@@ -111,7 +111,6 @@ export type ScientLibraryBackupResult =
     }
   /** A project is moving into or out of the Library right now; its files are in flux. */
   | { readonly outcome: "busy" }
-  | { readonly outcome: "stopped" }
   /** The destination is not an absolute path to a folder, or is inside the Library. */
   | { readonly outcome: "unsafe-destination" };
 
@@ -247,8 +246,6 @@ export async function backUpScientLibrary(input: {
   readonly destination: string;
   /** Called inside the Library's lock: it must only report, never change the Library. */
   readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
-  /** Asked between files; true abandons the backup and removes what was copied. */
-  readonly shouldStop?: () => boolean;
   /** Tests only: runs after the checkouts are listed, before the Library's lock is asked for. */
   readonly faults?: { readonly beforeLibraryLock?: () => Promise<void> };
 }): Promise<ScientLibraryBackupResult> {
@@ -295,7 +292,6 @@ export async function backUpScientLibrary(input: {
         created = true;
         const files: Array<typeof BackupFile.Type> = [];
         for (const [index, path] of paths.entries()) {
-          if (input.shouldStop?.()) return "stopped" as const;
           const from = NodePath.join(libraryRoot, ...path.split("/"));
           const to = NodePath.join(partial, SCIENT_LIBRARY_BACKUP_PAYLOAD, ...path.split("/"));
           await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
@@ -327,7 +323,7 @@ export async function backUpScientLibrary(input: {
     throw error;
   });
 
-  if (copied === "busy" || copied === "stopped") {
+  if (copied === "busy") {
     await discard();
     return { outcome: copied };
   }

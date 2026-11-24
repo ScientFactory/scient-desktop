@@ -3,18 +3,17 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 import { assert, it } from "@effect/vitest";
 import {
-  DEFAULT_SERVER_SETTINGS,
   CheckpointScopeId,
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
   ContextHandoffId,
-  type OrchestrationV2ContextHandoff,
   EventId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PendingBackgroundTask,
@@ -1695,7 +1694,6 @@ it.effect.each(
           scenario === "start-guard" || handoffInterruption
             ? ServerSettings.layerTest()
             : Layer.mock(ServerSettings.ServerSettingsService)({
-                committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
                 getSettings:
                   scenario === "interruption"
                     ? Effect.interrupt
@@ -4772,7 +4770,7 @@ it.effect("settles native subagents when a workspace handoff completes the root 
     assert.deepEqual(statusOf("turn-item.updated", runningTurnItem.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningNode.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningChildNode.id), ["interrupted"]);
-    assert.deepEqual(statusOf("run.updated", ids.runId), ["waiting"]);
+    assert.deepEqual(statusOf("run.updated", ids.runId), ["completed"]);
     assert.deepEqual(statusOf("run-attempt.updated", ids.attemptId), ["completed"]);
     assert.isFalse(
       events.some(
@@ -4937,10 +4935,7 @@ it.effect.each(
       shouldFinalizeRun: () => Effect.succeed(true),
       events: (ids) => Stream.make(rootTerminalEvent(ids, status)),
     });
-    assert.deepEqual(observed, [
-      `run:${status === "completed" ? "waiting" : status}`,
-      "pull-requests-refreshed",
-    ]);
+    assert.deepEqual(observed, [`run:${status}`, "pull-requests-refreshed"]);
   }),
 );
 
@@ -5362,6 +5357,48 @@ it.effect("ends a running root command when the provider stream fails mid-turn",
   }),
 );
 
+it.effect("fails the run when a released session's interrupt exits interrupted", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const key = "released-session-interrupted-interrupt";
+    const { observed, finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make({
+          type: "provider_turn.updated" as const,
+          driver,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            nodeId: ids.rootNodeId,
+            runAttemptId: ids.attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running" as const,
+            startedAt: now,
+            completedAt: null,
+          },
+        }).pipe(
+          Stream.concat(
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                raisedByT3: true,
+                cause: "Provider sign-in changed.",
+              }),
+            ),
+          ),
+        ),
+      // An ACP session whose scope is already closing interrupts the join.
+      interruptTurn: () => Effect.interrupt,
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.isTrue(finalEvents.some((event) => event.type === "run.updated"));
+  }),
+);
+
 it.effect("keeps a running root command open when a write fails under a live provider", () =>
   Effect.gen(function* () {
     const key = "write-error-running-command";
@@ -5463,10 +5500,56 @@ it.effect.each([
             : [],
         ),
         ended
-          ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
-          : ["run.updated:waiting"],
+          ? ["run.updated:completed", "subagent.updated:failed", "turn-item.updated:failed"]
+          : ["run.updated:completed"],
       );
     }),
+);
+
+it.effect("restores dropped inline handoffs when ingestion fails before the terminal", () =>
+  Effect.gen(function* () {
+    const key = "dropped-turn-ingest-error";
+    const ids = backgroundScenarioIds(key);
+    const handoff = { id: `handoff:${key}` } as unknown as OrchestrationV2ContextHandoff;
+    const { finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      loadDroppedInlineHandoffs: () => Effect.succeed([handoff]),
+      events: () =>
+        Stream.make({
+          type: "provider_turn.updated" as const,
+          driver,
+          threadId: ids.threadId,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            // SCIENT-FORK: Scient observes only the root node's turn.
+            nodeId: ids.rootNodeId,
+            runAttemptId: ids.attemptId,
+            ordinal: 1,
+            status: "failed",
+            promptDropped: true,
+          } as OrchestrationV2ProviderTurn,
+        }),
+      // SCIENT-FORK: Scient's harness takes a per-event ingest directly.
+      ingestNormalizedForEvent: ({ event }) =>
+        event.type === "provider_turn.updated"
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                eventCount: 1,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
+              }),
+            )
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(
+      finalEvents.flatMap((event) =>
+        event.type === "context-handoff.updated" ? [event.payload.id] : [],
+      ),
+      [handoff.id],
+    );
+  }),
 );
 
 it.effect("does not interrupt a provider when ingestion fails before the root turn is known", () =>
@@ -5903,7 +5986,7 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
       events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
       refreshAfterTurn: Effect.die("refresh failed"),
     });
-    assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.deepEqual(observed, ["run:completed", "pull-requests-refreshed"]);
   }),
 );
 
@@ -6507,6 +6590,7 @@ function captureRootRunTermination(input: {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
+  readonly loadDroppedInlineHandoffs?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["loadDroppedInlineHandoffs"];
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
@@ -6807,6 +6891,9 @@ function captureRootRunTermination(input: {
           ...(input.hasWorkspaceMoved === undefined
             ? {}
             : { hasWorkspaceMoved: input.hasWorkspaceMoved }),
+          ...(input.loadDroppedInlineHandoffs === undefined
+            ? {}
+            : { loadDroppedInlineHandoffs: input.loadDroppedInlineHandoffs }),
           message: {
             messageId: MessageId.make(`message:${input.key}`),
             text: input.messageText ?? "interrupt projection",

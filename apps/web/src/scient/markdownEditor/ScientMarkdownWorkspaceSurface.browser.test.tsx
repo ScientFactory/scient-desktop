@@ -11,6 +11,7 @@ import { StrictMode, useEffect, useRef, useState } from "react";
 
 import { AllSelection, NodeSelection, TextSelection } from "prosemirror-state";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import {
   MarkdownPersistenceCoordinator,
@@ -20,6 +21,7 @@ import {
 import { EnvironmentId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { resolveChatShortcutCommand } from "../../keybindings";
+import { isMacPlatform } from "../../lib/utils";
 import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import { MarkdownPersistenceRegistry } from "./persistence/markdownPersistenceRegistry";
 import { createTestCheckpointStore } from "./persistence/markdownDraftCheckpointTestkit";
@@ -968,6 +970,61 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
     expect(host.querySelector("[aria-label='Bold']")).toBeNull();
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  async function mountTaskDocument(_fixture: _Fixture, persist: TestSurfaceProps["persist"]) {
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(_fixture, host));
+    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
+    _fixture.root0.push(root);
+    await act(
+      async () =>
+        await root.rerender(
+          <ScientMarkdownWorkspaceSurface
+            source={"- [ ] Task item\n\nRendered file body.\n"}
+            revision="r0"
+            ariaLabel="Tasks"
+            persist={persist}
+          />,
+        ),
+    );
+    return host.querySelector<HTMLInputElement>(".scient-markdown-task-checkbox")!;
+  }
+
+  it("saves the whole file exactly once when a task is toggled", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    const persist = vi.fn(async () => ({ revision: "r1" }));
+    const checkbox = await mountTaskDocument(_fixture, persist);
+    _fixture.stack.use(_fixtureFakeTimers());
+
+    await act(async () => checkbox.click());
+    await act(() => vi.advanceTimersByTimeAsync(500));
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "- [x] Task item\n\nRendered file body.\n" }),
+    );
+  });
+
+  it("selects only the document with Mod+A while a clicked task checkbox holds focus", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    const transcript = document.createElement("p");
+    transcript.textContent = "Transcript text from the chat thread.";
+    document.body.append(_ownDOM(_fixture, transcript));
+    const checkbox = await mountTaskDocument(_fixture, async () => ({ revision: "r1" }));
+
+    await userEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    expect(document.activeElement).toBe(checkbox);
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Rendered file body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
   });
 
   it("expands the collapsed editing controls from the handle", async () => {

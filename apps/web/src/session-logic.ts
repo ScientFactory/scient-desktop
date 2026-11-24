@@ -24,6 +24,7 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
+  isLegacyMcpStartupNotice,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
@@ -266,6 +267,7 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "secret_request",
+  "feedback_request",
   "link_request",
   "subagent",
   // SCIENT-FORK: a thread room message the agent has not been given.
@@ -277,6 +279,7 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
   "thread_created",
   // Still answerable after a steer supersedes the attempt that asked.
   "secret_request",
+  "feedback_request",
   "link_request",
 ]);
 
@@ -767,6 +770,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         item.deliveries?.some((delivery) => delivery.status === "sent") === true)
     )
       continue;
+    // MCP startup and sign-in notices older servers wrote; the thread's live MCP status replaces them.
+    if (item.type === "system_notice" && isLegacyMcpStartupNotice(item)) continue;
     // SCIENT-FORK:END
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({
@@ -1204,12 +1209,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-// A missing snapshot (no git, or a side chat) still pins a conversation position; only
-// restoring files needs a ready one.
+// A missing or failed snapshot (no git, a side chat, a capture error) still pins a
+// conversation position; only restoring files needs a ready one.
 function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
-  // SCIENT-FORK: a failed snapshot (oversized workspace) also pins its position; only a
-  // rolled-back (stale) boundary does not.
-  return checkpointSupportsRewind(checkpoint, false);
+  return checkpoint.status !== "stale";
 }
 
 export function findRevertCheckpoint(

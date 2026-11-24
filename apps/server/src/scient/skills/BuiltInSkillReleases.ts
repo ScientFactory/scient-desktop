@@ -1,6 +1,13 @@
 import { loadEmbeddedSkillRelease, type SkillRelease } from "@scientfactory/scient-skills";
 
 import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
+import { BUILT_IN_DOCUMENT_LAB_SKILL_SOURCES } from "./BuiltInDocumentLabSkillSources.ts";
+
+export const BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES = Object.freeze(
+  BUILT_IN_DOCUMENT_LAB_SKILL_SOURCES.map((source) =>
+    loadEmbeddedSkillRelease(source.directoryName, source.files),
+  ),
+);
 
 /**
  * Reviewed Scient-owned releases embedded in the server bundle.

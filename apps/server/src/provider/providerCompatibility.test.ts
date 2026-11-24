@@ -2,6 +2,7 @@ import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
@@ -607,7 +608,6 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       }),
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (id) => Effect.succeed(id === instance.instanceId ? instance : undefined),
-        rebuildInstance: () => Effect.void,
         listInstances: Effect.succeed([instance]),
         listUnavailable: Effect.succeed([]),
         streamChanges: Stream.empty,
@@ -647,6 +647,8 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
           ),
         ),
       ),
+      // A login shell that prints nothing, so the refresh never takes PATH from the developer's profile.
+      Effect.provideService(HostProcess.Environment, { ...process.env, SHELL: "/usr/bin/true" }),
     );
   }),
 );

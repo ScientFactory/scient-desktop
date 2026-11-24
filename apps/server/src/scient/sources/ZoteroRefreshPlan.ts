@@ -38,6 +38,8 @@ export interface ZoteroRefreshPlan {
   readonly base: {
     readonly metadata: ScientSourceEditableMetadata;
     readonly note: string | null;
+    /** Markdown converted from Zotero's saved note when it differs from `note`. */
+    readonly zoteroNote?: string | null;
     /** Zotero's notes as it wrote them; absent while a clash on an earlier import's note is open. */
     readonly notes?: ReadonlyArray<ZoteroNoteOriginal>;
   };
@@ -255,13 +257,17 @@ export function planZoteroRefresh(input: {
     // By digest, which every note has even when its HTML was too long to keep.
     const digests = (notes: ReadonlyArray<{ readonly itemKey: string; readonly sha256: string }>) =>
       notes.map(({ itemKey, sha256 }) => `${itemKey}:${sha256}`);
+    const sameHtml =
+      input.base?.notes !== undefined &&
+      same(digests(input.base.notes), digests(input.zotero.notes));
+    const baseZoteroNote =
+      input.base?.zoteroNote !== undefined ? input.base.zoteroNote : input.base?.note;
     const zoteroChanged = !input.base
       ? true
       : input.base.notes
-        ? !same(digests(input.base.notes), digests(input.zotero.notes)) &&
-          zoteroNote !== input.base.note
+        ? !sameHtml && zoteroNote !== baseZoteroNote
         : legacyNote !== input.base.note;
-    if (useZotero.has("note") || untouched) {
+    if (useZotero.has("note") || (untouched && (zoteroChanged || !input.base?.notes))) {
       note = { value: zoteroNote };
     } else if (zoteroChanged && !keepLocal.has("note")) {
       conflicts.push({
@@ -274,7 +280,17 @@ export function planZoteroRefresh(input: {
       planBase = {
         metadata: planBase.metadata,
         note: input.base ? input.base.note : null,
+        ...(input.base?.zoteroNote !== undefined ? { zoteroNote: input.base.zoteroNote } : {}),
         ...(input.base?.notes ? { notes: input.base.notes } : {}),
+      };
+    } else if (!zoteroChanged && input.base) {
+      // Keep the local text baseline when Zotero's rendered Markdown did not change (identical
+      // HTML or formatting-only edits like colour), while advancing the Zotero HTML digests.
+      planBase = {
+        metadata: planBase.metadata,
+        note: input.base.note,
+        ...(zoteroNote !== input.base.note ? { zoteroNote } : {}),
+        notes: input.zotero.notes,
       };
     }
   }

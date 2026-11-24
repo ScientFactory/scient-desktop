@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import { windowsPowerShellPath } from "@t3tools/shared/windowsSystem";
 // SCIENT-FORK:START — busy means Scient's executing work, not any open run.
 import * as ScientKeepAwakeWork from "../scient/keepAwake/KeepAwakeService.ts";
 // SCIENT-FORK:END
@@ -30,10 +31,11 @@ const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace Scient -PassTh
  * Each command writes a line to stdout once it holds its inhibitor, holds it until it exits, and
  * exits on its own if the server dies.
  */
-function inhibitorCommand(
+export function inhibitorCommand(
   platform: NodeJS.Platform,
   serverPid: number,
   isWsl: boolean,
+  env: NodeJS.ProcessEnv,
 ):
   | {
       readonly command: string;
@@ -81,7 +83,7 @@ function inhibitorCommand(
       };
     case "win32":
       return {
-        command: "powershell.exe",
+        command: windowsPowerShellPath(env),
         args: [
           "-NoProfile",
           "-NonInteractive",
@@ -149,7 +151,7 @@ export const layer = Layer.effectDiscard(
         Effect.map((release) => release.toLowerCase().includes("microsoft")),
         Effect.orElseSucceed(() => false),
       ));
-    const command = inhibitorCommand(platform, process.pid, isWsl);
+    const command = inhibitorCommand(platform, process.pid, isWsl, yield* HostProcess.Environment);
     if (command === undefined) return;
     const settings = yield* Settings.ServerSettingsService;
     const events = yield* OrchestrationEventStore.OrchestrationEventStore;

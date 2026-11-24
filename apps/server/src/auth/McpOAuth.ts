@@ -104,6 +104,7 @@ export const authorizationServerMetadata = (
   authorization_endpoint: `${urls.issuer}/oauth/mcp/authorize`,
   token_endpoint: `${urls.issuer}/oauth/mcp/token`,
   registration_endpoint: `${urls.issuer}/oauth/mcp/register`,
+  revocation_endpoint: `${urls.issuer}/oauth/mcp/revoke`,
   response_types_supported: ["code"],
   grant_types_supported: ["authorization_code"],
   code_challenge_methods_supported: ["S256"],
@@ -643,6 +644,13 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     "orchestration",
                     "worktree",
                     "pull-requests",
+                    // SCIENT-FORK:START — the Library, as the approved mode allows; never a peer link.
+                    ...(client.peerLink
+                      ? []
+                      : client.access === "read-only"
+                        ? (["sources:read"] as const)
+                        : (["sources:read", "sources:write"] as const)),
+                    // SCIENT-FORK:END
                   ]),
                   issuedAt,
                 })),

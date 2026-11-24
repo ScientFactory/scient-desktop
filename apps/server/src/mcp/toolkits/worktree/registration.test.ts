@@ -69,6 +69,9 @@ import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import * as TaskFolders from "../../../workspace/TaskFolders.ts";
+import * as FeedbackStore from "../../../feedback/FeedbackStore.ts";
+import * as MilestoneHub from "../../../milestones/MilestoneHub.ts";
+import * as Workflows from "../../../workflows/Workflows.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -132,6 +135,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(TaskFolders.TaskFolders)({}),
+  Layer.mock(Workflows.Workflows)({}),
+  Layer.mock(FeedbackStore.FeedbackStore)({}),
+  Layer.mock(MilestoneHub.MilestoneHub)({}),
   // SCIENT-FORK: the custom models agent tools test models through their agents.
   Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
@@ -248,15 +254,14 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      // The credential holds worktree, orchestration and preview: only the device and
-      // issue tools, whose every call needs a grant it lacks, are not listed.
-      // Device tools need their grant, and only a deferring client lists tool_search.
-      // The background wait is listed only for providers that can hold a thread on one.
+      // Device and issue tools need missing grants; tool_search is for deferring clients;
+      // scient_background_wait needs background-wait; scient_workflow is hiddenFromThreads.
       const unlisted = new Set([
         ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
         ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
         "tool_search",
         "scient_background_wait",
+        "scient_workflow",
       ]);
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(

@@ -527,6 +527,7 @@ describe("Copy ▸ Conversation as Markdown", () => {
       canSnoozeNow: true,
       isRegeneratingTitle: false,
       isRunning: false,
+      hasCompletedRun: true,
       supports: {
         settlement: false,
         autoSettleOptOut: false,

@@ -214,6 +214,7 @@ import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 // SCIENT-FORK:START — Scient Accounts: sign-ins waiting for the user reach the phone.
 import { ThreadAccountRequests } from "./ThreadAccountRequests";
+import { ThreadMcpStatusRequests } from "./ThreadMcpStatusRequests";
 // SCIENT-FORK:END
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
@@ -1004,10 +1005,15 @@ function ThreadDetailBody(
     readonly threadKey: string;
     readonly now: number;
   } | null>(null);
+  const selectedProviderDriver =
+    props.serverConfig?.providers.find(
+      (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+    )?.driver ?? null;
   // Approval/question identity invalidates quota: answering on any client resumes spending.
   const usageLimitsKey = [
     selectedThreadKey,
     props.selectedThread.modelSelection.instanceId,
+    selectedProviderDriver === "scient" ? props.selectedThread.modelSelection.model : "",
     props.selectedThread.latestRun?.runId ?? "",
     props.activePendingApproval?.requestId ?? props.activePendingUserInput?.requestId ?? "",
   ].join(":");
@@ -1627,9 +1633,6 @@ function ThreadDetailBody(
           }
           offset={{ closed: 0, opened: composerKeyboardOffset }}
         >
-          {questionInFlow ? (
-            <Animated.View pointerEvents="none" style={questionStatusSpace} />
-          ) : null}
           <ComposerPopoverHost
             hidden={composerSlotHidden}
             popoverHeight={composerPopoverHeight}
@@ -1649,6 +1652,7 @@ function ThreadDetailBody(
                           position: "absolute",
                           bottom: controlInsets.bottom,
                           left: controlInsets.left,
+                          paddingTop: FLOATING_WORKING_CONTROL_COVERAGE,
                         },
                         columnComposerWidthStyle,
                       ]
@@ -1658,11 +1662,17 @@ function ThreadDetailBody(
                           bottom: controlInsets.bottom,
                           left: controlInsets.left,
                           right: controlInsets.right,
+                          paddingTop: FLOATING_WORKING_CONTROL_COVERAGE,
                         },
                         composerWidthStyle,
                       ]
               }
             >
+              {/* Android clips accessibility bounds to the parent, so the floating control's
+                space stays inside this host, or TalkBack cannot reach the pill. */}
+              {questionInFlow ? (
+                <Animated.View pointerEvents="none" style={questionStatusSpace} />
+              ) : null}
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
@@ -1925,6 +1935,11 @@ function ThreadDetailBody(
                     <>
                       {/* SCIENT-FORK:START — Scient Accounts: sign-ins reach the phone. */}
                       <ThreadAccountRequests
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
+                      />
+                      {/* MCP servers that need a sign-in, outside the transcript. */}
+                      <ThreadMcpStatusRequests
                         environmentId={props.environmentId}
                         threadId={props.selectedThread.id}
                       />

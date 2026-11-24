@@ -78,7 +78,6 @@ it.effect.each([
       McpToolAccessTestkit.liveThreadsLayer,
       Layer.mock(ServerSettings.ServerSettingsService)({
         getSettings: Effect.succeed(settings),
-        committedCustomModels: () => settings.customModels,
       }),
     );
     const toolkit = yield* PreviewControlsToolkit.pipe(
@@ -171,7 +170,6 @@ it.effect("close reports why the server browser refused to close a tab", () =>
           ...DEFAULT_SERVER_SETTINGS,
           enableAgentBrowserAccess: true,
         }),
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
       }),
     );
     const toolkit = yield* PreviewControlsToolkit.pipe(
@@ -243,7 +241,6 @@ it.effect("list hides and close refuses tabs in profiles this session may not se
             ...DEFAULT_SERVER_SETTINGS,
             enableAgentBrowserAccess: true,
           }),
-          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
         }),
         Layer.succeed(
           AccountsService,

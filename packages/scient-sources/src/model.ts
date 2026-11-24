@@ -96,6 +96,10 @@ export const ScientSourceExternalReference = Schema.Struct({
   itemKey: NonEmptyString,
   itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   rawItemType: NonEmptyString,
+  /** The legacy Zotero baseline verified when this concrete owner link was published. */
+  zoteroLegacyBaselineSha256: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+  ),
 });
 export type ScientSourceExternalReference = typeof ScientSourceExternalReference.Type;
 
@@ -394,8 +398,14 @@ export const ScientSourceZoteroSync = Schema.Struct({
   /** The text Scient last wrote into the source's note from Zotero's notes. */
   note: Schema.NullOr(Schema.String),
   /**
+   * The Markdown converted from Zotero's saved note when it differs from `note` (for example,
+   * local Markdown sent as plain paragraphs whose round-trip escapes characters).
+   */
+  zoteroNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
    * Zotero's notes as it wrote them: each by key with the sha256 of its HTML, and the HTML while
-   * the notes fit 1,000,000 characters; absent when last read before they were kept.
+   * the notes fit 1,000,000 characters and the 2 MiB sync-file limit; absent when last read
+   * before they were kept.
    */
   notes: Schema.optionalKey(
     Schema.Array(
@@ -406,6 +416,10 @@ export const ScientSourceZoteroSync = Schema.Struct({
       }),
     ),
   ),
+  /** Whether the initial import sync write omitted any original note HTML for size; preserved across later sync writes. */
+  importOmittedOriginalNoteHtml: Schema.optionalKey(Schema.Boolean),
+  /** The import operation whose initial write saved this baseline; preserved across later sync writes. */
+  importOperationId: Schema.optionalKey(NonEmptyString),
   attachmentKeys: Schema.Array(NonEmptyString),
   /** Each Zotero file's PDF here, by sha256; absent when imported before it was kept. */
   pdfs: Schema.optionalKey(Schema.Record(NonEmptyString, NonEmptyString)),

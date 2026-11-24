@@ -241,7 +241,7 @@ describe("ScientAgentBackgroundRuntime", () => {
             }),
             Layer.mock(ProcessRunner)({}),
             Layer.mock(AnalyticsService)({
-              record: (event) => Ref.update(events, (all) => [...all, event]),
+              record: (event) => Ref.update(events, (all) => [...all, event]).pipe(Effect.as(true)),
             }),
             Layer.succeed(
               ScientAgentRuntimePolicy,

@@ -13,12 +13,15 @@ import {
   type ObservedWorkspaceEvidence,
   type ResolvedThreadWorkspaceBinding,
   type ResolvedWorkspaceBinding,
+  WorkspaceAuthorityGeneration,
   type WorkspaceAuthorityScopeRevision,
+  WorkspaceBindingId as WorkspaceBindingIdSchema,
   type WorkspaceBindingId,
   type WorkspaceBindingRecordV1,
   type WorkspaceBindingSafeDiagnostic,
   WorkspaceBindingResolutionError,
-  type WorkspaceBindingStoreError,
+  WorkspaceBindingStoreError,
+  sameRepository,
   toSafeWorkspaceBindingDiagnostic,
 } from "./WorkspaceBinding.ts";
 import * as WorkspaceAuthorityProjection from "./WorkspaceAuthorityProjection.ts";
@@ -39,6 +42,7 @@ export class WorkspaceBindingResolver extends Context.Service<
     /** UI/environment selector only. Agent adapters must use resolveThread. */
     readonly resolveWorkspaceRoot: (
       workspaceRoot: string,
+      options?: { readonly readOnly?: boolean },
     ) => Effect.Effect<ResolvedThreadWorkspaceBinding, ResolverError>;
     readonly assertCurrentWorkspaceScope: (input: {
       readonly workspaceRoot: string;
@@ -188,7 +192,7 @@ const make = Effect.gen(function* () {
     if (
       project.repositoryIdentity !== null &&
       selected.repositoryIdentity !== null &&
-      project.repositoryIdentity.canonicalKey !== selected.repositoryIdentity.canonicalKey
+      !sameRepository(project.repositoryIdentity, selected.repositoryIdentity)
     ) {
       return false;
     }
@@ -202,9 +206,82 @@ const make = Effect.gen(function* () {
     return true;
   };
 
+  /** Verifies a registered root without inserting or updating any workspace-binding rows. */
+  const verifyObservedReadOnly = Effect.fn("WorkspaceBindingResolver.verifyObservedReadOnly")(
+    function* (input: WorkspaceBindingStore.VerifyObservedWorkspaceInput) {
+      const existing = yield* bindings.getActiveByRoot({
+        environmentId: input.environmentId,
+        canonicalRoot: input.evidence.canonicalRoot,
+      });
+      if (existing?.trustState === "revoked") {
+        return yield* new WorkspaceBindingStoreError({
+          operation: "verify-observed",
+          kind: "binding-revoked",
+        });
+      }
+      if (existing && existing.hostProjectId !== input.hostProjectId) {
+        if (
+          existing.trustState !== "verified" ||
+          input.evidence.trustState !== "verified" ||
+          !WorkspaceBindingStore.samePhysicalRoot(existing, input.evidence) ||
+          (yield* rootHasConflictingRegistration(input.evidence.canonicalRoot, input.hostProjectId))
+        ) {
+          return yield* new WorkspaceBindingStoreError({
+            operation: "verify-observed",
+            kind: "root-conflict",
+          });
+        }
+      }
+      const unchangedForSameProject =
+        existing !== null &&
+        existing.hostProjectId === input.hostProjectId &&
+        WorkspaceBindingStore.authorityEvidenceEqual(existing, input.evidence);
+      if (
+        existing &&
+        !unchangedForSameProject &&
+        !WorkspaceBindingStore.samePhysicalRoot(existing, input.evidence) &&
+        input.evidence.rootFileSystemIdentity === null
+      ) {
+        return yield* new WorkspaceBindingStoreError({
+          operation: "verify-observed",
+          kind: "root-conflict",
+        });
+      }
+      const binding: WorkspaceBindingRecordV1 = existing
+        ? {
+            ...existing,
+            hostProjectId: input.hostProjectId,
+            rootFileSystemIdentity: input.evidence.rootFileSystemIdentity,
+            scientProjectId: input.evidence.scientProjectId,
+            repositoryIdentity: input.evidence.repositoryIdentity,
+            worktreeIdentity: input.evidence.worktreeIdentity,
+            trustState: input.evidence.trustState,
+          }
+        : {
+            schemaVersion: 1,
+            bindingId: WorkspaceBindingIdSchema.make(`read-only:${input.hostProjectId}`),
+            environmentId: input.environmentId,
+            hostProjectId: input.hostProjectId,
+            canonicalRoot: input.evidence.canonicalRoot,
+            rootFileSystemIdentity: input.evidence.rootFileSystemIdentity,
+            scientProjectId: input.evidence.scientProjectId,
+            repositoryIdentity: input.evidence.repositoryIdentity,
+            worktreeIdentity: input.evidence.worktreeIdentity,
+            lineageBindingId: input.lineageBindingId ?? null,
+            trustState: input.evidence.trustState,
+            authorityGeneration: WorkspaceAuthorityGeneration.make(1),
+            createdAt: input.evidence.observedAt,
+            lastVerifiedAt: input.evidence.observedAt,
+            supersededBy: null,
+          };
+      return { binding, relation: "only-binding" as const, relatedBindingCount: 0 };
+    },
+  );
+
   const resolve = Effect.fn("WorkspaceBindingResolver.resolve")(function* (input: {
     readonly threadId: ThreadId;
     readonly lineageBindingId: WorkspaceBindingId | null;
+    readonly readOnly?: boolean;
   }): Effect.fn.Return<ResolvedThreadWorkspaceBinding, ResolverError> {
     const environmentId = yield* environment.getEnvironmentId;
     const context = yield* authorityProjection.getThreadContext(input.threadId);
@@ -243,7 +320,8 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const resolved = yield* verifyObserved({
+    const verify = input.readOnly ? verifyObservedReadOnly : verifyObserved;
+    const resolved = yield* verify({
       environmentId,
       hostProjectId: context.value.projectId,
       evidence: observed,
@@ -258,7 +336,9 @@ const make = Effect.gen(function* () {
   const resolveWorkspaceRoot = Effect.fn("WorkspaceBindingResolver.resolveWorkspaceRoot")(
     function* (
       workspaceRoot: string,
+      options?: { readonly readOnly?: boolean },
     ): Effect.fn.Return<ResolvedThreadWorkspaceBinding, ResolverError> {
+      const readOnly = options?.readOnly === true;
       const selected = yield* evidence.inspect(workspaceRoot);
       const roots = yield* authorityProjection.listRegisteredRoots();
       // Match only host-registered roots, including canonical aliases. A cwd
@@ -295,7 +375,7 @@ const make = Effect.gen(function* () {
       const root = matches.find((candidate) => candidate.threadId === null) ?? matches[0]!;
       let resolved: ResolvedThreadWorkspaceBinding;
       if (root.threadId !== null) {
-        resolved = yield* resolveThread(root.threadId);
+        resolved = yield* resolve({ threadId: root.threadId, lineageBindingId: null, readOnly });
       } else {
         const project = yield* authorityProjection.getProjectContext(root.projectId);
         if (Option.isNone(project)) {
@@ -312,7 +392,8 @@ const make = Effect.gen(function* () {
             ? selected
             : yield* evidence.inspect(project.value.workspaceRoot);
         const environmentId = yield* environment.getEnvironmentId;
-        const binding = yield* verifyObserved({
+        const verify = readOnly ? verifyObservedReadOnly : verifyObserved;
+        const binding = yield* verify({
           environmentId,
           hostProjectId: root.projectId,
           evidence: observed,

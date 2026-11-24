@@ -15,7 +15,7 @@ export const withConnectionInstanceIdentity = (
   },
 ) => {
   const stampIdentity = withInstanceIdentity(input);
-  return (snapshot: ServerProviderDraft): ServerProvider => ({
+  return ({ checkFailure, ...snapshot }: ServerProviderDraft): ServerProvider => ({
     ...stampIdentity(snapshot),
     connection: {
       methods: snapshot.auth.required === false ? [] : input.connectionMethods,
@@ -25,6 +25,7 @@ export const withConnectionInstanceIdentity = (
         snapshot.auth.status === "authenticated",
       operation: null,
       runtime: input.runtime,
+      ...(checkFailure === undefined ? {} : { checkFailure }),
     },
   });
 };

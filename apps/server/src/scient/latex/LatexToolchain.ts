@@ -411,7 +411,10 @@ export const make = Effect.gen(function* () {
     if (first._tag === "unusable" && unusable.length === 0) {
       unusable.push({
         ...first.unusable,
-        executable: resolveExecutable("latexmk", platform, hostEnvironment) ?? "latexmk",
+        executable:
+          (yield* Effect.promise(async () =>
+            resolveExecutable("latexmk", platform, hostEnvironment),
+          )) ?? "latexmk",
       });
     }
     return { status: null, unusable };
@@ -430,7 +433,9 @@ export const make = Effect.gen(function* () {
         // Tectonic embeds XeTeX, but does not run any of these binaries.
         if (status.kind !== "latexmk") return missing;
         const executable =
-          resolveExecutable(compiler, platform, { ...hostEnvironment, ...environment }) ?? compiler;
+          (yield* Effect.promise(async () =>
+            resolveExecutable(compiler, platform, { ...hostEnvironment, ...environment }),
+          )) ?? compiler;
         return yield* processRunner
           .run({
             command: executable,

@@ -555,6 +555,11 @@ export const ProviderRuntimePlan = Schema.Struct({
    * the system version.
    */
   olderThanSystem: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Whether the runtime this plan installs loads the provider's own plugins, for a provider whose
+   * releases differ in that. Optional so older clients and servers keep decoding the plan.
+   */
+  nativePlugins: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderRuntimePlan = typeof ProviderRuntimePlan.Type;
 

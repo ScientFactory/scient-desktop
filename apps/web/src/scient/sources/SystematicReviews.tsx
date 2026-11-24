@@ -17,7 +17,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { Field, FieldLabel } from "../../components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "../../components/ui/field";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import { ScrollArea } from "../../components/ui/scroll-area";
@@ -193,6 +193,14 @@ function LogSearchDialog(props: {
                   ))}
                 </SelectPopup>
               </Select>
+              {choices.length === 1 ? (
+                <FieldDescription>
+                  <T>
+                    To add its records now, select them in the list or put them in a collection
+                    first.
+                  </T>
+                </FieldDescription>
+              ) : null}
             </Field>
           </div>
         </DialogPanel>

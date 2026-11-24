@@ -22,10 +22,12 @@ import {
   listScientSourceImports,
   listScientSourceRecords,
   readScientSourceZoteroSync,
+  removeScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
   updateSourceImportOperationItem,
+  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -76,6 +78,28 @@ async function pdf(root: string, name: string) {
 
 const pdfAttachment = (key: string, filename: string) =>
   zoteroItem(key, { itemType: "attachment", contentType: "application/pdf", filename });
+
+function failRenameOnce(segment: string, message: string) {
+  const rename = NodeFS.promises.rename;
+  let interrupted = false;
+  NodeFS.promises.rename = async (from, to) => {
+    if (!interrupted && String(to).includes(segment)) {
+      interrupted = true;
+      NodeFS.promises.rename = rename;
+      NodeModule.syncBuiltinESMExports();
+      throw new Error(message);
+    }
+    return rename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+  return {
+    interrupted: () => interrupted,
+    restore: () => {
+      NodeFS.promises.rename = rename;
+      NodeModule.syncBuiltinESMExports();
+    },
+  };
+}
 
 describe("Zotero import", () => {
   it("keeps notes and every PDF of an item", async () => {
@@ -375,6 +399,646 @@ describe("Zotero import", () => {
       expect(await listScientSourceRecords(root)).toEqual(records);
     },
   );
+
+  it("keeps the initial original note HTML disclosure when resuming after the sync write", async () => {
+    const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
+    const largeChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const shortChildren = [zoteroItem("NOTE0001", { itemType: "note", note: "<p>Short note</p>" })];
+    const charHugeChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${`<p>${"a".repeat(1_000)}</p>`.repeat(110)}`,
+      }),
+    );
+
+    const interruptAfterSyncWrite = async (
+      initialChildren: ReadonlyArray<ZoteroRawItem>,
+      refreshedChildren: ReadonlyArray<ZoteroRawItem>,
+      operationId: string,
+      options: {
+        readonly refresh: boolean;
+        readonly expectedOmitted: boolean;
+        readonly materialOmitsOnRetry?: boolean;
+      },
+    ) => {
+      const root = await project();
+      const library = {
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem(
+                "ABCD2345",
+                {
+                  title: "Long multi-byte notes",
+                  abstractNote: "Already has an abstract.",
+                  DOI: "10.1000/cjk-resume",
+                },
+                475425,
+              ),
+              children: [...initialChildren],
+            },
+          ],
+        ]),
+      };
+      const transport = fakeZoteroTransport(library);
+      const zotero = fakeZoteroAccess(transport);
+      await beginZoteroScopedImport({
+        root,
+        operationId,
+        scope: { kind: "library" },
+        zotero,
+        partSize: 1,
+      });
+
+      const rename = NodeFS.promises.rename;
+      let sawSyncWrite = false;
+      let interrupted = false;
+      NodeFS.promises.rename = async (from, to) => {
+        const target = String(to);
+        if (
+          sawSyncWrite &&
+          !interrupted &&
+          target.includes(`${NodePath.sep}operations${NodePath.sep}`)
+        ) {
+          interrupted = true;
+          NodeFS.promises.rename = rename;
+          NodeModule.syncBuiltinESMExports();
+          throw new Error("Interrupted before recording import receipt.");
+        }
+        const result = await rename(from, to);
+        if (target.includes(`${NodePath.sep}zotero${NodePath.sep}`)) {
+          sawSyncWrite = true;
+        }
+        return result;
+      };
+      NodeModule.syncBuiltinESMExports();
+      try {
+        const failed = await advanceSourceImport({ root, operationId, zotero });
+        expect(failed.items[0]).toMatchObject({
+          state: "failed",
+          message: "Interrupted before recording import receipt.",
+        });
+      } finally {
+        NodeFS.promises.rename = rename;
+        NodeModule.syncBuiltinESMExports();
+      }
+      expect(sawSyncWrite).toBe(true);
+      expect(interrupted).toBe(true);
+
+      const [partial] = await listScientSourceRecords(root);
+      expect(partial).toBeDefined();
+      expect(
+        (await readScientSourceZoteroSync(root, partial!.sourceId))?.importOmittedOriginalNoteHtml,
+      ).toBe(options.expectedOmitted);
+      const entry = library.items.get("ABCD2345")!;
+      library.items.set("ABCD2345", { ...entry, children: [...refreshedChildren] });
+      if (options.refresh) {
+        const refreshed = await refreshZoteroSources({
+          root,
+          sourceIds: [partial!.sourceId],
+          actor: "user",
+          zotero,
+        });
+        expect(refreshed.items[0]?.outcome).toBe("updated");
+      }
+      if (options.materialOmitsOnRetry) {
+        const reread = await readZoteroItemMaterial(transport, "ABCD2345");
+        expect(reread.notBrought).toContainEqual({
+          kind: "note-cut",
+          name: "original",
+          count: 1,
+        });
+      }
+      const savedBeforeResume = await readScientSourceZoteroSync(root, partial!.sourceId);
+      if (options.refresh) {
+        expect(savedBeforeResume?.notes).toHaveLength(refreshedChildren.length);
+      }
+      expect(savedBeforeResume?.importOmittedOriginalNoteHtml).toBe(options.expectedOmitted);
+
+      await retrySourceImport({ root, operationId, itemKeys: ["ABCD2345"] });
+      const completed = await advanceSourceImport({ root, operationId, zotero });
+      expect(completed.state).toBe("completed");
+      expect(completed.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+      expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toEqual(savedBeforeResume);
+      return completed;
+    };
+
+    // Direction 1: initial import dropped HTML for size, intervening Refresh switched to short note.
+    const omittedOnImport = await interruptAfterSyncWrite(
+      largeChildren,
+      shortChildren,
+      "resume-byte-cut-zotero",
+      { refresh: true, expectedOmitted: true },
+    );
+    expect(omittedOnImport.items[0]?.notBrought).toContainEqual({
+      kind: "note-cut",
+      name: "original",
+      count: 1,
+    });
+    expect(summarizeNotBrought(omittedOnImport).map((line) => notBroughtName(line))).toContain(
+      "Notes not kept as Zotero wrote them (exceeded size limit)",
+    );
+
+    // Direction 2: initial import kept all originals, intervening Refresh hit the byte limit.
+    const keptOnImport = await interruptAfterSyncWrite(
+      shortChildren,
+      largeChildren,
+      "resume-short-then-large-zotero",
+      { refresh: true, expectedOmitted: false },
+    );
+    expect(
+      keptOnImport.items[0]?.notBrought?.some(
+        (entry) => entry.kind === "note-cut" && entry.name === "original",
+      ) ?? false,
+    ).toBe(false);
+
+    // Direction 3: no Refresh; Zotero's notes pass the character allowance only after the
+    // interruption, so retry's own material would newly disclose an omission.
+    const keptThenCharHuge = await interruptAfterSyncWrite(
+      shortChildren,
+      charHugeChildren,
+      "resume-short-then-char-huge-zotero",
+      { refresh: false, expectedOmitted: false, materialOmitsOnRetry: true },
+    );
+    expect(
+      keptThenCharHuge.items[0]?.notBrought?.some(
+        (entry) => entry.kind === "note-cut" && entry.name === "original",
+      ) ?? false,
+    ).toBe(false);
+  });
+
+  it("records a fresh omission decision when re-importing a trashed source", async () => {
+    const root = await project();
+    const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
+    const largeChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const library = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem(
+              "ABCD2345",
+              {
+                title: "Long multi-byte notes",
+                abstractNote: "Already has an abstract.",
+                DOI: "10.1000/cjk-resume",
+              },
+              475425,
+            ),
+            children: largeChildren,
+          },
+        ],
+      ]),
+    };
+    const transport = fakeZoteroTransport(library);
+    const zotero = fakeZoteroAccess(transport);
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "trash-reimport-first",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const first = await advanceSourceImport({ root, operationId: "trash-reimport-first", zotero });
+    expect(first.items[0]?.notBrought).toContainEqual({
+      kind: "note-cut",
+      name: "original",
+      count: 1,
+    });
+    const [record] = await listScientSourceRecords(root);
+    expect(record).toBeDefined();
+    expect(
+      (await readScientSourceZoteroSync(root, record!.sourceId))?.importOmittedOriginalNoteHtml,
+    ).toBe(true);
+    // As a Send to a group would leave it: the retained base is the group item's baseline.
+    const firstSync = (await readScientSourceZoteroSync(root, record!.sourceId))!;
+    await writeScientSourceZoteroSync(root, {
+      ...firstSync,
+      libraryId: "groups/77",
+      itemKey: "NEWA2345",
+    });
+
+    await removeScientSource({
+      root,
+      sourceId: record!.sourceId,
+      expectedRevision: record!.revision,
+    });
+    const entry = library.items.get("ABCD2345")!;
+    library.items.set("ABCD2345", {
+      ...entry,
+      children: [zoteroItem("NOTE0001", { itemType: "note", note: "<p>Short note</p>" })],
+    });
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "trash-reimport-second",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const fault = failRenameOnce(
+      `${NodePath.sep}zotero${NodePath.sep}`,
+      "Interrupted at the sync write.",
+    );
+    try {
+      const failed = await advanceSourceImport({
+        root,
+        operationId: "trash-reimport-second",
+        zotero,
+      });
+      expect(failed.items[0]).toMatchObject({
+        state: "failed",
+        message: "Interrupted at the sync write.",
+      });
+    } finally {
+      fault.restore();
+    }
+    expect(fault.interrupted()).toBe(true);
+    const retained = await readScientSourceZoteroSync(root, record!.sourceId);
+    expect(retained?.importOmittedOriginalNoteHtml).toBe(true);
+    expect(retained?.libraryId).toBe("groups/77");
+    const [partial] = await listScientSourceRecords(root);
+    await refreshZoteroSources({ root, sourceIds: [partial!.sourceId], actor: "user", zotero });
+    const refreshedSync = await readScientSourceZoteroSync(root, record!.sourceId);
+    expect(refreshedSync?.importOperationId).toBe(partial?.origin?.operationId);
+    expect(refreshedSync?.importOmittedOriginalNoteHtml).toBeUndefined();
+
+    await retrySourceImport({ root, operationId: "trash-reimport-second", itemKeys: ["ABCD2345"] });
+    const second = await advanceSourceImport({
+      root,
+      operationId: "trash-reimport-second",
+      zotero,
+    });
+    expect(second.items[0]).toMatchObject({ state: "imported", sourceId: record!.sourceId });
+    expect(
+      second.items[0]?.notBrought?.some(
+        (line) => line.kind === "note-cut" && line.name === "original",
+      ) ?? false,
+    ).toBe(false);
+    const resaved = await readScientSourceZoteroSync(root, record!.sourceId);
+    expect(resaved?.importOmittedOriginalNoteHtml).toBeUndefined();
+    expect(resaved?.notes).toHaveLength(1);
+    expect(resaved?.annotationLibraryId ?? resaved?.libraryId).toBe("475425");
+    const [reimported] = await listScientSourceRecords(root);
+    expect(resaved?.importOperationId).toBe(reimported?.origin?.operationId);
+    expect(resaved?.importOperationId).not.toBe(record!.origin?.operationId);
+  });
+
+  it("keeps a Refresh conflict visible when retrying an import interrupted before its sync write", async () => {
+    const root = await project();
+    const library = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem(
+              "ABCD2345",
+              {
+                title: "Clashing note",
+                abstractNote: "Already has an abstract.",
+                DOI: "10.1000/conflict-resume",
+              },
+              475425,
+            ),
+            children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>Original note</p>" })],
+          },
+        ],
+      ]),
+    };
+    const transport = fakeZoteroTransport(library);
+    const zotero = fakeZoteroAccess(transport);
+    await beginZoteroScopedImport({
+      root,
+      operationId: "conflict-resume-zotero",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const fault = failRenameOnce(
+      `${NodePath.sep}zotero${NodePath.sep}`,
+      "Interrupted at the sync write.",
+    );
+    try {
+      const failed = await advanceSourceImport({
+        root,
+        operationId: "conflict-resume-zotero",
+        zotero,
+      });
+      expect(failed.items[0]).toMatchObject({
+        state: "failed",
+        message: "Interrupted at the sync write.",
+      });
+    } finally {
+      fault.restore();
+    }
+    expect(fault.interrupted()).toBe(true);
+    const [partial] = await listScientSourceRecords(root);
+    expect(partial).toBeDefined();
+    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toBeNull();
+
+    await updateScientSourceNote({
+      root,
+      sourceId: partial!.sourceId,
+      expectedRevision: partial!.revision,
+      note: "My edited note",
+      actor: "user",
+    });
+    const entry = library.items.get("ABCD2345")!;
+    library.items.set("ABCD2345", {
+      ...entry,
+      children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>Changed in Zotero</p>" })],
+    });
+    const refreshed = await refreshZoteroSources({
+      root,
+      sourceIds: [partial!.sourceId],
+      actor: "user",
+      zotero,
+    });
+    expect(refreshed.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+
+    await retrySourceImport({
+      root,
+      operationId: "conflict-resume-zotero",
+      itemKeys: ["ABCD2345"],
+    });
+    const finished = await advanceSourceImport({
+      root,
+      operationId: "conflict-resume-zotero",
+      zotero,
+    });
+    expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+
+    const again = await refreshZoteroSources({
+      root,
+      sourceIds: [partial!.sourceId],
+      actor: "user",
+      zotero,
+    });
+    expect(again.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+  });
+
+  it("keeps legacy highlight IDs when retrying after an interrupted owner upgrade", async () => {
+    const root = await project();
+    const firstPdf = await pdf(root, "one.pdf");
+    await NodeFSP.writeFile(firstPdf, textPdf([["A quote whose note I edited."]]));
+    const annotation = (key: string, text: string, comment: string) =>
+      zoteroItem(key, {
+        itemType: "annotation",
+        parentItem: "PDFA2345",
+        annotationType: "highlight",
+        annotationText: text,
+        annotationComment: comment,
+        annotationColor: "#ffd400",
+        annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+      });
+    const library = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem(
+              "ABCD2345",
+              {
+                title: "Legacy owner work",
+                abstractNote: "Already has an abstract.",
+                DOI: "10.1000/legacy-upgrade",
+              },
+              0,
+            ),
+            children: [
+              zoteroItem("NOTE2345", { itemType: "note", note: "<p>Original note</p>" }),
+              pdfAttachment("PDFA2345", "one.pdf"),
+            ],
+          },
+        ],
+      ]),
+      files: new Map([["PDFA2345", firstPdf]]),
+      annotations: new Map([
+        [
+          "PDFA2345",
+          [
+            annotation("OLDM2345", "An older quote", "Removed here"),
+            annotation("EDIT2345", "A quote whose note I edited.", "Original highlight note"),
+          ],
+        ],
+      ]),
+    };
+    const transport = fakeZoteroTransport(library);
+    const zotero = fakeZoteroAccess(transport);
+    await beginZoteroScopedImport({
+      root,
+      operationId: "legacy-upgrade-resume",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const rename = NodeFS.promises.rename;
+    let sawSyncWrite = false;
+    let interrupted = false;
+    NodeFS.promises.rename = async (from, to) => {
+      const target = String(to);
+      if (
+        sawSyncWrite &&
+        !interrupted &&
+        target.includes(`${NodePath.sep}operations${NodePath.sep}`)
+      ) {
+        interrupted = true;
+        NodeFS.promises.rename = rename;
+        NodeModule.syncBuiltinESMExports();
+        throw new Error("Interrupted before recording import receipt.");
+      }
+      const result = await rename(from, to);
+      if (target.includes(`${NodePath.sep}zotero${NodePath.sep}`)) sawSyncWrite = true;
+      return result;
+    };
+    NodeModule.syncBuiltinESMExports();
+    try {
+      const failed = await advanceSourceImport({
+        root,
+        operationId: "legacy-upgrade-resume",
+        zotero,
+      });
+      expect(failed.items[0]).toMatchObject({ state: "failed" });
+    } finally {
+      NodeFS.promises.rename = rename;
+      NodeModule.syncBuiltinESMExports();
+    }
+    expect(interrupted).toBe(true);
+    const [partial] = await listScientSourceRecords(root);
+    expect(partial).toBeDefined();
+    const legacyBaseline = await readScientSourceZoteroSync(root, partial!.sourceId);
+    expect(legacyBaseline?.libraryId).toBe("0");
+    const first = partial!.attachments[0]!;
+    await mutateScientAnnotations({
+      canonicalRoot: root,
+      material: { sha256: first.sha256, byteLength: first.byteLength },
+      relativePath: null,
+      command: {
+        action: "remove",
+        annotationId: "ann_zotero_user_0_OLDM2345",
+        expectedRevision: 1,
+      },
+      actor: "user",
+      now: "2026-11-16T13:00:00.000Z",
+    });
+    const tombstoned = await readScientAnnotationFile(root, first.sha256);
+    expect(tombstoned?.unplaced?.[0]?.deletedAt).toBe("2026-11-16T13:00:00.000Z");
+
+    const original = library.items.get("ABCD2345")!;
+    library.items.set("ABCD2345", {
+      ...original,
+      item: { ...original.item, library: { type: "user", id: 475425 } },
+    });
+    const fault = failRenameOnce(
+      `${NodePath.sep}zotero${NodePath.sep}`,
+      "Interrupted at the sync write.",
+    );
+    try {
+      const refreshed = await refreshZoteroSources({
+        root,
+        sourceIds: [partial!.sourceId],
+        actor: "user",
+        zotero,
+      });
+      expect(refreshed.items[0]?.outcome).toBe("failed");
+    } finally {
+      fault.restore();
+    }
+    expect(fault.interrupted()).toBe(true);
+    expect((await listScientSourceRecords(root))[0]?.externalReferences[0]).toMatchObject({
+      libraryId: "475425",
+    });
+    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toEqual(legacyBaseline);
+
+    await retrySourceImport({ root, operationId: "legacy-upgrade-resume", itemKeys: ["ABCD2345"] });
+    const finished = await advanceSourceImport({
+      root,
+      operationId: "legacy-upgrade-resume",
+      zotero,
+    });
+    expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+    expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+    expect((await readScientSourceZoteroSync(root, partial!.sourceId))?.libraryId).toBe("0");
+    const refreshedAgain = await refreshZoteroSources({
+      root,
+      sourceIds: [partial!.sourceId],
+      actor: "user",
+      zotero,
+    });
+    expect(refreshedAgain.items[0]?.outcome).not.toBe("failed");
+    expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toMatchObject({
+      libraryId: "475425",
+      annotationLibraryId: "0",
+    });
+  });
+
+  it("names highlights from the incoming library when a same-key baseline came from another library", async () => {
+    const root = await project();
+    const secondPdf = await pdf(root, "two.pdf");
+    const library = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem(
+              "ABCD2345",
+              {
+                title: "Same key in two libraries",
+                abstractNote: "Already has an abstract.",
+                DOI: "10.1000/same-key-namespace",
+              },
+              475425,
+            ),
+            children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>Original note</p>" })],
+          },
+        ],
+      ]),
+      files: new Map([["PDFB2345", secondPdf]]),
+      annotations: new Map([
+        [
+          "PDFB2345",
+          [
+            zoteroItem("MARK2345", {
+              itemType: "annotation",
+              parentItem: "PDFB2345",
+              annotationType: "highlight",
+              annotationText: "A quote on a scanned page",
+              annotationComment: "Keep this comment",
+              annotationColor: "#ffd400",
+              annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+            }),
+          ],
+        ],
+      ]),
+    };
+    const transport = fakeZoteroTransport(library);
+    const zotero = fakeZoteroAccess(transport);
+    await beginZoteroScopedImport({
+      root,
+      operationId: "same-key-first",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "same-key-first", zotero });
+    const [first] = await listScientSourceRecords(root);
+    expect(first).toBeDefined();
+    await removeScientSource({
+      root,
+      sourceId: first!.sourceId,
+      expectedRevision: first!.revision,
+    });
+    const entry = library.items.get("ABCD2345")!;
+    library.items.set("ABCD2345", {
+      ...entry,
+      children: [...entry.children, pdfAttachment("PDFB2345", "two.pdf")],
+    });
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "same-key-second",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const fault = failRenameOnce(
+      `${NodePath.sep}zotero${NodePath.sep}`,
+      "Interrupted at the sync write.",
+    );
+    try {
+      const failed = await advanceSourceImport({ root, operationId: "same-key-second", zotero });
+      expect(failed.items[0]).toMatchObject({ state: "failed" });
+    } finally {
+      fault.restore();
+    }
+    const [partial] = await listScientSourceRecords(root);
+    // As a Send to another library's same-key item would leave it.
+    const retained = (await readScientSourceZoteroSync(root, partial!.sourceId))!;
+    await writeScientSourceZoteroSync(root, {
+      ...retained,
+      libraryId: "groups/77",
+      annotationLibraryId: "groups/77",
+      ...(partial!.origin?.operationId !== undefined
+        ? { importOperationId: partial!.origin.operationId }
+        : {}),
+    });
+
+    await retrySourceImport({ root, operationId: "same-key-second", itemKeys: ["ABCD2345"] });
+    const finished = await advanceSourceImport({ root, operationId: "same-key-second", zotero });
+    expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+    const [reimported] = await listScientSourceRecords(root);
+    const second = reimported!.attachments.find((attachment) => attachment.fileName === "two.pdf")!;
+    expect((await readScientAnnotationFile(root, second.sha256))?.unplaced).toMatchObject([
+      { annotationId: "ann_zotero_user_475425_MARK2345" },
+    ]);
+  });
 
   it.each([
     { owner: 475425, retry: "item" },

@@ -68,11 +68,6 @@
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
     },
     {
-      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",
-      "anchor": "latexDir: path.join(stateDir, \"latex\")",
-      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
-    },
-    {
       "path": ".gitignore",
       "anchor": "native/synctex-runtime/",
       "purpose": "Keep generated, reproducible native SyncTeX build output outside version control."
@@ -198,7 +193,7 @@
       "purpose": "Render PDF quotes in the shared citation chip: label, hover card, removal label and navigation to the quoted page."
     },
     {
-      "path": "packages/shared/src/markdownPipeline.ts",
+      "path": "packages/shared/src/markdownHast.ts",
       "anchor": "PDF_CITATION_PROTOCOL",
       "purpose": "Keep PDF quote links through sanitization so the validated citation renderer can parse them; preserving the protocol grants no navigation authority."
     },
@@ -233,6 +228,11 @@
       "path": "apps/web/src/scient/markdownEditor/ui/MarkdownDocumentSettings.tsx",
       "anchor": "LatexSelect",
       "purpose": "Reuse the LaTeX select in the Markdown Document settings card so both editors' cards look and behave the same."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.scient.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
     }
   ]
 }

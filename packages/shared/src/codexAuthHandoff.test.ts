@@ -41,7 +41,7 @@ describe("Codex desktop handoff", () => {
     expect(readCodexAuthHandoff(upstreamLink, false)).toBeUndefined();
   });
   // SCIENT-FORK:END
-  it("keeps the return route, account, and environment with the code in a fragment", () => {
+  it("keeps the hosted return route, account, and environment with the code in a fragment", () => {
     expect(readCodexAuthHandoff(codexAuthHandoffUrl(input), false)).toEqual(input);
     const delivery = codexAuthDeliveryUrl(input, callbackUrl);
     expect(new URL(delivery).search).toBe("");

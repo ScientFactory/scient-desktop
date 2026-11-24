@@ -522,7 +522,16 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
               stored.event.payload.status === "stopped",
           );
           assert.exists(sessionStopped);
-          assert.isBelow(rootTerminals[0]!.sequence, sessionStopped!.sequence);
+          // The run's failure and the session's stop have separate writers; neither orders the other.
+          assert.equal(
+            after.stored.findLast(
+              (stored) =>
+                stored.event.type === "provider-session.updated" &&
+                stored.event.payload.id === session.id,
+            ),
+            sessionStopped,
+            "Nothing may reopen the closed native session",
+          );
           assert.isTrue(Option.isNone(yield* manager.getCloseState!(session.id)));
           if (scenario.pending) {
             const late = after.wire
@@ -570,7 +579,15 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
                   row.event.payload.status === "stopped",
               );
               assert.exists(stopped);
-              assert.isBelow(siblingTerminals[0]!.sequence, stopped!.sequence);
+              assert.equal(
+                siblingEvents.findLast(
+                  (row) =>
+                    row.event.type === "provider-session.updated" &&
+                    row.event.payload.id === siblingSessionId,
+                ),
+                stopped,
+                "Nothing may reopen the closed sibling session",
+              );
             }
             if (scenario.all) {
               const siblingExit = yield* Deferred.await(processes[1]!.exit).pipe(
@@ -599,7 +616,7 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
           yield* worker.drain(24);
           yield* waitForProjection(
             orchestrator,
-            (projection) => projection.runs[1]?.status === "waiting",
+            (projection) => projection.runs[1]?.status === "completed",
           );
           yield* worker.drain(24);
           const replacement = yield* snapshot("same-file-replacement-completed");
@@ -620,14 +637,16 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
           assert.lengthOf(answers, 1);
           if (answers[0]!.type === "assistant_message")
             assert.equal(answers[0]!.text, "Same-file replacement completed.");
-          assert.lengthOf(
-            replacement.stored.filter(
-              (row) =>
-                row.event.type === "run.updated" &&
-                row.event.payload.id === replacementRun.id &&
-                row.event.payload.status === "completed",
+          // The turn end completes the run once; its checkpoint capture repeats that update.
+          assert.deepEqual(
+            replacement.stored.flatMap((row) =>
+              row.event.type === "run.updated" &&
+              row.event.payload.id === replacementRun.id &&
+              row.event.payload.status === "completed"
+                ? [row.event.payload.checkpointId !== null]
+                : [],
             ),
-            1,
+            [false, true],
           );
           assert.lengthOf(
             replacement.wire.filter(

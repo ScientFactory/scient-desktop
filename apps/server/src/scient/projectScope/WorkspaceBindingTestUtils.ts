@@ -6,6 +6,7 @@ import {
 } from "@scientfactory/operations";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import {
   WorkspaceBindingResolutionError,
   type WorkspaceBindingRecordV1,
@@ -22,6 +23,22 @@ export const workspaceScopeForTest = (
   scopeRevision: WorkspaceAuthorityScopeRevision.make(1),
   workspaceRoot,
 });
+
+const unavailable = (operation: string) => () =>
+  Effect.fail(new WorkspaceBindingResolutionError({ operation, kind: "workspace-unavailable" }));
+
+/** For harnesses that serve MCP without a binding store: no workspace resolves. */
+export const layerNoWorkspaceBindings = Layer.succeed(
+  WorkspaceBindingResolver,
+  WorkspaceBindingResolver.of({
+    resolveWorkspaceRoot: unavailable("resolve-workspace-root"),
+    assertCurrentWorkspaceScope: unavailable("assert-workspace-scope"),
+    resolveThread: unavailable("resolve-thread"),
+    resolveTrustedChild: unavailable("resolve-trusted-child"),
+    assertCurrentThreadScope: unavailable("assert-thread-scope"),
+    diagnosticsForThread: unavailable("thread-diagnostics"),
+  }),
+);
 
 export const workspaceResolverForTest = (
   entries: ReadonlyMap<

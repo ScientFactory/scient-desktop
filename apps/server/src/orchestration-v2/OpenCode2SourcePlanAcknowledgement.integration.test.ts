@@ -337,10 +337,9 @@ it.effect.each(
       },
     };
     yield* runtime.startTurn(input);
-    const snapshot = yield* runtime.readThreadSnapshot({ providerThread: resumed });
-    const latest = snapshot.providerTurns[0];
-    assert.ok(latest);
-    assert.equal(snapshot.providerTurns.length, 1);
+    // Reads the session's history after the prompt; the turn itself arrives only as events.
+    yield* runtime.readThreadSnapshot({ providerThread: resumed });
+    const mismatched = proof === "foreign-id" || proof === "foreign-session";
     if (proof === "displaced-attempt") {
       const replacementId = RunAttemptId.make(`${attempt.id}:replacement`);
       yield* sink.write({
@@ -362,15 +361,24 @@ it.effect.each(
         ],
       });
     }
-    // snapshotOf returns the actual providerTurns map values. Drain through
-    // that exact final emitted object, avoiding sleeps and synthetic receipts.
+    // The turn goes pending, then unknown once sent; only an exact native acknowledgement
+    // accepts it. Drain through that final emitted state, avoiding sleeps and synthetic receipts.
+    const finalAcceptance = mismatched ? "unknown" : "accepted";
     const emitted = yield* runtime.events.pipe(
       Stream.takeUntil(
-        (event) => event.type === "provider_turn.updated" && event.providerTurn === latest,
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.nativeAcceptance === finalAcceptance,
       ),
       Stream.runCollect,
       Effect.timeout("5 seconds"),
     );
+    const turnStates = [...emitted].flatMap((event) =>
+      event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+    );
+    const latest = turnStates.at(-1);
+    assert.ok(latest);
+    assert.equal(new Set(turnStates.map((turn) => turn.id)).size, 1);
     let receiptOrdinal = 0;
     for (const event of emitted) {
       assert.notEqual(event.type, "turn.terminal");
@@ -391,7 +399,6 @@ it.effect.each(
         ],
       });
     }
-    const mismatched = proof === "foreign-id" || proof === "foreign-session";
     const consumed = yield* projection.getPlan(plan.threadId, plan.id);
     assert.ok(consumed?.kind === "proposed_plan");
     assert.equal(consumed.status, proof === "confirmed" ? "completed" : "active");

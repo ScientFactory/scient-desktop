@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../../processRunner.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { sourceControlDefinitions } from "../../sourceControl/sourceControlDefinitions.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import { isGitMissing, isPlainHostScratchDirectory } from "./scratchWorkspace.ts";
@@ -134,43 +135,103 @@ const make = Effect.gen(function* () {
           kind: "repository-inspection-failed",
         });
       }
-      const parts = detected.stdout.trim().split(/\r?\n/u);
-      if (parts.length !== 2 || !parts[0] || !parts[1])
+      const readGit = Effect.fn("WorkspaceBindingEvidence.readGit")(function* (
+        operation: string,
+        args: ReadonlyArray<string>,
+      ) {
+        const result = yield* git.execute({
+          operation,
+          cwd: canonicalRoot,
+          args,
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 262_144,
+        });
+        if (
+          result.stdoutTruncated ||
+          result.stderrTruncated ||
+          result.stdoutInvalidUtf8 ||
+          result.stderrInvalidUtf8
+        )
+          return yield* new WorkspaceBindingResolutionError({
+            operation: "inspect-repository-output",
+            kind: "repository-inspection-failed",
+          });
+        return result;
+      });
+      const lines = detected.stdout.replace(/\n$/u, "").split("\n");
+      let [rootOutput, metadataOutput] = lines;
+      // A newline inside a path breaks the line framing; ask for each path on its own.
+      if (lines.length !== 2) {
+        const separate = yield* Effect.all(
+          [
+            readGit("ScientWorkspace.inspectRepositoryRoot", [
+              "rev-parse",
+              "--path-format=absolute",
+              "--show-toplevel",
+            ]),
+            readGit("ScientWorkspace.inspectRepositoryMetadata", [
+              "rev-parse",
+              "--path-format=absolute",
+              "--git-common-dir",
+            ]),
+          ],
+          { concurrency: "unbounded" },
+        );
+        if (separate.some((result) => result.exitCode !== 0))
+          return yield* new WorkspaceBindingResolutionError({
+            operation: "inspect-repository",
+            kind: "repository-inspection-failed",
+          });
+        [rootOutput, metadataOutput] = separate.map((result) => result.stdout.replace(/\n$/u, ""));
+      }
+      if (!rootOutput || !metadataOutput)
         return yield* new WorkspaceBindingResolutionError({
           operation: "inspect-repository-paths",
           kind: "repository-inspection-failed",
         });
-      const rootPath = yield* fileSystem.realPath(path.resolve(parts[0]));
-      const metadataPath = yield* fileSystem.realPath(path.resolve(parts[1]));
-      const remotes = yield* git.execute({
-        operation: "ScientWorkspace.inspectRemotes",
-        cwd: canonicalRoot,
-        args: ["remote", "-v"],
-        env: { LC_ALL: "C" },
-        timeoutMs: 5_000,
-        maxOutputBytes: 262_144,
-      });
-      if (
-        remotes.stdoutTruncated ||
-        remotes.stderrTruncated ||
-        remotes.stdoutInvalidUtf8 ||
-        remotes.stderrInvalidUtf8
-      )
+      const rootPath = yield* fileSystem.realPath(path.resolve(rootOutput));
+      const metadataPath = yield* fileSystem.realPath(path.resolve(metadataOutput));
+      const [remotes, remoteConfig] = yield* Effect.all(
+        [
+          readGit("ScientWorkspace.inspectRemotes", ["remote", "-v"]),
+          readGit("ScientWorkspace.inspectRemoteConfig", [
+            "config",
+            "--get-regexp",
+            "^remote\\..*\\.url$",
+          ]),
+        ],
+        { concurrency: "unbounded" },
+      );
+      // `git config --get-regexp` exits 1 when no key matches.
+      if (remotes.exitCode !== 0 || (remoteConfig.exitCode !== 0 && remoteConfig.exitCode !== 1))
         return yield* new WorkspaceBindingResolutionError({
-          operation: "inspect-repository-output",
+          operation: "inspect-remotes",
           kind: "repository-inspection-failed",
         });
-      // Binding evidence reads only `git remote -v`, not the gh repo set-default marker.
+      // Binding evidence follows the project identity's configured-URL rule, without the gh
+      // repo set-default marker.
       const remote = RepositoryIdentityResolver.pickPrimaryRemote(
-        RepositoryIdentityResolver.parseRemoteFetchUrls(remotes.stdout),
+        RepositoryIdentityResolver.parseRemoteFetchUrls(
+          remotes.stdout,
+          RepositoryIdentityResolver.parseConfiguredRemoteUrls(
+            remoteConfig.exitCode === 0 ? remoteConfig.stdout : "",
+          ),
+        ),
         "",
       );
-      const keyUrl =
-        remote === null || Option.isNone(processRunner)
-          ? remote?.remoteUrl
-          : yield* RepositoryIdentityResolver.sshResolvedRemoteUrl(remote.remoteUrl).pipe(
+      const transportUrl =
+        remote === null
+          ? undefined
+          : RepositoryIdentityResolver.parseRemoteFetchUrls(remotes.stdout).get(remote.remoteName);
+      const keyUrlOf = (remoteUrl: string) =>
+        Option.isNone(processRunner)
+          ? Effect.succeed(remoteUrl)
+          : RepositoryIdentityResolver.sshResolvedRemoteUrl(remoteUrl).pipe(
               Effect.provideService(ProcessRunner.ProcessRunner, processRunner.value),
             );
+      const keyUrl = remote === null ? undefined : yield* keyUrlOf(remote.remoteUrl);
       const identity =
         remote && keyUrl !== undefined
           ? RepositoryIdentityResolver.buildRepositoryIdentity({
@@ -181,6 +242,10 @@ const make = Effect.gen(function* () {
               rootPath,
             })
           : null;
+      const transportCanonicalKey =
+        identity === null || transportUrl === undefined || transportUrl === remote?.remoteUrl
+          ? undefined
+          : sourceControlDefinitions.repositoryKeyFromRemote(yield* keyUrlOf(transportUrl));
       return {
         worktreeIdentity: { kind: "git" as const, rootPath, metadataPath },
         repositoryIdentity: identity
@@ -188,6 +253,10 @@ const make = Effect.gen(function* () {
               canonicalKey: identity.canonicalKey,
               source: identity.locator.source,
               remoteName: identity.locator.remoteName,
+              ...(transportCanonicalKey !== undefined &&
+              transportCanonicalKey !== identity.canonicalKey
+                ? { transportCanonicalKey }
+                : {}),
             }
           : null,
       };

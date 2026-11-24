@@ -48,6 +48,9 @@ import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
 import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
 import { useEnvironmentQuery } from "../../state/query";
+// SCIENT-FORK:START Live MCP status replaces the startup notices older hosts wrote.
+import { threadMcpStatus } from "../../state/threadMcpStatus";
+// SCIENT-FORK:END
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -393,7 +396,20 @@ function ThreadRouteContent(
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const startSideChat = useStartSideChat();
-  const composer = useThreadComposerState({ startSideChat });
+  // SCIENT-FORK:START A host that reports live MCP status no longer needs its old notices.
+  const liveMcpStatus = useEnvironmentQuery(
+    selectedThread
+      ? threadMcpStatus({
+          environmentId: selectedThread.environmentId,
+          input: { threadId: selectedThread.id },
+        })
+      : null,
+  ).data;
+  const composer = useThreadComposerState({
+    startSideChat,
+    hideMcpStartupNotices: liveMcpStatus !== null,
+  });
+  // SCIENT-FORK:END
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -589,12 +605,11 @@ function ThreadRouteContent(
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   };
-  const gitActionProgress = useGitActionProgress(
-    gitActionProgressTarget,
+  const gitActionThreadRef =
     selectedThread === null
       ? null
-      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
-  );
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id };
+  const gitActionProgress = useGitActionProgress(gitActionProgressTarget, gitActionThreadRef);
 
   const handleOpenGitInspector = () => {
     navigation.setParams({ inspector: undefined });
@@ -1033,7 +1048,7 @@ function ThreadRouteContent(
     <>
       <GitActionProgressOverlay
         progress={gitActionProgress}
-        onDismiss={dismissGitActionResult}
+        onDismiss={() => dismissGitActionResult(gitActionThreadRef)}
         onOpenPullRequest={openPullRequest}
       />
 

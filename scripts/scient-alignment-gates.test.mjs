@@ -8,6 +8,7 @@ import * as NodeURL from "node:url";
 import { afterEach, test, vi } from "vite-plus/test";
 import {
   acquireGatesLock,
+  baselinePath,
   claimGatesSlot,
   main,
   serverWorkers,
@@ -61,12 +62,26 @@ if (args.includes("test") && filter === "t3") {
   const failing = args.includes("--fileParallelism")
     ? list("FAKE_SERVER_FAILS_IN_PARALLEL")
     : list("FAKE_SERVER_FAILS_ALONE").filter((file) => requested.includes(file));
-  const testResults = [...new Set([...requested, ...failing])].map((file) => ({
+  const loadErrors = list("FAKE_SERVER_FILE_ERRORS");
+  // A full run always reports at least one file; a targeted one, the files it was given.
+  const files = requested.length ? requested : ["src/passing.test.ts"];
+  const testResults = [...new Set([...files, ...failing, ...loadErrors])].map((file) => ({
     name: NodePath.resolve("apps/server", file),
-    status: failing.includes(file) ? "failed" : "passed",
+    status: failing.includes(file) || loadErrors.includes(file) ? "failed" : "passed",
+    assertionResults: failing.includes(file)
+      ? [{ status: "failed", fullName: "fails", failureMessages: [process.env.FAKE_FAILURE ?? "AssertionError: expected"] }]
+      : [],
+    ...(loadErrors.includes(file) ? { message: "Failed to load the file" } : {}),
   }));
-  NodeFS.writeFileSync(report, JSON.stringify({ testResults }));
-  if (failing.length) process.exit(1);
+  NodeFS.writeFileSync(report, JSON.stringify({ testResults: process.env.FAKE_EMPTY_REPORT ? [] : testResults }));
+  const outcome = process.env.SCIENT_VITEST_RUN_OUTCOME;
+  const unhandled = list("FAKE_UNHANDLED_ERRORS");
+  if (outcome && !process.env.FAKE_NO_OUTCOME) {
+    const failed = failing.length || loadErrors.length || unhandled.length;
+    const suiteErrors = list("FAKE_SUITE_ERRORS").map((file) => ({ file: NodePath.resolve("apps/server", file), message: "afterAll failed" }));
+    NodeFS.writeFileSync(outcome, JSON.stringify({ reason: failed ? "failed" : "passed", unfinished: [], unhandledErrors: unhandled, suiteErrors }));
+  }
+  if (failing.length || loadErrors.length || unhandled.length || process.env.FAKE_EXIT_1) process.exit(1);
 }
 `;
 
@@ -90,6 +105,8 @@ function fixture() {
   }
   git("add", ".");
   git("-c", "user.name=Gates", "-c", "user.email=gates@example.invalid", "commit", "-qm", "base");
+  // The candidate is origin/main unless a test moves it.
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
   const bin = NodePath.join(cwd, "..", `${NodePath.basename(cwd)}-bin`);
   directories.push(bin);
   NodeFS.mkdirSync(bin);
@@ -103,7 +120,7 @@ function fixture() {
     NodePath.join(bin, "pnpm.cmd"),
     `@"${process.execPath}" "%~dp0fake-pnpm.mjs" %*\r\n`,
   );
-  return { cwd, bin };
+  return { cwd, bin, git };
 }
 
 function run({ cwd, bin }, args, env = {}) {
@@ -170,7 +187,10 @@ test.each([
   (_name, extra, expectedFilters, rerun, failedPackages) => {
     const gates = fixture();
     const env = { FAKE_FAILING_PACKAGES: "b", FAKE_CALLS: NodePath.join(gates.bin, "calls.jsonl") };
-    const result = run(gates, ["--only", "test", "--server-workers", "3"], { ...env, ...extra });
+    const result = run(gates, ["--only", "test", "--tests", "--server-workers", "3"], {
+      ...env,
+      ...extra,
+    });
     NodeAssert.equal(result.status, 1, result.stderr);
     NodeAssert.deepEqual(result.record.gates[0].tests.packagesFailed, failedPackages);
     NodeAssert.deepEqual(result.record.gates[0].tests.packagesRerun, rerun);
@@ -183,7 +203,7 @@ test.each([
 );
 
 test("a failed server file runs once more alone, and the gate fails either way", () => {
-  const result = run(fixture(), ["--only", "test", "--server-workers", "4"], {
+  const result = run(fixture(), ["--only", "test", "--tests", "--server-workers", "4"], {
     FAKE_SERVER_FAILS_IN_PARALLEL: "src/flaky.test.ts,src/broken.test.ts",
     FAKE_SERVER_FAILS_ALONE: "src/broken.test.ts",
   });
@@ -193,7 +213,166 @@ test("a failed server file runs once more alone, and the gate fails either way",
   NodeAssert.deepEqual(server.passedWhenRerunAlone, ["src/flaky.test.ts"]);
   NodeAssert.match(
     result.stdout,
-    /failed again alone: src\/broken\.test\.ts; passed when rerun alone: src\/flaky\.test\.ts \|/u,
+    /failed again alone: src\/broken\.test\.ts; passed when rerun alone \(load, or a race with other files\): src\/flaky\.test\.ts \|/u,
+  );
+});
+
+const baselineOf = ({ cwd }) => baselinePath(NodePath.join(cwd, ".git"));
+const id = (file, kind = "AssertionError") => `${file} > fails :: ${kind}`;
+const writeBaseline = (gates, failures, change = {}) => {
+  NodeFS.mkdirSync(NodePath.dirname(baselineOf(gates)), { recursive: true });
+  NodeFS.writeFileSync(
+    baselineOf(gates),
+    JSON.stringify({
+      head: gates.git("rev-parse", "HEAD").trim(),
+      // Recorded when the fixture's commit was made, moments ago.
+      recordedAt: gates.git("log", "-1", "--format=%cI").trim(),
+      failures,
+      ...change,
+    }),
+  );
+};
+
+test("a baseline from origin/main records every failure of the suite, without reruns", () => {
+  const gates = fixture();
+  const calls = NodePath.join(gates.bin, "calls.jsonl");
+  const result = run(
+    gates,
+    ["--only", "test", "--tests", "--server-workers", "4", "--record-baseline"],
+    { FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts,src/flaky.test.ts", FAKE_CALLS: calls },
+  );
+  NodeAssert.equal(result.status, 0, result.stdout + result.stderr);
+  const baseline = JSON.parse(NodeFS.readFileSync(baselineOf(gates), "utf8"));
+  NodeAssert.deepEqual(baseline.failures, [id("src/flaky.test.ts"), id("src/known.test.ts")]);
+  NodeAssert.equal(baseline.head, result.record.head);
+  NodeAssert.match(result.stdout, /baseline recorded: 2 failure/u);
+  NodeAssert.ok(!NodeFS.readFileSync(calls, "utf8").includes("--no-file-parallelism"));
+});
+
+test("a baseline is recorded only from a clean checkout of origin/main", () => {
+  const dirty = fixture();
+  NodeFS.writeFileSync(NodePath.join(dirty.cwd, "file.txt"), "changed\n");
+  const fromDirty = run(dirty, ["--only", "test", "--tests", "--record-baseline"]);
+  NodeAssert.equal(fromDirty.status, 2);
+  NodeAssert.match(fromDirty.stderr, /clean checkout of origin\/main/u);
+
+  const branch = fixture();
+  branch.git(
+    "-c",
+    "user.name=G",
+    "-c",
+    "user.email=g@example.invalid",
+    "commit",
+    "-qm",
+    "x",
+    "--allow-empty",
+  );
+  const fromBranch = run(branch, ["--only", "test", "--tests", "--record-baseline"]);
+  NodeAssert.equal(fromBranch.status, 2);
+  NodeAssert.match(fromBranch.stderr, /clean checkout of origin\/main/u);
+  NodeAssert.ok(!NodeFS.existsSync(baselineOf(branch)));
+});
+
+test("failures known on main pass the gate; new ones block even when they pass alone", () => {
+  const gates = fixture();
+  const calls = NodePath.join(gates.bin, "calls.jsonl");
+  writeBaseline(gates, [id("src/known.test.ts"), id("src/fixed.test.ts")]);
+  const known = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts",
+    FAKE_CALLS: calls,
+  });
+  NodeAssert.equal(known.status, 0, known.stdout);
+  const { baseline } = known.record.gates[0].tests;
+  NodeAssert.deepEqual(baseline.knownOnMain, [id("src/known.test.ts")]);
+  NodeAssert.deepEqual(baseline.notFailingHere, [id("src/fixed.test.ts")]);
+  NodeAssert.ok(
+    !NodeFS.readFileSync(calls, "utf8").includes("--no-file-parallelism"),
+    "a known failure is not rerun",
+  );
+  NodeAssert.match(known.stdout, /no new failures; also failing on main/u);
+
+  const fresh = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts,src/broken.test.ts,src/loaded.test.ts",
+    FAKE_SERVER_FAILS_ALONE: "src/broken.test.ts",
+  });
+  NodeAssert.equal(fresh.status, 1);
+  const labels = fresh.record.gates[0].tests.baseline;
+  NodeAssert.deepEqual(labels.new, [id("src/broken.test.ts"), id("src/loaded.test.ts")]);
+  const { server } = fresh.record.gates[0].tests;
+  NodeAssert.deepEqual(server.failedAgainAlone, ["src/broken.test.ts"]);
+  NodeAssert.deepEqual(server.passedWhenRerunAlone, ["src/loaded.test.ts"]);
+
+  // Alone it passes, but the suite failed it: load, or a race this branch added.
+  const onlyAlone = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts,src/loaded.test.ts",
+  });
+  NodeAssert.equal(onlyAlone.status, 1, onlyAlone.stdout);
+  NodeAssert.deepEqual(onlyAlone.record.gates[0].tests.baseline.new, [id("src/loaded.test.ts")]);
+});
+
+test.each([
+  ["an error outside any test", { FAKE_UNHANDLED_ERRORS: "boom" }, /error outside any test: boom/u],
+  ["a missing run outcome", { FAKE_NO_OUTCOME: "1" }, /Vitest wrote no run outcome/u],
+  [
+    "a suite hook error",
+    { FAKE_SUITE_ERRORS: "src/known.test.ts" },
+    /error in a file or suite hook: src\/known\.test\.ts: afterAll failed/u,
+  ],
+  [
+    "a known test failing another way",
+    { FAKE_FAILURE: "Error: Test timed out in 5000ms." },
+    /new failures: src\/known\.test\.ts > fails :: timeout/u,
+  ],
+  ["an empty report", { FAKE_EMPTY_REPORT: "1" }, /no readable report of any test file/u],
+  [
+    "a file that failed to load",
+    { FAKE_SERVER_FILE_ERRORS: "src/known.test.ts" },
+    /new failures: src\/known\.test\.ts > \(file error\)/u,
+  ],
+])("%s blocks the gate even when every failed test is known on main", (_name, env, message) => {
+  const gates = fixture();
+  writeBaseline(gates, [id("src/known.test.ts"), "src/known.test.ts > (file error) :: file"]);
+  const result = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts",
+    ...env,
+  });
+  NodeAssert.equal(result.status, 1, result.stdout);
+  NodeAssert.match(result.stdout, message);
+});
+
+test("a failed exit that the report does not account for blocks, baseline or not", () => {
+  const gates = fixture();
+  writeBaseline(gates, [id("src/known.test.ts")]);
+  const result = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_EXIT_1: "1",
+  });
+  NodeAssert.equal(result.status, 1, result.stdout);
+  NodeAssert.match(result.stdout, /the server suite exited 1 without a failure in its report/u);
+});
+
+test.each([
+  ["older than seven days", { recordedAt: "2000-01-01T00:00:00.000Z" }, /record it again/u],
+  [
+    "from a commit outside the candidate's history",
+    { head: "0".repeat(40) },
+    /not in this candidate's history/u,
+  ],
+])("a baseline %s is not used", (_name, change, reason) => {
+  const gates = fixture();
+  writeBaseline(gates, [id("src/known.test.ts")], change);
+  const result = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts",
+  });
+  NodeAssert.equal(result.status, 1, result.stdout);
+  NodeAssert.match(result.stdout, reason);
+  NodeAssert.equal(result.record.gates[0].tests.baseline, undefined);
+});
+
+test("recording a baseline on Windows needs the test gate to run there", () => {
+  const { cwd } = fixture();
+  NodeAssert.throws(
+    () => main(["--only", "test", "--record-baseline"], { cwd, platform: "win32" }),
+    /needs --tests on Windows/u,
   );
 });
 
@@ -284,6 +463,12 @@ test("a run whose lock folder was deleted leaves the next owner's slot when it e
   NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, String(slots()[0]), "released")), false);
   second();
   NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, String(slots()[0]), "released")), true);
+});
+
+test("server workers leave busy cores alone", () => {
+  NodeAssert.equal(serverWorkers(18, 64 * 1024 ** 3, 0), 6);
+  NodeAssert.equal(serverWorkers(18, 64 * 1024 ** 3, 12), 3);
+  NodeAssert.equal(serverWorkers(18, 64 * 1024 ** 3, 40), 1);
 });
 
 test("server workers leave half the cores free, need 4 GiB each, and stay between 1 and 6", () => {

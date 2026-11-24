@@ -456,6 +456,19 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     (await nativeFilePublicationHelper(options.filePublicationHelperPath));
   const hook = (point: Parameters<NonNullable<OverleafStateStoreHooks["at"]>>[0], file: string) =>
     options.hooks?.at?.(point, file) ?? Promise.resolve();
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const volumeUuid: OverleafVolumeIdentityResolver =
+    options.volumeUuid ??
+    (async (path) => {
+      const read = await platformFileIdentity.readVolume(path);
+      if (read.volume === null)
+        await runPromise(
+          Effect.logWarning("Could not read the identity of an Overleaf checkout's disk", {
+            reason: read.reason,
+          }),
+        );
+      return read.volume;
+    });
 
   const io = <A>(operation: OverleafStateIoError["operation"], run: () => Promise<A>) =>
     Effect.tryPromise({
@@ -861,7 +874,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
         userId,
         publicationHelper: input.publicationHelper,
         expected: input.expected,
-        volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
+        volumeUuid,
       });
     });
     if (located._tag === "refused")

@@ -6,7 +6,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { organizeScientSources, readScientSourcesOrganization } from "./collections.ts";
 import {
@@ -21,6 +22,7 @@ import type { ScientSourceCandidate } from "./model.ts";
 import {
   decodePersistedScientSourceRecord,
   importScientSource,
+  inspectScientLibrarySources,
   listScientSourceRecords,
   listScientSourceTrash,
   listScientSourceRevisions,
@@ -33,6 +35,8 @@ import {
   warmScientLibraryRecordIndex,
 } from "./store.ts";
 import { sourceCandidate } from "./testing/sourceFixtures.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const fixtures: string[] = [];
 
@@ -255,6 +259,34 @@ describe("personal library store", () => {
     expect(after?.note ?? null).toBeNull();
   });
 
+  it("edits a source starred after a write that stopped once its earlier version was kept", async () => {
+    const { root, library } = await newLibrary();
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("STOP1", "Source STOP1"),
+    });
+    const sourceId = imported.record!.sourceId;
+    // What a note edit stopped between keeping revision 1 and writing revision 2 leaves.
+    const history = NodePath.join(root, "history", sourceId, "1.json");
+    await NodeFSP.mkdir(NodePath.dirname(history), { recursive: true });
+    await NodeFSP.copyFile(NodePath.join(root, "records", `${sourceId}.json`), history);
+    await setScientLibraryReadingState({ library, sourceIds: [sourceId], starred: true });
+
+    const noted = await updateScientSourceNote({
+      root: library,
+      sourceId,
+      expectedRevision: 1,
+      note: "Written after the star.",
+    });
+    expect(noted.outcome).toBe("updated");
+    expect(await readScientSourceRecord(library, sourceId)).toMatchObject({
+      revision: 2,
+      starred: true,
+      note: "Written after the star.",
+    });
+  });
+
   it("refuses a library record that names a project", () => {
     expect(() =>
       decodePersistedScientSourceRecord({
@@ -313,6 +345,33 @@ describe("personal library store", () => {
     await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
     vi.setSystemTime(Date.now() + 60 * 1000);
     expect((await listScientSourceRecords(library))[0]?.title).toBe("After");
+  });
+
+  it("changes the list revision when a record is rewritten between its stat and its read", async () => {
+    const { root, library } = await newLibrary();
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("RACE", "Before"),
+    });
+    if (!imported.record) throw new Error("Expected an imported record.");
+    const before = await inspectScientLibrarySources(library);
+    const filePath = NodePath.join(root, "records", `${imported.record.sourceId}.json`);
+    const statsBefore = await NodeFSP.lstat(filePath, { bigint: true });
+    const file = JSON.parse(await NodeFSP.readFile(filePath, "utf8")) as Record<string, unknown>;
+    await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
+    const { lstat } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    // The scan's stat saw the file before the rewrite; its read sees the new contents.
+    using _stale = vi
+      .spyOn(NodeFSP, "lstat")
+      .mockImplementation((async (
+        path: Parameters<typeof lstat>[0],
+        options?: Parameters<typeof lstat>[1],
+      ) => (path === filePath ? statsBefore : lstat(path, options))) as typeof lstat);
+    const after = await inspectScientLibrarySources(library);
+    expect(after.records[0]?.title).toBe("After");
+    expect(after.recordsRevision).toBeDefined();
+    expect(after.recordsRevision).not.toBe(before.recordsRevision);
   });
 
   it("warms the record index only at its threshold, and a stopped warming keeps none", async () => {

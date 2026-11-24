@@ -15,7 +15,6 @@ import { describe, expect, vi } from "vite-plus/test";
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
-import { customModelsTestMethods } from "../../serverSettings.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { makeVoiceTranscriptCorrection } from "./VoiceTranscriptCorrection.ts";
 import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
@@ -48,12 +47,10 @@ function settings(): ServerSettingsService["Service"] {
   };
   return {
     start: Effect.void,
-    ...customModelsTestMethods,
     ready: Effect.void,
     getSettings: Effect.succeed(current),
     updateSettings: () => Effect.succeed(current),
     updateProviderInstance: () => Effect.succeed(current),
-    removeProjectSettingsOverrides: () => Effect.succeed(current),
     withSettingsSnapshot: (use) => use(current),
     streamChanges: Stream.make(current),
     subscribeChanges: Effect.succeed(Stream.make(current)),

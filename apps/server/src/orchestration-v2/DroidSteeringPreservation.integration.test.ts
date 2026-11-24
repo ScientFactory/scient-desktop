@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Command,
   OrchestrationV2RunJson,
@@ -81,6 +82,9 @@ const decodeCheckpointJson = Schema.decodeSync(
   Schema.fromJsonString(OrchestrationV2CheckpointJson),
 );
 const encodeNativeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+// A run completes when its turn ends; its turn-end checkpoint capture commits afterwards.
+const captured = (run: OrchestrationV2Run | undefined) =>
+  run?.status === "completed" && run.checkpointId !== null;
 const decodeNativePrompt = Schema.decodeUnknownSync(
   Schema.Struct({
     prompt: Schema.Array(Schema.Struct({ text: Schema.String })),
@@ -831,9 +835,9 @@ it.effect(
           ),
         );
         yield* h.release("finish-prompt");
-        yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+        yield* h.waitFor((p) => p.runs[0]?.status === "completed");
         yield* h.worker.drain(12);
-        const settled = yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+        const settled = yield* h.waitFor((p) => captured(p.runs[0]));
         assert.lengthOf(settled.runs, 1);
         assert.equal(settled.runs[0]!.id, initial.runs[0]!.id);
         assert.deepEqual(
@@ -1187,8 +1191,9 @@ it.effect.each(
         yield* h.release(outcome === "completed" ? "finish-prompt" : "fail-prompt");
       }
       if (outcome === "completed") {
-        yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+        yield* h.waitFor((p) => p.runs[0]?.status === "completed");
         yield* h.worker.drain(12);
+        yield* h.waitFor((p) => captured(p.runs[0]));
       }
       const final = yield* h.waitFor(
         (p) => p.runs[0]?.status === (outcome === "stopped" ? "interrupted" : outcome),
@@ -1273,9 +1278,9 @@ it.effect.each(
       );
       assert.isFalse(owner.droidSteerConsumed?.("unrelated") ?? false);
       yield* h.release("finish-prompt");
-      yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
+      yield* h.waitFor((p) => p.runs[0]?.status === "completed");
       yield* h.worker.drain(12);
-      const final = yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+      const final = yield* h.waitFor((p) => captured(p.runs[0]));
       assert.deepEqual(
         final.attempts.map((attempt) => attempt.status),
         ["superseded", "superseded", "completed"],
@@ -1730,9 +1735,9 @@ for (const oldReturn of ["completed", "aborted"] as const)
         h.hooks.promptReturn = undefined;
         if (releaseOldAfter === "replacement-result") {
           yield* h.release("finish-prompt");
-          yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
-          yield* h.worker.drain(12);
           yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+          yield* h.worker.drain(12);
+          yield* h.waitFor((p) => captured(p.runs[0]));
         }
         yield* gate.release;
         yield* gate.exited;
@@ -1749,9 +1754,9 @@ for (const oldReturn of ["completed", "aborted"] as const)
         assert.isFalse(after.turnItems.some((item) => item.type === "error"));
         if (releaseOldAfter === "adoption") {
           yield* h.release("finish-prompt");
-          yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
-          yield* h.worker.drain(12);
           yield* h.waitFor((p) => p.runs[0]?.status === "completed");
+          yield* h.worker.drain(12);
+          yield* h.waitFor((p) => captured(p.runs[0]));
         }
         const final = yield* h.observe(
           "late-success-callback-kept-old-bytes-and-new-owner",
@@ -2098,7 +2103,7 @@ it.effect.each(
               p.runs.find(
                 (candidate) =>
                   candidate.id === (index === 0 ? initial.runs[0]!.id : queued[index - 1]!.id),
-              )?.status === "waiting",
+              )?.status === "completed",
           ),
         );
         yield* trace.capture(`fifo-${index + 1}-before-drain`, { protocol: h.protocol });
@@ -2137,12 +2142,12 @@ it.effect.each(
       yield* h.release("finish-prompt");
       yield* trace.at(
         "last-queued-waiting",
-        h.waitFor((p) => p.runs.find((run) => run.id === queued[2]!.id)?.status === "waiting"),
+        h.waitFor((p) => p.runs.find((run) => run.id === queued[2]!.id)?.status === "completed"),
       );
       yield* trace.drain("last-fifo-drain", 24, h.worker.drain(24));
       yield* trace.at(
         "all-fifo-runs-completed",
-        h.waitFor((p) => p.runs.every((run) => run.status === "completed")),
+        h.waitFor((p) => p.runs.every(captured)),
       );
       yield* h.observe("held-then-actual-FIFO-order", newer);
     }).pipe(Effect.onError((cause) => trace.failure(cause, { protocol: h.protocol })));

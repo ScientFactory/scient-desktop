@@ -1,0 +1,1231 @@
+# Scient providers
+
+> For maintainers. Using Scient? See [provider guides](../user/providers.md).
+
+The shared provider rules (instance routing, honest capabilities, passive health checks, owning
+installers, cross-provider traps) are in [providers](./03_providers.md). This page covers what
+Scient adds on top: its extra drivers (Droid, Oh My Pi, Scient Agent), its Antigravity and OpenCode
+composition, automatic defaults, Scient awareness, assisted lifecycle and the Scient-owned model
+manifest.
+
+## Built-in drivers
+
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with twelve entries:
+
+| Driver kind   | Driver source                                                                   |
+| ------------- | ------------------------------------------------------------------------------- |
+| `acpRegistry` | [`server/driver.ts`](../../packages/provider-acp-registry/src/server/driver.ts) |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]                                               |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]                                             |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]                                             |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]                                                 |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]                                         |
+| `droid`       | [`Drivers/DroidDriver.ts`][droid]                                               |
+| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]                                   |
+| `pi`          | [`server/driver.ts`][pi]                                                        |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                                                   |
+| `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent]                                  |
+| `muse`        | [`server/driver.ts`](../../packages/provider-muse/src/server/driver.ts)         |
+
+Each driver declares its `driverKind`, configuration schema, and scoped instance factory.
+Live execution uses that instance's `orchestrationAdapter`, implementing
+[`ProviderAdapterV2`][adapter]. Provider packages own their adapters where the provider has moved
+there; integrations still owned by the app keep their adapters beside the server driver. Read the
+driver and its adapter together. The V1 `provider/Layers/*Adapter` execution facade and its unused
+service/directory/metrics/queue owners are retired; historical readers and migration contracts
+remain separate compatibility boundaries.
+
+## Provider package boundaries
+
+A provider implementation belongs in its own `packages/provider-<name>` package where it has
+moved; [Pi](../../packages/provider-pi) is the reference. Drivers not yet moved remain in
+[`provider/Drivers`](../../apps/server/src/provider/Drivers). Package exports separate instance
+settings, browser-safe client metadata, server drivers/adapters, and replay-test internals. Provider
+packages reach server-owned services through `ProviderHost`, not imports from `apps/server`; tests
+use `@t3tools/provider-testing`. Register the provider driver in the server registry; its factory
+returns the orchestration adapter. Register its client definition in web and mobile.
+
+## Automatic conversation defaults
+
+`resolveAutomaticModel` in `packages/shared/src/model.ts` owns implicit model selection.
+ProviderRegistry publishes the same default flags to all clients. Desktop/web instance
+selection, onboarding, Settings, and mobile consume that policy without changing catalog
+order, native dispatch identifiers, or persisted selections.
+
+| Driver                | Automatic model                                                                                                       | Reasoning for new selections                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Codex                 | GPT 6.1 Sol, then GPT 6 Astra, then GPT 6 Luna; otherwise reported default                                            | Medium when advertised, otherwise native default                                                |
+| Claude                | Opus 5.5, then Fable 5.1; otherwise reported default                                                                  | Medium when advertised                                                                          |
+| OpenCode              | Configured native model, or a single connected vendor's reported default; otherwise OpenAI GPT 6.1 Sol when available | Medium for OpenAI/Anthropic models when advertised; other families retain their adapter default |
+| Antigravity           | Native default model family, choosing its verified High Gemini variant when available                                 | High through the native model ID; unsupported/unknown models stay native                        |
+| Pi / Oh My Pi / Droid | Reported default                                                                                                      | Existing reported/configured effort; shared supported-level fallback prefers Medium             |
+| Cursor / Grok         | Reported default                                                                                                      | Native reported effort                                                                          |
+
+Opening a provider session can start MCP servers, run hooks, or launch a login browser.
+[Grok probes](../../packages/provider-grok/src/server/status.ts) avoid authentication and
+session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
+explicit setup or model refresh; background checks use initialization only.
+
+Preferred models must exist in the instance's current non-legacy catalog. When neither
+a preference nor a reported/static fallback is available, the first remaining built-in
+model is the final compatibility fallback. Empty Antigravity catalogs never yield an
+invented dispatch ID. Hidden models remain excluded by the existing client preference
+filter before automatic resolution.
+
+Built-in Codex and Claude capability defaults mark supported Medium reasoning as
+concrete so both web and mobile serialize it on dispatch. OpenCode does the same for its
+chosen advertised variant; it no longer invents effort variants when a discovered model
+reports none. Custom model capability declarations and explicit selection options remain
+owned by their existing paths. Automatic Settings displays the effective model alongside
+its traits. These are conversation defaults; background text-generation preferences are
+unchanged. No stored thread, project, or draft selections are migrated.
+
+Automatic Pi/OMP metadata fallback uses separate text-generation markers (`pi-default` and
+`omp-default`), not conversation defaults or another driver's model slug. The shared
+`TextGeneration` entry point resolves them from the selected instance's cached, ready discovery
+snapshot through `resolveAutomaticModel`, after canonical native slug validation. This reads no
+new runtime process and follows the same reported-default/non-legacy ordering as the client.
+Pending, failed, unavailable, mismatched or empty catalogs produce a configuration error; native
+generation retains validation of the selected model. Concrete selections and their options pass
+through unchanged. Catalog price labels are not numeric costs, so this policy makes no cheapest-model
+claim. Settings displays the effective native model without replacing the stored automatic marker.
+
+## Runtime context
+
+Native adapters compose shared harness instructions from `provider/RuntimeInstructions.ts`
+where their protocol supports that channel; Pi also carries orchestration guidance through
+its MCP bridge. These instructions describe Markdown image/video embeds and the runtime.
+Codex includes them in developer instructions; Claude appends them to its system preset;
+OpenCode uses a per-prompt `system` field. Cursor appends runtime text to its SDK prompt;
+Grok and Antigravity use separate text blocks in ACP prompts, which have no system-message field. This does not change the stored user message.
+
+Per-turn context includes the current model when known. Codex includes reasoning effort;
+Grok includes it when explicitly selected for the turn. Claude's session-level context omits model and effort because they can
+change during a session. OpenCode variants are not assumed to be reasoning-effort levels.
+
+## Codex async questions
+
+Codex 0.153 exposes `request_user_input_async` through `item/started` and `item/completed`
+notifications. The item has `type: "agentMessage"`, `delivery: "async"`, and a `questions` array.
+Each question has a `title` and an optional `options` array of strings. The tool returns `{"accepted":true}`
+without waiting. This is separate from the `item/tool/requestUserInput` server request.
+See the [Codex tool handler](https://github.com/openai/codex/blob/d979df154cf60e13eafb5453e75b6d84f21c67bf/codex-rs/core/src/tools/handlers/request_user_input_async.rs).
+
+`CodexAdapterV2` maps async question items into the native V2 request model with stable IDs
+and message-mode response capability. These are distinct from blocking callback questions.
+Web, desktop, and mobile use their existing question panels.
+
+Orchestration v2 persists the same requests as `user_input_request` turn items and runtime
+requests with `responseCapability: { type: "message" }`. Their execution nodes do not block the
+run, the normal question panels still answer them, and a request stays pending after a turn
+finishes, a provider exits, or the server restarts. `runtime-request.respond` reads the persisted
+request and question item, validates required answers, and commits the resolution and a user
+message in one transaction; repeating the command returns its receipt without posting the answer
+twice. The message path itself starts or resumes a run, queues behind active work, or steers when
+the adapter supports it. Do not infer that a request has disappeared merely because it is outside
+the recent history window.
+
+## Registry and routing
+
+Configuration and execution share the canonical instance registry:
+
+- [`ProviderInstanceRegistry`][instances] materializes configuration by instance ID, decoding it
+  through the selected driver's schema and owning its child scope, snapshots and optional lifecycle
+  actions.
+- [`ProviderAdapterRegistryV2`][registry] is a dynamic facade over those instances. `get(instanceId)`
+  obtains `instance.orchestrationAdapter`, so replacement/removal is visible without another
+  settings watcher or routing map.
+- [`ProviderSessionManagerV2`][sessions] owns live session handles, scopes, MCP preparation,
+  per-turn selected-skill scope, idle release and exact-instance teardown. Durable provider sessions
+  and threads remain V2 facts even when an in-memory process has gone away.
+
+For a provider session that negotiates both multiple threads and
+per-thread workspaces, switch planning compares the last bound native workspace
+(`nativeMetadata.cwd`) with the conversation's resolved target, not with the shared
+process's opening directory. A genuine workspace change still restarts the binding.
+Older bindings without that metadata conservatively use the session's cwd until rebound.
+Adapters do not own this binding and re-emit cached copies of the row, sometimes from before a
+relocation (OpenCode 2 does). While the same session owns the thread, `ProviderEventIngestor`
+and run finalization in `RunExecutionService` restore the recorded `nativeMetadata.cwd` over
+whatever the adapter carries (`scient-provider/RecordedWorkspace.ts`).
+Detach also unloads the native thread its runtime still holds for the app thread when the
+durable record already names a replacement session; attached peers remain loaded. Because the
+next owner may be another process, detach asks the adapter to wait for the release
+(`awaitRelease`): Codex answers `thread/unsubscribe` before it closes the thread, so the Codex
+adapter then waits up to 5 seconds for `thread/closed`, including a close still pending from an
+earlier idle unsubscribe. Detach also re-joins a thread an idle unload already released, because
+the reassigned row no longer names the old session. Idle unloads do not wait.
+
+Codex launches with `-c thread_unload_delay_secs=0` ahead of user launch arguments, so Codex
+closes a thread as soon as Scient unsubscribes; a launch-argument override still wins. A
+`thread/resume` that Codex refuses because the thread is still closing waits up to 10 seconds
+for this connection's `thread/closed`, then retries.
+
+`ProviderTurnStartService` projects typed composer context, applies selected Scient skills, resolves
+native or portable context transfers, and calls the session manager and `RunExecutionService`.
+Native start and steer expand supported composer citations. Current-input validation includes that
+expansion, projected typed context, selected-skill instructions and attachment descriptors/captured
+data; inherited history has a separate receiving budget. See
+[context handoffs](./scient-context-handoffs.md) for the complete-current-input boundary.
+The importer's historical citation repair is a separate reader boundary, not the mechanism for
+expanding citations in new user prompts.
+`ProviderTurnControlService` owns interrupt/restart/steer execution;
+`RuntimeRequestService` sends callback answers to the recorded session.
+`ProviderEventIngestor` persists adapter output with run/attempt/node attribution.
+The V1 `ProviderService.sendTurn` path is not the current execution boundary.
+
+Native Claude subagent Stop distinguishes an adapter stop receipt from an absent session.
+A live adapter remains authoritative for terminal task, node and tool-item updates. If the
+captured session has gone, the effect worker requests targeted local settlement under the
+same strong native task/thread, provider instance, owning run/turn and root-node bindings.
+That repair ends the exact linked runless child roots and proven nested native descendants,
+whether recorded under the task's node or in its child threads. Each descendant retains the
+native identity, parent/root/run/provider/turn and child-lineage fences. A run-bound descendant
+proves its own run, attempt, native session/thread/turn and root ownership within the captured
+run-ordinal horizon; a resumed coordinator's retained launch root is not substituted for that
+descendant's current root. Terminal intermediate tasks stay terminal while their active
+descendants are reached through compact native items, without loading the full message history.
+A workflow coordinator's
+runless member rows use the same exact coordinator/member/node ownership predicates as native
+event routing; those members do not carry independent native task identities. The repair does
+not interrupt the parent, settle siblings, admit weak native tasks or frozen nodes, stop
+child-owned user runs, or assign execution authority to imported history.
+A nonretryable adapter error is not a stop receipt: local repair still requires the
+captured session to be absent.
+
+Adding an ordinary driver requires a native `ProviderAdapterV2`, an instance factory, and registration
+in `BUILT_IN_DRIVERS`. Expose capabilities truthfully; new wire behavior may also require contract
+and client work. Production composition is in
+[`runtimeLayer.ts`](../../apps/server/src/orchestration-v2/runtimeLayer.ts).
+
+### Grok health check
+
+`checkGrokProviderStatus` never opens an ACP session. It runs `grok --version`, then `grok models`
+for login state and model slugs, then a single ACP `initialize` and reads models from
+`_meta.modelState`. `authenticate` and `session/new` are skipped on purpose: `authenticate` can open
+a browser login and `session/new` boots every configured MCP server, both of which made background
+probes hang or surprise the user. A failed `initialize` degrades to `warning` with the CLI's model
+list instead of persisting `error` over a working install. The built-in `grok-build` slug is the
+CLI's product name, not an ACP model id. `applyGrokAcpModelSelection` treats it as "keep the
+session's current model" and never sends it in `session/set_model`.
+
+### Claude health check
+
+`checkClaudeProviderStatus` runs `claude --version` and, for first-party accounts,
+`claude auth status --json` before reading capabilities. Each command gets 20 seconds rather than
+the shared 4-second probe deadline. The native CLI takes 2-4 seconds to answer either command on
+Windows, so the shorter deadline reported a healthy install as failing whenever the machine was
+busy, and the composer then offered setup for a provider whose conversations kept working. A
+command that still does not answer reports `error` or an unverified account as before.
+
+## Antigravity ownership and protocol
+
+[`AntigravityDriver`][antigravity] uses Google's official ACP executable. The instance config
+selects the ACP auth method: `oauth-personal` (default), `oauth-business`, `gemini-api-key`, or
+`agent-platform`. The two OAuth methods share the loopback sign-in flow below. The API key
+methods pass the configured key to the agent as `GEMINI_API_KEY` or `GOOGLE_API_KEY` and never
+open a browser. A GCP project and location are written to the profile's `settings.json` on each
+launch. The driver never reuses CLI credentials or ambient `GOOGLE_*` variables and never falls
+back to another method. Antigravity is disabled by default and supports multiple provider
+instances. The open driver and instance identifiers require no database migration.
+
+### Runtime installation
+
+[`AntigravityInstallation`][antigravity-installation] belongs to the environment, outside
+WebSocket and provider-instance scopes. Instances share an explicit download operation and the
+completed runtime. Client disconnects and instance rebuilds do not cancel installation.
+
+On Scient's ACP targets the managed default is the agy CLI that Scient's catalog lists under the
+`antigravity` key, from 1.5.12 on: it serves ACP as `agy acp` and loads full plugins. The
+catalog's URL policy and T3's CLI release parser both apply. The paired release below is the
+floor where no qualified CLI is listed (no catalog check yet, musl Linux). The CLI supersedes
+every paired release, so a paired install is offered it as an update and an installed CLI is
+never offered a paired release. A paired Google sign-in is not converted: both runtimes use the
+same Google OAuth client, but the paired grant lacks scopes the CLI requests (`openid`,
+`userinfo.profile`, `cclog`, `experimentsandconfigs`), so the user signs in once after the
+switch.
+
+The fixed [release table][antigravity-release] supplies the paired bundled floor. Scient's qualified
+catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
+still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
+The catalog's semver is distinct from the agent's native build version. When the bundled
+native release advances, reconcile Scient's registry floor, catalog receipts and accepted
+native build identities together. Preserve the approved targets and exact native URL, hash,
+archive and executable-member facts; artifact availability alone does not qualify a new target.
+Downloads stream to disk.
+Lazy `yauzl` entry streams extract only that pair, with member names, types, duplicates, and
+sizes checked. Validation runs ACP `initialize` in a temporary profile without authentication
+or a session. Progress updates are bounded, not sent for every network chunk.
+
+Complete releases live in immutable version directories under the owning Scient environment's state root
+`tools/antigravity-acp/<platform>-<arch>/versions`. An atomic `active.json` change selects the
+release for new processes. Each process holds a version lease until it exits. Updates do not
+replace running executables. Removal refuses active leases or explicit binary paths that still
+reference the managed files. Failure or cancellation removes owned partial files, not the
+previous release or account data.
+
+Repair validates a complete replacement before swapping a damaged generation, refuses active
+leases, and restores the previous directory if publication fails. A registry-only revision of
+the same verified archive updates its receipt without replacing or downloading the binaries.
+
+Resolution order is explicit `binaryPath`, active managed release, then the instance's `PATH`.
+An invalid explicit path fails without fallback. Manual installations are never changed by the
+installer. Every paired launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's
+sibling.
+
+### Google profiles and sign-in
+
+Each instance owns a stable profile at
+`<stateDir>/providers/antigravity/<sha256(instanceId)>`.
+[`antigravityAuthSupport.ts`][antigravity-auth-support] sets `GEMINI_HOME` to this directory and
+`AGY_ACP_FORCE_FILE_STORAGE=1` after merging instance environment variables. File storage avoids
+the official macOS keychain entry being shared across instances. Profile directories use mode
+`0700` on POSIX. This is file storage, not an encrypted keychain. Windows uses the host profile's
+filesystem permissions.
+
+The private profile links the user's documented loose and provider-managed skill roots. The agy
+CLI loads plugins natively from the OS user's `~/.gemini/config/plugins` whatever `GEMINI_HOME`
+says, and `agy plugin enable|disable` keeps their switches in `~/.gemini/config/config.json`;
+installed plugins are therefore shared with the user's own Antigravity. For a paired runtime,
+which loads no plugins of its own, global plugin skills receive a skill-only projection
+containing each enabled plugin's manifest and skill directory; plugin MCP servers, hooks, rules,
+agents, and credentials remain outside the profile. A CLI launch skips the projection and removes
+only a `config/plugins` link that points at one of Scient's projected generations.
+
+The launch environment removes API-key and cloud-billing variables, disables inherited
+environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A tested Node or
+Electron-as-Node helper prevents the official agent from opening a browser on the environment.
+The same launch factory serves setup, health checks, chat, and text generation.
+
+The official agent prints a non-JSON OAuth line on stderr in version 1.1.1. Earlier versions
+print it on stdout. T3 accepts the exact native prefix on either stream and its browser-helper
+marker on stderr. Fragmented lines are joined and bounded. Other malformed protocol output
+remains fatal. Authorization URLs are validated before use. Other stderr is discarded because
+it can contain OAuth data. Normal work rejects an interactive login request with a
+sign-in-required error instead of waiting for consent. A rejected stderr callback fails pending
+ACP requests and closes the owned process.
+
+[`AntigravityAuth`][antigravity-auth] owns each sign-in process and deadline in the instance
+scope. Only the initiating T3 auth session receives its URL and flow ID or can complete or
+cancel it. Other clients receive busy state without those values. Subscriptions follow
+controller replacement when settings rebuild an instance.
+
+Scient's compact setup delegates to that same controller through
+`scient/providerLifecycle/AntigravityAcpLifecycleActions.ts`.
+The bridge owns one private controller session for the shared lifecycle supervisor; existing
+authorized lifecycle clients can complete or cancel its current operation. It is not a second
+authentication engine. The direct upstream setup RPC keeps its initiating-client ownership.
+
+For remote completion, the client sends the full return URL through the typed setup RPC.
+The server validates the pending loopback origin, port, root path, and single matching state
+before forwarding once to the owned listener. It does not probe the listener or follow
+redirects. Google's process owns PKCE, token exchange, refresh, and storage. Callback HTTP
+success is not authentication success. The controller waits for authenticated session setup
+and catalog discovery. Cancellation closes the process instead of sending a synthetic denial.
+
+Auth RPCs `provider.auth.start`, `complete`, `cancel`, `logout`, and `subscribe` require
+`orchestration:operate`. Install `start`, `cancel`, and `remove` use that scope too.
+`provider.install.subscribe` and public provider snapshots require `orchestration:read`.
+[`providerSetup.ts`][provider-setup] defines the operation IDs, states, and safe errors.
+
+Sign-out closes process admission for the instance, stops provider bindings through
+[`ProviderAuthService`][provider-auth-service], then stops owned startup and helper processes.
+A fresh official process calls `initialize` and native `logout` without authenticating.
+Only then does the provider clear auth, models, commands, skills, and workspace metadata.
+Thread history and native session files remain. Settings sign-out and a text-only `/logout`
+use this same path. The command is handled before model prompting or title generation.
+Disabling an instance closes its processes but keeps credentials. Account replacement is
+explicit sign-out followed by sign-in.
+
+### Scient composition and legacy compatibility
+
+The native protocol, callback validation, profile isolation, and auth controller
+follow T3. Scient's qualified catalog is composed into the native installer by
+`scient/providerLifecycle/ScientAntigravityInstallation.ts`; the native installer
+does not depend on the catalog service. Server composition and its registry
+harnesses use this layer, retaining the existing installation service identity.
+
+Scient owns the compact lifecycle actions, safe failure diagnostics, skill-only
+plugin projection, model-family presentation, and voice correction. The voice
+capability shares the same guarded structured-generation runner as the standard
+text-generation service. Paired `SCIENT-FORK` markers identify the remaining
+upstream mounts and retained failure-presentation changes; unchanged native
+model-selection helpers remain upstream-owned.
+
+Legacy CLI configuration is active compatibility support, not another ACP auth
+engine. Its account and runtime owners are explicitly named
+`LegacyAntigravityConnectionActions.ts` and
+`LegacyAntigravityManagedRuntimeActions.ts`. Explicit `agy` paths and hosts
+outside Scient's qualified ACP target list keep their existing routing. This
+cleanup does not migrate credentials, histories, runtime policy, or disabled
+instance behavior. Retiring an implicit legacy fallback requires qualification
+of its native replacement first.
+
+### Sessions, models, and client capabilities
+
+[`AntigravityAdapter`][antigravity-adapter] owns one ACP process per active thread. It uses
+native `session/resume` without transcript replay and reapplies the persisted model and
+permission mode after new or resumed setup. An unavailable explicit model fails instead of
+accepting the native default. Steering cancels the previous prompt, waits for its result and
+event drain, then sends the replacement. Native background commands use T3's existing
+background-task state.
+
+The permission mapping is `approval-required` and `auto` to `default`, `auto-accept-edits` to
+`auto_edit`, and `full-access` to `yolo`. Native requests still need replies in `yolo`.
+`interaction_` requests are user questions, not approvals. T3 keeps opaque option IDs in
+`UserInputQuestion.options[].value` and sets `allowCustomAnswer=false`. Both clients preserve
+these values. Ordinary approval replies use only offered option IDs, including `allow_always`
+only when present. Existing providers keep their prior behavior when the optional fields are
+absent.
+
+`showInteractionModeToggle=false` keeps native `/plan` separate from T3 Plan mode.
+`supportsConversationRollback=false` hides unsupported client actions and makes checkpoint
+revert fail before filesystem changes. Checkpoint capture and diffs remain supported.
+
+Automatic status refreshes, reconnects, and workspace checks do not open catalog sessions.
+Health probes use `initialize` only. Disabled instances do not run background probes.
+An explicit `serverRefreshProviders` request with `refreshModels: true` calls the driver's
+optional `refreshModels` operation. Antigravity opens a short-lived catalog session under the
+instance's process admission guard, uses saved credentials, publishes models and commands,
+then closes the process. An interactive login request fails with sign-in required. Web's
+**Refresh provider status** and mobile's **Refresh models** actions request this operation.
+Account access starts unknown and becomes authenticated after successful session setup,
+including an explicit model refresh.
+The [provider snapshot][antigravity-provider] takes models and commands from setup and native
+updates. It preserves returned Gemini model IDs, labels, order, and thinking-level choices.
+Desktop/web and mobile derive a presentation-only grouping of recognized Gemini effort variants
+through `packages/client-runtime/src/antigravityModelPresentation.ts`. A family occupies one
+picker row; the existing reasoning control chooses another available native model ID.
+The control descriptor is local UI data, never a provider option sent over ACP or stored on a
+selection. The native ID remains authoritative for drafts, defaults, favorites, resume, and turns.
+Favorites retain exact variant shortcuts; hidden rows are not restored by grouping. Custom
+models, ambiguous names, and models already advertising native options are not rewritten.
+The ACP adapter and managed lifecycle preserve native semantics. Automatic selections prefer
+a verified High variant; the legacy `agy` catalog also prefers High when supported.
+
+On desktop/web, an unstarted draft may still contain an old `agy` family ID with
+separate reasoning. `antigravityDraftSelection.ts` reconciles only verified live
+variants from that instance, preserving the explicit effort (or the historical
+default: medium when available) and excluding hidden variants. The draft store writes the complete
+native selection before the first send and updates a matching remembered selection
+without overwriting a newer choice. This is not a display alias or a session migration:
+started conversations, unknown IDs, ambiguous options, and legacy catalogs stay unchanged.
+The composer keeps an open provider setup mounted through its ready-model handoff;
+Antigravity hands off a complete selection so obsolete reasoning options do not survive.
+
+ACP `config_option_update` notifications and supplied `session/set_config_option`
+inventories update the instance model catalog. An empty acknowledgment preserves
+an inventory already published by a notification; otherwise it confirms only the
+requested selection. Child session notifications do not change the root catalog.
+The registry treats a successful empty catalog as authoritative and clears cached metadata
+after sign-out. It must not retain a previous account's models. Cached models do not prove
+current access. The auth response does not supply an email, plan tier, or reliable quota.
+
+Some upstream failures arrive as assistant text followed by `end_turn`. Preserve that message
+without treating model-written text as a structured error or successful task completion.
+
+### Text generation
+
+[`AntigravityTextGeneration`][antigravity-text] implements titles, branch names, commit text,
+and PR text through the same instance and Google sign-in. Each helper uses a temporary empty
+workspace, no injected MCP servers, native `default` mode, and explicit denial of tools and
+questions. Output is bounded, parsed against the existing schemas, and sanitized. Cancellation,
+timeout, and sign-out close the process. Cleanup removes only that helper's verified temporary
+native session files.
+
+The official agent has no verified hard no-tools setting. Global hooks and MCP configuration
+can run before a prompt. Helpers check the profile's `config/hooks.json` and
+`config/mcp_config.json` before launch and reject nonempty, malformed, or oversized
+configuration. `supportsTextGeneration=false` keeps such an instance out of system-model
+pickers. Empty managed profiles are supported. Do not describe prompt-time denial as a native
+sandbox.
+
+## OpenCode server ownership and catalog
+
+Each OpenCode provider instance owns one lazy local server for catalog discovery and text-generation
+helpers through [`OpenCodeServerOwner.ts`][opencode-server-owner]. Concurrent borrowers share one
+startup. The helper closes 30 seconds after the last borrower releases it, or when the provider
+instance closes, and a failed or exited process can start again on the next use. An explicitly
+configured external server remains externally owned.
+
+The local server and its SDK clients use one resolved password. An explicit provider password
+overrides `OPENCODE_SERVER_PASSWORD` in the spawned environment. Without an explicit password, a
+local client uses the password inherited by the process. External servers use only the explicit
+provider password and never inherit the host's local password. Every connection must pass an
+authenticated `/global/health` check and report OpenCode 1.14.19 or newer before inventory or
+session work begins.
+
+Chat adapters keep one server per thread because OpenCode stores MCP connections by directory and
+each thread registers its own Scient MCP connection. Catalog discovery instead uses the provider
+instance's shared helper. It runs when an enabled instance starts, when a client subscribes to server
+configuration, and when provider status is refreshed. Successful snapshots are persisted through
+the existing per-instance cache. Failed discovery keeps the last known models, slash commands, and
+skills; a successful empty inventory is authoritative. Existing threads keep their explicit model
+and options when catalog metadata is temporarily absent.
+
+Native configuration files can remain cached while a local helper is alive. Refreshing after its
+idle shutdown starts a new helper and rereads those files. Scient does not own an external OpenCode
+process, so changes there may require that server's own reload or restart before refresh can see them.
+
+Chat adapters send the runtime mode as a session ruleset, but upstream OpenCode evaluates
+doom-loop and subagent asks against the agent ruleset only. In full access the adapter answers
+those asks itself so the user never sees an approval they already granted. It replies `once`
+rather than `always` because OpenCode stores `always` grants per directory, and on a shared
+external server that would widen what a supervised thread in the same directory may do.
+
+OpenCode loads its catalog through the HTTP API when an enabled provider instance starts. The
+provider registry keeps the snapshot in memory and persists it in the existing per-instance cache.
+Each `subscribeServerConfig` connection refreshes all providers, so a client reconnect reloads the
+OpenCode catalog from the current helper. The `serverRefreshProviders` request also refreshes it.
+Periodic OpenCode probes remain disabled. OpenCode reads credentials for each inventory request,
+but its native configuration files can remain cached for the lifetime of the helper process. The
+helper closes 30 seconds after its last inventory or text-generation borrower releases it. A
+refresh after that idle period starts a new helper and reads file changes. Repeated refreshes and
+active text-generation work can extend process reuse. Changes to the provider configuration or
+environment replace the instance and start a new discovery. Changes to unrelated settings only
+update snapshot enrichment. Other providers retain their existing refresh policy.
+
+## Scient awareness
+
+Interactive agents receive one compact, Scient-owned awareness contract from
+[`ScientAwareness.ts`][awareness]. The always-on block identifies Scient as a project workspace,
+states what the user can inspect, and names the rich Markdown representations the chat actually
+renders. Every other block names tools, so it is composed only when the session's tool list can
+show them:
+
+- browser (upstream's browser rules in Scient's copy) with `preview`;
+- Compute with `compute`, and PDF builds plus Overleaf with `documents:build`, each only while the
+  thread's project workspace verifies, the same rule tool discovery uses;
+- devices with `device`; skills with `skills:read`;
+- papers and sign-ins with `accounts`; its `preview_open` sign-in sentence also needs `preview`.
+
+The session manager writes these grants into the provider-facing manifest that adapters read,
+leaving out the project grants when the workspace does not verify; the credential itself keeps
+them, and every call is still checked. Claude's text names tools as `mcp__scient__*` and says how
+to load them through ToolSearch, because Claude Code defers MCP tools. Sources mechanics remain in
+tool descriptions rather than consuming every turn's instruction context.
+
+Each built-in driver has an explicit delivery decision, kept in `ScientAwareness.test.ts` and
+guarded against `BUILT_IN_DRIVERS`:
+
+- Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
+  per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`; Pi appends
+  awareness through its session-local `before_agent_start` extension hook. Oh My Pi and Scient Agent use that
+  hook from their own generated extension; its hook receives the prompt as `string[]` and treats a
+  returned value as the whole replacement, so awareness is appended as one more element.
+- Antigravity, Cursor, ACP registry agents, fx and Kiro have no verified private system seam, so
+  their awareness rides the same wrapped first-prompt instructions that already carry upstream's
+  orchestration text (`<scient_instructions>` for ACP, `<scient_orchestration_instructions>` for
+  Cursor), sent again when those are. The device text keeps upstream's own prompt delivery there.
+  Antigravity's prompt also says its `write_to_file` tool writes outside the project.
+- Muse has no private seam and sends runtime text with every turn. Its awareness rides the first
+  turn of a session, wrapped in `<scient_instructions>`, and is sent again only when the session's
+  awareness changes, so ordinary turns carry none.
+- ACP prompts, Cursor's first-run text and Muse turns compare the session's grant manifest, so a
+  session that gains a verified project or browser access receives the new blocks on its next
+  turn. After a compaction each sends the awareness again.
+
+Adding a provider requires adding a tested delivery decision. Awareness never comes from
+unmarked user-message prefixes, project instruction files, credentials copied into a synthetic
+home, or undocumented ACP metadata.
+
+### Droid (Factory) driver
+
+Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`), using
+`DroidAdapterV2` over the shared `AcpAdapterV2` runtime. Cursor uses its SDK adapter. See [Droid in Scient](../user/providers-droid.md) for the
+user-facing setup flow. Implementation notes that go beyond the shared runtime:
+
+- `Drivers/DroidDriver.ts` composes the existing adapter with the optional Scient lifecycle seam.
+  It preserves healthy custom and system binaries, otherwise resolves the reviewed app-private
+  runtime and exposes only actions that match the current runtime and ACP capabilities.
+- `DroidProvider.ts` probes version, opens one passive ACP connection, and initializes it to
+  inspect account capabilities. It calls `session/new` without `authenticate` to classify account
+  state and read the model inventory. Model-specific reasoning ladders are discovered best-effort
+  and time-bounded; failure keeps the models with unknown ladders instead of publishing wrong ones.
+  The model selected when that session starts is Droid's own default and is the one reported as
+  default (`isDefault`), which is all the [automatic model policy](#automatic-conversation-defaults)
+  needs to start new threads on it. Text generation is outside that policy: without a chosen model
+  it uses `DROID_DEFAULT_MODEL`, a marker never sent to Droid, so the session keeps the same default.
+- `acp/DroidAcpSupport.ts` owns auth-method selection, model and effort parsing, autonomy mapping,
+  and the shared model/effort application used by interactive and headless paths.
+- `orchestration-v2/Adapters/DroidAdapterV2.ts` specializes the shared `AcpAdapterV2` runtime for
+  Droid, including its idle watchdog and failure policy. The shared ACP adapter owns common prompt,
+  steering, event, interruption and elicitation mechanics.
+- `scient/providerLifecycle/DroidConnectionActions.ts` invokes device pairing only when the exact
+  initialized peer advertises it. Droid owns its browser flow, and Sign out is exposed only when the
+  peer advertises ACP logout.
+- `scient/providerLifecycle/DroidManagedRuntimeActions.ts` delegates download, verification, staging,
+  smoke testing, atomic activation, repair, and removal to the shared provider-runtime package.
+  Scient disables Droid's in-place updater for managed processes.
+
+Shared ACP compatibility edits required by Droid remain narrow and tested. `AcpSessionRuntime.ts`
+folds configuration notifications into cached session state and handles Droid's model-option
+notification behavior. `packages/effect-acp` decodes missing or null configuration inventories
+tolerantly without weakening non-array validation or editing generated schemas.
+
+### Legacy Antigravity compatibility
+
+The official ACP path above is the default on supported hosts. Scient's previous `agy`
+stream-json transport remains only for version-2 continuation cursors, explicit legacy executable
+paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the default fallback on hosts
+without an official ACP artifact. The Antigravity driver's native adapter router chooses `AntigravityAdapterV2` or
+`LegacyAntigravityAdapterV2` from the configured executable and recorded native reference.
+It never replays or converts one protocol's cursor into the other.
+
+`LegacyAntigravityDriver` and [`AgySession.ts`][agy-session] preserve the existing subscription,
+credential-store, attachment, and managed-runtime behavior for that path. The `antigravity` catalog
+entry stays separate from `antigravityAcp`. Neither authentication nor installation migrates old
+credentials. New ACP text and voice helpers share T3's structured-generation implementation.
+
+The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared management contract.
+
+### Pi driver
+
+[`PiDriverComposition.ts`](../../apps/server/src/provider/PiDriverComposition.ts) supplies
+Scient's production `PiDriver` and direct-session `makeScientPiAdapterV2` factory. Both
+share the same orchestration instructions, capability-aware guidance and native receipt
+error mapping. Package defaults remain generic; application native and replay harnesses
+use this composition rather than constructing an unconfigured package adapter.
+The [package adapter](../../packages/provider-pi/src/server/adapter.ts) runs Pi's own
+RPC mode with user extensions, packages, skills, templates, configuration and project-trust
+discovery. Its namespaced MCP/permission bridge is in
+[`mcpExtensionSource.ts`](../../packages/provider-pi/src/server/mcpExtensionSource.ts) and
+[`mcpInjection.ts`](../../packages/provider-pi/src/server/mcpInjection.ts).
+
+[`rpc.ts`](../../packages/provider-pi/src/server/rpc.ts) owns native RPC transport. The adapter maps text, reasoning, tools,
+extension questions, compaction and settled lifecycle into V2 provider events. One low-level cycle
+ending is not enough to complete a root turn while queued prompts or compaction remain active.
+Extension dialogs use the existing runtime-request path; unsupported terminal UI is not emulated.
+Native commands retain their own dispatch semantics instead of becoming model prompts.
+Editor prefill is the question's `initialAnswer`, not part of its title. MCP model content
+keeps bounded text, images and resource descriptions separate from the full native script
+`CallToolResult` in `structuredContent`; `details.result` is not its transport contract.
+
+Session files support native resume, rollback snapshots and same-instance provider thread forks.
+Forking through Pi's CLI in the destination directory preserves the correct cwd; generic Scient
+exact-boundary continuity still requires its frozen ownership proof and falls back to portable
+history when that proof is unavailable. Provider switches use the shared whole-item handoff budget.
+The native adapter advertises supported permission modes through its permission hook; do not retain
+the V1 claim that Pi is always Full access or that rollback and thread forks are unsupported.
+
+Pi's session manager leases each known native session file before opening a
+replacement process. It resolves symlinks to one server-side path, admits a
+single live writer across provider instances, and retains the lease until the
+owning process scope closes successfully. Failed cleanup retains the lease. A cancelled startup
+releases unpublished or published ownership only after its owned process scope closes successfully;
+a later start can then acquire the file. Repeated opens of
+the same provider session share its runtime and spawn one process.
+Stop and administrative session close remain different operations. Stop interrupts the
+accepted owned run; administrative close fails unfinished accepted work. Both preserve
+native acceptance evidence, cancel the owned pending request and retain the file lease
+until physical close completes.
+
+Passive model/catalog discovery and headless generation belong to
+[`status.ts`](../../packages/provider-pi/src/server/status.ts) and
+[`textGeneration.ts`](../../packages/provider-pi/src/server/textGeneration.ts).
+Scient's custom-model connection and managed-runtime policy enter through
+`PiDriverComposition.ts` and `provider/pi/PiCustomModels.ts`; installation stays owned by
+the driver lifecycle actions and shared runtime package. Runtime catalogs and platform
+qualification remain separate from native orchestration compatibility.
+
+Usage reads Pi's native JSONL sessions, preserving disjoint input/cache counters and the
+catalog pricing model separately from the displayed provider/model name. The durable scan
+cache writes `usage-scan-cache-v6.json`. It can import the prior v5 file and then the
+unversioned v4 file without rewriting either; retained records for deleted transcripts,
+incremental positions, tails and pricing-model attribution survive an older server's v5
+rewrite. A readable current cache takes precedence over older snapshots, and unsupported
+schema versions are not interpreted as compatible records.
+
+The earlier main-based Pi proposal was selectively adapted, not merged as a second host platform;
+see [the Pi source notice][pi-notice] for provenance. Native tests and replay exercise the V2
+adapter; real-process tests still do not establish every extension, hosted account or platform.
+
+### Oh My Pi driver
+
+[`OmpDriver.ts`][omp] constructs the native
+[`OmpAdapterV2`](../../apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts).
+Discovery remains in
+[`provider/OmpProvider.ts`](../../apps/server/src/provider/OmpProvider.ts).
+The driver supplies the custom-model-aware factory from
+[`OmpCustomModels.ts`](../../apps/server/src/provider/omp/OmpCustomModels.ts);
+[`OmpRpcProcess.ts`](../../apps/server/src/provider/omp/OmpRpcProcess.ts) owns process launch and the
+RPC transport connection.
+[`provider/omp/OmpSessionRuntime.ts`](../../apps/server/src/provider/omp/OmpSessionRuntime.ts)
+tracks native prompt and background-work settlement; the V2 adapter maps it to orchestration events.
+`packages/effect-omp-rpc` speaks Oh My Pi's newline JSON protocol, including protocol v2 chunk
+reassembly, and imports no Scient orchestration types. The adapter's
+[`OmpProcessOwnership`](../../apps/server/src/orchestration-v2/scient-provider/OmpProcessOwnership.ts)
+retains shutdown confirmation before releasing its session lock. This is distinct from logical
+turn settlement and does not establish universal physical-reader release.
+
+The shared adapter projects assistant usage and model capacity into the context meter and
+refreshes `get_session_stats` on settlement. Its reported cost includes the agent's billed
+cache refreshes; a billed `cache_warming_end` refreshes that total without adding usage twice.
+Scient leaves cache warming at the agent's default. Optional observations and unsupported
+statistics commands degrade without preventing ordinary turns on older agents.
+`/compact` uses the native compact command and shared compaction item. Notices, persistence
+errors, extension notifications, retry progress and fallback models use shared notice/error
+items; process loss includes the observed exit code and a bounded, redacted stderr tail.
+Scient tools register with `strict: false`, as the agent's own MCP tools do: a strict grammar makes
+OpenAI models fill optional fields, which turned an empty `session` into an invented one and a `url`
+into a page target. Scient Agent gets `SCIENT_AGENT_HOST_PAGES=1`, so `/stats` reports an address
+instead of opening the system browser, and `<root>/agent/sessions` links to Scient's session folder
+so the dashboard counts its conversations. A local command's output precedes its reply on the wire
+but runs through the event queue, so the turn settles after that queue. An `ask` call is one
+`user_input_request`; a `manual_compaction_end` with `skipped` is a notice, not a failed turn.
+
+Native todo phases project to the shared read-only todo list. Select dialogs accept offered
+labels, editor dialogs retain their initial text, and the existing dialog text shows timeouts;
+the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No only.
+
+- The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
+  qualified. Launch arguments are `--mode rpc-ui` (the only mode with the agent's `ask` tool) and
+  `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can
+  install the qualified private binary on every approved target (below); otherwise Scient uses an
+  executable the user installed.
+  Scient never runs `omp update`: it cannot pin a version, follows npm `latest` across majors,
+  and has no rollback. The maintenance capabilities are manual-only for every channel. The
+  advisory compares the running version with the latest stable release in the supported major,
+  read from the channel that installed the executable (`OmpMaintenance.ts`): npm `latest` for
+  bun, npm and standalone installs, the `can1357/tap` formula for Homebrew (the formulae API does
+  not publish third-party taps), and GitHub `releases/latest` for mise and as the fallback. Only
+  successful lookups are cached. Nix installations are not checked. The notice carries the
+  copyable `omp update` command and names Scient-managed Oh My Pi when a managed artifact exists
+  for the target. The desktop
+  app can install a private Oh My Pi from the qualified catalog on macOS arm64/x64, Linux glibc
+  arm64/x64 and Windows arm64/x64 (`ompManifest.ts`); OMP's musl builds are not approved. That copy is
+  updated only through the managed-runtime actions. Managed activation also runs an isolated
+  RPC-v2 handshake and state probe after staging; a binary that only answers `--version` is
+  rejected and the previous runtime is restored.
+- `OmpExecutableGate` (one per server, in the runtime layer) serializes runtime mutation against
+  new OMP processes. `makeOmpRpcProcess` resolves the command once, leases the executable's real
+  path before probing or spawning, and holds the lease for the process scope; it fails closed when
+  the gate is absent. The custom-model process factory provides the gate, so sessions, discovery,
+  text generation and custom-model tests are all covered. Managed activation holds the active and
+  destination identities from #374's `beforeActivate` hook (after `awaitActivationWindow`) through
+  the state commit; a waiting process fails after 30 seconds, one-shot work gets a 30-second drain,
+  and a remaining conversation fails the activation. The qualification process carries the
+  activation token, so a repair does not deadlock on its own hold. The gate is per server, which is
+  sufficient because Scient never runs `omp update`.
+- The child environment (`OmpEnvironment.ts`) is the agent environment shared with Droid
+  (`agentProcessEnvironment.ts`): the server's login environment minus Scient's internals
+  (`T3CODE_*`, `T3_*`, `SCIENT_*`, `VITE_*`, `ELECTRON_RUN_AS_NODE`, `ELECTRON_RENDERER_PORT`,
+  `PORT`, case-insensitive), then the instance environment as configured (the filter applies only
+  to what the server inherited), with `NO_PROXY` and `no_proxy` both receiving the union of their
+  entries plus loopback (one case-insensitive variable on Windows). OMP then removes
+  `PI_CODING_AGENT_SESSION_DIR`. Scient adds nothing back: its bridge secrets travel in extension
+  bootstrap files. No OMP spawn merges the server's own environment into it (`extendEnv: false`).
+  Drivers other than Droid and OMP keep their existing policies. An instance home removes inherited
+  `OMP_PROFILE`/`PI_PROFILE`, an instance profile removes inherited `PI_PROFILE`/
+  `PI_CODING_AGENT_DIR`, and a defined `OMP_PROFILE` drops `PI_PROFILE`, matching OMP's precedence
+  so the resume identity does.
+- One process serves one thread. Stop closes that process only. The child receives an explicit
+  `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
+  variable is retained only as a compatibility fallback in the process environment.
+- A prompt response is acceptance. Completion is a local prompt, or a yielded `agent_end` confirmed
+  idle with `get_state` (older runtimes use `isTerminal`). Background work may still wake the parent.
+  OMP events carry no run id, so a user turn is never decided by an idle session alone: it waits
+  for its prompt's acknowledgement and, from 18.3.1, for that prompt's own `prompt_result`
+  (bounded to a minute of idle waiting; a prompt that never reports is uncertain). The same bound
+  covers acknowledged prompts with no `agent_start`; streaming, compaction, and extension questions
+  suspend that idle wait. A prompt OMP handled locally
+  (`agentInvoked: false`) owes no result, and a reported prompt that never started a run settles
+  from its status. Prompts are sent with `streamingBehavior: "steer"`, so a message that meets a
+  background run Scient has not seen yet is queued into that run instead of being rejected as
+  busy. Native commands are refused while background work is pending, since OMP runs some as a
+  prompt without that flag. If `begin` joins a continuation that appeared while the message was
+  prepared, a model or level change is restored and a command is refused, both as not sent.
+  Stop closes this thread's session and marks its active turn interrupted; an unexpected process
+  exit during a turn is an uncertain failure. OMP reports model failures as turn data, so
+  `omp/OmpTurnOutcome.ts` classifies each settled turn once: an abort (Scient's Stop closes the
+  process instead of aborting), a model error (`stopReason: "error"`), or an exhausted session
+  retry fails the turn with OMP's message (clipped to 512 characters); `length` completes with that
+  stop reason. From 18.3.1 `prompt_result.status` is authoritative. A failed compaction is a
+  warning.
+- Native assistant envelopes are execution records, not conversation replies. OMP and Scient
+  Agent publish a reply only when an owned text block has content; tool-only and content-free
+  error envelopes produce no chat row. Visible reasoning stays in separate reasoning items.
+  Each envelope/content-index/kind has its own identity and settles at its block end, with
+  `message_end` as the authoritative final snapshot. Snapshots replace partial streams rather
+  than appending them. Duplicate completions and late deltas cannot reopen settled content.
+  A run-end snapshot repairs its identifiable open envelope, an otherwise unobserved response,
+  or a response following this turn's identifiable observed envelope in the ordered native
+  transcript; it never replays a completed envelope. Native identity and transcript position,
+  rather than wall-clock ordering, establish snapshot ownership. Turn failures, retry warnings, tools,
+  requests, and subagent outcomes retain their independent reporting.
+- At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
+  18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
+  that unknown command without an id, so the filter is not sent there. The same command requests
+  `messageUpdates: "delta"`: streaming `message_update` frames then carry only the increment, not the
+  whole message twice per token. Full snapshots grow quadratically with a long reply or tool call
+  and, once the host falls behind, fill an unbounded temporary spool file in the agent; one session
+  wrote 99 GB. Releases without the projection ignore the option and leave it out of the echo. The
+  runtime reads only the message id and role, `delta`, `contentIndex`, and block-end content from
+  these frames.
+- Model-discovery failures stay in redacted server diagnostics rather than the conversation
+  timeline. Text turns can continue without the catalog. Image attachments retry discovery when
+  support is unconfirmed, and report an actionable error if support remains unknown or the model
+  explicitly excludes images; missing capability metadata is not treated as lack of support.
+  Native `contextWindow: null` means unknown capacity, not an invalid model list; fork budgeting
+  receives no capacity override for that model.
+- Images are planned against the outbound frame limit OMP advertises in `ready.maxFrameBytes`
+  (1 MiB on 18.x), because OMP reads inbound commands unchunked. Images that fit with the message
+  go inline; the rest, up to `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` (10 MB), are listed in the
+  message as attachment paths for OMP's `read` tool, which returns image content to image-capable
+  models (verified live on 18.3.1). Larger images are rejected with the limit in the message. Audio
+  is advertised nowhere.
+- Context delivery uses `ContextHandoffBudget` and `ProviderTurnStartService` with the selected
+  instance/model's allowance. V2 delivery records the target native identity and selected items.
+  When that augmented text cannot fit the RPC frame, OMP receives a reference to a private
+  `0600` UTF-8 file under its session directory, containing the exact text. The handoff tells
+  the agent to read the whole file, including successive ranges and wrapped long lines when
+  native tools truncate output. Image planning still uses the remaining physical frame budget.
+  The file is removed when the session scope closes. An allowed slash command cannot be the
+  first fork message: it is rejected before dispatch with guidance to send a normal message
+  first, so native command routing never silently discards retained history.
+- The shared native event log records OMP notifications, every command the client writes, and
+  every `ready` and `response` frame it reads. Each process exposes its `OmpRedaction`, built from
+  its final environment and every secret it received by bootstrap (the MCP bearer, custom-model
+  keys, the models endpoint token). Its `log` form replaces credential fields, bearer and
+  key-shaped text, credential variable values, image data, and extension UI answers before the
+  logger bounds and writes the record. The adapter also applies its `text` form to provider error
+  text (turn errors, warnings, failed commands, `lastError`) and its `exact` form (known secrets
+  of 12 or more characters, nothing else) to every runtime event it emits; OMP text generation
+  redacts its failures the same way. OMP's own log (`~/.omp/logs`) and session transcript still
+  hold whatever the provider echoed. Persisted
+  `open-url` activity keeps only the URL's origin and path; the web links through OMP's loopback
+  `launchUrl` when present.
+- Resume cursors (v4) must match the provider instance, workspace, effective OMP home/profile,
+  protocol, launch policy and OMP major version, and must stay inside Scient's session directory.
+  The executable is not part of the identity, because the transcript lives in Scient's explicit
+  `--session-dir`; a system-to-managed switch or a package-manager upgrade resumes, which #374's
+  idle-aware managed activation relies on. v3 cursors, whose scope hash bound an executable
+  fingerprint, migrate only when that scope recomputed with their own recorded fingerprint still
+  matches; otherwise they, and every v2 cursor (which hashed `PATH`), are refused with the same
+  "start a new session" message.
+- A known event that no longer matches its schema is reported as an observable `UndecodableEvent`
+  warning when it is informational; routing-critical frames (turn boundaries, host requests,
+  subagent identity) stay fail-closed. A slash invocation OMP does not know is forwarded as text,
+  matching OMP itself, while a failed command catalog keeps every slash invocation blocked.
+- Subagent frames preserve native IDs and report under the turn that started the task, with or
+  without an open turn: OMP 18.3.1 runs `task` spawns as background jobs that can outlive the
+  turn and an abort. A task closes on its own terminal `subagent_lifecycle`, on `session_settled`,
+  or when the session closes. A fresh native run delivering a background result starts a visible
+  continuation turn, also after a turn whose outcome was uncertain. A user message arriving during
+  that continuation steers it. An injected `async-result` message is marked as a "Background
+  result" work item in whichever turn receives it. With native
+  settlement signals (18.3.1), pending async work uses the shared Monitoring indicator; live
+  subagents retain the Working indicator. Older runtimes such as 18.2.8 keep the original turn
+  Working across a nonterminal pause and deliver the result into that same turn.
+  Stop closes the provider session, including background jobs, even between turns: native abort
+  alone does not cancel detached work. Late output from a stopped session cannot reopen a turn.
+  Native compact reports a compacted
+  thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
+  session, export, sharing, model, configuration, and extension commands are rejected. The
+  v18.2.8 runtime exposes context usage through `get_state`, not a standalone event, so OMP does not
+  invent a native context-window capacity when none is reported. V2 provider-turn usage and
+  shared session-runtime estimates remain separately attributed.
+- `provider/omp/OmpCustomModels.ts` adapts the shared custom-model connection contract to OMP's
+  explicit extension API for discovery, chat, and background generation. It passes credentials only
+  through a per-process bootstrap file for connections published at process start,
+  refreshes metadata through an authenticated loopback endpoint, and retires the process on
+  credential, endpoint, or model-removal changes. A newly attached keyed connection is withheld
+  until the next OMP process instead of interrupting an active turn. Custom-model readiness is
+  projected separately from native OMP models. See [Custom model connections](./custom-models.md)
+  for ownership and qualification limits.
+- Scient tools, Scient skills, and awareness reach OMP like Pi: `OmpAdapterV2` session opening reads the
+  thread's MCP provider session, rejects one issued to another provider instance, and writes the
+  extension from `provider/omp/OmpScientExtension.ts` (a source template separate from Pi's V2 MCP bridge) as a 0600 file in the session scope, between the session
+  lock and the process, so it is removed after the process on every close path. The file carries
+  no secret. The endpoint, bearer token, and awareness are in a 0600 bootstrap file beside it
+  (`provider/omp/OmpExtensionBootstrap.ts`), which the extension reads and deletes while OMP
+  loads; the adapter deletes it after `ready` if OMP left it unread. Creating an OMP instance
+  sweeps extension files and bootstraps a crashed server left (`sweepStaleOmpExtensionFiles`:
+  only files older than this server's start, skipping another live server's by pid or session
+  lock). No Scient secret is in OMP's
+  environment: OMP's bash tool is a native shell that copies the process's real OS environment,
+  which `delete process.env.X` under Bun does not change, and a child can read its parent's
+  start-up environment anyway. OMP re-imports an extension for every load and re-runs it for
+  in-process subagents after the bootstrap is gone, so each generated extension keeps its first
+  read in a process-wide `globalThis` slot keyed by the bootstrap path: subagents get the same
+  tools over the one MCP connection, and only the first run owns the custom-model refresh loop.
+  The extension proxies Scient's MCP tools with
+  `loadMode: "essential"`, because OMP presents extension tools as `discoverable` by default and
+  keeps those out of the top-level tool list. Tool calls go through Scient's MCP server, which
+  authorizes each one against the session token; `stopSession` revokes it. A tool call may run for
+  65 minutes, above the hour a thread wait can block, as Claude's and Codex's limits allow; the
+  handshake keeps a 3-minute limit. The adapter declares
+  `mcpSessionInjection`, and `SCIENT_SKILL_DELIVERY.omp` is `mcp`.
+- The appended system-prompt element (`provider/omp/OmpScientGuidance.ts`) carries what Claude's
+  session carries: the awareness, Scient's runtime and pull-request linking instructions, and, with
+  the `orchestration` grant, the shared orchestration rules plus a note that OMP's native `task`
+  serves only the models it offers (the current model unless `task.perCallModel` adds a `model`
+  argument), so another model is a `delegate_task`.
+- OMP's RPC host tools (`set_host_tools`) are not used. An unexpected host-tool call is rejected
+  with an explicit warning rather than being silently dropped. Full access is the only runtime
+  mode. `Adapters/OmpAdapterV2.ts` maps the shared native session runtime into V2;
+  Scient Agent uses that same adapter with its own target identity.
+
+### Scient Agent driver
+
+Scient Agent is ScientFactory's agent, a fork of Oh My Pi that speaks the same RPC protocol.
+[`ScientAgentDriver.ts`][scient-agent] runs it through the Oh My Pi adapter, RPC client, custom-model
+bridge and Scient tool extension. What makes it a separate product is an
+[`OmpTarget`](../../apps/server/src/provider/omp/OmpTarget.ts): every Oh My Pi module takes one,
+and reads the product's name, driver kind, executable probe, state variables and state folders
+from it. `ompTarget` describes Oh My Pi; `scientAgentTarget`
+([`ScientAgentTarget.ts`](../../apps/server/src/provider/scient/ScientAgentTarget.ts)) describes
+Scient Agent.
+
+- Identity. The RPC protocol carries no product name, so a target probes the executable before
+  starting it. Oh My Pi is probed with `--version`. Scient Agent is probed with `--runtime-info`,
+  which prints one JSON object: `product`, the Scient Agent `version`, the `upstream` Oh My Pi
+  release, and `rpcProtocolVersions`. The product must be `scient-agent`, the version 0.1.0 or
+  newer below 2.0, the upstream release Oh My Pi 18.2.8 or newer on major 18 or 19 (1.x is built on
+  19), and RPC v2 offered. That upstream range is Scient Agent's own, apart from the stock Oh My Pi
+  provider's.
+  An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
+  runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
+- Two versions. A process reports `version` (the product's, shown to the user) and
+  `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
+  `runtimeVersion`. For Oh My Pi the two are equal. A cursor resumes on the major that wrote it,
+  and Scient Agent's also resumes forward from 18 to 19 (`resumableUpstreamMajors`), since 19 reads
+  an 18 session.
+- State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
+  and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
+  treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a
+  `SCIENT_AGENT_*` variable from a `.env` in the project or the home directory. It keeps its
+  configuration, credentials, logs, caches and native addon there. One thing stays outside: the
+  agent's native sign-in helper keeps its registration under `~/.scient-agent/oauth`, because a
+  URL-scheme handler is registered once per user. Oh My Pi's own variables pass through
+  untouched: Scient Agent ignores them, and an `omp` started from the agent's shell keeps the
+  user's setup.
+- Scient's folders. Sessions are in `<stateDir>/scient-agent-sessions` and generated extensions in
+  `<stateDir>/scient-agent/extensions`. Each product's crash sweep covers only its own folders.
+- Resume. The two products write the same session format, so a cursor names its product: a
+  Scient Agent cursor carries `driverKind`, and one without it is Oh My Pi's. Each product refuses
+  the other's cursor even when the instance id, session folder, workspace and home all match.
+- Model sources. A model reaches the agent from the user's own sign-ins and keys, or from a Scient
+  model connection (`scient_<connection id>` provider ids, delivered through the bootstrap file).
+  A later Scient subscription is a third source and uses that same private channel: Scient signs
+  the user in, and hands the agent an endpoint and a token. Keep account state in Scient, never in
+  the agent's root, and keep the provider id `scient` free for it.
+- Native subagents. Scient-only ingestion separates a stable bounded label from the full
+  assignment and changing activity. The shared OMP RPC decoder retains optional aggregate
+  progress fields; Scient projects observed role, tool, model identity, effort and counters
+  into existing V2 records. `tokens` is the cumulative billing-volume counter, not
+  `contextTokens`; missing observations stay missing, including a missing terminal result.
+  Sparse updates retain known metadata without changing child identity or the original
+  background launch's ownership. Native read-only child conversations project the supplied
+  assignment and terminal result as stable message artifacts.
+  Their steps come from the conversation OMP saves for each subagent (the lifecycle and progress
+  `sessionFile`, which must resolve inside the session directory). `OmpSubagentTranscript.ts`
+  reads complete records in bounded chunks; `OmpAdapterV2` reads at most once a second per
+  subagent while it runs, two reads at a time per session, outside the event consumer, then
+  twice after it ends. `NativeSessionAdapterV2` projects text, reasoning and tool calls into the
+  child thread with ids derived from the saved records, so a re-read writes nothing new; the
+  terminal result appears once, after the steps. Tool input and output use the parent's previews
+  and redaction. The RPC's `get_subagent_messages` returns the same records, unbounded, and only
+  while the process remembers the subagent, so Scient reads the file.
+  Terminal progress can precede the closing lifecycle frame. Matching terminal frames
+  enrich retained metadata and any supplied result or error without reopening the child;
+  identical repeats are ignored.
+  Subscription remains `progress`: this does not ingest a full native tool/thinking transcript. Scient chat groups
+  reuse the shared member presentation with bounded labels and child navigation inside the
+  disclosure, including historical oversized titles and temporarily missing roster entries.
+  Codex, Claude and external Oh My Pi keep their existing behavior.
+- Installation. The driver resolves custom, system, or Scient-managed execution once, and uses
+  that executable for sessions, model probes, and text generation. Managed binaries live in
+  `<baseDir>/provider-runtimes/scient-agent`; account and session roots remain independent. The
+  macOS ARM64 packaging policy can discover the first qualified release without a fabricated
+  bundled artifact. Until publication, the configured executable remains the usable path.
+  Activation shares executable admission with sessions and probes, checks the exact Scient
+  identity/version and RPC v2 state, and preserves the previous version on failure. All installer
+  probes use throwaway state without credentials. See [runtime updates](../operations/managed-provider-runtime-updates.md).
+- Sign-in. The agent reports its own sign-in list (`get_login_providers`: id, name, `kind`
+  account or key, and whether a sign-in is `stored`) during the status check, and the driver
+  publishes it as `connection.accounts`. A sign-in to one of them is published as
+  `connection.accountOperation`, never as `connection.operation`, and `connection.methods` stays
+  empty. Both account fields are optional keys an older client ignores, so the
+  `scient_agent_account` method never reaches a field such a client decodes. The account
+  operation is transient like any other: it is not written to the status cache, and its link,
+  device code and instructions are removed for read-only clients. A sign-in or
+  sign-out names one entry. `ScientAgentConnectionActions` starts one isolated agent process per
+  attempt, sends `login`, turns the agent's `open_url` and `input` requests into the operation's
+  link, device code and instructions, writes each pasted answer straight to that process, and
+  ends on the `login` response. The manager verifies the result against the refreshed list, not
+  against `auth`, which stays `required: false`. A sign-in can ask several questions, each after
+  the previous answer (Cloudflare asks for a token, an account id and a gateway id). Each one
+  that arrives after the attempt was described, including the first, is published on the
+  waiting operation (`nextQuestion`); an answer's `verifying` never replaces a question that
+  already followed it. Every question is published with a server-minted `questionId` that the
+  answer echoes, and each answer is bound to the agent request it was asked in, so an answer
+  typed for an earlier question is refused rather than taken for the open one. A client that
+  predates `questionId` can answer only an operation's first question. What the user pastes is
+  removed from any error the agent returns.
+  Sign-out sends `logout`, and the
+  lifecycle manager then stops the provider's sessions on whichever instances are current: every
+  process that could have read the sign-in started before it was removed. Removal and stop are
+  one uninterruptible step, so a client that disconnects midway cannot leave sessions holding the
+  sign-in. When the agent's process ends or never answers, the sign-in may be gone, and the
+  sessions are stopped as well; when the agent answers that it kept the sign-in, they are not. An agent build that does not report `kind` offers no sign-in.
+- Not yet: more than one instance.
+
+`provider/scient/ScientAgent.live.test.ts` is the opt-in suite against real executables
+(`SCIENT_AGENT_QUALIFY_BINARY`, with `OMP_QUALIFY_BINARY` for the coexistence cases and
+`SCIENT_AGENT_QUALIFY_FULL_TURN=1` for a model turn).
+
+## Scient-assisted provider lifecycle
+
+Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
+capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
+Pi, Oh My Pi, and Scient Agent expose assisted runtime management, but leave model-specific credentials to the
+agent rather than inventing a single account login or logout flow.
+ACP Registry agents expose supported install/remove actions for app-owned registry runtimes and use
+the configured agent's authentication capabilities. Their recorded installation owner is separate
+from generic managed-runtime catalog qualification; executable overrides remain external.
+The lifecycle extension does not create another provider registry, session router, model catalog,
+credential store, or updater.
+
+The canonical architecture, action semantics, provider matrix, extension checklist, evidence levels,
+and T3 maintenance boundary are documented in
+[Provider lifecycle architecture](./provider-lifecycle.md). The
+[capability audit](./provider-lifecycle-capability-audit.md) records provider-specific evidence and
+open qualification questions.
+
+At the integration boundary:
+
+- [`ProviderDriver.ts`][driver] exposes optional connection and managed-runtime capabilities;
+- [`ProviderRegistry`][provider-registry] overlays transient operations on canonical provider
+  snapshots without persisting them as provider truth;
+- [`ProviderConnectionManager`][connection-manager] supervises official provider account flows;
+- [`ProviderRuntimeManager`][runtime-manager] supervises reviewed app-private runtime mutations; and
+- [`packages/scient-provider-runtime`][runtime-package] owns the reviewed artifact and filesystem
+  boundary.
+
+The canonical provider host owns instances, enablement, discovery, and external maintenance.
+Live sessions and turns run through V2 `ProviderSessionManager`, the effect worker, and native
+adapters; the lifecycle extension does not route conversation work through a V1 provider service.
+
+### Settings presentation seam
+
+The provider editor's initial presentation is a small Scient-owned policy over that host state.
+Shipped drivers open on **Models** when the tab exists; unknown/custom drivers stay on their only
+**Configuration** tab. Provider-reported authenticated email is shown initially so multiple account
+instances can be distinguished, while the same reusable sensitive-text component remains redacted
+by default for other uses and lets the user hide or reveal the email. These defaults live in
+`apps/web/src/components/settings/ProviderInstanceCard.tsx` and are guarded by
+`ProviderInstanceCard.tabs.test.tsx` and `RedactedSensitiveText.test.tsx`.
+
+## External runtime maintenance
+
+External runtime maintenance uses T3's ownership resolver in
+`apps/server/src/provider/providerMaintenance.ts`. It proves the resolved binary's installer,
+pins npm's owning prefix, and uses Homebrew's available version rather than npm's version for a
+Homebrew install. For official-tap packages that version comes from Homebrew's published API
+(`HOMEBREW_API_DOMAIN`, default `formulae.brew.sh`), which `brew upgrade` refreshes before
+installing; `brew info` only reads local metadata as of the last `brew update`. With
+`HOMEBREW_NO_INSTALL_FROM_API` or `HOMEBREW_NO_AUTO_UPDATE` set, or when the API is unreachable,
+`brew info` stays authoritative. Homebrew and npm ownership are proven from the real path with symlinks
+followed: a versioned keg or cask under `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/`
+(Windows: the shim beside `node_modules`). Native installer layouts and the global bin
+directories of pnpm, Bun, and Vite+ may match on either the resolved path or its real target,
+because those installers place real files or their own symlinks there. Cursor and Grok are the
+exception: the provider CLI is its own updater and detects the installer that owns it, so any
+resolved executable runs `<binary> update`. Anything unproven stays manual-only but still reports
+the version gap. Resolution is cached per instance and revalidated immediately before mutation;
+the runner refuses when the lock key changed since the advisory and reports success only when the
+refreshed provider is still installed with a readable, current version.
+Scient-managed paths remain manual-only at this generic boundary: their separate runtime actions
+own discovery, verification, activation, leases, and rollback. Never send a managed binary through
+an inferred system-package update command.
+
+## Model manifest
+
+The model picker's legacy section is driven by explicit per-model statuses in
+`apps/server/src/provider/model-manifest.json`. Unknown discovered models are
+visible by default, while known legacy models remain explicitly classified;
+provider-native legacy flags are preserved. The top-level `currentModels` lists
+remain for compatibility and as positive current classifications. The
+`ModelManifest` service (`apps/server/src/provider/ModelManifest.ts`) refreshes
+policy from the same file on Scient's `main` branch, so changing a model's
+classification is a reviewed Scient commit rather than an app release.
+Preference order is remote fetch, then the on-disk copy of the last successful
+fetch in the state directory, then the bundled copy.
+
+Refreshes are TTL-gated, run concurrently with provider probes, respect the
+`enableProviderUpdateChecks` setting, and never fail a provider check. Codex,
+Claude, and Antigravity apply the classification to snapshots. Claude's
+built-in catalog is manifest-owned; dynamic providers expose unclassified
+discoveries by default. Keep the remote source Scient-owned: pointing it at
+upstream would let an unrelated repository change Scient's model policy
+outside Scient's review and release boundary.
+
+Compatibility policies are matched by `t3CodeRange` against the build's version. Release builds
+are stamped with their Scient version (for example `0.6.18`); unstamped development builds keep
+upstream's `0.0.x` version and match as newer than every release. Upstream policies use T3's
+version space (`>=0.0.42`) and describe `main`'s code, so a release build applies a fetched policy
+only when its range names a Scient release (`0.6.0` or later); otherwise its bundled policy stays in
+effect. To change what shipped builds see, for example to flag a newly broken provider version,
+write a Scient-scoped range such as `>=0.6.18 <0.7.0`. Oh My Pi has no upstream policy: its only
+entry is Scient-scoped from its first release (`>=0.6.18`), supports `>=18.2.8 <19.0.0`, and marks
+19 and later unsupported, matching the client's own major cap (`OMP_SUPPORTED_MAJOR`).
+
+Releases up to 0.6.17 predate that rule and apply every fetched policy. The
+`pre-release-scoping-compatibility.json` test fixture pins what they resolve; the Codex policies
+are split at `0.6.18` for that reason.
+
+For newer clients, a catalog entry marked `legacy` places that discovered model under **Legacy
+models**, and an entry marked `current` clears a stale provider legacy flag. Known older Codex IDs
+and Antigravity model families stay in the manifest as explicit legacy entries; Antigravity
+Low/Medium/High variants inherit their base family's status. Droid's **More models** grouping is a
+separate provider-specific curation policy.
+
+## Attachment access
+
+The server stores uploaded attachments outside the project workspace. Scient's composer accepts
+images and generic files, while each provider decides whether to receive a native content block or
+a safe path reference according to its real capabilities.
+
+The [attachment boundary](../../apps/server/src/orchestration-v2/AttachmentClaims.ts) validates
+and claims uploads for a thread; adapters choose native input formats for those environment-local
+files.
+
+- Codex, Claude, Cursor, and Grok send images as native image inputs and skip generic files. For
+  these providers, generic files reach the agent only as file paths in the turn text.
+- OpenCode sends PNG/JPEG/GIF/WebP images, text files, and PDFs up to 20 MB as native file parts
+  with their real mime type. Everything else (ZIP and other binaries, image formats model APIs
+  reject, oversized files) falls back to the file path in the turn text, like the other providers.
+- Antigravity sends BMP/JPEG/PNG/WebP images and common audio formats as native blocks, UTF-8 text
+  as embedded resources, and PDFs as local resource links. Text is limited to 1 MiB per file,
+  images to 10 MiB each, and all attachments to 50 MiB per turn. Unsupported or oversized inputs
+  fail explicitly instead of being dropped. Its ACP file-service requests are confined to the
+  workspace and attachments directory.
+
+The server must never copy a file into the project or bypass a provider's approval rules merely to
+make the shared UI uniform. A provider that cannot ingest a format natively receives a path only
+when its adapter explicitly supports that fallback.
+
+## How provider work is requested
+
+Clients dispatch native commands through `orchestration.dispatchCommand`, defined in
+[`orchestrationV2.ts`][contracts]. Provider-facing requests include `message.dispatch`, `run.interrupt`,
+`runtime-request.respond`, `checkpoint.rollback`, and `provider-session.detach`, with
+`thread.model-selection.set`, `thread.runtime-mode.set`, and `thread.interaction-mode.set`. Native queued-run controls share this path.
+The retained Scient message-boundary fork command is routed to `ConversationForkService`.
+
+`Orchestrator` serializes the thread command, plans state transitions, and commits events, receipt,
+projection and outbox effects through `EventSink`. `EffectWorker` performs the provider call via
+the owning V2 service. Adapters emit `ProviderAdapterV2Event` records; `ProviderEventIngestor`
+normalizes and persists them. Clients read bounded shell and thread streams, not V1 internal
+commands or an authoritative client-side queue. See [architecture](./01_architecture.md).
+
+### Provider-initiated native work
+
+A native extension can start work after the previous Scient run settles. Its adapter buffers the
+new frames and offers `ProviderContinuationRequest.initiated` through the shared continuation queue. The
+server admits an independent run only while that exact provider instance, live session and native
+thread still own an idle application thread. The request has a stable work ID, a generation guard
+invalidated by Stop, and a callback that disposes a dropped buffer. Duplicate offers replay the
+same command receipt; archived, replaced or busy owners cannot acquire another run.
+
+[`ProviderContinuationService`](../../apps/server/src/orchestration-v2/ProviderContinuationService.ts)
+handles the offer and generation-guarded reoffer; native adoption uses the existing runtime rather
+than sending another prompt. Pi session-file ownership is leased by
+[`PiSessionFileLeases`](../../apps/server/src/orchestration-v2/scient-provider/PiSessionFileLeases.ts)
+through `ProviderSessionManager`. Shared native producer close/interrupt ordering lives in
+[`NativeProducerLifecycle`](../../apps/server/src/orchestration-v2/scient-provider/NativeProducerLifecycle.ts)
+and is used by `NativeSessionAdapterV2`; Pi's own RPC adapter keeps its protocol-specific generation
+and turn ownership.
+
+The adapter captures the applied model, runtime policy and workspace when that native generation
+begins. Admission records this immutable configuration with its exact native owner; adoption does
+not apply later thread defaults, reopen a disposed session or reload its conversation. Changing
+next-turn defaults cannot relabel existing work or widen its run-scoped MCP authority. A captured
+owner that is lost before adoption fails the run rather than recreating the buffered generation.
+
+The captured cwd must be a known absolute execution directory. Both ordinary and pending-transfer
+admission persist checkpoint ownership in that directory, even if the project's workspace is
+relocated before admission or adoption. Startup refuses a checkpoint scope that differs from the
+captured native cwd. Unknown native cwd is refused rather than replaced with current project
+ownership; the producer must supply its actual applied directory.
+
+Admission records an agent-authored system notification rather than a user message. The adapter's
+`startTurn` receives `message.notification.source.kind = "provider_work"` and its `workId`: it
+adopts the buffered native work under the admitted run/attempt identities and sends no prompt.
+Normal event ingestion, terminal settlement and Stop then use that run's ownership. Adapters must
+not project unowned frames or treat the notification text as instructions for another native turn.
+
+### Stop ownership and confirmation
+
+An accepted `run.interrupt` commits intent; it does not prove the external process ended.
+The outbox captures the exact run attempt, provider session, thread and turn. V2
+`ProviderTurnControlService` loads that recorded context and calls the owning live session's
+interrupt operation. A pre-acceptance start uses `interruptPendingStart` and durable native
+acceptance evidence; absence of a turn receipt is not permission to target a replacement session.
+Restart waits for terminal provider/attempt state before replacement when a live session exists.
+Natural terminal events and persisted attempt identity remain authoritative.
+
+Adapters own protocol cancellation and process teardown. `ProviderSessionManager` owns scopes,
+idle release and exact-instance close; `ProviderRuntimeRecoveryService` settles process loss.
+Stop, failure and interruption hold ordinary queued runs. Neither session-idle state nor a later
+successful message implicitly releases that hold. Delayed terminal/checkpoint echoes from an older
+attempt cannot override newer explicit Send/Resume or hold work admitted after its original terminal
+boundary. Do not reintroduce the V1 command-reactor's
+cancellation handle or its timing assumptions as the shared V2 policy.
+
+### Assistant delivery
+
+`RunExecutionService` applies `assistantStreaming.ts` to assistant and reasoning output.
+`responseStreamingMode: "turn"` retains streaming text until completion; `"paragraph"` emits
+stable Markdown boundaries with a 400-ms update throttle, preserving unfinished fences and
+headings until their content arrives. Completed items flush in either mode. This replaces the
+V1 ingestion buffer's 24,000-character spill rule. Thread live-event coalescing and wire budgets
+bound client delivery separately from provider execution and stored history.
+
+[drivers]: ../../apps/server/src/provider/builtInDrivers.ts
+[codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
+[claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
+[cursor]: ../../packages/provider-cursor/src/server/driver.ts
+[grok]: ../../packages/provider-grok/src/server/driver.ts
+[opencode]: ../../packages/provider-opencode/src/server/driver.ts
+[antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
+[antigravity-adapter]: ../../apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
+[antigravity-provider]: ../../apps/server/src/provider/AntigravityProvider.ts
+[antigravity-installation]: ../../apps/server/src/provider/AntigravityInstallation.ts
+[antigravity-release]: ../../apps/server/src/provider/antigravityRelease.ts
+[antigravity-auth]: ../../apps/server/src/provider/AntigravityAuth.ts
+[antigravity-auth-support]: ../../apps/server/src/provider/antigravityAuthSupport.ts
+[antigravity-text]: ../../apps/server/src/textGeneration/AntigravityTextGeneration.ts
+[provider-auth-service]: ../../apps/server/src/provider/ProviderAuthService.ts
+[provider-setup]: ../../packages/contracts/src/providerSetup.ts
+[opencode-server-owner]: ../../packages/provider-opencode/src/server/OpenCodeServerOwner.ts
+[droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
+[pi]: ../../packages/provider-pi/src/server/driver.ts
+[omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
+[scient-agent]: ../../apps/server/src/provider/Drivers/ScientAgentDriver.ts
+[pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
+[agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
+[adapter]: ../../packages/provider-core/src/server/ProviderAdapter.ts
+[awareness]: ../../apps/server/src/provider/ScientAwareness.ts
+[instances]: ../../apps/server/src/provider/ProviderInstanceRegistry.ts
+[registry]: ../../apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts
+[sessions]: ../../apps/server/src/orchestration-v2/ProviderSessionManager.ts
+[driver]: ../../packages/provider-core/src/server/driver.ts
+[provider-registry]: ../../apps/server/src/provider/ProviderRegistry.ts
+[connection-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderConnectionManager.ts
+[runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
+[runtime-package]: ../../packages/scient-provider-runtime/
+[contracts]: ../../packages/contracts/src/orchestrationV2.ts
+
+Managed subscription-sharing OAuth and remote handoff are retained as upstream machinery,
+but are not enabled in Scient. Native Codex sign-in remains the active connection path.
+
+Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
+metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
+do not establish current access, and an authoritative empty catalog must clear the old list.
+
+Antigravity text-generation helpers deny tool requests, but native hooks and MCP configuration can
+run before the prompt. They reject profiles with such configuration before launch. Prompt
+instructions and tool denial do not create a native sandbox.
+See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).

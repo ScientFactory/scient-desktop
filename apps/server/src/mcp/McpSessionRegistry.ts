@@ -43,6 +43,7 @@ export interface McpCredentialConnector {
   readonly connectorId: string;
   readonly serverName: string;
   readonly displayName: string;
+  readonly authRevision?: number;
 }
 // SCIENT-FORK:END
 
@@ -198,6 +199,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           serverName: connector.serverName,
           displayName: connector.displayName,
           url: connectorProxyUrl(endpoint, connector.connectorId),
+          ...(connector.authRevision === undefined ? {} : { authRevision: connector.authRevision }),
         }),
       );
       // SCIENT-FORK:END

@@ -91,7 +91,9 @@ export async function showSourceRowMenu(input: {
           icon: "trash",
         },
       ];
+  // A source only in the Library offers joining the project first: it is what most need next.
   const items: Item[] = [
+    ...addItems,
     { id: "view", label: m(msg("View source details")) },
     {
       id: "edit",
@@ -107,7 +109,6 @@ export async function showSourceRowMenu(input: {
         : m(msg("Select", { $context: "verb, adds a source to the selection" })),
     },
     ...readingItems,
-    ...addItems,
     ...removeFromProjectItems,
     ...trashItems,
   ];

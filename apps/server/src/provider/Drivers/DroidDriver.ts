@@ -20,6 +20,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../../scientServerSettings.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -104,7 +105,8 @@ export type DroidDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ScientServerSettings;
 
 const withInstanceIdentity =
   (input: {
@@ -169,6 +171,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serverConfig = yield* ServerConfig;
     const serverSettings = yield* ServerSettingsService;
+    const scientSettings = yield* ScientServerSettings;
     const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
     const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const platform = yield* HostProcess.Platform;
@@ -235,7 +238,10 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
       runtime: managedRuntime.summary,
       assistedAccountActionsAllowed,
     });
-    const makeAcpRuntime = yield* makeDroidCustomModelsRuntimeFactory(serverSettings, instanceId);
+    const makeAcpRuntime = yield* makeDroidCustomModelsRuntimeFactory(
+      customModelSettingsSource(serverSettings, scientSettings),
+      instanceId,
+    );
 
     // Scient Extensions lists the MCP servers Droid configures itself, from each full probe.
     const nativeInventory = yield* Effect.acquireRelease(

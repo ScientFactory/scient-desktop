@@ -100,7 +100,6 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     turnDiffSummaries: [],
     runs: [],
     routeThreadKey: `environment-local:thread-${Math.random().toString(36).slice(2)}`,
-    onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
     supportsConversationRollback: false,
@@ -1856,7 +1855,9 @@ it("sanitizes executable HTML while preserving supported assistant markup", asyn
   expect(markup).not.toContain("onclick=");
   expect(markup).not.toContain("onerror=");
   expect(markup).not.toContain("javascript:");
-  expect(markup).not.toContain("globalThis.__t3Xss");
+  // Words shows a raw script as escaped text (GFM's tag filter); it never runs.
+  expect(screen.container.querySelector("script")).toBeNull();
+  expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
 });
 
 // regression: f1e6f0c9bb fix(web): stop showing red x summaries for ordinary tool failures (#8395)

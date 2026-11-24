@@ -16,9 +16,11 @@ export function seedDraftModelSelection(draftId: DraftId, projectRef: ScopedProj
   const project = readProject(projectRef);
   const settings = readEnvironment(projectRef.environmentId)?.serverConfig?.settings;
   const providers = readEnvironmentProviders(projectRef.environmentId) ?? [];
-  const defaultSelection = settings
+  const projectSettings = settings
     ? resolveProjectSettings(settings, projectRef.projectId, project ?? undefined).settings
-        .defaultModelSelection
+    : null;
+  const defaultSelection = projectSettings
+    ? projectSettings.defaultModelSelection
     : (project?.defaultModelSelection ?? null);
   const resolution = resolveNewThreadModelSelection({
     defaultSelection:
@@ -26,7 +28,7 @@ export function seedDraftModelSelection(draftId: DraftId, projectRef: ScopedProj
       (useComposerDraftStore.getState().stickyActiveProvider !== null || !settings
         ? null
         : resolveProjectDefaultProviderModelSelection(providers, settings, projectRef.projectId)),
-    fallbackSelection: settings?.fallbackModelSelection ?? null,
+    fallbackSelection: projectSettings?.fallbackModelSelection ?? null,
     providers,
     ...(settings ? { settings } : {}),
     projectId: projectRef.projectId,

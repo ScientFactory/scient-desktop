@@ -4,7 +4,12 @@ import type {
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
 import type { ScientSourceType } from "@scientfactory/scient-sources";
-import { journalIconIdentity } from "@t3tools/shared/scientJournalIdentity";
+import {
+  journalCoverDoiParts,
+  journalCoverEligible,
+  journalIconIdentity,
+  journalRecordDoi,
+} from "@t3tools/shared/scientJournalIdentity";
 import { useMessages } from "gt-react";
 import {
   Book,
@@ -25,7 +30,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { readScientSourceJournalIcon } from "./client";
-import { publisherMark, sourceDoi } from "./publisherMarks";
+import { publisherMark } from "./publisherMarks";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 
@@ -88,7 +93,7 @@ function discoverIcon(
   cache.set(lookupKey, entry);
   if (cache.size > MAX_CACHED_JOURNALS) cache.delete(cache.keys().next().value!);
   if (entry.pending || entry.retryAt > Date.now()) return entry;
-  entry.pending = Promise.resolve()
+  const renewal = Promise.resolve()
     .then(() => resolveIcon(environmentId, { root, sourceId }))
     .then((icon) => {
       const now = Date.now();
@@ -109,7 +114,14 @@ function discoverIcon(
     })
     .finally(() => {
       delete entry.pending;
+      if (!shared) return;
+      delete shared.pending;
+      // Not renewed: the others wait as this card does, instead of each asking again.
+      if (cache.get(cacheKey) === shared) shared.retryAt = Math.max(shared.retryAt, entry.retryAt);
     });
+  entry.pending = renewal;
+  // Cards that share a cover renew it once: the others wait on this lookup.
+  if (shared) shared.pending = renewal;
   return entry;
 }
 
@@ -141,16 +153,10 @@ export function SourceJournalIcon(props: { readonly record: SourceRecord }) {
   );
 }
 
-/**
- * The parts of a DOI the environment reads a cover address from: its registrant, a Springer
- * Nature journal id, or an ISSN embedded in an older Wiley or Elsevier DOI. Papers of one
- * journal share these, so they share one cover; a corrected DOI looks the cover up again.
- */
+/** Papers of one journal share their DOI's cover evidence, so they share one cover. */
 function coverEvidence(record: SourceRecord): string | null {
-  const match = sourceDoi(record)?.match(
-    /^(10\.\d{4,9})\/(?:s(\d{5})-|(?:j\.|s)(\d{4}-\d{3}[\dx])[.(])?/u,
-  );
-  return match ? [match[1], match[2] ?? match[3] ?? ""].join(" ") : null;
+  const parts = journalCoverDoiParts(journalRecordDoi(record));
+  return parts ? [parts.prefix, parts.springerJournal ?? parts.embeddedIssn ?? ""].join(" ") : null;
 }
 
 /** The journal's current cover, fetched by the environment; nothing while there is none. */
@@ -172,7 +178,8 @@ export function SourceJournalCover(props: {
     props.record.sourceId,
     props.record.identifiers.filter(({ scheme }) => /^(?:doi|e?issn)$/iu.test(scheme.trim())),
   ]);
-  if (identity === null) return null;
+  // A preprint or a source without a journal has no cover: nothing is asked or scheduled.
+  if (!journalCoverEligible(props.record)) return null;
   return (
     <JournalCoverImage
       key={lookupKey}

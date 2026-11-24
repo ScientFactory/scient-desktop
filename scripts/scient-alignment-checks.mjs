@@ -22,7 +22,14 @@ export function checkEnvironment(env, home) {
   const hostOwned = (name) => {
     const upper = name.toUpperCase();
     return (
-      ["ELECTRON_RUN_AS_NODE", "T3CODE_HOME", "T3CODE_CLI_PATH"].includes(upper) ||
+      [
+        "ELECTRON_RUN_AS_NODE",
+        "T3CODE_HOME",
+        "T3CODE_CLI_PATH",
+        // The host thread's agent marker: test processes would look like that thread's agents.
+        "T3CODE_THREAD_ID",
+        "T3CODE_DESKTOP_HOST_SCOPE",
+      ].includes(upper) ||
       upper.startsWith("SCIENT_NEXT_") ||
       upper.startsWith("SCIENT_ANALYTICS_")
     );
@@ -327,8 +334,8 @@ function readBaseline(path) {
 /**
  * A Vitest JSON report's test-file count and failures: `file > full test name`
  * for a failed test and `file > (file error)` for a failed file with an error
- * of its own or no failed test (an import or hook failure). Null when there is
- * no readable report.
+ * of its own or no failed test (an import or hook failure). `signatures` adds
+ * how each failed (`<id> :: AssertionError`). Null when there is no readable report.
  */
 export function readVitestReport(reportPath, cwd) {
   let report;
@@ -338,15 +345,40 @@ export function readVitestReport(reportPath, cwd) {
     return null;
   }
   if (!Array.isArray(report?.testResults)) return null;
-  const failures = report.testResults.flatMap((file) => {
+  const signatures = report.testResults.flatMap((file) => {
     const path = NodePath.relative(cwd, file.name).split(NodePath.sep).join("/");
     const tests = (file.assertionResults ?? [])
       .filter((test) => test.status === "failed")
-      .map((test) => `${path} > ${test.fullName}`);
+      .map((test) => `${path} > ${test.fullName}${SIGNATURE}${failureKind(test.failureMessages)}`);
     const fileError = file.status === "failed" && (Boolean(file.message) || tests.length === 0);
-    return fileError ? [...tests, `${path} > (file error)`] : tests;
+    return fileError ? [...tests, `${path} > (file error)${SIGNATURE}file`] : tests;
   });
-  return { files: report.testResults.length, failures: [...new Set(failures)].sort() };
+  const sorted = [...new Set(signatures)].sort();
+  return {
+    files: report.testResults.length,
+    failures: [...new Set(sorted.map(failureId))].sort(),
+    signatures: sorted,
+  };
+}
+
+const SIGNATURE = " :: ";
+/** A failure's test ID, without the kind its signature adds. */
+export const failureId = (signature) => signature.split(SIGNATURE)[0];
+
+/**
+ * How a test failed, stable across runs: each reported error's kind, sorted, duplicates kept
+ * (a cleanup error after an assertion adds one). A kind is `timeout` for Vitest's own
+ * "Test/Hook timed out" error, else the error's name (`AssertionError`, `TypeError`, `Error`),
+ * else `error`; never the message, which carries paths, ports and durations.
+ */
+function failureKind(messages) {
+  const kinds = (messages?.length ? messages : [""]).map((message) => {
+    const first = String(message).trimStart();
+    // Vitest raises its timeouts as a plain Error.
+    if (/^(?:Error: )?(?:Test|Hook) timed out in \d+ms/u.test(first)) return "timeout";
+    return /^((?:[A-Z]\w*)?(?:Error|Exception))(?::|\s|$)/u.exec(first)?.[1] ?? "error";
+  });
+  return kinds.sort().join("+");
 }
 
 /**

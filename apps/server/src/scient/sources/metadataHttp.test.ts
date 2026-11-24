@@ -74,6 +74,37 @@ describe("metadata HTTP completion", () => {
     ).rejects.toThrow(/too much data/);
   });
 
+  it("gives a request one budget across its redirects", async () => {
+    const seen: string[] = [];
+    const signals: Array<AbortSignal | undefined> = [];
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      seen.push(request.url ?? "");
+      if (request.url === "/first") {
+        response.writeHead(302, { Location: "https://registry.example/second" }).end();
+      } else {
+        // Hold the second hop open until the shared deadline signal aborts it.
+        response.writeHead(200);
+      }
+    });
+    const request = makeMetadataRequest((url, options, onResponse) => {
+      signals.push(options.signal);
+      return fixture.send(url, options, onResponse);
+    });
+
+    await expect(
+      request(new URL("https://registry.example/first"), agent, {
+        deadlineMs: 120,
+        timeoutMs: 1_000,
+      }),
+    ).rejects.toThrow("The metadata request timed out.");
+    expect(seen).toEqual(["/first", "/second"]);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBeDefined();
+    expect(signals[1]).toBe(signals[0]);
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
   it("follows complete HTTPS redirects and still refuses plain HTTP before opening a socket", async () => {
     await using fixture = await startHttpTransport((request, response) => {
       request.resume();

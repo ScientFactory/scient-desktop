@@ -1150,7 +1150,7 @@ effectIt.effect(
             run: (input) => {
               spawnedArgs.push(input.args);
               const isIpv6 = input.args.includes("tcpv6");
-              const isTasklist = input.command === "tasklist.exe";
+              const isTasklist = input.command.endsWith(String.raw`\System32\tasklist.exe`);
               const failTasklist = isTasklist && tasklistCalls++ === 0;
               return Effect.succeed({
                 stdout: isTasklist
@@ -1459,7 +1459,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            if (input.command === "tasklist.exe") {
+            if (input.command === String.raw`C:\Windows\System32\tasklist.exe`) {
               return Effect.succeed(
                 processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
               );
@@ -1480,6 +1480,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
           },
         }),
         Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Environment, {}),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
         TestOwnedLocalEndpointsLive,
       ),
@@ -1621,6 +1622,59 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
       expect(requests).toEqual([configuredUrl]);
       expect(commands).toEqual([]);
       expect(fileReads).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips the DevTools port of a browser an agent's tool launched on %s",
+  (platform) => {
+    const appPort = 43_126;
+    const devToolsPort = 43_127;
+    const agentEnvironment = `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`;
+    const procFiles: Record<string, string> = {
+      "/proc/4242/environ": agentEnvironment,
+      "/proc/4242/cmdline": "node\0server.js\0",
+      "/proc/6000/environ": agentEnvironment,
+      "/proc/6000/cmdline": "/opt/google/chrome/chrome\0--remote-debugging-port=0\0about:blank\0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procFiles[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.succeed(
+                processOutput(
+                  input.command === "lsof"
+                    ? `p4242\ncnode\nn127.0.0.1:${appPort}\np6000\ncchrome\nn127.0.0.1:${devToolsPort}\n`
+                    : `  4242 1 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                        `  6000 1 /opt/google/chrome/chrome --remote-debugging-port=0 about:blank PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`,
+                ),
+              ),
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          TestOwnedLocalEndpointsLive,
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.reject(new Error()))),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      // SCIENT-FORK: Scient lists only declared URLs.
+      const urls = [`http://localhost:${appPort}/`, `http://localhost:${devToolsPort}/`];
+      expect(yield* scanner.scan(urls)).toMatchObject([
+        { port: appPort, pid: 4242, agent: { threadId: "thread-agent" } },
+      ]);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -1807,6 +1861,46 @@ effectIt.effect("stops only a job's own process group", () =>
   }),
 );
 
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+effectIt.effect("reads no environment from a macOS platform binary's argv", () =>
+  Effect.sync(() => {
+    // `ps -E` appends no environment to `/bin/bash`, whose argv spells the assignment out.
+    const withEnvironment = [
+      "  200 /usr/local/bin/codex app-server HOME=/Users/a",
+      "  300 /bin/bash -c COMMAND=b npm run dev & wait",
+      "  301 /usr/local/bin/node /usr/local/bin/npm run dev COMMAND=a HOME=/Users/a",
+      "  302 /usr/local/bin/node vite COMMAND=a HOME=/Users/a",
+    ].join("\n");
+    const withoutEnvironment = [
+      "  200 /usr/local/bin/codex app-server",
+      "  300 /bin/bash -c COMMAND=b npm run dev & wait",
+      "  301 /usr/local/bin/node /usr/local/bin/npm run dev",
+      "  302 /usr/local/bin/node vite",
+    ].join("\n");
+    const variables = PortScanner.parsePsEnvironmentVariables(withEnvironment, withoutEnvironment, [
+      "COMMAND",
+      "HOME",
+    ]);
+    expect([...variables.keys()]).toEqual([200, 301, 302]);
+    expect([...variables.get(200)!]).toEqual([["HOME", "/Users/a"]]);
+    expect(variables.get(301)!.get("COMMAND")).toBe("a");
+
+    // An unreadable leader names no command: what it inherited cannot be read anywhere else.
+    const rows = [
+      { pid: 200, ppid: 1, pgid: 200 },
+      { pid: 300, ppid: 200, pgid: 300 },
+      { pid: 301, ppid: 300, pgid: 300 },
+    ];
+    const table = new Map(rows.map((row) => [row.pid, row]));
+    expect(PortScanner.agentCommandsInGroup(variables, table.get(300)!).size).toBe(0);
+    // Nor does a leader whose parent is unreadable: the parent cannot rule out inheritance.
+    expect(
+      PortScanner.agentCommandsInGroup(variables, { pid: 301, ppid: 300, pgid: 301 }).size,
+    ).toBe(0);
+  }),
+);
+// SCIENT-FORK:END macos-unreadable-environment
+
 const AGENT_SERVER_SCRIPT = `
 const server = require("node:http").createServer((_, response) => {
   response.writeHead(200, { "content-type": "text/html" });
@@ -1819,10 +1913,21 @@ server.listen(0, "127.0.0.1", () => {
 
 const AGENT_COMMAND_ENV = "T3CODE_TEST_AGENT_COMMAND";
 
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+// The CLI starts the command as a group leader and names it there. Both are node, whose
+// environment macOS shows; it hides a platform binary's, such as bash's.
+const AGENT_CLI_SCRIPT = `
+require("node:child_process").spawn(process.execPath, ["-e", process.argv[1]], {
+  detached: true,
+  env: { ...process.env, ${AGENT_COMMAND_ENV}: "command-live" },
+  stdio: ["ignore", "inherit", "ignore"],
+}).once("exit", () => process.exit());
+`;
+
 /**
- * A real HTML server with an agent's environment, started the way an agent's tool shell starts a
- * job: under a detached shell with job control, in a group of its own. Release kills only the pids
- * it started.
+ * A real HTML server with an agent's environment, started the way an agent CLI starts a command:
+ * detached, in a group of its own that it leads, named in its environment.
+ * Release kills only the pids it started.
  */
 const agentServer = () =>
   Effect.acquireRelease(
@@ -1833,17 +1938,12 @@ const agentServer = () =>
       readonly exited: Promise<void>;
     }>((resume) => {
       const env = { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-live" };
-      // dash ignores `set -m` without a terminal; bash, like agent tool shells, honors it.
       const child = NodeChildProcess.spawn(
-        "bash",
-        [
-          "-c",
-          `set -m; ${AGENT_COMMAND_ENV}=command-live "$0" -e "$1" & wait`,
-          process.execPath,
-          AGENT_SERVER_SCRIPT,
-        ],
+        process.execPath,
+        ["-e", AGENT_CLI_SCRIPT, AGENT_SERVER_SCRIPT],
         { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
       );
+      // SCIENT-FORK:END macos-unreadable-environment
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       child.once("error", (error) => resume(Effect.die(error)));
       child.stdout?.once("data", (chunk) => {
@@ -1906,7 +2006,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       expect(stops).toEqual([["command-live", true]]);
-      // The shell waits on its job, so it exits once the job has.
+      // SCIENT-FORK: macos-unreadable-environment — the CLI exits once its command has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
     }).pipe(

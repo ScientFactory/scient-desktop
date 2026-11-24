@@ -6,6 +6,7 @@ import type {
   ScientSourceImportOperation,
   ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
+  ScientSourcesOverviewResult,
   ScientSourcesReadingStateResult,
   ScientSourcesScope,
   ZoteroConnection,
@@ -46,6 +47,7 @@ import {
   emptyZoteroPage,
   importOutcomeFromOperation,
   initialSourcesWorkflowState,
+  samePinState,
   sourcesWorkflowReducer,
   workflowPreflightImportCounts,
   workflowReviewedImportCounts,
@@ -93,6 +95,8 @@ export function useScientSources(input: {
     notBrought?: ScientSourceImportOperation["notBrought"];
   } | null>(null);
   const overviewRequestRef = useRef(0);
+  /** The last full list of each scope here, reused when the server says it is unchanged. */
+  const heldOverviews = useRef(new Map<string, ScientSourcesOverviewResult>());
   const zoteroRequestRef = useRef(0);
   const detailFetchRef = useRef(0);
   // Collections of a library the person already left must not replace the current ones.
@@ -147,13 +151,33 @@ export function useScientSources(input: {
     // call while a durable import runs, and neither may starve the other.
     const request = nextOverviewRequestToken();
     dispatch({ type: "overviewRequestStarted", request });
-    return await readScientSources(
-      input.environmentId,
-      input.root,
-      inLibraryView() ? "library" : undefined,
-    ).then(
-      (next) => {
+    const scope = inLibraryView() ? "library" : undefined;
+    const heldKey = `${contextKey}\0${scope ?? ""}`;
+    const held = heldOverviews.current.get(heldKey);
+    return await readScientSources(input.environmentId, input.root, scope, held?.revision).then(
+      (answer) => {
+        // Same revision: the rows, collections and notices held are this answer's.
+        const { unchanged, ...fresh } = answer;
+        const next: ScientSourcesOverviewResult =
+          unchanged && held
+            ? {
+                ...fresh,
+                records: held.records,
+                recordDiagnostics: held.recordDiagnostics,
+                ...(held.organization ? { organization: held.organization } : {}),
+                ...(held.noticeChanges ? { noticeChanges: held.noticeChanges } : {}),
+              }
+            : fresh;
+        // A late reply for a context or request already left changes neither the screen nor
+        // the lists held.
         if (isCurrentContext() && overviewRequestRef.current === request) {
+          if (next.revision) {
+            // One context at a time: a list of the context left behind is never kept.
+            for (const key of heldOverviews.current.keys()) {
+              if (!key.startsWith(`${contextKey}\0`)) heldOverviews.current.delete(key);
+            }
+            heldOverviews.current.set(heldKey, next);
+          }
           dispatch({ type: "overviewArrived", request, overview: next });
         }
         return next;
@@ -204,7 +228,17 @@ export function useScientSources(input: {
   ): Promise<ScientSourceDetailResult> => {
     const cached = state.sourceDetails[sourceId];
     const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
-    if (cached && summary?.revision === cached.revision) return cached;
+    // Review snapshots and Library details (kept copies, review holder names) read project files
+    // whose changes do not bump the source's revision, so they always revalidate.
+    if (
+      !reviewId &&
+      state.overview?.scopes === undefined &&
+      cached &&
+      summary?.revision === cached.revision &&
+      samePinState(summary, cached)
+    ) {
+      return cached;
+    }
     const atDetailFetch = ++detailFetchRef.current;
     try {
       const detail = await readScientSource(input.environmentId, {

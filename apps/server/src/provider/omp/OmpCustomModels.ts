@@ -30,7 +30,7 @@ import {
   effectiveCustomModelReasoning,
 } from "../../customModelCapabilities.ts";
 import type { ServerSettings } from "@t3tools/contracts";
-import type { ServerSettingsService } from "../../serverSettings.ts";
+import type { CustomModelSettingsSource } from "../../scientServerSettings.ts";
 import { OmpExecutableGate } from "./OmpExecutableGate.ts";
 import {
   ompExtensionBootstrapPrelude,
@@ -524,7 +524,7 @@ const settingsRevision = (settings: ServerSettings): number | undefined => {
 export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeClientFactory")(
   function* (
     target: OmpTarget,
-    settings: Pick<ServerSettingsService["Service"], "resolveCustomModels" | "subscribeChanges">,
+    settings: CustomModelSettingsSource<"subscribeChanges", "resolveCustomModels">,
     instanceId: ProviderInstanceId,
     stateDir: string,
     makeProcess: OmpProcessFactory = makeOmpRpcProcess,

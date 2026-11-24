@@ -53,8 +53,8 @@ import {
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
-// SCIENT-FORK:START — file-link masking and scientific math use the same authored offsets.
-import { scientMathRanges } from "~/scient/math/scientMathRanges";
+// SCIENT-FORK:START — formulas in source order, footnotes included (scient/math).
+import { scientFormulaRanges } from "~/scient/math/scientFormulaRanges";
 // SCIENT-FORK:END
 
 export type SkillMeta = { label: string; description: string | null };
@@ -937,7 +937,8 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = composerMathRanges(remainder, undefined, scientMathRanges);
+  // SCIENT-FORK: formulas in source order, so the editable text never rewinds.
+  const formulas = composerMathRanges(remainder, scientFormulaRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1831,13 +1832,17 @@ export function skillChipReplacements(
     });
   });
   const map = serializeEditorDoc(doc);
-  const formulas = composerMathRanges(map.value, undefined, scientMathRanges);
+  // SCIENT-FORK:START — a token inside a formula stays formula source, as chat reads it.
+  const formulas = composerMathRanges(map.value, scientFormulaRanges);
+  // SCIENT-FORK:END
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {
     const start = end;
     end += segment.type === "text" ? segment.text.length : segment.source.length;
     if (segment.type !== "skill" && segment.type !== "model") continue;
+    // SCIENT-FORK:START
     if (formulas.some((formula) => start < formula.end && end > formula.start)) continue;
+    // SCIENT-FORK:END
     const atom = atomJsonForSegment(segment, chips);
     const type = atom && schema.nodes[atom.type];
     if (!atom || !type) continue;

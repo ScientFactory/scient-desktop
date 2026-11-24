@@ -72,6 +72,23 @@ describe("AnalyticsOutbox", () => {
     });
     reopened.close();
   });
+  it("never hands out a queued agent feedback report, even after a restart", () => {
+    const path = fixturePath();
+    const first = new AnalyticsOutbox(path);
+    const ordinary = event("surface.opened");
+    const report = {
+      ...event("surface.opened"),
+      name: "agent.feedback",
+      properties: { expected: "synthetic expected", actual: "synthetic actual" },
+    } as AnalyticsEvent;
+    expect(first.enqueueBatch([report, ordinary], ["core", "core"])).toBe(2);
+    first.close();
+    const reopened = new AnalyticsOutbox(path);
+    const pending = reopened.pending(50, Date.parse("2026-10-20T00:00:00.000Z"));
+    expect(pending.map((queued) => queued.name)).toEqual(["surface.opened"]);
+    expect(reopened.pending(50, Date.parse("2026-10-20T00:00:00.000Z"))).toHaveLength(1);
+    reopened.close();
+  });
   it("writes a coalesced batch transaction and delivers critical events first", () => {
     const outbox = new AnalyticsOutbox(fixturePath());
     const events = [event("surface.opened"), event("app.health"), event("project.opened")];

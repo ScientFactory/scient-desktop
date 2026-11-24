@@ -400,6 +400,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/scient/extensions/ScientThreadMcpStatusBridge.ts",
+      "anchor": "bound in Scient Accounts",
+      "purpose": "Name the Accounts entry whose bound plugin key a service refused, in the thread's MCP status."
+    },
+    {
       "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
       "anchor": "[WS_METHODS.accountsSave]: () => use(\"accounts.save\")",
       "purpose": "Count Accounts and paper actions as Scient feature use in analytics, with no account details."

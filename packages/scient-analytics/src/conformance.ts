@@ -474,6 +474,36 @@ export function buildAnalyticsConformanceFixture() {
       ),
     );
   }
+  cases.push(
+    fixtureCase("provider-initial-warning", "provider.readiness.observed", {
+      provider: "claudeAgent",
+      state: "warning",
+      runtimeSource: "system",
+      checkFailure: "not_authenticated",
+    }),
+    fixtureCase("provider-unrecognized-values", "provider.readiness.observed", {
+      provider: "private-label",
+      state: "private-tag",
+      runtimeSource: "private-runtime",
+      checkFailure: "private-message",
+      customField: "private-experiment",
+    }),
+    fixtureCase("visual-editable", "latex.visual.opened", { outcome: "editable" }),
+    fixtureCase("visual-source-only", "latex.visual.opened", { outcome: "source-only-content" }),
+    fixtureCase("visual-unavailable", "latex.visual.opened", {
+      outcome: "unavailable",
+      reason: "source-truncated",
+    }),
+    fixtureCase("visual-private-input", "latex.visual.opened", {
+      outcome: "open-error",
+      reason: "private-construct",
+      customField: "private-experiment",
+    }),
+    fixtureCase("visual-source-fallback", "latex.visual.source-fallback", {
+      outcome: "open-error",
+      reason: "projection",
+    }),
+  );
   for (const fileType of ["csv", "none", "PRIVATE"]) {
     cases.push(
       fixtureCase(`file-${fileType.toLowerCase()}`, "panel.viewed", {

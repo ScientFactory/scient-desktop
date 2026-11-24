@@ -7,9 +7,13 @@ import * as NodePath from "node:path";
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-backup";
-import { mergeScientLibrarySources } from "@scientfactory/scient-sources/library-merge";
+import {
+  mergeScientLibrarySources,
+  undoScientLibraryMerge,
+} from "@scientfactory/scient-sources/library-merge";
 import { recordScientLibraryNoticeCheck } from "@scientfactory/scient-sources/library-notice-watch";
 import { changeScientLibraryReview } from "@scientfactory/scient-sources/library-reviews";
+import { keepScientDisplacedCopies } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
@@ -18,6 +22,7 @@ import {
 import {
   pinScientLibrarySource,
   readScientProjectPins,
+  refreshScientProjectPinSnapshots,
   renameScientProjectPinKey,
   setScientProjectPinNote,
 } from "@scientfactory/scient-sources/project-pins";
@@ -30,6 +35,7 @@ import {
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import {
+  ScientSourceDetailResult,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateResult,
   ScientSourcesDuplicatesResult,
@@ -66,6 +72,7 @@ import {
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
 import { setLibraryReadingState } from "./LibraryProjectSources.ts";
+import { createScientSourceCollection } from "@scientfactory/scient-sources/collections";
 import { advanceSourceImport, beginZoteroImport } from "./ScientSourcesCoordinator.ts";
 import {
   ScientSourcesBackend,
@@ -122,6 +129,7 @@ const storeFor = (fixture: Fixture, access: ScientSourcesAccess, root = fixture.
 // What a client receives: the HTTP contract keeps only the fields it names.
 const encodeEditAnswer = Schema.encodeSync(ScientSourceMetadataUpdateResult);
 const encodeNoteAnswer = Schema.encodeSync(ScientSourceNoteUpdateResult);
+const encodeDetail = Schema.encodeSync(ScientSourceDetailResult);
 const encodeDuplicates = Schema.encodeSync(ScientSourcesDuplicatesResult);
 
 async function libraryRecord(
@@ -273,6 +281,68 @@ describe("Library routes on the library backend", () => {
         yield* Effect.promise(async () => {
           await expect(NodeFSP.stat(recovery.pending)).rejects.toMatchObject({ code: "ENOENT" });
         });
+      }),
+  );
+
+  it.effect(
+    "answers unchanged while the list would be the same, and in full after any change",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const { a, b } = yield* Effect.promise(() => threeSources(fixture));
+        const store = yield* storeFor(fixture, "write");
+        const list = (scope: "library" | "project", knownRevision?: string) =>
+          Effect.promise(() =>
+            libraryOverview(store, {
+              scope,
+              background: false,
+              ...(knownRevision ? { knownRevision } : {}),
+            }),
+          );
+        const first = yield* list("library");
+        expect(first.records).toHaveLength(2);
+        expect(first.revision).toBeDefined();
+        const again = yield* list("library", first.revision);
+        expect(again).toMatchObject({ unchanged: true, records: [], revision: first.revision });
+        expect(again.scopes).toEqual(first.scopes);
+        expect(again).not.toHaveProperty("organization");
+
+        // A star rewrites the record; a new collection changes no record but the list's collections.
+        yield* Effect.promise(() =>
+          setLibraryReadingState(store, { sourceIds: [b.sourceId], starred: true }),
+        );
+        const starred = yield* list("library", first.revision);
+        expect(starred).not.toHaveProperty("unchanged");
+        expect(starred.records.find((row) => row.sourceId === b.sourceId)?.starred).toBe(true);
+        yield* Effect.promise(() =>
+          createScientSourceCollection({
+            root: fixture.library,
+            name: "Methods",
+            sourceIds: [b.sourceId],
+            actor: "user",
+          }),
+        );
+        const filed = yield* list("library", starred.revision);
+        expect(filed).not.toHaveProperty("unchanged");
+        expect(filed.organization?.collections.map((collection) => collection.name)).toEqual([
+          "Methods",
+        ]);
+
+        // The project's own key for a record changes its row, though no record file changes.
+        const project = yield* list("project");
+        expect(yield* list("project", project.revision)).toMatchObject({ unchanged: true });
+        yield* Effect.promise(() =>
+          renameScientProjectPinKey({
+            projectRoot: fixture.root,
+            citationKey: "vasopressinHere",
+            to: "vasopressinNow",
+          }),
+        );
+        const renamed = yield* list("project", project.revision);
+        expect(renamed).not.toHaveProperty("unchanged");
+        expect(renamed.records.find((row) => row.sourceId === a.sourceId)?.citationKey).toBe(
+          "vasopressinNow",
+        );
       }),
   );
 
@@ -677,7 +747,10 @@ describe("Library routes on the library backend", () => {
             await organizeLibrarySources(store, {
               change: { action: "undo-join", joinId: done.joinId },
             }),
-          ).toEqual({ outcome: "join-undone", joinUndone: { trashed: 1, left: 0 } });
+          ).toEqual({
+            outcome: "join-undone",
+            joinUndone: { trashed: 1, left: 0, leftSourceIds: [] },
+          });
           expect(await readScientSourceRecord(store.library, fresh.sourceId)).toBeNull();
           expect(await listed()).toMatchObject({ state: "undone", left: 0 });
           expect(
@@ -860,6 +933,220 @@ describe("Library routes on the library backend", () => {
         ),
       ).toMatchObject({ outcome: "stale", record: { personalNote: "  Personal observation  " } });
     }),
+  );
+
+  it.effect(
+    "shows values kept after a merge Undo beside the details', for a key now gone or a pin's snapshot",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const record = yield* Effect.promise(() =>
+          libraryRecord(fixture, "kept", { title: "Vasopressin timing", abstract: null }),
+        );
+        const pinned = yield* Effect.promise(() => pin(fixture, record.sourceId));
+        const writer = yield* storeFor(fixture, "write");
+        yield* Effect.promise(() =>
+          updateLibraryPersonalNote(writer, {
+            sourceId: record.sourceId,
+            expectedRevision: record.revision,
+            expectedNote: null,
+            note: "Private reading note",
+          }),
+        );
+        // Each shows only fields its holder keeps (a key has no abstract, a review no pages),
+        // whatever the file names.
+        const copy = (heldBy: string) => ({
+          sourceId: record.sourceId,
+          heldBy,
+          undoneAt: "2026-11-01T00:00:00.000Z",
+          differs: ["abstract", "pages", "note"],
+          work: { abstract: "Imported by the review", pages: "1-9", note: null },
+        });
+        yield* Effect.promise(async () => {
+          await keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
+            copy(pinned.citationKey),
+            copy("RemovedKey2020"),
+          ]);
+          await keepScientDisplacedCopies(
+            fixture.root,
+            { kind: "review", reviewId: "review_gone" },
+            [copy("review_gone")],
+          );
+        });
+        const store = yield* storeFor(fixture, "read");
+        const detail = encodeDetail(
+          yield* Effect.promise(() => librarySourceDetail(store, { sourceId: record.sourceId })),
+        );
+        expect(JSON.stringify(detail)).not.toContain("Private reading note");
+        const pages = { field: "pages", earlier: "1-9", current: null };
+        expect(detail.keptCopies).toEqual([
+          {
+            holder: "citation-key",
+            heldBy: pinned.citationKey,
+            holderPresent: true,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [pages],
+          },
+          {
+            holder: "citation-key",
+            heldBy: "RemovedKey2020",
+            holderPresent: false,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [pages],
+          },
+          {
+            holder: "review",
+            heldBy: "review_gone",
+            holderPresent: false,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [{ field: "abstract", earlier: "Imported by the review", current: null }],
+          },
+        ]);
+
+        // A source in Trash is shown from its pin's snapshot, and compared with what that shows.
+        const removed = yield* Effect.promise(async () => {
+          const trashed = await libraryRecord(fixture, "trashed", { title: "Fluid balance" });
+          const trashedPin = await pin(fixture, trashed.sourceId);
+          await removeScientSource({
+            root: fixture.library,
+            sourceId: trashed.sourceId,
+            expectedRevision: trashed.revision,
+          });
+          await keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
+            {
+              sourceId: trashed.sourceId,
+              heldBy: trashedPin.citationKey,
+              undoneAt: "2026-11-02T00:00:00.000Z",
+              differs: ["containerTitle"],
+              work: { title: "Fluid balance", containerTitle: "Journal before the merge" },
+            },
+          ]);
+          return { sourceId: trashed.sourceId, citationKey: trashedPin.citationKey };
+        });
+        const fromSnapshot = encodeDetail(
+          yield* Effect.promise(() => librarySourceDetail(store, { sourceId: removed.sourceId })),
+        );
+        expect(fromSnapshot).toMatchObject({
+          fromSnapshot: true,
+          keptCopies: [
+            {
+              heldBy: removed.citationKey,
+              holderPresent: true,
+              fields: [
+                {
+                  field: "containerTitle",
+                  earlier: "Journal before the merge",
+                  current: "Scient Journal",
+                },
+              ],
+            },
+          ],
+        });
+      }),
+  );
+
+  it.effect(
+    "shows kept values for a trashed pin whose alias points to another Library record",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const chained = yield* Effect.promise(async () => {
+          const a = await libraryRecord(fixture, "chain-a", {
+            title: "Sepsis bundle",
+            containerTitle: "Journal A",
+          });
+          const d = await libraryRecord(fixture, "chain-d", {
+            title: "Sepsis bundle sibling",
+            containerTitle: "Journal D",
+          });
+          const b = await libraryRecord(fixture, "chain-b", {
+            title: "Sepsis bundle",
+            containerTitle: "Journal B",
+          });
+          const c = await libraryRecord(fixture, "chain-c", {
+            title: "Sepsis bundle",
+            containerTitle: "Journal C",
+          });
+          const pinA = await pin(fixture, a.sourceId);
+          const pinD = await pin(fixture, d.sourceId);
+          // Merge A -> B and sibling D -> B, then B -> C, and refresh so both snapshots carry C's details.
+          const firstMerge = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [a.sourceId, b.sourceId],
+            survivorId: b.sourceId,
+            actor: "user",
+          });
+          if (firstMerge.outcome !== "merged") throw new Error("Expected A -> B merge.");
+          const siblingMerge = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [d.sourceId, b.sourceId],
+            survivorId: b.sourceId,
+            actor: "user",
+          });
+          if (siblingMerge.outcome !== "merged") throw new Error("Expected D -> B merge.");
+          const secondMerge = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [b.sourceId, c.sourceId],
+            survivorId: c.sourceId,
+            actor: "user",
+          });
+          if (secondMerge.outcome !== "merged") throw new Error("Expected B -> C merge.");
+          await refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          });
+          // Undo B -> C and refresh: displaced values for both pins are saved under B, not A or D.
+          const undone = await undoScientLibraryMerge({
+            library: fixture.library,
+            mergeId: secondMerge.merge.mergeId,
+            actor: "user",
+          });
+          if (undone.outcome !== "undone") throw new Error("Expected B -> C undo.");
+          await refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          });
+          await removeScientSource({
+            root: fixture.library,
+            sourceId: undone.loser.sourceId,
+            expectedRevision: undone.loser.revision,
+          });
+          return {
+            pinSourceId: a.sourceId,
+            citationKey: pinA.citationKey,
+            siblingCitationKey: pinD.citationKey,
+          };
+        });
+
+        const store = yield* storeFor(fixture, "read");
+        const detail = encodeDetail(
+          yield* Effect.promise(() =>
+            librarySourceDetail(store, { sourceId: chained.pinSourceId }),
+          ),
+        );
+        expect(detail).toMatchObject({
+          fromSnapshot: true,
+          keptCopies: expect.arrayContaining([
+            expect.objectContaining({
+              holder: "citation-key",
+              heldBy: chained.citationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            }),
+            expect.objectContaining({
+              holder: "citation-key",
+              heldBy: chained.siblingCitationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            }),
+          ]),
+        });
+        expect(detail.keptCopies).toHaveLength(2);
+      }),
   );
 
   it.effect("answers two stale panels with the note saved first and its history", () =>

@@ -63,6 +63,28 @@ export const ScientSourceCollection = Schema.Struct({
 });
 export type ScientSourceCollection = typeof ScientSourceCollection.Type;
 
+/** The name and place a change made a collection with, so its Undo knows one changed since. */
+export const ScientSourceCollectionMadeAs = Schema.Struct({
+  name: Name,
+  parentCollectionId: Schema.optionalKey(NonEmptyString),
+});
+type ScientSourceCollectionMadeAs = typeof ScientSourceCollectionMadeAs.Type;
+
+export const scientSourceCollectionMadeAs = (
+  collection: ScientSourceCollectionMadeAs,
+): ScientSourceCollectionMadeAs => ({
+  name: collection.name,
+  ...(collection.parentCollectionId ? { parentCollectionId: collection.parentCollectionId } : {}),
+});
+
+/** Renamed or moved since a change made it: the person's now. Not known for an older record. */
+export const scientSourceCollectionChangedSince = (
+  collection: ScientSourceCollectionMadeAs,
+  madeAs: ScientSourceCollectionMadeAs | undefined,
+): boolean =>
+  madeAs !== undefined &&
+  (collection.name !== madeAs.name || collection.parentCollectionId !== madeAs.parentCollectionId);
+
 export const ScientSourceSavedSearch = Schema.Struct({
   searchId: NonEmptyString,
   name: Name,
@@ -249,6 +271,7 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
       updatedAt: Schema.optionalKey(NonEmptyString),
       // The edit made this collection; Undo deletes it once it is empty again.
       created: Schema.optionalKey(Schema.Literal(true)),
+      madeAs: Schema.optionalKey(ScientSourceCollectionMadeAs),
       pending: Schema.optionalKey(Schema.Literal(true)),
       restoring: Schema.optionalKey(Schema.Struct({ updatedAt: NonEmptyString })),
       undoneAt: Schema.optionalKey(NonEmptyString),

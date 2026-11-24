@@ -136,7 +136,6 @@ it.effect("parks automatic pull until activation without delaying command readin
       Layer.mock(ServerSettings.ServerSettingsService)({
         start: Effect.void,
         getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true }),
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({
@@ -171,7 +170,7 @@ it.effect("parks automatic pull until activation without delaying command readin
             Effect.onInterrupt(() => Deferred.succeed(statusInterrupted, undefined)),
           ),
       }),
-      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.void }),
+      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.succeed(true) }),
       // No provider logins or Connect link, so startup records no owners.
       FileSystem.layerNoop({}),
       Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),

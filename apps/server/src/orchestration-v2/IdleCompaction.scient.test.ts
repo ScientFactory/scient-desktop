@@ -332,7 +332,6 @@ describe("Scient Agent idle compaction", () => {
           Layer.mock(ServerSettings.ServerSettingsService)({
             // Nothing configured: Scient Agent's own default compacts before the cache expires.
             getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-            committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
           }),
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromQueue(events),

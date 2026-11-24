@@ -4,6 +4,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  GitManagerError,
   ProjectId,
   EventId,
   ProviderInstanceId,
@@ -59,7 +60,7 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestResumingMessageAt">;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -98,7 +99,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunStartedAt: null,
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
-    latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    latestResumingMessageAt: overrides.latestUserMessageAt ?? null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -396,10 +397,10 @@ describe("resolveAutoSettlementAt", () => {
     ).toEqual(shell().createdAt);
   });
 
-  it("settles on merge after agent-started runs, but not after the user writes again", () => {
+  it("settles on merge after automatic agent wakes, but not after the thread is resumed", () => {
     const woken = shell({
       latestUserMessageAt: at(-30 * 60 * 1_000),
-      latestUserAuthoredMessageAt: at(-2 * 60 * 60 * 1_000),
+      latestResumingMessageAt: at(-2 * 60 * 60 * 1_000),
       latestRunRequestedAt: at(-30 * 60 * 1_000),
       latestRunCompletedAt: at(-29 * 60 * 1_000),
     });
@@ -414,7 +415,7 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
-        thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
+        thread: { ...woken, latestResumingMessageAt: at(-30 * 60 * 1_000) },
       }),
     ).toBeNull();
   });
@@ -679,13 +680,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     getSettings: Ref.update(settingsReadCount, (count) => count + 1).pipe(
       Effect.andThen(Ref.get(settings)),
     ),
-    committedCustomModels: () => Ref.getUnsafe(settings).customModels,
-    saveCustomModel: () => Effect.die("Unexpected custom model mutation"),
-    removeCustomModel: () => Effect.die("Unexpected custom model mutation"),
-    resolveCustomModels: () => Effect.succeed([]),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
-    removeProjectSettingsOverrides: () => Effect.die("Unexpected project settings removal"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
@@ -970,6 +966,67 @@ describe("ThreadSettlementServiceV2 worker", () => {
         expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
           thread.id,
         ]);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("keeps idle unlinked branch threads with an open PR under retention", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const earlier = "2026-08-19T00:00:00.000Z";
+      const openPr = makeThread("idle-open", {
+        branch: "open",
+        latestUserMessageAt: DateTime.makeUnsafe(earlier),
+      });
+      const reused = makeThread("idle-reused", { branch: "reused" });
+      const link = persistedLink("open", DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"));
+      const reusedOwner = makeThread("archived-reused-owner", {
+        branch: "reused",
+        archivedAt: DateTime.makeUnsafe("2026-07-02T00:00:00.000Z"),
+        pullRequests: [
+          {
+            ...link,
+            snapshot: { ...link.snapshot!, state: "merged", mergedAt: "2026-07-01T00:00:00.000Z" },
+          },
+        ],
+      });
+      const noPr = makeThread("idle-none", { branch: "none" });
+      const merged = makeThread("idle-merged", { branch: "merged" });
+      const failed = makeThread("idle-failed", { branch: "failed" });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([openPr, reused, reusedOwner, noPr, merged, failed]),
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sidebarAutoSettleAfterDays: 3,
+          sidebarAutoSettleKeepPullRequests: true,
+        },
+        branchPullRequest: ({ branch, cwd }, options) =>
+          branch === "open"
+            ? Effect.succeed(makeBranchPullRequest("open"))
+            : branch === "reused"
+              ? Effect.succeed(
+                  options?.freshGitState === true
+                    ? { ...makeBranchPullRequest("open"), number: 43 }
+                    : { ...makeBranchPullRequest("merged"), mergedAt: "2026-07-01T00:00:00.000Z" },
+                )
+              : branch === "merged"
+                ? Effect.succeed({ ...makeBranchPullRequest("merged"), mergedAt: earlier })
+                : branch === "failed"
+                  ? Effect.fail(
+                      new GitManagerError({
+                        operation: "branchPullRequest",
+                        cwd,
+                        detail: "failed",
+                      }),
+                    )
+                  : Effect.succeed(null),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        expect(
+          (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
+        ).toEqual([failed.id, merged.id, noPr.id]);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
@@ -2024,7 +2081,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         snapshot: makeSnapshot([
           makeThread("worked-after-merge", {
             branch: "merged-feature",
-            latestUserAuthoredMessageAt: DateTime.makeUnsafe("2026-08-28T06:00:00.000Z"),
+            latestResumingMessageAt: DateTime.makeUnsafe("2026-08-28T06:00:00.000Z"),
           }),
         ]),
         // SCIENT-FORK: Scient settles on merge only when the user opts in.

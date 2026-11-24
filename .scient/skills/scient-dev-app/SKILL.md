@@ -38,7 +38,7 @@ paths or another branch's capabilities.
   macOS service commands or claim background persistence. If the available
   tool cannot retain the session, report that boundary rather than inventing
   a supervisor.
-- **Other hosts:** consult `docs/operations/development.md`; do not assume
+- **Other hosts:** consult `docs/operations/00_development.md`; do not assume
   that the managed macOS workflow applies.
 
 Use isolated worktree state and synthetic data. Never copy credentials or live

@@ -274,7 +274,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("dev-runner", (it
           assert.equal(env.VITE_HTTP_URL, undefined);
           assert.equal(env.VITE_WS_URL, undefined);
           assert.equal(env.T3CODE_PORT, "13773");
-
           assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
         }),
     );
@@ -907,7 +906,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("dev-runner", (it
     });
     // SCIENT-FORK:END
 
-    describe("candidate home precedence", () => {
+    describe("t3 home precedence", () => {
       const makeWorktree = Effect.acquireRelease(
         Effect.sync(() => {
           const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-devrunner-"));

@@ -7,6 +7,22 @@ import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 
 /**
+ * The thread's own modes and worktree, nothing resolved. Upstream removed its default layer;
+ * Scient tests that only need a policy service use this one.
+ */
+export const layerThreadWorktree: Layer.Layer<RuntimePolicy.RuntimePolicyV2> = Layer.succeed(
+  RuntimePolicy.RuntimePolicyV2,
+  RuntimePolicy.RuntimePolicyV2.of({
+    resolve: (input) =>
+      Effect.succeed({
+        runtimeMode: input.thread.runtimeMode,
+        interactionMode: input.thread.interactionMode,
+        cwd: input.thread.worktreePath,
+      }),
+  }),
+);
+
+/**
  * A replay thread's workspace, resolved as production resolves it: its worktree, else its
  * project's root. Upstream's test policy leaves a local thread's cwd null, and the
  * orchestrator then checkpoints `process.cwd()`, which in tests is the source checkout. A
@@ -49,4 +65,4 @@ export const layer: Layer.Layer<
         ),
     });
   }),
-).pipe(Layer.provide(RuntimePolicy.layer));
+).pipe(Layer.provide(layerThreadWorktree));

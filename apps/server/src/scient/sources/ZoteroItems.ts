@@ -671,8 +671,11 @@ export interface ZoteroNoteOriginal {
  * (images are not carried and are counted). The HTML of whole notes, as many as the bound
  * holds; a note past it has only its digest.
  */
-function zoteroNoteOriginals(
-  children: ReadonlyArray<ZoteroRawItem>,
+export function zoteroNoteOriginals(
+  children: ReadonlyArray<{
+    readonly key: string;
+    readonly data: { readonly itemType: string; readonly note?: string };
+  }>,
 ): ReadonlyArray<ZoteroNoteOriginal> {
   let characters = 0;
   return children

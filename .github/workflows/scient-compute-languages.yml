@@ -22,6 +22,7 @@ on:
       - "apps/server/src/scient/execution/**"
       - "apps/server/scripts/install-run-languages.ts"
       - ".github/workflows/scient-compute-languages.yml"
+      - ".github/scripts/match-windows-llvm.sh"
   schedule:
     # Weekly: package managers move without us, and this catches what that breaks.
     - cron: "17 3 * * 1"
@@ -90,6 +91,10 @@ jobs:
           # Looks up each tool's newest release without meeting GitHub's limit for anonymous reads.
           GH_TOKEN: ${{ github.token }}
         run: node apps/server/scripts/install-run-languages.ts ${{ matrix.group }}
+
+      - name: Match LLVM to the Visual Studio C++ library
+        if: ${{ runner.os == 'Windows' && matrix.group == 'compiled' }}
+        run: bash .github/scripts/match-windows-llvm.sh
 
       - name: Run a real file in each
         working-directory: apps/server

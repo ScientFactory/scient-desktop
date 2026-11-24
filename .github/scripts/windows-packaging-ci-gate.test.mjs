@@ -53,7 +53,7 @@ NodeTest.test(
       needsLinuxPackaging([
         "apps/web/src/App.tsx",
         "apps/server/src/ws.ts",
-        "docs/operations/release.md",
+        "docs/operations/scient-release.md",
       ]),
       false,
     );

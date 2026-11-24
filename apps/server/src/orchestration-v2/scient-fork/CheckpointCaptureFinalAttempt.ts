@@ -1,7 +1,8 @@
 /**
- * A waiting capture blocks the queue and Send. On the final attempt, settle non-Git failures as an
- * error checkpoint without touching the workspace; if settlement itself fails, keep retrying past
- * the limit until committed or no longer waiting.
+ * A run awaiting its turn-end capture holds the queue and Send: a `completed` run without a
+ * checkpoint, or a legacy `waiting` run. On the final attempt, settle non-Git failures as an error
+ * checkpoint without touching the workspace; if settlement itself fails, keep retrying past the
+ * limit until committed or no longer awaiting capture.
  */
 import {
   CommandId,
@@ -23,6 +24,8 @@ import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import type * as EventSink from "../EventSink.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProjectionStore from "../ProjectionStore.ts";
+import type * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
+import { makeInterruptResultTurnItem } from "../runInterruptResult.ts";
 
 /** True while the effect worker runs a capture's last attempt. */
 export class CheckpointCaptureFinalAttempt extends Context.Reference<boolean>(
@@ -62,6 +65,8 @@ interface SettlementDependencies {
   readonly eventSink: EventSink.EventSinkV2Shape;
   readonly ids: IdAllocator.IdAllocatorV2["Service"];
   readonly projections: ProjectionStore.ProjectionStoreV2Shape;
+  /** Stop and deletion commit under this lock; settlement rereads the run under it too. */
+  readonly threadCommands: ThreadCommandExecutor.ThreadCommandExecutor["Service"];
   readonly makeCheckpointTurnItem: (input: {
     readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
     readonly run: OrchestrationV2Run;
@@ -72,7 +77,11 @@ interface SettlementDependencies {
   }) => OrchestrationV2TurnItem;
 }
 
-/** Completes a still-waiting run with an `error` checkpoint. False when nothing waits. */
+/**
+ * Gives a run still awaiting capture an `error` checkpoint, completing a legacy `waiting` run and
+ * interrupting one a Stop reached. The repeated run update releases what waited behind the
+ * capture. False when nothing awaits it.
+ */
 const settleWaitingRun = Effect.fnUntraced(function* (
   deps: SettlementDependencies,
   target: CaptureTarget,
@@ -82,7 +91,24 @@ const settleWaitingRun = Effect.fnUntraced(function* (
     target.threadId,
     target,
   );
-  if (run === undefined || run.status !== "waiting") return false;
+  const legacyWaiting = run?.status === "waiting";
+  if (
+    run === undefined ||
+    !(legacyWaiting || (run.status === "completed" && run.checkpointId === null))
+  )
+    return false;
+
+  // As a committed capture does, a Stop accepted after the provider's turn ended still wins.
+  const stopSignals = (yield* projections.getThreadRecords(target.threadId, ["turnItems"], {
+    turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+    turnItemRunIds: [run.id],
+  })).turnItems;
+  const stopRequest = stopSignals.some((item) => item.type === "run_interrupt_result")
+    ? undefined
+    : stopSignals.find((item) => item.type === "run_interrupt_request");
+  const settledStatus =
+    stopRequest === undefined ? ("completed" as const) : ("interrupted" as const);
+  const settlesRun = legacyWaiting || stopRequest !== undefined;
 
   const completedAt = yield* DateTime.now;
   const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
@@ -161,6 +187,27 @@ const settleWaitingRun = Effect.fnUntraced(function* (
                 completedAt,
               }),
             },
+            ...(stopRequest?.type !== "run_interrupt_request"
+              ? []
+              : [
+                  {
+                    id: yield* ids.allocate.event({ threadId: target.threadId, commandId }),
+                    type: "turn-item.updated" as const,
+                    threadId: target.threadId,
+                    runId: run.id,
+                    nodeId: checkpointTarget.rootNode.id,
+                    providerInstanceId: run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: makeInterruptResultTurnItem({
+                      idAllocator: ids,
+                      run,
+                      rootNode: checkpointTarget.rootNode,
+                      providerThread: checkpointTarget.providerThread,
+                      reason: stopRequest.message,
+                      completedAt,
+                    }),
+                  },
+                ]),
           ]),
       {
         id: yield* ids.allocate.event({ threadId: target.threadId, commandId }),
@@ -172,12 +219,13 @@ const settleWaitingRun = Effect.fnUntraced(function* (
         occurredAt: completedAt,
         payload: {
           ...runWithoutDelegatedCompletion,
-          status: "completed" as const,
-          completedAt,
+          status: settledStatus,
+          completedAt: settlesRun ? completedAt : run.completedAt,
           checkpointId: checkpoint?.id ?? run.checkpointId,
         },
       },
-      ...(rootNode === undefined
+      // A run that settled before capture already completed its root node.
+      ...(rootNode === undefined || !settlesRun
         ? []
         : [
             {
@@ -190,7 +238,7 @@ const settleWaitingRun = Effect.fnUntraced(function* (
               occurredAt: completedAt,
               payload: {
                 ...rootNode,
-                status: "completed" as const,
+                status: settledStatus,
                 completedAt,
                 checkpointScopeId: scope?.id ?? rootNode.checkpointScopeId,
               },
@@ -202,8 +250,8 @@ const settleWaitingRun = Effect.fnUntraced(function* (
 });
 
 /**
- * Wraps one capture execution. On the last attempt, a failure settles a
- * still-waiting run instead of leaving it waiting; every other failure, and
+ * Wraps one capture execution. On the last attempt, a failure settles a run
+ * still awaiting capture instead of leaving it holding the queue; every other failure, and
  * every earlier attempt, fails as before so the worker retries. A settlement
  * that fails is reported as pending, so the worker retries it again.
  */
@@ -214,9 +262,9 @@ export const settleUncapturedRunOnFinalAttempt =
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (!(yield* CheckpointCaptureFinalAttempt)) return yield* Effect.fail(error);
-          const settled = yield* settleWaitingRun(deps, target).pipe(
-            Effect.mapError((cause) => new CheckpointSettlementPendingError({ cause })),
-          );
+          const settled = yield* deps.threadCommands
+            .withLock(target.threadId, settleWaitingRun(deps, target))
+            .pipe(Effect.mapError((cause) => new CheckpointSettlementPendingError({ cause })));
           if (!settled) return yield* Effect.fail(error);
           yield* Effect.logWarning(
             "Completed a run with an unavailable checkpoint after its last capture attempt failed",

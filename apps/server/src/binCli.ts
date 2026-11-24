@@ -24,6 +24,7 @@ import { prepareOutboundNetworking } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
+import { workflowCommand } from "./cli/workflow.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
 import {
@@ -103,6 +104,8 @@ export const makeCli = ({
       browserCommand,
       projectCommand,
       threadCommand,
+      // SCIENT-FORK: T3's `feedback` command stays unregistered; see ScientAgentFeedbackGate.
+      workflowCommand,
       // Inherited service and standalone-install lifecycle remains dormant in
       // Scient. Desktop updates use the owned desktop updater.
       ...(serviceEnabled

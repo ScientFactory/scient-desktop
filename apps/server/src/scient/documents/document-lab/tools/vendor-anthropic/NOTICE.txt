@@ -1,0 +1,10 @@
+This preview includes Apache-2.0 material from Anthropic's Agent Skills
+repository (https://github.com/anthropics/skills), from the docx, xlsx, pptx
+and pdf skill directories. See LICENSE-anthropic-apache-2.0.txt.
+
+Scient has modified the adopted document helpers in office/, ooxml/ and pdf/,
+and the Excel recalculation script recalc.py. The Office validation schemas
+and OOXML templates were carried forward from that tool collection. The
+Scient command wrappers and portable skill instructions were developed in
+Document Lab. The preview uses the locked Python and npm dependencies with
+their own licenses and uses native binaries already installed on the host.

@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { m } from "~/i18n/messages";
 // SCIENT-FORK:START — refresh moved into the Files menu; its icon import went with it
 // SCIENT-FORK:END
@@ -6,7 +7,7 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { ContextMenuSource, EnvironmentId } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -188,7 +189,12 @@ export default function FileBrowserPanel({
   const followedRevealRef = useRef<string | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
-  const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const contextMenuPointerRef = useRef<{
+    x: number;
+    y: number;
+    at: number;
+    source: ContextMenuSource;
+  } | null>(null);
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -237,6 +243,7 @@ export default function FileBrowserPanel({
             // SCIENT-FORK:END
           ],
           position,
+          pointerIsFresh ? pointer.source : undefined,
         );
         if (clicked === null) return;
         // SCIENT-FORK:START
@@ -602,7 +609,12 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {
-        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+        contextMenuPointerRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          at: event.timeStamp,
+          source: contextMenuSourceOf(event),
+        };
       }}
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
@@ -681,6 +693,32 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={gt("{projectName} files", { projectName })}
           className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
+          onClickCapture={(event) => {
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.altKey ||
+              dragMention.isDragInProgress()
+            ) {
+              return;
+            }
+            // Pierre emits no change for its sole selected row; read before the click to avoid double opens.
+            const selected = model.getSelectedPaths();
+            const path = selected.length === 1 ? selected[0] : undefined;
+            if (!path || entryKindsRef.current.get(path) !== "file") return;
+            const clickedSelectedRow = event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+              );
+            if (!clickedSelectedRow) return;
+            treeSelectionPathRef.current = path;
+            onOpenFile(panelPath(path));
+          }}
           style={pierreTreeStyle(resolvedTheme)}
           onPointerOver={titleClippedPierreTreeRow}
         />

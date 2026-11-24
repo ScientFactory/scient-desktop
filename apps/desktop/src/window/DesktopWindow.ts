@@ -14,12 +14,13 @@ import { msg } from "gt-i18n";
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
+import * as DesktopClerk from "../app/DesktopClerk.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
-import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
+import { getDesktopOrigin, getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -64,6 +65,7 @@ import {
 import { spellingMenuItems } from "../scient/spelling/ipc.ts";
 // SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -458,6 +460,10 @@ export const make = Effect.gen(function* () {
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
+  // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+  const remoteRequestHeaderWindows = new Set<number>();
+  let detachRemoteRequestHeaders: (() => void) | null = null;
+  // SCIENT-FORK:END
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -727,7 +733,7 @@ export const make = Effect.gen(function* () {
       webPreferences.sandbox = true;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
+      webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
@@ -856,12 +862,19 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
+    // Popups from every frame in this window arrive here without a caller, so only web links
+    // pass. The app opens editors and other applications over IPC.
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+      if (Option.isSome(ElectronShell.parseWebExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
       return { action: "deny" };
     });
+    // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
+    // when nothing answers. External links are opened through ElectronShell only.
+    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
+      callback(permission !== "openExternal"),
+    );
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({
@@ -1149,6 +1162,22 @@ export const make = Effect.gen(function* () {
 
     // Desktop IPC only answers the main window, so register it before its renderer can call in.
     yield* electronWindow.setMain(window);
+    // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+    const webContentsId = window.webContents.id;
+    remoteRequestHeaderWindows.add(webContentsId);
+    detachRemoteRequestHeaders ??= installMainWindowRemoteRequestHeaderPolicy(
+      window.webContents.session,
+      {
+        desktopOrigin: getDesktopOrigin(environment.isDevelopment),
+        mainWebContentsIds: remoteRequestHeaderWindows,
+        clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+        devServerOrigin: Option.getOrUndefined(
+          Option.map(environment.devServerUrl, (url) => url.origin),
+        ),
+        isDevelopment: environment.isDevelopment,
+      },
+    );
+    // SCIENT-FORK:END
     loadApplication();
     // SCIENT-FORK:START — one detached DevTools window per development launch.
     if (environment.isDevelopment && !additionalWindow) {
@@ -1162,6 +1191,13 @@ export const make = Effect.gen(function* () {
       clearBoundsPersist();
       // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
       flushWindowBounds.delete(window);
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+      remoteRequestHeaderWindows.delete(webContentsId);
+      if (remoteRequestHeaderWindows.size === 0) {
+        detachRemoteRequestHeaders?.();
+        detachRemoteRequestHeaders = null;
+      }
       // SCIENT-FORK:END
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });

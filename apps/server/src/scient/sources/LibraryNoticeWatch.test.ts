@@ -9,10 +9,17 @@ import {
   ensureScientLibrary,
   scientLibraryLocation,
 } from "@scientfactory/scient-sources/library-root";
-import { importScientSource, readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import {
+  importScientSource,
+  listScientSourceRecords,
+  readScientSourceRecord,
+} from "@scientfactory/scient-sources/store";
+import type { ScientSourceEditorialNotice } from "@scientfactory/scient-sources";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { runLibraryNoticeWatch } from "./LibraryNoticeWatch.ts";
+import { checkSourceIdentifier } from "./ScientSourcesCoordinator.ts";
+import { resolveSourceIdentifier } from "./SourceIdentifierResolver.ts";
 
 // The header and one row of https://gitlab.com/crossref/retraction-watch-data (2026-11-13).
 const FILE = `Record ID,Title,Subject,Institution,Journal,Publisher,Country,Author,URLS,ArticleType,RetractionDate,RetractionDOI,RetractionPubMedID,OriginalPaperDate,OriginalPaperDOI,OriginalPaperPubMedID,RetractionNature,Reason,Paywalled,Notes,
@@ -29,7 +36,10 @@ afterEach(async () => {
   );
 });
 
-async function setup(identifier: { readonly scheme: string; readonly value: string }) {
+async function setup(
+  identifier: { readonly scheme: string; readonly value: string },
+  notices?: ReadonlyArray<ScientSourceEditorialNotice>,
+) {
   const base = await NodeFSP.realpath(
     await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-notice-watch-")),
   );
@@ -38,7 +48,10 @@ async function setup(identifier: { readonly scheme: string; readonly value: stri
   await ensureScientLibrary(root);
   const library = scientLibraryLocation(root);
   /** Adds a paper to the Library; the answer reads its editorial state. */
-  const add = async (held: typeof identifier) => {
+  const add = async (
+    held: typeof identifier,
+    editorialNotices?: ReadonlyArray<ScientSourceEditorialNotice>,
+  ) => {
     const imported = await importScientSource({
       root: library,
       operationId: NodeCrypto.randomUUID(),
@@ -67,12 +80,21 @@ async function setup(identifier: { readonly scheme: string; readonly value: stri
         pdfAttachmentCount: 0,
       },
       allowPossibleMetadataMatch: true,
+      ...(editorialNotices
+        ? {
+            editorialStatus: {
+              state: "retracted",
+              notices: editorialNotices,
+              checkedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }
+        : {}),
     });
     const sourceId = imported.record?.sourceId;
     if (!sourceId) throw new Error("Expected an imported record.");
     return async () => (await readScientSourceRecord(library, sourceId))?.editorialStatus?.state;
   };
-  const state = await add(identifier);
+  const state = await add(identifier, notices);
   const asked: Array<Readonly<Record<string, string>>> = [];
   let clock = Date.parse("2026-11-15T10:00:00.000Z");
   return {
@@ -133,6 +155,49 @@ describe("the weekly notice check", () => {
   });
 
   it.each([
+    ["it found", undefined],
+    ["it confirmed", [{ kind: "retraction" as const, date: "2015-02-03", source: "publisher" }]],
+  ])(
+    "keeps a retraction %s when a registry check of the paper does not report it",
+    async (_name, notices) => {
+      const { library, later, state, run } = await setup(
+        { scheme: "doi", value: "10.1002/jcb.21852" },
+        notices,
+      );
+      expect(await run(theFile)).toBe("checked");
+      const [record] = await listScientSourceRecords(library);
+
+      // doi.org's answer for the paper, which carries no update notice.
+      const checked = await checkSourceIdentifier({
+        root: library,
+        sourceId: record!.sourceId,
+        actor: "user",
+        resolveIdentifier: (identifiers) =>
+          resolveSourceIdentifier(identifiers, {
+            request: async (url) => ({
+              status: 200,
+              url,
+              body: JSON.stringify({
+                type: "journal-article",
+                title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
+                DOI: "10.1002/jcb.21852",
+              }),
+            }),
+          }),
+      });
+      expect(checked).toMatchObject({
+        registry: "found",
+        record: { verification: { state: "verified" } },
+      });
+      expect(await state()).toBe("retracted");
+
+      later(WEEK);
+      expect(await run(() => new Response(null, { status: 304 }))).toBe("unchanged");
+      expect(await state()).toBe("retracted");
+    },
+  );
+
+  it.each([
     ["no connection", () => Promise.reject(new TypeError("fetch failed"))],
     ["an error from the server", () => new Response("Service unavailable", { status: 503 })],
     ["a file cut short", () => new Response(FILE.slice(0, -4), { status: 200 })],
@@ -144,6 +209,102 @@ describe("the weekly notice check", () => {
     expect(await readScientLibraryNoticeWatch(library)).toBeNull();
 
     expect(await run(theFile)).toBe("checked");
+    expect(await state()).toBe("retracted");
+  });
+
+  it.each([
+    ["not-found", 404, "unverified", "not-found"],
+    ["unavailable", 503, "unchecked", undefined],
+  ] as const)(
+    "keeps a weekly retraction when a registry check is %s",
+    async (_label, status, expectedState, expectedProblem) => {
+      const { library, state, run } = await setup({ scheme: "doi", value: "10.1002/jcb.21852" });
+      expect(await run(theFile)).toBe("checked");
+      const [record] = await listScientSourceRecords(library);
+
+      const checked = await checkSourceIdentifier({
+        root: library,
+        sourceId: record!.sourceId,
+        actor: "user",
+        resolveIdentifier: (identifiers) =>
+          resolveSourceIdentifier(identifiers, {
+            request: async (url) => ({ status, url, body: "" }),
+          }),
+      });
+      expect(checked.record.verification).toMatchObject({
+        state: expectedState,
+        ...(expectedProblem ? { problem: expectedProblem } : {}),
+      });
+      expect(await state()).toBe("retracted");
+    },
+  );
+
+  it("backfills ownership once after upgrade from old coverage without resetting dismissal", async () => {
+    const { library, asked, later, state, run } = await setup(
+      { scheme: "doi", value: "10.1002/jcb.21852" },
+      [{ kind: "retraction", date: "2015-02-03", source: "publisher" }],
+    );
+    const [record] = await listScientSourceRecords(library);
+    // Simulate a pre-upgrade watch file: old unversioned coverage hash, ETag set, dismissed entry lacking notices/identifiers.
+    const oldCoverage = NodeCrypto.createHash("sha256")
+      .update("doi:10.1002/jcb.21852")
+      .digest("hex");
+    await NodeFSP.writeFile(
+      NodePath.join(library.root, "notice-watch.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        checkedAt: "2026-11-01T10:00:00.000Z",
+        etag: '"v1"',
+        covered: oldCoverage,
+        changes: [
+          {
+            sourceId: record!.sourceId,
+            kind: "retraction",
+            change: "added",
+            at: "2026-11-01T10:00:00.000Z",
+            dismissed: true,
+          },
+        ],
+      }),
+    );
+
+    later(WEEK);
+    // First due check after upgrade must NOT send If-None-Match so it backfills ownership.
+    expect(
+      await run(() =>
+        asked.at(-1)?.["If-None-Match"] ? new Response(null, { status: 304 }) : theFile(),
+      ),
+    ).toBe("checked");
+    expect(asked[0]).not.toHaveProperty("If-None-Match");
+    const watch = await readScientLibraryNoticeWatch(library);
+    expect(watch?.changes).toMatchObject([
+      {
+        sourceId: record!.sourceId,
+        kind: "retraction",
+        change: "added",
+        dismissed: true,
+        matched: [expect.objectContaining({ identifiers: ["doi:10.1002/jcb.21852"] })],
+      },
+    ]);
+
+    // A subsequent registry check returning no notice now preserves the retraction.
+    await checkSourceIdentifier({
+      root: library,
+      sourceId: record!.sourceId,
+      actor: "user",
+      resolveIdentifier: (identifiers) =>
+        resolveSourceIdentifier(identifiers, {
+          request: async (url) => ({
+            status: 200,
+            url,
+            body: JSON.stringify({
+              type: "journal-article",
+              title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
+              DOI: "10.1002/jcb.21852",
+            }),
+          }),
+        }),
+    });
     expect(await state()).toBe("retracted");
   });
 

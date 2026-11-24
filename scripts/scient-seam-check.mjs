@@ -410,11 +410,110 @@ function check(name, ctx) {
   };
 }
 
+// A test declaration's literal title: `it(`, `test(`, modifiers such as `it.effect(`,
+// `it.skipIf(cond)(` or a multiline `it.for([...])(`, and a title the formatter wraps
+// onto the next line. A title held in a variable, or new cases added to an existing
+// `.each` table, are out of reach of this text scan; review catches those.
+const testDeclaration =
+  /^[ \t]*(?:it|test)(?:\.\w+(?:<(?:[^<>()\n]|<[^<>()\n]*>)*>)?(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
+const t3TestFile = (path) => /(^|\/)(__tests__\/.+|[^/]+\.(test|spec))\.[cm]?[jt]sx?$/u.test(path);
+// A marker is a comment line that starts with it, as every region in T3's test files
+// is written, and counts only as a START…END pair: an unclosed START marks nothing.
+const forkMarker = /^[ \t]*(?:\/\/|\/\*|\{\/\*|\*)[ \t]*SCIENT-FORK:(START|END)\b/u;
+
+function markedLines(lines) {
+  const open = [];
+  const marked = new Set();
+  for (const [index, text] of lines.entries()) {
+    const type = forkMarker.exec(text)?.[1];
+    if (type === "START") open.push(index);
+    else if (type === "END" && open.length) {
+      const from = open.pop();
+      for (let line = from; line <= index; line += 1) marked.add(line);
+    }
+  }
+  return marked;
+}
+
+function testTitles(source) {
+  const marked = markedLines(source.split("\n"));
+  const titles = [];
+  let line = 0;
+  let scanned = 0;
+  for (const match of source.matchAll(testDeclaration)) {
+    for (; scanned < match.index; scanned += 1) if (source[scanned] === "\n") line += 1;
+    // `it.layer(layer)("name", (it) => …)` names a suite, not a test.
+    if (/^\s*it\.layer\b/u.test(match[0])) continue;
+    titles.push({ title: match[2], marked: marked.has(line) });
+  }
+  return titles;
+}
+
+const countTitles = (titles) => {
+  const counts = new Map();
+  for (const { title } of titles) counts.set(title, (counts.get(title) ?? 0) + 1);
+  return counts;
+};
+
+// A Scient test goes in the `.scient.` sibling, or in a SCIENT-FORK region when it
+// needs the file's private helpers. Counted per title, line-based; each expected test
+// the change drops offsets one new title, as a retitle.
+function testPlacement(ctx) {
+  const findings = [];
+  if (!ctx.base) return { name: "test-placement", status: "passed", findings };
+  const titlesAt = (tree, paths, path) =>
+    countTitles(paths.has(path) ? testTitles(read(ctx.run, tree, path)) : []);
+  // The base's own upstream tells Scient's tests in the base from T3's.
+  const baseUpstream = ctx.basePaths.has("upstream-state.json")
+    ? commit(ctx.run, JSON.parse(read(ctx.run, ctx.base, "upstream-state.json")).integrationBase)
+    : ctx.upstream;
+  const baseUpstreamPaths =
+    baseUpstream === ctx.upstream ? ctx.upstreamPaths : treePaths(ctx.run, baseUpstream);
+  for (const path of ctx.changed) {
+    if (
+      path.startsWith(".repos/") ||
+      !t3TestFile(path) ||
+      !ctx.upstreamPaths.has(path) ||
+      !ctx.paths.has(path)
+    )
+      continue;
+    const headTests = testTitles(read(ctx.run, ctx.tree, path));
+    const head = countTitles(headTests);
+    const headUnmarked = countTitles(headTests.filter(({ marked }) => !marked));
+    const baseTests = ctx.basePaths.has(path) ? testTitles(read(ctx.run, ctx.base, path)) : [];
+    const base = countTitles(baseTests);
+    const baseUnmarked = countTitles(baseTests.filter(({ marked }) => !marked));
+    const previous = titlesAt(baseUpstream, baseUpstreamPaths, path);
+    const upstream = titlesAt(ctx.upstream, ctx.upstreamPaths, path);
+    const added = [];
+    let dropped = 0;
+    for (const title of new Set([...head.keys(), ...base.keys(), ...upstream.keys()])) {
+      const [h, hU, b, bU, p, u] = [head, headUnmarked, base, baseUnmarked, previous, upstream].map(
+        (m) => m.get(title) ?? 0,
+      );
+      // Unmarked occurrences beyond what the base had unmarked or T3 has now are new.
+      const extra = hU - Math.max(bU, u);
+      for (let i = 0; i < extra; i += 1) added.push(title);
+      // Only an unmarked test this change drops offsets one: the base's T3 tests T3
+      // still has, tests T3 added since the base, and Scient's own.
+      const expected = (n) => Math.min(n, p, u) + Math.max(0, u - p) + Math.max(0, n - p);
+      dropped += Math.min(Math.max(0, expected(b) - h), Math.max(0, expected(bU) - hU));
+    }
+    if (added.length > dropped) {
+      findings.push({
+        kind: "review-needed",
+        message: `${added.length - dropped} new test(s) in T3's test file outside a SCIENT-FORK:START/END region; put them in the .scient. sibling: ${path}: ${dropped ? "candidates " : ""}${added.map((title) => JSON.stringify(title)).join(", ")}`,
+      });
+    }
+  }
+  return { name: "test-placement", status: findings.length ? "review-needed" : "passed", findings };
+}
+
 // Public for fixture-based tests and other maintainer tooling. No output, fetch,
 // branch movement, checkout change, or persistent receipt/cache is performed.
 export function inspectScientSeams(
   argv = [],
-  { cwd = process.cwd(), names = Object.keys(definitions) } = {},
+  { cwd = process.cwd(), names = [...Object.keys(definitions), "test-placement"] } = {},
 ) {
   let ctx;
   const resources = { directory: null };
@@ -424,6 +523,7 @@ export function inspectScientSeams(
     ctx.diffs = readDiffs(ctx);
     const checks = names.map((name) => {
       try {
+        if (name === "test-placement") return testPlacement(ctx);
         if (!Object.hasOwn(definitions, name)) throw new Error(`Unknown seam: ${name}`);
         return check(name, ctx);
       } catch (error) {
@@ -435,7 +535,8 @@ export function inspectScientSeams(
       }
     });
     return {
-      scope: "seam locators and changed-path classification, not behavioral or ancestry proof",
+      scope:
+        "seam locators, changed-path classification and test placement, not behavioral or ancestry proof",
       context: {
         base: ctx.base,
         head: ctx.head,

@@ -1,8 +1,9 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
@@ -17,6 +18,8 @@ import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { TaskFolders } from "../workspace/TaskFolders.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { hostToolVisibility } from "../mcp/ScientMcpProtocol.ts";
+import { scientOperationCatalog } from "../mcp/ScientOperationCatalog.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -33,6 +36,7 @@ import { PeerLinkRequests } from "../peer/PeerLinkRequests.ts";
 import { PeerLinks } from "../peer/PeerLinks.ts";
 import { RemoteDelegation } from "../peer/RemoteDelegation.ts";
 import { PreviewManager } from "../preview/Manager.ts";
+import { Workflows } from "../workflows/Workflows.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
@@ -43,6 +47,8 @@ import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewG
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { SecretRequests } from "../secrets/SecretRequests.ts";
+import { FeedbackStore } from "../feedback/FeedbackStore.ts";
+import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -71,10 +77,12 @@ import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 import { AccountsService } from "../scient/accounts/AccountsService.ts";
 import { OverleafSync } from "../scient/overleaf/OverleafSync.ts";
+import { ScientServerSettings } from "../scientServerSettings.ts";
 // SCIENT-FORK:END
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
+  Layer.mock(AnalyticsService)({}),
   Layer.mock(AssetSigner)({}),
   Layer.mock(WorkspacePreviewRevisions)({}),
   Layer.mock(DeviceService)({}),
@@ -93,6 +101,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(PreviewAutomationBroker)({}),
   Layer.mock(PreviewBrowser)({}),
   Layer.mock(PreviewManager)({}),
+  Layer.mock(Workflows)({}),
   Layer.mock(ProjectCloneTracker)({}),
   Layer.mock(ProjectService)({}),
   Layer.mock(ProjectSetupScriptRunner)({}),
@@ -105,14 +114,12 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),
+  Layer.mock(FeedbackStore)({}),
+  NodeSqliteClient.layer({ filename: ":memory:" }),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
   Layer.mock(ServerEnvironment)({}),
   Layer.mock(ServerSecretStore)({}),
-  // SCIENT-FORK:START Scient settings service requires committed custom models.
-  Layer.mock(ServerSettingsService)({
-    committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-  }),
-  // SCIENT-FORK:END
+  Layer.mock(ServerSettingsService)({}),
   Layer.mock(SourceControlRepositoryService)({}),
   Layer.mock(ThreadIssueService)({}),
   Layer.mock(ThreadLaunchService)({}),
@@ -134,6 +141,9 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(WorkspacePaths)({}),
   Layer.mock(AccountsService)({}),
   Layer.mock(OverleafSync)({}),
+  Layer.mock(ScientServerSettings)({
+    committedCustomModels: () => ({ revision: 0, connections: [] }),
+  }),
   // SCIENT-FORK:END
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
@@ -184,6 +194,22 @@ it.effect("only request_secret and send_to_user ask Claude Code to load them up 
       ["request_secret", { "anthropic/alwaysLoad": true }],
       ["send_to_user", { "anthropic/alwaysLoad": true }],
     ]);
+  }).pipe(Effect.provide(layerAdvertisedTools)),
+);
+
+// The tool list dies on a tool no one owns, and an outside client lists every tool.
+it.effect("every advertised tool is owned by a Scient operation or declared as a host tool", () =>
+  Effect.gen(function* () {
+    const mcp = yield* McpServer.McpServer;
+    const host = hostToolVisibility(McpHttpServer.hostMcpTools, McpHttpServer.hostMcpToolGrants);
+    const unowned = mcp.tools
+      .map(({ tool }) => tool.name)
+      // ScientAgentFeedbackGate keeps agentFeedback off in Scient, so t3_feedback is never listed.
+      .filter(
+        (name) =>
+          name !== "t3_feedback" && !scientOperationCatalog.forTool(name) && !host.owns(name),
+      );
+    expect(unowned).toEqual([]);
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 

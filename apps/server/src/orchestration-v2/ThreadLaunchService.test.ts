@@ -308,8 +308,6 @@ function makeHarness(options: HarnessOptions = {}) {
           ? Layer.empty
           : Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: options.getLaunchSettings,
-              // SCIENT-FORK: Scient's settings service also answers its committed custom models.
-              committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
             }),
       ),
     ),
@@ -520,7 +518,7 @@ it.effect(
   },
 );
 
-it.effect("leaves a task delegated from a linked environment out of the top-level list", () => {
+it.effect("leaves delegated tasks and workflow agent steps out of the top-level list", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -539,15 +537,26 @@ it.effect("leaves a task delegated from a linked environment out of the top-leve
         title: "Remote parent",
       },
     });
+    const workflowStep = yield* launches.launch({
+      ...launchInput({ command: "command:workflow-step", thread: "thread:workflow-step" }),
+      createdBy: "system",
+      creationSource: "server",
+      workflowRun: {
+        environmentId: EnvironmentId.make("environment:local"),
+        runId: "run:1",
+        workflow: "review",
+        step: "agent",
+      },
+    });
     const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
     assert.deepEqual(
       listed.map((thread) => thread.id),
       [ThreadId.make("thread:top-level")],
     );
     const all = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
-    assert.include(
+    assert.includeMembers(
       all.map((thread) => thread.id),
-      delegated.threadId,
+      [delegated.threadId, workflowStep.threadId],
     );
   }).pipe(Effect.provide(harness.layer));
 });
@@ -3409,6 +3418,43 @@ it.effect("starts the agent of a new worktree thread only after its branch is re
   }),
 );
 
+it.effect("names a new worktree thread's branch while its worktree is being created", () =>
+  Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
+    const renamedTo = yield* Deferred.make<string>();
+    const harness = makeHarness({
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.as({ branch: "generated-branch" }),
+        ),
+      createWorktree: (input) =>
+        Deferred.await(branchNameStarted).pipe(
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never),
+        ),
+      renameBranch: (input) =>
+        Deferred.succeed(renamedTo, input.newBranch).pipe(Effect.as({ branch: input.newBranch })),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "launch:name-during-checkout",
+          thread: "thread:name-during-checkout",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      assert.equal(yield* Deferred.await(renamedTo), "generated-branch");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("tells the thread when its worktree branch could not be renamed", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
@@ -4130,6 +4176,18 @@ it.effect.each(
         if (delegated.childThreadId === null) throw new Error("expected a child thread");
         const childThreadId = delegated.childThreadId;
         yield* Deferred.await(setupEntered);
+        // An async setup script runs beside the launch, which releases the run without waiting for it.
+        if (cancelAsync) {
+          yield* threads
+            .streamStoredEventsFrom({ threadId: childThreadId, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" && stored.event.payload.status === "starting",
+              ),
+              Stream.runHead,
+            );
+        }
         const child = yield* threads.getThreadProjection(childThreadId);
         assert.equal(child.thread.lineage.parentThreadId, parentThreadId);
         assert.equal(child.thread.worktreePath, "/repo-worktrees/feature");

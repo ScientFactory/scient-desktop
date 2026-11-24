@@ -152,6 +152,7 @@ it.layer(NodeServices.layer)("Claude provider account status", (it) => {
 
       assert.equal(snapshot.status, "warning");
       assert.deepEqual(snapshot.auth, { status: "authenticated", required: true });
+      assert.equal(snapshot.checkFailure, "command_failed");
       assert.equal(
         snapshot.models.some((model) => model.slug === "claude-fable-5"),
         true,

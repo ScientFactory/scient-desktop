@@ -244,7 +244,7 @@ Finish the whole check in this turn. If something can't be finished, say exactly
 
 \`scient_references_resolve\` applies a finding's \`fix\` as the check returned it; a stale fix means the file changed, so check again. Search the Library before anything else. Many computer-science conference papers and mathematics books have no DOI: use proceedings, publisher and zbMATH records for them, and the issuing body for editions of guidelines, manuals and software.
 
-The writing calls are \`scient_references_resolve\`, \`scient_paper_get\` (saves a PDF), \`scient_sources_add\`, \`scient_sources_cite\` (pins sources and updates \`references.bib\`) and \`scient_sources_bibliography\` (rewrites \`references.bib\`). Keep to the project folder, and leave \`.scient\` files to the tools.
+The writing calls are \`scient_references_resolve\`, \`scient_paper_get\` (saves a PDF), \`scient_sources_add\`, \`scient_sources_import_file\` (adds a project's .bib, .ris or CSL-JSON file to the Library, skipping entries it holds), \`scient_sources_cite\` (pins sources and updates \`references.bib\`) and \`scient_sources_bibliography\` (rewrites \`references.bib\`). Keep to the project folder, and leave \`.scient\` files to the tools.
 
 ## What to check
 
@@ -2323,11 +2323,16 @@ py -3 -m venv "$env:TEMP\\pdf-review-env"
 \`render_pdf.py\` is this skill's \`scripts/render_pdf.py\` (read it with \`scient_skill_read_resource\` and save it in the temporary folder). Omit \`--pages\` for every page; the output folder must not exist yet, so use a new one after each rebuild. It prints the page count and the image paths.
 
 Open the images with your image-view tool and actually look at them. If you can't render or view them, say that visual inspection was not performed and why. Page images don't show live links, font embedding or tags; check those in the PDF structure when they are required.
+
+For Hebrew and mixed-direction layouts, check the actual PDF page image
+against the source. Check the paragraph edge separately from inline reading
+order, including the words before and after a language switch and any wrap.
+Inspect punctuation, minus signs, ranges and table order where they appear.
 `,
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.pdf-authoring",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 40,
@@ -2425,7 +2430,7 @@ if __name__ == "__main__":
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.references",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "category": "Research",
   "categoryDescription": "Check, find and cite the literature.",
   "displayOrder": 80,

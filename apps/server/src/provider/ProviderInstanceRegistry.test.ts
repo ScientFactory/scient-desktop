@@ -301,7 +301,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
         drivers: [CodexDriver],
         configMap,
       });
@@ -347,7 +347,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       // rematerialized even though its settings envelope did not change.
       // The explicit rebuild must replace only that instance and preserve
       // every unrelated instance and its live scope.
-      yield* registry.rebuildInstance(personalId);
+      yield* mutator.rebuild([personalId]);
       const rebuiltPersonal = yield* registry.getInstance(personalId);
       const unchangedWork = yield* registry.getInstance(workId);
       expect(rebuiltPersonal).toBeDefined();
@@ -483,6 +483,41 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect((yield* registry.getInstance(nextId))?.displayName).toBe("Second");
         expect(yield* registry.getInstance(siblingId)).toBe(sibling);
         expect(closed).toBe(1);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([{ displayName: "Renamed" }, { accentColor: "#ff0000" }])(
+    "keeps the live instance when only %o changes",
+    (presentation) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const instanceId = ProviderInstanceId.make("account-a");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          displayName: "Account A",
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: entry },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        const changes = yield* registry.subscribeChanges;
+        yield* mutator.reconcile({ [instanceId]: { ...entry, ...presentation } });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        yield* PubSub.take(changes);
+        expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
       }).pipe(Effect.provide(layerTest)),
   );
 

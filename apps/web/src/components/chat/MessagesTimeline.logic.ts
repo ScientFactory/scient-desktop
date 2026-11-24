@@ -14,7 +14,7 @@ import {
   IDLE_COMPACTION_TITLES,
 } from "@t3tools/client-runtime/user-message";
 import type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
-import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
+import { renderCodexDirectivesForCopy } from "~/markdown/markdownText";
 import {
   commandDisplayText,
   commandProgramName,
@@ -115,7 +115,10 @@ import {
 } from "../../scient/threadTimeline/postHandoffSetup";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — real answers stay visible when their turn folds.
-import { keepsSettledAnswerVisible } from "../../scient/threadTimeline/keptAnswers";
+import {
+  keepsSettledAnswerVisible,
+  workEntryOffersMcpSignIn,
+} from "../../scient/threadTimeline/keptAnswers";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — an error about a user's message sits under that message.
 import {
@@ -683,11 +686,9 @@ type MessagesTimelineRowContent =
       suppressEmptyResponse?: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
-      assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
-      // SCIENT-FORK:START — files the message's turn changed, for every assistant message of
-      // that turn (not only the one the changed-files card attaches to); Scient fork V2; and
-      // content direction.
+      // SCIENT-FORK:START — files the message's turn changed (for its file links), on every
+      // assistant message of that turn; Scient fork V2; and content direction.
       assistantTurnChangedFiles?: TurnDiffSummary["files"] | undefined;
       canForkConversation?: boolean | undefined;
       assistantDirectionHint?: FixedContentDirection | null | undefined;
@@ -1121,8 +1122,9 @@ function failedTimelineRunIds(
 function itemizedFailedRunIds(
   entries: ReadonlyArray<TimelineEntry>,
   failedRunIds: ReadonlySet<RunId>,
+  usageLimitRunId: RunId | null,
 ) {
-  const usageLimited = new Set<RunId>();
+  const usageLimited = new Set<RunId>(usageLimitRunId ? [usageLimitRunId] : []);
   const otherFailures = new Set<RunId>();
   for (const entry of entries) {
     const item = timelineEntryFailedItem(entry);
@@ -1309,6 +1311,8 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      // SCIENT-FORK: a sign-in the agent asked for stays in view for the user to act on.
+      if (entry.kind === "work" && workEntryOffersMcpSignIn(entry.entry)) continue;
 
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
@@ -1728,6 +1732,8 @@ export function deriveMessagesTimelineRows(
     contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
     // SCIENT-FORK:END
     latestRun?: TimelineLatestRun | null;
+    /** The usage-limited run whose failure row the recovery notice replaces. */
+    usageLimitRunId?: RunId | null;
     runningRunId?: RunId | null;
     expandedRunIds?: ReadonlySet<RunId>;
     expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -1773,18 +1779,12 @@ export function deriveMessagesTimelineRows(
       input.pendingApprovalRequestIds?.has(item.requestId) === true
     );
   };
-  const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
-  // SCIENT-FORK:START — files-changed chips on every assistant message of a turn.
+  // SCIENT-FORK:START — each assistant message's turn files, for its file links.
   const turnDiffSummaryByRunId = new Map<RunId, TurnDiffSummary>();
-  // SCIENT-FORK:END
   for (const summary of input.turnDiffSummaries) {
-    if (summary.assistantMessageId) {
-      turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
-    }
-    // SCIENT-FORK:START
     turnDiffSummaryByRunId.set(summary.runId, summary);
-    // SCIENT-FORK:END
   }
+  // SCIENT-FORK:END
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
@@ -1803,7 +1803,11 @@ export function deriveMessagesTimelineRows(
   // SCIENT-FORK:END
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
-  const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
+  const itemizedRunIds = itemizedFailedRunIds(
+    timelineEntries,
+    failedRunIds,
+    input.usageLimitRunId ?? null,
+  );
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const retainedAssistantReplyIds = retainedAssistantReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
@@ -2519,10 +2523,6 @@ export function deriveMessagesTimelineRows(
         embeddedResultRunIds.has(timelineEntry.message.runId),
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
-      assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
-          ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
-          : undefined,
       // SCIENT-FORK:START
       assistantTurnChangedFiles:
         timelineEntry.message.role === "assistant" && timelineEntry.message.runId !== null
@@ -2610,6 +2610,10 @@ export function deriveMessagesTimelineRows(
     }
   }
 
+  // SCIENT-FORK:START — ThinkingRowFade hides Thinking once a streaming reply's lines appear, so the
+  // row stays through the reveal's short wait instead of leaving the turn blank.
+  const replyIsStreaming = false;
+  // SCIENT-FORK:END
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
@@ -2622,6 +2626,7 @@ export function deriveMessagesTimelineRows(
   if (
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
@@ -3157,7 +3162,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.suppressEmptyResponse === bm.suppressEmptyResponse &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
-        a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         // SCIENT-FORK:START
         a.assistantTurnChangedFiles === bm.assistantTurnChangedFiles &&
         a.canForkConversation === bm.canForkConversation &&

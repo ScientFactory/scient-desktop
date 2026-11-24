@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   RunId,
   MessageId,
+  ProviderDriverKind,
   RoomMessageId,
   ThreadId,
   TurnItemId,
@@ -152,6 +153,58 @@ describe("Scient work-log entries", () => {
     expect(failureEntry.entry.label).not.toBe("technical detail");
     expect(workEntrySignalsSevereFailure(failureEntry.entry)).toBe(true);
     expect(workEntrySignalsSevereFailure(noticeEntry.entry)).toBe(false);
+  });
+
+  it("leaves out MCP startup and sign-in notices older servers wrote", () => {
+    const entries = entriesFor(
+      {
+        ...base,
+        id: TurnItemId.make("mcp-notice"),
+        type: "system_notice" as const,
+        title: "MCP server cloudflare failed to start",
+        message: "MCP client for `cloudflare` failed to start: huge raw error chain",
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "mcp-startup-failed:turn-1:cloudflare",
+          strength: "weak" as const,
+        },
+      },
+      {
+        ...base,
+        id: TurnItemId.make("generic-notice"),
+        type: "system_notice" as const,
+        title: "Steer delivery not confirmed",
+        message: "Your steer could not be confirmed before the turn ended.",
+      },
+      {
+        ...base,
+        id: TurnItemId.make("sign-in-notice"),
+        type: "system_notice" as const,
+        title: "MCP server guru needs a sign-in",
+        message: "The guru MCP server needs a sign-in before Claude can use it.",
+        mcpSignIn: { server: "guru" },
+      },
+      {
+        ...base,
+        id: TurnItemId.make("sign-in-request"),
+        type: "system_notice" as const,
+        title: "Sign in to guru",
+        message: "Claude needs guru for this request. Sign in, then ask again.",
+        mcpSignIn: { server: "guru" },
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          nativeId: "mcp-sign-in-request:turn-1:guru",
+          strength: "weak" as const,
+        },
+      },
+    );
+    // The row the agent asked for when it needed the server stays.
+    expect(
+      entries.map((entry) => (entry?.kind === "work" ? entry.entry.label : entry?.kind)),
+    ).toEqual([
+      "Your steer could not be confirmed before the turn ended.",
+      "Claude needs guru for this request. Sign in, then ask again.",
+    ]);
   });
 
   // regression: 5b6c34265c fix(fork): keep inherited readers and windows consistent

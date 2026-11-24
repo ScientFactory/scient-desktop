@@ -9,6 +9,7 @@ import type {
   ProviderTurnId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
@@ -160,6 +161,8 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
+        case "CodexAppServerUnresponsiveError":
+        case "CodexAppServerRetiredError":
         case "ProviderSetupError":
         case "ProviderAdapterThreadInUseError":
         case "ProviderCompactionUnsupportedError":
@@ -363,6 +366,8 @@ export function makeProviderFailure(input: {
 }
 
 export function makeProviderFailureTurnItem(input: {
+  // Defaults to the turn's single failure row.
+  readonly id?: TurnItemId;
   readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly runId: RunId | null;
@@ -376,10 +381,12 @@ export function makeProviderFailureTurnItem(input: {
   readonly occurredAt: DateTime.Utc;
 }): Extract<OrchestrationV2TurnItem, { readonly type: "error" }> {
   return {
-    id: IdAllocator.derive.turnItemFromProviderItem({
-      driver: input.driver,
-      nativeItemId: `terminal-failure:${input.providerTurnId}`,
-    }),
+    id:
+      input.id ??
+      IdAllocator.derive.turnItemFromProviderItem({
+        driver: input.driver,
+        nativeItemId: `terminal-failure:${input.providerTurnId}`,
+      }),
     threadId: input.threadId,
     runId: input.runId,
     nodeId: input.nodeId,
@@ -407,6 +414,7 @@ export function makeProviderFailureTurnItem(input: {
 export const PROVIDER_RETRY_BUDGET_MS = 10 * 60 * 1000;
 
 export function makeProviderRetryTurnItem(input: {
+  readonly id?: TurnItemId;
   readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly runId: RunId | null;
@@ -433,10 +441,12 @@ export function makeProviderRetryTurnItem(input: {
     title = "Provider retry stopped";
   }
   return {
-    id: IdAllocator.derive.turnItemFromProviderItem({
-      driver: input.driver,
-      nativeItemId: `terminal-failure:${input.providerTurnId}`,
-    }),
+    id:
+      input.id ??
+      IdAllocator.derive.turnItemFromProviderItem({
+        driver: input.driver,
+        nativeItemId: `terminal-failure:${input.providerTurnId}`,
+      }),
     threadId: input.threadId,
     runId: input.runId,
     nodeId: input.nodeId,

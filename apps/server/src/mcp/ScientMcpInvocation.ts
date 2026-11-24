@@ -19,17 +19,23 @@ const scientGrants: Record<OperationCapability, McpCapability> = {
   "threads:read": "threads:read",
 };
 
+/** The Scient grants a credential's MCP grants carry, for a thread or an outside client. */
+export const scientCapabilitiesForMcp = (
+  capabilities: ReadonlySet<McpCapability>,
+): ReadonlySet<OperationCapability> =>
+  new Set(
+    (Object.keys(scientGrants) as OperationCapability[]).filter((grant) =>
+      capabilities.has(scientGrants[grant]),
+    ),
+  );
+
 export function scientInvocationForMcp(scope: McpThreadInvocationScope): AgentInvocationScope {
   return {
     environmentId: scope.environmentId,
     threadId: scope.thread.threadId,
     providerSessionId: scope.thread.providerSessionId,
     providerInstanceId: scope.thread.providerInstanceId,
-    capabilities: new Set(
-      (Object.keys(scientGrants) as OperationCapability[]).filter((grant) =>
-        scope.capabilities.has(scientGrants[grant]),
-      ),
-    ),
+    capabilities: scientCapabilitiesForMcp(scope.capabilities),
     ...(scope.skillScope === undefined ? {} : { skillScope: scope.skillScope }),
     issuedAt: scope.issuedAt,
   };

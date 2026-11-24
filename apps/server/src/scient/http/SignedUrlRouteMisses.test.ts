@@ -27,6 +27,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../../http.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as RelayDeliveryProof from "../../scheduledTasks/RelayDeliveryProof.ts";
@@ -36,6 +37,7 @@ import {
 } from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as WebhookRoute from "../../scheduledTasks/webhookRoute.ts";
 import { SourceControlDrivers } from "../../sourceControl/builtInDrivers.ts";
+import * as Workflows from "../../workflows/Workflows.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as SignedUrlRouteMisses from "./SignedUrlRouteMisses.ts";
 
@@ -84,6 +86,8 @@ const serveSignedRoutes = Effect.fn("serveSignedRoutes")(function* (withRouteMis
     Layer.mock(DocumentText.DocumentText)({}),
     Layer.mock(NativeAppIconResolver.NativeAppIconResolver)({}),
     Layer.mock(Orchestrator.OrchestratorV2)({}),
+    ManagedPolicy.layerTest(),
+    Layer.mock(Workflows.Workflows)({}),
     Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
     Layer.mock(SecureRandom.SecureRandom)({}),
     ServerConfig.layerTest(process.cwd(), { prefix: "scient-signed-url-test-" }),

@@ -1,5 +1,5 @@
 // SCIENT-FORK:START — refresh the checked-in shard weights from the newest main timings.
-// docs/operations/development.md has the command. Each suite takes a run only when that run has
+// docs/internals/ci.md has the command. Each suite takes a run only when that run has
 // a successful report from every one of its shards, so a partial run cannot skew the split.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

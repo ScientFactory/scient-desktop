@@ -16,7 +16,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../../config.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -25,6 +28,7 @@ import {
   WorkspaceBindingEvidence,
   layer as workspaceBindingEvidenceLayer,
 } from "./WorkspaceBindingEvidence.ts";
+import * as WorkspaceBindingStore from "./WorkspaceBindingStore.ts";
 
 const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -46,6 +50,13 @@ const liveLayer = workspaceBindingEvidenceLayer.pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const testLayer = Layer.merge(liveLayer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer));
+const bindingLayer = Layer.merge(
+  testLayer,
+  WorkspaceBindingStore.layer.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
+);
 
 describe("WorkspaceBindingEvidence", () => {
   it.effect.each(["spawn", "unavailable"] as const)(
@@ -139,12 +150,12 @@ describe("WorkspaceBindingEvidence", () => {
   );
 
   it.effect.each(
-    (["probe", "remotes", "canonical-path", "truncated", "invalid-utf8"] as const).map(
-      (failure) => ({
-        caseTitle: `does not publish absent repository evidence after ${failure} failure and recovers uncached`,
-        failure,
-      }),
-    ),
+    (
+      ["probe", "remotes", "remote-config", "canonical-path", "truncated", "invalid-utf8"] as const
+    ).map((failure) => ({
+      caseTitle: `does not publish absent repository evidence after ${failure} failure and recovers uncached`,
+      failure,
+    })),
   )("$caseTitle", ({ failure }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -159,7 +170,9 @@ describe("WorkspaceBindingEvidence", () => {
             if (
               fail &&
               ((failure === "probe" && input.operation === "ScientWorkspace.inspectRepository") ||
-                (failure === "remotes" && input.operation === "ScientWorkspace.inspectRemotes"))
+                (failure === "remotes" && input.operation === "ScientWorkspace.inspectRemotes") ||
+                (failure === "remote-config" &&
+                  input.operation === "ScientWorkspace.inspectRemoteConfig"))
             )
               return yield* new VcsProcessTimeoutError({
                 operation: input.operation,
@@ -259,6 +272,83 @@ describe("WorkspaceBindingEvidence", () => {
         yield* fileSystem.realPath(path.join(root, ".git")),
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps whitespace and newlines at the end of repository paths",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-workspace-binding-edge-space-",
+        });
+        const evidenceService = yield* WorkspaceBindingEvidence;
+        // The newline name takes the per-path fallback; the others take the one-spawn answer.
+        for (const name of ["repo ", "repo\r", "multi\nline "]) {
+          const root = path.join(parent, name);
+          const gitDir = path.join(parent, `${name.replace("\n", "")} metadata `);
+          const workspace = path.join(root, "analysis");
+          yield* fileSystem.makeDirectory(workspace, { recursive: true });
+          yield* git(root, ["init", `--separate-git-dir=${gitDir}`]);
+
+          const evidence = yield* evidenceService.inspect(workspace);
+          expect(evidence.worktreeIdentity?.rootPath).toBe(yield* fileSystem.realPath(root));
+          expect(evidence.worktreeIdentity?.metadataPath).toBe(yield* fileSystem.realPath(gitDir));
+        }
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.each(["added", "removed"] as const)(
+    "keys the configured remote URL and keeps the binding current when a mirror rewrite is %s",
+    (change) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-workspace-binding-insteadof-",
+        });
+        yield* git(root, ["init"]);
+        yield* git(root, [
+          "remote",
+          "add",
+          "origin",
+          "https://github.com/ScientFactory/example.git",
+        ]);
+        const rewrite = ["url.https://mirror.example.com/.insteadOf", "https://github.com/"];
+        if (change === "removed") yield* git(root, ["config", ...rewrite]);
+
+        const evidence = yield* WorkspaceBindingEvidence;
+        const store = yield* WorkspaceBindingStore.WorkspaceBindingStore;
+        const verify = Effect.fn("test.verify")(function* () {
+          const observed = yield* evidence.inspect(root);
+          const resolved = yield* store.verifyObserved({
+            environmentId: EnvironmentId.make("insteadof-environment"),
+            hostProjectId: ProjectId.make("insteadof-project"),
+            evidence: observed,
+          });
+          return { observed, binding: resolved.binding };
+        });
+        const before = yield* verify();
+        if (change === "added") yield* git(root, ["config", ...rewrite]);
+        else yield* git(root, ["config", "--unset", rewrite[0]!]);
+        const after = yield* verify();
+
+        const [plain, rewritten] = change === "added" ? [before, after] : [after, before];
+        expect(plain.observed.repositoryIdentity).toEqual({
+          canonicalKey: "github.com/scientfactory/example",
+          source: "git-remote",
+          remoteName: "origin",
+        });
+        expect(rewritten.observed.repositoryIdentity?.canonicalKey).toBe(
+          "github.com/scientfactory/example",
+        );
+        expect(rewritten.observed.repositoryIdentity?.transportCanonicalKey).toContain(
+          "mirror.example.com",
+        );
+        expect(after.binding.bindingId).toBe(before.binding.bindingId);
+        expect(after.binding.authorityGeneration).toBe(before.binding.authorityGeneration);
+        expect(yield* store.assertCurrent(before.binding)).toEqual(after.binding);
+      }).pipe(Effect.provide(bindingLayer)),
   );
 
   it.effect("distinguishes linked worktree roots while proving their shared Git lineage", () =>

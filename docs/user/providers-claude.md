@@ -128,8 +128,8 @@ When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
 sends your message. Click the chip to switch it to **Keep** and keep the full
-history for that message. The mobile app shows no chip: an eligible message sent
-from it summarizes first. The cache lasts about an hour on a Claude
+history for that message. The mobile app shows the same chip, labelled with the
+token count: tap it to keep the full history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
@@ -206,12 +206,15 @@ above the composer until they are done, the session changes, or you dismiss them
 
 ## Sign in to an MCP server
 
-When an MCP server you added to Claude needs you to sign in, the thread shows a notice with
-**Sign in**, once per session; on mobile, tap the notice. Approve access on the page it opens. Your
+When an MCP server you added to Claude needs you to sign in, the thread's plug button at the top
+shows it as needing attention: open it and choose **Sign in** beside the server. On mobile, a card
+above the composer offers **Sign in**. Nothing is added to the conversation. Approve access on the
+page it opens. Your
 browser then goes to a page that may not load, especially when Claude runs on another machine:
 copy that page's address, paste it into Scient, and choose **Finish sign-in**. Claude keeps the
-sign-in and reconnects the server, and **Extensions** shows it signed in. Connectors you added on claude.ai are signed in on claude.ai,
-so Scient doesn't ask about them. Signing in needs permission to manage providers.
+sign-in and reconnects the server, and **Extensions** shows it signed in. Claude plugins and claude.ai
+connectors you haven't signed in to are counted under **Optional plugin or account servers** in the
+same list, each with its own **Sign in**; they never ask for attention on their own. Signing in needs permission to manage providers.
 
 ## Claude in Chrome
 

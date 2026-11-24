@@ -70,6 +70,9 @@ const instanceId = ProviderInstanceId.make("pi-initiated-fixture");
 const selection = { instanceId, model: "fixture-model" };
 const threadId = ThreadId.make("thread:provider-initiated");
 const projectId = ProjectId.make("project:provider-initiated");
+// A run completes when its turn ends; its checkpoint capture commits afterwards.
+const captured = (run: OrchestrationV2ThreadProjection["runs"][number] | undefined) =>
+  run?.status === "completed" && run.checkpointId !== null;
 
 // Ordinary prompts include the complete empty Scient scope on the native wire.
 // Keep exact text and prompt-count assertions while native work adds no prompt.
@@ -515,10 +518,10 @@ const withInitiatedWork = <A, E, R>(
         const first = yield* Queue.take(offers).pipe(Effect.timeout("10 seconds"));
         yield* first.finish;
         if (options.manualWorker) {
-          yield* waitFor((p) => p.runs[0]?.status === "waiting");
+          yield* waitFor((p) => p.runs[0]?.status === "completed");
           yield* worker.drain(12);
         }
-        yield* waitFor((p) => p.runs[0]?.status === "completed");
+        yield* waitFor((p) => captured(p.runs[0]));
         return yield* run({
           orchestrator,
           workspaceA: cwd,
@@ -879,9 +882,9 @@ it.live(
           assert.equal(loads(), initialLoads);
           assert.equal(closes(), 0);
           yield* adoptedWork.finish;
-          yield* waitFor((p) => p.runs[1]?.status === "waiting");
+          yield* waitFor((p) => p.runs[1]?.status === "completed");
           yield* worker.drain(12);
-          const completed = yield* waitFor((p) => p.runs[1]?.status === "completed");
+          const completed = yield* waitFor((p) => captured(p.runs[1]));
           const checkpoint = completed.checkpoints.find(
             (row) => row.id === completed.runs[1]!.checkpointId,
           )!;
@@ -1107,7 +1110,7 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           );
           yield* predecessor.finish;
           const waiting = yield* waitFor(
-            (p) => p.runs.find((run) => run.id === predecessor.input.runId)?.status === "waiting",
+            (p) => p.runs.find((run) => run.id === predecessor.input.runId)?.status === "completed",
           );
           assert.equal(
             waiting.messages.find(
@@ -1233,9 +1236,9 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
               expectedNativePrompt("Held predecessor"),
             ]);
             yield* adoptedOffer.finish;
-            yield* waitFor((p) => p.runs[2]?.status === "waiting");
+            yield* waitFor((p) => p.runs[2]?.status === "completed");
             yield* worker.drain(12);
-            const completed = yield* waitFor((p) => p.runs[2]?.status === "completed");
+            const completed = yield* waitFor((p) => captured(p.runs[2]));
 
             while (Option.isSome(yield* Queue.poll(observed))) {
               /* consume earlier attempt receipts */

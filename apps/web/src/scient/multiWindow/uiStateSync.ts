@@ -14,7 +14,6 @@ const UI_STATE_FIELDS = [
   "projectOrder",
   "sidebarProjectScopeKeys",
   "threadLastVisitedAtById",
-  "threadChangedFilesExpandedById",
   "defaultAdvertisedEndpointKey",
   "pullRequestMergeMethod",
 ] as const satisfies ReadonlyArray<keyof UiState>;
@@ -54,11 +53,6 @@ function mergeUiState(
       synced.threadLastVisitedAtById,
       stored.threadLastVisitedAtById,
       { resolveChanged: resolveThreadVisit },
-    ),
-    threadChangedFilesExpandedById: mergeWindowEntries(
-      local.threadChangedFilesExpandedById,
-      synced.threadChangedFilesExpandedById,
-      stored.threadChangedFilesExpandedById,
     ),
     defaultAdvertisedEndpointKey: mergeWindowValue(
       local.defaultAdvertisedEndpointKey,

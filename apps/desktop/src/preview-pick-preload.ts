@@ -1,17 +1,7 @@
-import { ipcRenderer } from "electron";
-
-import {
-  PASSKEY_BRIDGE_ARGUMENT,
-  PRIMARY_PASTE_DISABLED_ARGUMENT,
-} from "./preview/GuestProtocol.ts";
-import { installPasskeyBridge } from "./preview/PasskeyBridge.ts";
+import { PRIMARY_PASTE_DISABLED_ARGUMENT } from "./preview/GuestProtocol.ts";
 import "./preview/PickPreload.ts";
 
 // Electron hands webPreferences.additionalArguments to sandboxed preloads in process.argv.
-if (process.argv.includes(PASSKEY_BRIDGE_ARGUMENT)) {
-  installPasskeyBridge((channel, publicKey) => ipcRenderer.invoke(channel, publicKey));
-}
-
 if (process.argv.includes(PRIMARY_PASTE_DISABLED_ARGUMENT)) {
   // Same guard as the app preload: Blink pastes PRIMARY on an uncancelled middle mouseup.
   window.addEventListener(
@@ -24,6 +14,7 @@ if (process.argv.includes(PRIMARY_PASTE_DISABLED_ARGUMENT)) {
 }
 
 // SCIENT-FORK:START — Scient Accounts: capture submitted sign-ins from preview guests.
+import { ipcRenderer } from "electron";
 import { installSignInCapture } from "./scient/accounts/capture.ts";
 import { installLoginFormDetection } from "./scient/accounts/autofill.ts";
 import { CAPTURE, CAPTURE_ALLOWED, LOGIN_FORM_REPORT } from "./scient/accounts/protocol.ts";
@@ -35,4 +26,9 @@ installLoginFormDetection(
   () => ipcRenderer.sendSync(CAPTURE_ALLOWED) === true,
   (form) => ipcRenderer.send(LOGIN_FORM_REPORT, form),
 );
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
+import { PINCH_ZOOM_CHANNEL, reportPinchWheel } from "./scient/browser/pinchZoom.ts";
+reportPinchWheel(window, (deltaY) => ipcRenderer.send(PINCH_ZOOM_CHANNEL, deltaY));
 // SCIENT-FORK:END

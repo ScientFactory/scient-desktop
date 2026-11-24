@@ -64,6 +64,7 @@ import {
   pastedPathQueryLength,
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { preserveReadingPosition } from "~/lib/preserveReadingPosition";
 import {
   caretLineDirection,
   composerContentDirectionKey,
@@ -214,6 +215,8 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
+    /** True when the change came from undo or redo. */
+    fromHistory?: boolean,
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
@@ -1155,6 +1158,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       previousSnapshot.value !== nextValue,
+      isHistoryTransaction(transaction),
     );
   };
 
@@ -1827,6 +1831,11 @@ function ComposerPromptEditorTiptapInner(
     if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, modelKeys, skills]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the mounted editor's visible text anchored while its DOM width changes
+  useLayoutEffect(() => {
+    if (editor) return preserveReadingPosition(editor.view.dom);
+  }, [editor]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {
     if (!editor) return;
@@ -1998,12 +2007,13 @@ function ComposerPromptEditorTiptapInner(
             }
             // SCIENT-FORK:END
             className={cn(
-              "relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
+              "relative grid grid-cols-[minmax(0,1fr)] font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
               containerClassName,
             )}
           >
             <EditorContent
               editor={editor}
+              className="col-start-1 row-start-1"
               onKeyDown={(event) => {
                 if (
                   event.key === "Control" ||
@@ -2049,7 +2059,7 @@ function ComposerPromptEditorTiptapInner(
               <div
                 dir={placeholderDirection}
                 className={cn(
-                  "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
+                  "pointer-events-none relative col-start-1 row-start-1 leading-relaxed text-placeholder",
                   placeholderClassName,
                 )}
               >

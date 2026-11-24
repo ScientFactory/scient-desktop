@@ -1,3 +1,4 @@
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -57,6 +58,11 @@ import * as DateTime from "effect/DateTime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+// SCIENT-FORK:START — a requested MCP sign-in follows the chat's live MCP status.
+import { isMcpSignInRequestNotice, requestedMcpSignInIsOpen } from "@t3tools/contracts";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadMcpStatus } from "../../state/threadMcpStatus";
+// SCIENT-FORK:END
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
@@ -219,6 +225,7 @@ function ShimmerWorkContent(props: {
   readonly environmentId?: EnvironmentId;
   readonly highlighted: boolean;
   readonly icon: WorkContentIcon;
+  readonly iconNode?: ReactNode;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly onTextLayout?: ComponentProps<typeof Text>["onTextLayout"];
@@ -230,7 +237,9 @@ function ShimmerWorkContent(props: {
     <View className="flex-row items-center gap-1.5">
       {props.showIcon ? (
         <View className="h-6 w-6 shrink-0 items-center justify-center">
-          {props.toolIcon && props.environmentId ? (
+          {props.iconNode !== undefined ? (
+            props.iconNode
+          ) : props.toolIcon && props.environmentId ? (
             <ToolActivityIconView
               environmentId={props.environmentId}
               icon={props.toolIcon}
@@ -269,6 +278,7 @@ export function ShimmeringWorkContent(props: {
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly icon: WorkContentIcon;
+  readonly iconNode?: ReactNode;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly showIcon: boolean;
@@ -290,7 +300,7 @@ export function ShimmeringWorkContent(props: {
 
   // Uses a native Animated value instead of Reanimated, whose per-frame commits
   // starve React's while commit pausing is disabled (package.json). See
-  // docs/internals/performance-regressions.md.
+  // docs/internals/16_performance-regressions.md.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value on timers while visible and active, and stops them on cleanup
   useEffect(() => {
     progress.setValue(0);
@@ -320,6 +330,7 @@ export function ShimmeringWorkContent(props: {
         environmentId={props.environmentId}
         highlighted={false}
         icon={props.icon}
+        iconNode={props.iconNode}
         iconSubtleColor={props.iconSubtleColor}
         label={props.label}
         showIcon={props.showIcon}
@@ -371,6 +382,7 @@ export function ShimmeringWorkContent(props: {
                 environmentId={props.environmentId}
                 highlighted
                 icon={props.icon}
+                iconNode={props.iconNode}
                 iconSubtleColor={props.iconSubtleColor}
                 label={props.label}
                 showIcon={props.showIcon}
@@ -902,6 +914,27 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   );
   const [mcpSignInOpen, setMcpSignInOpen] = useState(false);
   const signInNotice = row.projectedItem.item;
+  // SCIENT-FORK:START — a sign-in the agent asked for offers it while the chat still needs it.
+  const requestedSignIn =
+    signInNotice.type === "system_notice" && isMcpSignInRequestNotice(signInNotice)
+      ? signInNotice
+      : null;
+  const liveMcpStatus = useEnvironmentQuery(
+    requestedSignIn
+      ? threadMcpStatus({
+          environmentId: props.environmentId,
+          input: { threadId: requestedSignIn.threadId },
+        })
+      : null,
+  ).data;
+  const requestedSignInOpen =
+    requestedSignIn === null ||
+    (requestedSignIn.mcpSignIn !== undefined &&
+      requestedMcpSignInIsOpen(liveMcpStatus, {
+        server: requestedSignIn.mcpSignIn.server,
+        providerThreadId: requestedSignIn.providerThreadId,
+      }));
+  // SCIENT-FORK:END
   const mcpSignedIn = useAtomValue(
     signInNotice.type === "system_notice" && signInNotice.mcpSignIn !== undefined
       ? threadEnvironment.mcpSignedInAtom(props.environmentId, {
@@ -976,7 +1009,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             ) : null}
             <Text
               accessibilityLabel={timestamp.toLocaleString()}
-              className="shrink-0 text-xs text-foreground-subtle"
+              className="shrink-0 text-xs text-foreground-muted"
             >
               {timestamp.toLocaleString(undefined, {
                 month: "short",
@@ -1010,6 +1043,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const notice = row.projectedItem.item;
   const mcpSignInTarget: McpSignInTarget | null =
     canSignInToMcp &&
+    requestedSignInOpen &&
     notice.type === "system_notice" &&
     notice.mcpSignIn !== undefined &&
     notice.providerThreadId !== null
@@ -1021,6 +1055,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       : null;
   // Signed in, the notice is an ordinary row again.
   const opensMcpSignIn = mcpSignInTarget !== null && !mcpSignedIn;
+  // SCIENT-FORK:START — a sheet whose request closed does not reopen by itself later.
+  if (mcpSignInOpen && mcpSignInTarget === null) setMcpSignInOpen(false);
+  // SCIENT-FORK:END
   // A sign-in notice opens its sheet instead; a nested button would be out of VoiceOver's reach.
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined && !opensMcpSignIn;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
@@ -1190,7 +1227,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                     row.workEntry.questionAnswer &&
                     hasQuestionAnswer(row.workEntry.questionAnswer)
                       ? "text-foreground"
-                      : "text-foreground-subtle"
+                      : "text-foreground-muted"
                   }
                 >{`  ${answerPreview}`}</Text>
               ) : null}
@@ -1418,7 +1455,6 @@ export function ThreadWorkGroupToggle(props: {
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
   readonly thought?: string | undefined;
-  readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
   const gt = useGT();
@@ -1508,7 +1544,6 @@ export function ThreadWorkGroupToggle(props: {
             />
           </WorkLogPressable>
         </View>
-        {props.trailing}
       </View>
     </WorkLogBlock>
   );
@@ -1520,9 +1555,12 @@ export function ThreadThinkingRow(props: {
   readonly label?: string;
   /** Replaces "Thinking" while the provider has not started a turn. */
   readonly providerStartingLabel?: string | undefined;
+  /** The starting provider, whose logo replaces the thinking icon. */
+  readonly providerStartingDriver?: string | undefined;
 }) {
   const gt = useGT();
   const label = props.providerStartingLabel ?? props.label ?? gt("Thinking");
+  const driver = props.providerStartingDriver;
   return (
     <View
       accessible
@@ -1532,6 +1570,13 @@ export function ThreadThinkingRow(props: {
     >
       <ShimmeringWorkContent
         icon="brain"
+        iconNode={
+          driver === undefined ? undefined : (
+            <View style={{ opacity: 0.7 }}>
+              <ProviderIcon provider={driver} size={14} />
+            </View>
+          )
+        }
         iconSubtleColor={props.iconSubtleColor}
         label={label}
         showIcon

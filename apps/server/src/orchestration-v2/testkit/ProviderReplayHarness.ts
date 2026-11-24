@@ -1,5 +1,3 @@
-import { ContextHandoffPolicyOverride } from "../ScientContextHandoffPolicy.ts";
-import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -8,7 +6,6 @@ import type {
   ManagedPolicyDocument,
   ProviderDriverKind,
   ProviderReplayTranscript,
-  ResponseStreamingMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,9 +16,12 @@ import type * as Scope from "effect/Scope";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { MigrationError } from "effect/sql/Migrator";
 import type { SqlError } from "effect/sql/SqlError";
-import type { ScientMigrationError } from "../scient-fork/scientMigrator.ts";
-import type { V2DatabaseImportError } from "../../persistence/initializeV2Database.ts";
 
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+// SCIENT-FORK:START — Scient's options, services and replay workspaces.
+import * as ScientReplay from "./ProviderReplayHarness.scient.ts";
+import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
+// SCIENT-FORK:END
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -30,15 +30,11 @@ import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
-import type * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
-import { layer as attachmentRollbackPruneLayer } from "../AttachmentRollbackPruneService.ts";
-import { layer as threadFileReleaseLayer } from "../scient-fork/ThreadFileRelease.ts";
-import { layer as attachmentReconciliationLayer } from "../AttachmentReservationReconciliation.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
 import * as CommandReceiptStore from "../CommandReceiptStore.ts";
@@ -54,8 +50,6 @@ import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
-import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
-import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
@@ -76,20 +70,11 @@ import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationServi
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as TaskFolderStore from "../../workspace/TaskFolderStore.ts";
-// SCIENT-FORK:START — replay workspaces resolve like production, never to the checkout.
-import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
-// SCIENT-FORK:END
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
-import * as ConversationForks from "../scient-fork/ConversationForkService.ts";
-import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
-import {
-  ScientForkCheckpointBaseline,
-  ScientForkCheckpointBaselineLive,
-  type ScientForkCheckpointBaselineShape,
-} from "../scient-fork/ForkCheckpointBaseline.ts";
+import { ThreadWorktreeRestore } from "../../workspace/restoreMissingWorktree.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -173,6 +158,7 @@ export function makeReplayServerConfig(
       providerStatusCacheDir,
       worktreesDir,
       worktreeCheckoutCacheDir: path.join(providerStatusCacheDir, "worktree-checkouts"),
+      workflowsDir: path.join(baseDir, "workflows"),
       attachmentsDir,
       browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
       environmentThemesDir,
@@ -186,10 +172,8 @@ export function makeReplayServerConfig(
       environmentIdPath: path.join(stateDir, "environment-id"),
       serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
       secretsDir: path.join(stateDir, "secrets"),
-      analysisDir: path.join(stateDir, "analysis"),
-      computeDir: path.join(stateDir, "compute"),
-      latexDir: path.join(stateDir, "latex"),
-      documentArtifactsDir: path.join(stateDir, "document-artifacts"),
+      // SCIENT-FORK: Scient's own state folders.
+      ...ScientReplay.scientReplayStatePaths(path, stateDir),
     };
   });
 }
@@ -228,33 +212,17 @@ export function runOrchestratorV2ProviderReplayScenario<
   options: {
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
-      | MigrationError
-      | PlatformError.PlatformError
-      | SqlError
-      | ScientMigrationError
-      | V2DatabaseImportError
+      MigrationError | PlatformError.PlatformError | SqlError | ScientReplay.ScientReplayErrors
     >;
     readonly runEffectWorker?: boolean;
-    /** Exercise production session credential issuance; disabled for recorded transports. */
-    readonly configureMcp?: boolean;
-    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
-    readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
-    /** Auth integration tests must supply the actual snapshot registry. */
-    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
-    readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
-    readonly responseStreamingMode?: ResponseStreamingMode;
-    /** Inject an external Git process failure while retaining native checkpoint services. */
-    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
-    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
-    readonly contextHandoffPolicy?: "scient" | "byte";
     readonly managedPolicy?: ManagedPolicyDocument;
     readonly providerInstances?: Partial<
       ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
     >;
-  } = {},
+  } & ScientReplay.ScientReplayOptions = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
   | Orchestrator.OrchestratorV2Error
@@ -263,8 +231,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   | MigrationError
   | PlatformError.PlatformError
   | SqlError
-  | ScientMigrationError
-  | V2DatabaseImportError,
+  | ScientReplay.ScientReplayErrors,
   never
 > {
   const replayGate = makeProviderReplayGate(
@@ -292,54 +259,26 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   options: {
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
-      | MigrationError
-      | PlatformError.PlatformError
-      | SqlError
-      | ScientMigrationError
-      | V2DatabaseImportError
+      MigrationError | PlatformError.PlatformError | SqlError | ScientReplay.ScientReplayErrors
     >;
     readonly runEffectWorker?: boolean;
-    /** Exercise production session credential issuance; disabled for recorded transports. */
-    readonly configureMcp?: boolean;
-    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
-    readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
-    /** Auth integration tests must supply the actual snapshot registry. */
-    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
-    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
-    readonly contextHandoffPolicy?: "scient" | "byte";
     readonly managedPolicy?: ManagedPolicyDocument;
     readonly replayGate?: ProviderReplayGate;
     readonly providerInstances?: Partial<
       ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
     >;
-  } = {},
+  } & ScientReplay.ScientReplayOptions = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
-  | ProviderSessionManager.ProviderSessionManagerV2
-  | ProviderTurnStartService.ProviderTurnStartServiceV2
-  | CommandReceiptStore.CommandReceiptStoreV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
-  | EventStore.EventStoreV2
-  | CheckpointService.CheckpointServiceV2
-  | CheckpointStore.CheckpointStore
-  | ConversationForks.ConversationForkService
-  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
-  | ProjectionStore.ProjectionStoreV2
-  | ProjectStore.ProjectStoreV2
-  | McpProviderSessions.McpProviderSessions
   | CommandOutputRecorder.CommandOutputRecorder
-  | ServerConfig.ServerConfig
-  | ServerSettings.ServerSettingsService,
-  | Error
-  | MigrationError
-  | PlatformError.PlatformError
-  | SqlError
-  | ScientMigrationError
-  | V2DatabaseImportError
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | ScientReplay.ScientReplayServices,
+  Error | MigrationError | PlatformError.PlatformError | SqlError | ScientReplay.ScientReplayErrors
 > {
   const layerRegistry = harness.makeProviderAdapterRegistryLayer(
     scenario.transcript,
@@ -356,54 +295,14 @@ export function layerWithRegistry<Error>(
     McpProviderSessions.McpProviderSessions
   >,
   options: {
-    /** Preserve one disposable profile across file-backed restart and recovery tests. */
-    readonly layerServerConfig?: Layer.Layer<ServerConfig.ServerConfig>;
-    readonly layerServerSettings?: Layer.Layer<ServerSettings.ServerSettingsService>;
-    readonly providerSessionIdleTimeoutMs?: number;
-    /** Capture explicitly supplied thread operations in the actual effect worker. */
-    readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
-    /** Observe or gate the real canonical writer without replacing its SQL transaction. */
-    readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
-    /** Gate actual Git capture without replacing publication or admission. */
-    readonly decorateForkCheckpointBaseline?: (
-      baseline: ScientForkCheckpointBaselineShape,
-    ) => ScientForkCheckpointBaselineShape;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
-      | MigrationError
-      | PlatformError.PlatformError
-      | SqlError
-      | ScientMigrationError
-      | V2DatabaseImportError
+      MigrationError | PlatformError.PlatformError | SqlError | ScientReplay.ScientReplayErrors
     >;
     readonly runEffectWorker?: boolean;
-    /** Run actual attachment cleanup on isolated test profiles. */
-    readonly resourceCleanupLayer?: Layer.Layer<
-      never,
-      never,
-      ServerConfig.ServerConfig | FileSystem.FileSystem
-    >;
-    /** Exercise native fork checkout with the production Git workflow. */
-    readonly forkGitWorkflowLayer?: Layer.Layer<
-      GitWorkflowService,
-      never,
-      ServerConfig.ServerConfig
-    >;
-    /** Exercise production session credential issuance; disabled for recorded transports. */
-    readonly configureMcp?: boolean;
-    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
-    readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
-    /** Auth integration tests must supply the actual snapshot registry. */
-    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
-    readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
-    readonly responseStreamingMode?: ResponseStreamingMode;
-    /** Inject an external Git process failure while retaining native checkpoint services. */
-    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
-    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
-    readonly contextHandoffPolicy?: "scient" | "byte";
     /** Lets a test hold a projection read open to order concurrent dispatches. */
     readonly wrapProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
@@ -413,81 +312,85 @@ export function layerWithRegistry<Error>(
     readonly providerInstances?: Partial<
       ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
     >;
-  } = {},
+  } & ScientReplay.ScientReplayOptions = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
-  | ProviderSessionManager.ProviderSessionManagerV2
-  | ProviderTurnStartService.ProviderTurnStartServiceV2
-  | CommandReceiptStore.CommandReceiptStoreV2
-  | EffectWorker.OrchestrationEffectWorkerV2
   | EffectOutbox.EffectOutboxV2
+  | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
-  | EventStore.EventStoreV2
-  | CheckpointService.CheckpointServiceV2
-  | CheckpointStore.CheckpointStore
-  | ConversationForks.ConversationForkService
-  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
-  | ProjectionStore.ProjectionStoreV2
-  | ProjectStore.ProjectStoreV2
-  | McpProviderSessions.McpProviderSessions
+  | ProviderSessionManager.ProviderSessionManagerV2
   | CommandOutputRecorder.CommandOutputRecorder
   | ThreadCommandExecutor.ThreadCommandExecutor
-  | ServerConfig.ServerConfig
-  | ServerSettings.ServerSettingsService,
-  | Error
-  | MigrationError
-  | PlatformError.PlatformError
-  | SqlError
-  | ScientMigrationError
-  | V2DatabaseImportError
+  | ScientReplay.ScientReplayServices,
+  Error | MigrationError | PlatformError.PlatformError | SqlError | ScientReplay.ScientReplayErrors
 > {
-  const layerServerConfig =
-    options.layerServerConfig ??
-    Layer.effect(
-      ServerConfig.ServerConfig,
-      makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
-    ).pipe(Layer.provide(NodeServices.layer));
-  // SCIENT-FORK:START — a local thread checkpoints its project, not process.cwd() (the checkout).
-  // Suspended: the stores it reads are built below.
-  const layerReplayPolicy = Layer.suspend(() =>
-    ScientReplayWorkspacePolicy.layer.pipe(
-      Layer.provide(Layer.merge(layerStores, layerServerConfig)),
+  const layerServerConfig = Layer.effect(
+    ServerConfig.ServerConfig,
+    makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
+  ).pipe(
+    Layer.provide(NodeServices.layer),
+    // SCIENT-FORK: a test may keep one disposable profile across restarts.
+    ScientReplay.replaceWith(options.layerServerConfig),
+  );
+  // A thread without a worktree would otherwise fall back to process.cwd(), so checkpoints
+  // would run git against the checkout running the tests and race its other users.
+  const layerScenarioWorkspacePolicy = Layer.effect(
+    RuntimePolicy.RuntimePolicyV2,
+    Effect.gen(function* () {
+      const workspace = yield* checkpointWorkspace(
+        scenario.name.replace(/[^a-z0-9_-]+/gi, "-"),
+      ).pipe(Effect.orDie);
+      return {
+        resolve: (input) =>
+          Effect.succeed({
+            runtimeMode: input.thread.runtimeMode,
+            interactionMode: input.thread.interactionMode,
+            cwd: input.thread.worktreePath ?? workspace,
+          }),
+      };
+    }),
+  ).pipe(
+    // SCIENT-FORK: a local thread checkpoints its project as production resolves it.
+    ScientReplay.replaceWith(
+      Layer.suspend(() =>
+        ScientReplayWorkspacePolicy.layer.pipe(
+          Layer.provide(Layer.merge(layerStores, layerServerConfig)),
+        ),
+      ),
     ),
   );
   const layerRuntimeBase =
-    options.runtimePolicyLayer ??
-    (scenario.runtimePolicyOverride === undefined
-      ? layerReplayPolicy
+    scenario.runtimePolicyOverride === undefined
+      ? layerScenarioWorkspacePolicy
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(layerReplayPolicy),
-        ));
-  // SCIENT-FORK:END
+          Layer.provide(layerScenarioWorkspacePolicy),
+        );
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
-  const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
-  const layerProvidedRegistry = registryLayer.pipe(Layer.provide(layerContinuationRequests));
-  const layerServerSettings =
-    options.layerServerSettings ??
-    Layer.unwrap(
-      Effect.map(ManagedPolicy.fromDocument("/test/policy.json", options.managedPolicy), (policy) =>
-        ServerSettings.layerTest(
-          {
-            responseStreamingMode: options.responseStreamingMode ?? "turn",
-            ...(options.continueThreadsAfterServerUpdate === undefined
-              ? {}
-              : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
-          },
-          policy.summary,
-        ),
+  // SCIENT-FORK: one MCP session store, which a test may supply.
+  const layerMcpProviderSessions = options.mcpProviderSessionsLayer ?? McpProviderSessions.layer;
+  const layerProvidedRegistry = registryLayer.pipe(
+    Layer.provide(Layer.merge(layerContinuationRequests, layerMcpProviderSessions)),
+  );
+  const layerServerSettings = Layer.unwrap(
+    Effect.map(ManagedPolicy.fromDocument("/test/policy.json", options.managedPolicy), (policy) =>
+      ServerSettings.layerTest(
+        {
+          // SCIENT-FORK: a test may choose the streaming mode.
+          responseStreamingMode: options.responseStreamingMode ?? "turn",
+          ...(options.continueThreadsAfterServerUpdate === undefined
+            ? {}
+            : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
+        },
+        policy.summary,
       ),
-    ).pipe(Layer.orDie);
-  const handoffSettingsLayer = Layer.merge(
-    layerServerSettings,
-    options.contextHandoffPolicy === "byte"
-      ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
-      : Layer.empty,
+    ),
+  ).pipe(
+    Layer.orDie,
+    // SCIENT-FORK: a test may supply its own settings.
+    ScientReplay.replaceWith(options.layerServerSettings),
   );
   const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const wrapProjectionStore = options.wrapProjectionStore;
@@ -508,27 +411,17 @@ export function layerWithRegistry<Error>(
     layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
-  const actualEventSink = EventSink.layerFromStores.pipe(
+  const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase, ThreadViewers.layer)),
+    // SCIENT-FORK: observe or gate the real canonical writer.
+    ScientReplay.decorateEventSink(options.decorateEventSink),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
-    Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
+    // SCIENT-FORK: a test policy replaces the replay workspace and any scenario override.
+    Layer.provide(Layer.merge(options.runtimePolicyLayer ?? layerRuntimeBase, layerServerSettings)),
   );
-  const layerEventSinkProvided =
-    options.decorateEventSink === undefined
-      ? actualEventSink
-      : Layer.effect(
-          EventSink.EventSinkV2,
-          Effect.map(EventSink.EventSinkV2, options.decorateEventSink),
-        ).pipe(Layer.provide(actualEventSink));
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
-  );
-  const attachmentReconciliationProvided = attachmentReconciliationLayer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerServerConfig)),
-  );
-  const legacyImporterProvided = LegacyV1ThreadImporter.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerEventSinkProvided, layerDatabase)),
   );
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
@@ -539,7 +432,7 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
-        attachmentReconciliationProvided,
+        ThreadCommandExecutor.layer,
         GitVcsDriver.layer.pipe(
           Layer.provide(layerServerConfig),
           Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -548,6 +441,7 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
+    // SCIENT-FORK: a test may inject an external Git process failure.
     Layer.provide(options.vcsProcessLayer ?? VcsProcess.layer),
     Layer.provide(layerServerConfig),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -569,7 +463,7 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-    Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
+    Layer.provide(IdAllocator.layer),
   );
   const layerPersistence = Layer.mergeAll(
     layerStores,
@@ -578,35 +472,27 @@ export function layerWithRegistry<Error>(
     IdAllocator.layer,
     layerProviderEventIngestorProvided,
   );
-  // Recorded transports have no snapshot instance registry. Unexpected auth
-  // control must fail visibly; dedicated auth proofs provide the live registry.
-  const snapshotRegistryLayer =
-    options.providerRegistryLayer ??
-    Layer.succeed(ProviderRegistry.ProviderRegistry, {
-      ...makeProviderRegistryMock(),
-      setProviderAuthenticationFailure: Effect.fn(
-        "ProviderRegistry.setProviderAuthenticationFailure",
-      )(function () {
-        return Effect.die("Unexpected authentication invalidation in recorded provider replay.");
-      }),
-    });
   const layerCommandOutputHubProvided = CommandOutputRecorder.layer.pipe(
     Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
   );
   const layerProviderSessionManagerProvided = ProviderSessionManager.layerWithOptions({
+    // SCIENT-FORK:START — production credential issuance and idle timeouts, when asked.
     configureMcp: options.configureMcp ?? false,
     ...(options.providerSessionIdleTimeoutMs === undefined
       ? {}
       : { idleTimeoutMs: options.providerSessionIdleTimeoutMs }),
+    // SCIENT-FORK:END
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerCommandOutputHubProvided,
         layerProvidedRegistry,
-        snapshotRegistryLayer,
         layerEventSinkProvided,
         IdAllocator.layer,
+        // SCIENT-FORK:START — the shared store, and a test's session registry.
+        layerMcpProviderSessions,
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
+        // SCIENT-FORK:END
         layerProviderEventIngestorProvided,
         layerStores,
         ProviderInstallationGate.layer,
@@ -614,7 +500,8 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerProvidedRegistry, layerRuntime)),
+    // SCIENT-FORK: Scient's switch service reads the runtime policy.
+    Layer.provide(Layer.merge(layerProvidedRegistry, layerRuntime)),
   );
   const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(
@@ -627,16 +514,14 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
-      ).pipe(Layer.provideMerge(ThreadCommandExecutor.layer)),
+        ThreadCommandExecutor.layer,
+      ),
     ),
   );
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerContextHandoffServiceProvided,
-        layerServerConfig,
-        handoffSettingsLayer,
-        layerDatabase,
         layerEventSinkProvided,
         IdAllocator.layer,
         layerStores,
@@ -646,6 +531,10 @@ export function layerWithRegistry<Error>(
         }),
         layerRunExecutionServiceProvided,
         layerRuntime,
+        layerServerConfig,
+        layerServerSettings,
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+        layerDatabase, // SCIENT-FORK: turn start reads persisted model windows from this database.
       ),
     ),
   );
@@ -656,7 +545,6 @@ export function layerWithRegistry<Error>(
         McpAppModelContext.layerEmpty,
         layerStores,
         layerProviderSessionManagerProvided,
-        layerServerConfig,
       ),
     ),
   );
@@ -671,6 +559,7 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         layerStores,
         layerProviderSessionManagerProvided,
+        ThreadCommandExecutor.layer,
         layerRuntime,
         layerServerConfig,
         layerServerSettings,
@@ -684,6 +573,7 @@ export function layerWithRegistry<Error>(
         layerEventSinkProvided,
         IdAllocator.layer,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
@@ -698,30 +588,9 @@ export function layerWithRegistry<Error>(
       }),
     }),
   );
-  const conversationForkProvided = ConversationForks.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerProviderSessionManagerProvided,
-        layerStores,
-        layerEventSinkProvided,
-        layerCommandReceiptStoreProvided,
-        legacyImporterProvided,
-        options.decorateForkCheckpointBaseline === undefined
-          ? ScientForkCheckpointBaselineLive
-          : Layer.effect(
-              ScientForkCheckpointBaseline,
-              Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
-            ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
-      ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
-    ),
-    Layer.provide(
-      Layer.mergeAll(layerCheckpointStore, layerServerConfig, VcsProcess.layer, layerDatabase),
-    ),
-  );
   const layerOrchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerServerConfig,
         layerCheckpointServiceProvided,
         CommandPolicy.layer,
         layerContextHandoffServiceProvided,
@@ -735,7 +604,6 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         TaskFolderStore.layer.pipe(Layer.provide(layerDatabase)),
         ThreadForkService.layer,
-        conversationForkProvided,
       ),
     ),
   );
@@ -750,6 +618,7 @@ export function layerWithRegistry<Error>(
         cancelDelegatedTask: orchestrator.cancelDelegatedTask,
         delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
         streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
+        // SCIENT-FORK: capture a test's thread operations in the actual effect worker.
         ...options.threads,
       });
     }),
@@ -769,24 +638,6 @@ export function layerWithRegistry<Error>(
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
-        attachmentRollbackPruneLayer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              layerStores,
-              layerProviderSessionManagerProvided,
-              layerServerConfig,
-              attachmentReconciliationProvided,
-            ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
-          ),
-        ),
-        threadFileReleaseLayer.pipe(
-          Layer.provide(
-            Layer.mergeAll(layerStores, layerServerConfig, attachmentReconciliationProvided),
-          ),
-        ),
-        options.resourceCleanupLayer?.pipe(
-          Layer.provide(Layer.merge(layerServerConfig, NodeServices.layer)),
-        ) ?? Layer.empty,
         layerRunFinalizationServiceProvided,
         layerCheckpointRollbackServiceProvided,
         layerProviderSessionManagerProvided,
@@ -796,7 +647,6 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
-        conversationForkProvided,
         layerStores,
       ),
     ),
@@ -805,34 +655,40 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(
-    attachmentReconciliationProvided,
-    layerServerSettings,
-    layerCommandReceiptStoreProvided,
-    layerCheckpointServiceProvided,
-    layerCheckpointStore,
-    legacyImporterProvided,
-    layerServerConfig,
-    conversationForkProvided,
-    layerStores,
     layerEffectOutboxProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
-    layerProviderTurnStartServiceProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
+    ThreadCommandExecutor.layer,
   ).pipe(
-    Layer.provide(
-      Layer.merge(
-        ProviderTurnStartServiceTestkit.layer,
-        (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(layerServerConfig)),
-      ),
+    // SCIENT-FORK:START — Scient's orchestration services, from this harness's own layers.
+    ScientReplay.withScientServices(
+      {
+        leaves: Layer.mergeAll(
+          layerStores,
+          layerServerConfig,
+          layerServerSettings,
+          layerEventSinkProvided,
+        ),
+        database: layerDatabase,
+        shared: layerMcpProviderSessions,
+        upper: Layer.mergeAll(
+          layerProviderSessionManagerProvided,
+          layerProviderTurnStartServiceProvided,
+          layerCheckpointServiceProvided,
+          layerCheckpointStore,
+          layerCommandReceiptStoreProvided,
+          ThreadCommandExecutor.layer,
+        ),
+      },
+      options,
     ),
-    // SCIENT-FORK: one step below the runtime, so its layers see the executor it also exports.
-    Layer.provideMerge(layerThreadCommandExecutor),
+    // SCIENT-FORK:END
+    Layer.provide(ProviderTurnStartServiceTestkit.layer),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-    Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );
 
   if (options.runEffectWorker === false) {
@@ -841,11 +697,7 @@ export function layerWithRegistry<Error>(
   // Build recovery before runtime so it commits before the effect worker claims work.
   const layerStartupRecovery: Layer.Layer<
     never,
-    | MigrationError
-    | PlatformError.PlatformError
-    | SqlError
-    | ScientMigrationError
-    | V2DatabaseImportError
+    MigrationError | PlatformError.PlatformError | SqlError | ScientReplay.ScientReplayErrors
   > =
     options.recoverOnStartup === true
       ? Layer.effectDiscard(

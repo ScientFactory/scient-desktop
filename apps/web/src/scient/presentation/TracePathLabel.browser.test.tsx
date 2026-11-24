@@ -158,7 +158,6 @@ it.each([false, true])(
         }
         runningRunId={live ? RunId.make("run-1") : null}
         turnDiffSummaries={[]}
-        onOpenTurnDiff={() => {}}
         onOpenThread={() => {}}
         onForkFromRun={() => Promise.resolve()}
         supportsConversationRollback={false}

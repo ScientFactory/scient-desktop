@@ -964,7 +964,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           if (command._tag !== "StandardCommand") {
             return yield* Effect.die("Expected one validation process.");
           }
-          if (command.command === "taskkill") {
+          if (command.command.endsWith(String.raw`\System32\taskkill.exe`)) {
             taskkillCommands.push(command.args.map(String));
             // The validator tree is stopped here, before its pipes close.
             childProcessesRunning = false;

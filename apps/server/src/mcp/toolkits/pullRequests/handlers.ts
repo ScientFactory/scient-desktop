@@ -66,6 +66,7 @@ import {
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
   alreadyEndedWatchNext,
+  CHECKS_ALREADY_PASSED_WATCH_NEXT,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
@@ -311,10 +312,9 @@ const make = Effect.gen(function* () {
       | typeof PullRequestUnlinkFailedError
       | typeof PullRequestForgeError,
   ) =>
-    projects.getShell(thread.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.mapError((cause) => new Failure({ cause })),
-    );
+    pullRequests
+      .addressedProject(thread.projectId)
+      .pipe(Effect.mapError((cause) => new Failure({ cause })));
 
   const dispatchFailure =
     (Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError) =>
@@ -337,9 +337,11 @@ const make = Effect.gen(function* () {
       .setWatching({ threadId, target: input, watching, until: input.until })
       .pipe(
         Effect.map((result) =>
-          result.state === undefined
-            ? result
-            : { ...result, next: alreadyEndedWatchNext(result.state) },
+          result.state !== undefined
+            ? { ...result, next: alreadyEndedWatchNext(result.state) }
+            : result.checksState === "passing"
+              ? { ...result, next: CHECKS_ALREADY_PASSED_WATCH_NEXT }
+              : result,
         ),
         Effect.catchTags({
           PullRequestWatchThreadNotFoundError: (error) =>
@@ -362,10 +364,10 @@ const make = Effect.gen(function* () {
     let known: ReadonlyArray<OrchestrationProjectShell>;
     if (scope.thread !== undefined) {
       const caller = yield* requireThread(PullRequestListFailedError, scope.thread.threadId);
-      callerProject = yield* projects.getShell(caller.projectId).pipe(
-        Effect.map(Option.getOrUndefined),
-        Effect.mapError((cause) => new PullRequestListFailedError({ cause })),
-      );
+      // The refined forge the caller's tools are exposed for addresses its pull requests.
+      callerProject = yield* pullRequests
+        .addressedProject(caller.projectId)
+        .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
       known = callerProject === undefined ? [] : [callerProject];
     } else {
       known = yield* projects
@@ -631,6 +633,7 @@ const make = Effect.gen(function* () {
       title: detail.title,
       state: detail.state,
       isDraft: detail.isDraft,
+      ...(detail.visibility === undefined ? {} : { visibility: detail.visibility }),
       author: detail.author?.login ?? null,
       headBranch: detail.headBranch,
       baseBranch: detail.baseBranch,
@@ -1066,6 +1069,7 @@ const make = Effect.gen(function* () {
             body: input.body,
             baseBranch: input.base,
             draft: input.draft,
+            private: input.private,
           })
           .pipe(Effect.mapError(forgeFailure));
         if (created.url === undefined) {

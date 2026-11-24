@@ -41,6 +41,7 @@ import * as ModelManifest from "../ModelManifest.ts";
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ScientServerSettings } from "../../scientServerSettings.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { DroidDriver } from "./DroidDriver.ts";
 
@@ -137,11 +138,10 @@ const canaryConnectionLayer = (instanceId: ProviderInstanceId) => {
       },
     ],
   };
-  return Layer.effect(
-    ServerSettingsService,
-    Effect.gen(function* () {
-      const base = yield* ServerSettingsService;
-      return {
+  return Layer.mergeAll(
+    Layer.effect(
+      ServerSettingsService,
+      Effect.map(ServerSettingsService, (base) => ({
         ...base,
         getSettings: base.getSettings.pipe(
           Effect.map((settings) => ({
@@ -149,10 +149,16 @@ const canaryConnectionLayer = (instanceId: ProviderInstanceId) => {
             customModels: { revision: 0, connections: [connection] },
           })),
         ),
+      })),
+    ),
+    Layer.effect(
+      ScientServerSettings,
+      Effect.map(ScientServerSettings, (base) => ({
+        ...base,
         committedCustomModels: () => ({ revision: 0, connections: [connection] }),
         resolveCustomModels: () => Effect.succeed([connection]),
-      };
-    }),
+      })),
+    ),
   ).pipe(Layer.provide(ServerSettingsService.layerTest()));
 };
 

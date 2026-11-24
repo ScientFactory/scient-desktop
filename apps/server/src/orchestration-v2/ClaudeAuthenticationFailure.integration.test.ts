@@ -218,7 +218,6 @@ it.effect.each(
       getInstance: (id) => Effect.succeed(instances.find((instance) => instance.instanceId === id)),
       listInstances: Effect.succeed(instances),
       listUnavailable: Effect.succeed([]),
-      rebuildInstance: () => Effect.die("Auth failure must not rebuild a peer"),
       streamChanges: Stream.fromPubSub(changes),
       subscribeChanges: PubSub.subscribe(changes),
     });

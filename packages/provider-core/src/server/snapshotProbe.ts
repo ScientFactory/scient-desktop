@@ -1,6 +1,7 @@
 import type {
   CustomModelSetting,
   ProviderDriverKind,
+  ProviderStatusCheckFailure,
   ModelCapabilities,
   RuntimeMode,
   ServerProvider,
@@ -104,6 +105,8 @@ export interface ProviderProbeResult {
   readonly auth: ServerProviderAuth;
   readonly message?: string;
   readonly usageLimits?: ServerProviderUsageLimits;
+  // SCIENT-FORK: the probe's bounded diagnostic, independent of its UI message.
+  readonly checkFailure?: ProviderStatusCheckFailure;
 }
 
 export interface ServerProviderPresentation {
@@ -115,7 +118,9 @@ export interface ServerProviderPresentation {
   readonly supportsConversationRollback?: boolean;
 }
 
-export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
+export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver"> & {
+  readonly checkFailure?: ProviderStatusCheckFailure;
+};
 
 /** Keep previously discovered native agent models visible in Settings after native discovery removes them. */
 export function retainUnavailableAgentModels(
@@ -373,6 +378,8 @@ export function buildServerProvider(input: {
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
+    // SCIENT-FORK: carry the typed probe result to the connection stamp.
+    ...(input.probe.checkFailure ? { checkFailure: input.probe.checkFailure } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }

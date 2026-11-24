@@ -90,8 +90,7 @@ function makeRegistry(input: {
   }>;
   readonly discovery?: ReadonlyArray<SourceControlProviderDiscoverySpec>;
   readonly run?: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
-  // SCIENT-FORK: Layer.mock accepts effectful partials; Scient's settings mock returns committed models.
-  readonly settings?: Layer.PartialEffectful<ServerSettings.ServerSettingsService["Service"]>;
+  readonly settings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
 }) {
   const driver = {
     listRemotes: () =>
@@ -436,9 +435,6 @@ it.effect("asks again once Settings change", () =>
     const registry = yield* makeRegistry({
       remotes: [],
       settings: {
-        // SCIENT-FORK:START — Scient's settings service also returns committed custom models.
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-        // SCIENT-FORK:END
         subscribeChanges: PubSub.subscribe(changes).pipe(
           Effect.map((subscription) =>
             Stream.fromSubscription(subscription).pipe(

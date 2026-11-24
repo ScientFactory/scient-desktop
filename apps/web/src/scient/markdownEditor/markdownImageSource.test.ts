@@ -28,6 +28,19 @@ describe("Markdown image display/action identity", () => {
     });
   });
 
+  it("resolves from a folder whose name holds a colon, such as a timestamp", () => {
+    expect(
+      resolveMarkdownImageSource("diagram.png", {
+        ...context,
+        documentPath: "2026-11-23T14:05/README.md",
+      }),
+    ).toMatchObject({
+      kind: "workspace",
+      relativePath: "2026-11-23T14:05/diagram.png",
+      absolutePath: "/workspace/project/2026-11-23T14:05/diagram.png",
+    });
+  });
+
   it("keeps direct images outside workspace-file authority", () => {
     expect(resolveMarkdownImageSource("https://example.test/plot.svg#panel", context)).toEqual({
       kind: "direct",

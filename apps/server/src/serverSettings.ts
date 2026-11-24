@@ -48,6 +48,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+// SCIENT-FORK:START — agent feedback stays off in Scient.
+import { withScientAgentFeedbackOff } from "./scient/ScientAgentFeedbackGate.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — scoped native hints and authoritative settings metadata fallback.
 import {
   SettingsDirectoryWatch,
@@ -90,7 +93,7 @@ import {
   customModelsTestMethods,
   fallbackTextGenerationProvider,
   makeCustomModelSettingsMethods,
-  type CustomModelSettingsMethods,
+  ScientServerSettings,
 } from "./scientServerSettings.ts";
 // SCIENT-FORK:END
 import {
@@ -331,19 +334,11 @@ export class ServerSettingsService extends Context.Service<
     readonly setRemovedAgentKeeper?: (keeper: RemovedAgentKeeper) => Effect.Effect<void>;
     // SCIENT-FORK:END
 
-    // SCIENT-FORK:START — authoritative project deletion. Server-only: no RPC exposes it.
-    readonly removeProjectSettingsOverrides: (
-      projectIds: ReadonlyArray<ProjectId>,
-    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
-    // SCIENT-FORK:END
-
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
     /** Subscribe before reading a snapshot to retain changes before lazy stream startup. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
-    // SCIENT-FORK:START — custom-model catalog methods
-  } & CustomModelSettingsMethods
-  // SCIENT-FORK:END
+  }
 >()("t3/serverSettings/ServerSettingsService") {
   static readonly layerTest = (
     overrides: DeepPartial<ServerSettings> = {},
@@ -369,7 +364,11 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
   const writeSemaphore = yield* Semaphore.make(1);
-  const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
+  // SCIENT-FORK:START — agent feedback reads as off, as in the live service.
+  const toTestEffective = (settings: ServerSettings) =>
+    withScientAgentFeedbackOff(resolveTextGenerationProvider(settings));
+  const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(toTestEffective));
+  // SCIENT-FORK:END
 
   const updateTestSettings = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
@@ -379,15 +378,25 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
         Effect.flatMap(update),
         Effect.flatMap(normalizeServerSettings),
         Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-        Effect.map(resolveTextGenerationProvider),
+        // SCIENT-FORK: agent feedback reads as off, as in the live service.
+        Effect.map(toTestEffective),
       ),
     );
 
-  return {
-    // SCIENT-FORK:START — custom models share the committed settings snapshot.
+  // SCIENT-FORK:START — Scient's settings capabilities share the snapshot and writer.
+  const scient = ScientServerSettings.of({
     ...customModelsTestMethods,
     committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
-    // SCIENT-FORK:END
+    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
+      (projectIds: ReadonlyArray<ProjectId>) =>
+        updateTestSettings((currentSettings) =>
+          Effect.succeed(withoutProjectSettingsOverrides(currentSettings, projectIds)),
+        ),
+    ),
+  });
+  // SCIENT-FORK:END
+
+  const service = {
     managedPolicy,
     start: Effect.void,
     ready: Effect.void,
@@ -413,28 +422,23 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
-    // SCIENT-FORK:START — authoritative project deletion
-    removeProjectSettingsOverrides: (projectIds) =>
-      updateTestSettings((currentSettings) =>
-        Effect.succeed(withoutProjectSettingsOverrides(currentSettings, projectIds)),
-      ),
-    // SCIENT-FORK:END
     withSettingsSnapshot: (use) =>
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.succeed(Stream.empty),
   } satisfies ServerSettingsService["Service"];
+  // SCIENT-FORK:START — Scient's settings capabilities come from the same build.
+  return Context.make(ServerSettingsService, service).pipe(
+    Context.add(ScientServerSettings, scient),
+  );
+  // SCIENT-FORK:END
 });
 
 /** Test settings; `managedPolicy` only tells consumers a policy applies, it does not lock values. */
 export const layerTest = (
   overrides: DeepPartial<ServerSettings> = {},
   managedPolicy?: ManagedPolicySummary,
-) => Layer.effect(ServerSettingsService, makeTest(overrides, managedPolicy));
-
-// SCIENT-FORK:START — custom-model test members
-export { customModelsTestMethods } from "./scientServerSettings.ts";
-// SCIENT-FORK:END
+) => Layer.effectContext(makeTest(overrides, managedPolicy)); // SCIENT-FORK: and ScientServerSettings
 
 // Accept retired token delivery only on load so one old value cannot reset all settings.
 const PersistedResponseStreamingMode = Schema.Union([
@@ -467,6 +471,23 @@ const PersistedServerSettings = Schema.Struct({
 // Parse first and decode second, so a managed policy can fill its defaults in between.
 const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServerSettings);
+
+/**
+ * The settings on disk with the managed policy laid over them, read without the service: no
+ * database, no write, no legacy migration. A missing or unreadable file reads as the defaults.
+ */
+export const readServerSettingsFromDisk = Effect.gen(function* () {
+  const { settingsPath } = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const { settings: managed } = yield* ManagedPolicy.ManagedPolicy;
+  const raw = yield* fs.readFileString(settingsPath).pipe(Effect.option);
+  // SCIENT-FORK: agent feedback stays off in Scient; see ScientAgentFeedbackGate.
+  return withScientAgentFeedbackOff(
+    managed.applyLocks(
+      Option.isNone(raw) ? managed.defaults : decodeSettingsFile(raw.value, managed).settings,
+    ),
+  );
+}).pipe(Effect.withSpan("ServerSettings.readServerSettingsFromDisk"));
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -476,6 +497,40 @@ const LegacyProviderSettingsJson = fromLenientJson(
 );
 const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
 const isLegacyProviderConfig = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+
+/**
+ * A settings file as the server reads it: its settings, or the defaults when the file or its
+ * legacy fields are rejected, with the cause. Pure, so the CLI reads files as the server does.
+ */
+function decodeSettingsFile(
+  raw: string,
+  managed: ManagedPolicy.ManagedPolicy["Service"]["settings"],
+) {
+  const parsed = decodeSettingsFileJsonExit(raw);
+  const decoded = Exit.isFailure(parsed)
+    ? parsed
+    : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));
+  const legacy = decodeLegacyProviderSettingsJsonExit(raw);
+  const failure = Exit.isFailure(decoded)
+    ? decoded.cause
+    : Exit.isFailure(legacy)
+      ? legacy.cause
+      : undefined;
+  const settings: ServerSettings =
+    Exit.isSuccess(decoded) && failure === undefined
+      ? decoded.value
+      : // The file may hold choices we can no longer read, so opt-in behaviour stays off.
+        {
+          ...managed.defaults,
+          continueThreadsAfterServerUpdate: false,
+          usageHistoryRetentionDays: "unlimited",
+          requireConnectDeviceApproval: true,
+          enablePreviewTunnel: false,
+          enableAgentBrowserAccess: false,
+          defaultRuntimeMode: "approval-required",
+        };
+  return { settings, legacy: Exit.isSuccess(legacy) ? legacy.value : undefined, failure };
+}
 
 const LEGACY_BITBUCKET_SECRET_NAMES: Readonly<Record<string, string>> = {
   accessToken: "bitbucket-access-token",
@@ -925,9 +980,13 @@ const make = Effect.gen(function* () {
   } = yield* ManagedPolicy.ManagedPolicy;
   // Locks are laid over every settings value that leaves this service, never persisted.
   const toEffective = (settings: ServerSettings) =>
-    resolveTextGenerationProvider(
-      managedProviders.applyLimits(managed.applyLocks(settings)),
-      managedProviders.isDriverAllowed,
+    // SCIENT-FORK:START — agent feedback stays off in Scient, whatever is saved or locked.
+    withScientAgentFeedbackOff(
+      // SCIENT-FORK:END
+      resolveTextGenerationProvider(
+        managedProviders.applyLimits(managed.applyLocks(settings)),
+        managedProviders.isDriverAllowed,
+      ),
     );
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
@@ -1043,37 +1102,19 @@ const make = Effect.gen(function* () {
     // SCIENT-FORK:END
 
     if (yield* readConfigExists) {
-      const raw = yield* readRawConfig;
-      const parsed = decodeSettingsFileJsonExit(raw);
-      const decoded = Exit.isFailure(parsed)
-        ? parsed
-        : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));
-      const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
-      if (legacySettings._tag === "Success") {
-        legacyProviders = legacySettings.value.providers;
-        legacySourceControl = {
-          bitbucket: legacySettings.value.bitbucket,
-          github: legacySettings.value.github,
-        };
+      const file = decodeSettingsFile(yield* readRawConfig, managed);
+      if (file.legacy !== undefined) {
+        legacyProviders = file.legacy.providers;
+        legacySourceControl = { bitbucket: file.legacy.bitbucket, github: file.legacy.github };
       }
-      if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
-        const failure = decoded._tag === "Failure" ? decoded : legacySettings;
-        // The file may hold an opt-out we can no longer read; never resume threads on a guess.
-        settings = {
-          ...managed.defaults,
-          continueThreadsAfterServerUpdate: false,
-          usageHistoryRetentionDays: "unlimited",
-        };
-        if (failure._tag === "Failure") {
-          parseFailure = Option.some(Cause.squash(failure.cause));
-          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-            path: settingsPath,
-            issues: Cause.pretty(failure.cause),
-            cause: failure.cause,
-          });
-        }
-      } else {
-        settings = decoded.value;
+      settings = file.settings;
+      if (file.failure !== undefined) {
+        parseFailure = Option.some(Cause.squash(file.failure));
+        yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+          path: settingsPath,
+          issues: Cause.pretty(file.failure),
+          cause: file.failure,
+        });
       }
       // A valid outer document can still carry an unreadable legacy provider
       // blob. Keep the original file for repair while using its readable settings.
@@ -1630,7 +1671,12 @@ const make = Effect.gen(function* () {
       getMaterializedSettings.pipe(
         Effect.catchIf(
           (error) => options?.allowUnresolvedSecrets === true && error.operation === "read-secret",
-          () => getSettingsFromCache.pipe(Effect.map(resolveTextGenerationProvider)),
+          () =>
+            getSettingsFromCache.pipe(
+              Effect.map((settings) =>
+                withScientAgentFeedbackOff(resolveTextGenerationProvider(settings)),
+              ),
+            ),
         ),
         Effect.flatMap(use),
       ),
@@ -1797,11 +1843,8 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
-  return {
-    managedPolicy,
-    start,
-    ready: Deferred.await(startedDeferred),
-    // SCIENT-FORK:START — custom-model catalog methods
+  // SCIENT-FORK:START — Scient's settings capabilities share the cache, writer and committed catalog.
+  const scient = ScientServerSettings.of({
     ...makeCustomModelSettingsMethods({
       secretStore: customModelSecrets,
       modelReasoning,
@@ -1813,7 +1856,20 @@ const make = Effect.gen(function* () {
       emitChange,
       committedCustomModels,
     }),
-    // SCIENT-FORK:END
+    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
+      function* (projectIds: ReadonlyArray<ProjectId>) {
+        return yield* updateAndPersistSettings({}, (current) =>
+          Effect.succeed(withoutProjectSettingsOverrides(current, projectIds)),
+        );
+      },
+    ),
+  });
+  // SCIENT-FORK:END
+
+  const service = {
+    managedPolicy,
+    start,
+    ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
@@ -1844,15 +1900,6 @@ const make = Effect.gen(function* () {
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
-    // SCIENT-FORK:START — authoritative project deletion shares the serialized settings writer.
-    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
-      function* (projectIds: ReadonlyArray<ProjectId>) {
-        return yield* updateAndPersistSettings({}, (current) =>
-          Effect.succeed(withoutProjectSettingsOverrides(current, projectIds)),
-        );
-      },
-    ),
-    // SCIENT-FORK:END
     withSettingsSnapshot,
     // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
     setRemovedAgentKeeper: (keeper) =>
@@ -1869,10 +1916,14 @@ const make = Effect.gen(function* () {
       );
     },
   } satisfies ServerSettingsService["Service"];
+  // SCIENT-FORK:START — Scient's settings capabilities come from the same build.
+  return Context.make(ServerSettingsService, service).pipe(
+    Context.add(ScientServerSettings, scient),
+  );
+  // SCIENT-FORK:END
 });
 
 // SCIENT-FORK:START — Scient Accounts: share encrypted Custom models storage without changing other secret-store users.
-export const layer = Layer.effect(ServerSettingsService, make).pipe(
-  Layer.provide(accountsSecretStoreLayer),
-);
+// ScientServerSettings comes from the same build as the settings service.
+export const layer = Layer.effectContext(make).pipe(Layer.provide(accountsSecretStoreLayer));
 // SCIENT-FORK:END

@@ -37,11 +37,17 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import type { McpScientSkillScope } from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
+import {
+  layerThreadWorktreeRestore,
+  ThreadWorktreeRestore,
+} from "../workspace/restoreMissingWorktree.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -307,6 +313,10 @@ const makeStartFixture = Effect.fnUntraced(function* () {
     Layer.provide(
       Layer.mergeAll(
         layerNoTaskFolders,
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" }),
+        }),
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
         Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({
@@ -457,4 +467,42 @@ it.effect.each(["stop-requested", "run-interrupted", "attempt-superseded"] as co
       assert.deepEqual(yield* fixture.offeredScopes, []);
       assert.isUndefined(yield* fixture.publishedScope);
     }).pipe(provideFixture),
+);
+
+it.effect.each([true, false])(
+  "hands a task folder its restore rebuilt to turn start for setup: %s",
+  (rebuilt) => {
+    const worktreePath = "/tmp/scient-task-folder-restore/feature";
+    const threadId = ThreadId.make("thread_task_folder_restore");
+    return Effect.gen(function* () {
+      const { restore, takeRecreated } = yield* ThreadWorktreeRestore;
+      yield* restore({
+        id: threadId,
+        projectId: ProjectId.make("project_task_folder_restore"),
+        worktreePath,
+        branch: "feature",
+      });
+      const recreated = yield* takeRecreated(threadId);
+      assert.equal(recreated?.worktreePath, rebuilt ? worktreePath : undefined);
+    }).pipe(
+      Effect.provide(
+        layerThreadWorktreeRestore.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(TaskFolders.TaskFolders)({
+                find: () => Effect.succeed({ root: worktreePath } as never),
+                restore: () => Effect.succeed(rebuilt),
+              }),
+              Layer.mock(GitWorkflow.GitWorkflowService)({}),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome({ workspaceRoot: "/tmp/scient-shop" } as never),
+              }),
+              ServerConfig.layerTest(process.cwd(), { prefix: "scient-task-folder-restore-" }),
+              ServerSettings.layerTest(),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
+        ),
+      ),
+    );
+  },
 );

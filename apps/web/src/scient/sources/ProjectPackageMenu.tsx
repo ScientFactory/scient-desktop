@@ -35,7 +35,13 @@ function exportedDescription(report: PackageReport): string {
   const inside = report.insideProject
     ? " It is in the project folder, so Git commits it with the project and it takes disk space there."
     : "";
-  return `${plural(report.sources, "source", "sources")}, ${plural(report.pdfs, "PDF", "PDFs")}, ${plural(report.reviews, "review", "reviews")}.${unavailable}${inside}`;
+  const kept = report.keptCopiesLeftOut
+    ? ` ${plural(report.keptCopiesLeftOut, "earlier copy", "earlier copies")} of source details kept after a merge Undo ${report.keptCopiesLeftOut === 1 ? "is" : "are"} not in the package; ${report.keptCopiesLeftOut === 1 ? "it stays" : "they stay"} in this project.`
+    : "";
+  const unreadable = report.keptCopiesUnreadable
+    ? ` ${plural(report.keptCopiesUnreadable, "file", "files")} of such copies could not be read.`
+    : "";
+  return `${plural(report.sources, "source", "sources")}, ${plural(report.pdfs, "PDF", "PDFs")}, ${plural(report.reviews, "review", "reviews")}.${unavailable}${inside}${kept}${unreadable}`;
 }
 
 function importedDescription(report: PackageReport): string {

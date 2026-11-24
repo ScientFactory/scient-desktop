@@ -47,7 +47,7 @@ import {
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 
 const { workspaceSearch, filesystemMetadata, resolveFileLink } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -143,6 +143,17 @@ vi.mock(import("../state/session"), async (original) => {
       htmlOpening.enabled
         ? { _tag: "Some", value: { httpBaseUrl: "https://file-host.test" } }
         : actual.usePreparedConnection(id)) as typeof actual.usePreparedConnection,
+  };
+});
+const threadWorktrees = vi.hoisted(() => new Map<string, string>());
+vi.mock(import("../state/entities"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    readThreadShell: ((ref: { threadId: string }) => {
+      const worktreePath = threadWorktrees.get(ref.threadId);
+      return worktreePath === undefined ? actual.readThreadShell(ref as never) : { worktreePath };
+    }) as never,
   };
 });
 vi.mock(import("../remoteOpen"), async (original) => ({
@@ -1341,6 +1352,33 @@ describe("ChatMarkdown environment-owned file opening", () => {
     expect(toast).not.toHaveBeenCalled();
     expect(htmlOpening.mint).not.toHaveBeenCalled();
     expect(htmlOpening.open).not.toHaveBeenCalled();
+  });
+
+  it("opens a path from markdown rendered in another checkout under that checkout", async () => {
+    using _environment = setupFileOpening();
+    threadWorktrees.set(fileOpeningThread.threadId, "/scratch/thread");
+    using _worktrees = { [Symbol.dispose]: () => threadWorktrees.clear() };
+    resolveFileLink.mockResolvedValue(
+      AsyncResult.success({
+        _tag: "literal",
+        path: EnvironmentFilePath.make("/repo-a/packages/state/filesystem.ts"),
+      } satisfies EnvironmentFileLinkResolution),
+    );
+    using opened = vi.spyOn(useRightPanelStore.getState(), "openFile");
+    await using screen = await renderText("[State](packages/state/filesystem.ts)", {
+      cwd: "/repo-a",
+      threadRef: fileOpeningThread,
+    });
+
+    await act(() => fileOpeningLink(screen.container).click());
+
+    await vi.waitFor(() =>
+      expect(opened).toHaveBeenCalledExactlyOnceWith(
+        fileOpeningThread,
+        "/repo-a/packages/state/filesystem.ts",
+        undefined,
+      ),
+    );
   });
 
   it.each([

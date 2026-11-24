@@ -11,6 +11,7 @@ function fixture() {
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
+        return true;
       }),
     flush: Effect.void,
   });
@@ -53,19 +54,28 @@ describe("UI operation collection context", () => {
       const f = fixture();
       const ui = makeAnalyticsUiAdapter(f.service, { available: true });
       const current = yield* ui.status;
-      const event = {
-        name: "scient.operation.completed" as const,
-        properties: { operationKind: "latex-visual-edit", trigger: "user" },
-      };
-      expect(yield* ui.record(event)).toEqual({ accepted: false });
-      expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
-        accepted: true,
-      });
       const restarted = makeAnalyticsUiAdapter(f.service, { available: true });
-      expect(
-        yield* restarted.record({ ...event, collectionContext: current.collectionContext }),
-      ).toEqual({ accepted: false });
-      expect(f.events).toEqual([event]);
+      const events = [
+        {
+          name: "scient.operation.completed",
+          properties: { operationKind: "latex-visual-edit", trigger: "user" },
+        },
+        {
+          name: "latex.visual.opened",
+          properties: { outcome: "unavailable", reason: "source-truncated" },
+        },
+        {
+          name: "latex.visual.source-fallback",
+          properties: { outcome: "unavailable", reason: "source-truncated" },
+        },
+      ] as const;
+      for (const event of events) {
+        expect(yield* ui.record(event)).toEqual({ accepted: false });
+        const contextual = { ...event, collectionContext: current.collectionContext };
+        expect(yield* ui.record(contextual)).toEqual({ accepted: true });
+        expect(yield* restarted.record(contextual)).toEqual({ accepted: false });
+      }
+      expect(f.events).toEqual(events);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
   it.effect(

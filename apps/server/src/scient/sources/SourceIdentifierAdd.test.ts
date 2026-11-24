@@ -13,9 +13,10 @@ import {
   addScientSourcesByIdentifier,
   type ResolveSourceIdentifierBatch,
 } from "./SourceIdentifierAdd.ts";
-import type {
-  ResolvedSourceMetadata,
-  SourceIdentifierResolution,
+import {
+  resolveSourceIdentifierBatch,
+  type ResolvedSourceMetadata,
+  type SourceIdentifierResolution,
 } from "./SourceIdentifierResolver.ts";
 
 const fixtures: string[] = [];
@@ -248,5 +249,61 @@ describe("addScientSourcesByIdentifier", () => {
       },
     ]);
     await expect(listScientSourceRecords(root)).resolves.toHaveLength(1);
+  });
+
+  it("keeps the retraction doi.org reports for an added DOI", async () => {
+    const root = await project();
+    // doi.org's CSL-JSON for 10.1016/S0140-6736(97)11096-0, recorded 2026-11-21, trimmed.
+    const recorded = {
+      type: "journal-article",
+      title:
+        "RETRACTED: Ileal-lymphoid-nodular hyperplasia, non-specific colitis, and pervasive developmental disorder in children",
+      "container-title": "The Lancet",
+      DOI: "10.1016/s0140-6736(97)11096-0",
+      issued: { "date-parts": [[1998, 2]] },
+      author: [{ given: "AJ", family: "Wakefield", sequence: "first" }],
+      "updated-by": [
+        {
+          DOI: "10.1016/s0140-6736(04)15715-2",
+          type: "correction",
+          label: "Correction",
+          source: "retraction-watch",
+          updated: { "date-parts": [[2004, 3, 6]], "date-time": "2004-03-06T00:00:00Z" },
+          "record-id": "17269",
+        },
+        {
+          DOI: "10.1016/s0140-6736(10)60175-4",
+          type: "retraction",
+          label: "Retraction",
+          source: "retraction-watch",
+          updated: { "date-parts": [[2010, 2, 6]], "date-time": "2010-02-06T00:00:00Z" },
+          "record-id": "4036",
+        },
+      ],
+    };
+
+    await addScientSourcesByIdentifier({
+      root,
+      actor: "user",
+      entries: ["10.1016/S0140-6736(97)11096-0"],
+      resolveIdentifiers: (identifiers) =>
+        resolveSourceIdentifierBatch(identifiers, {
+          now: () => new Date("2026-11-21T12:00:00.000Z"),
+          request: async (url) => ({
+            status: 200,
+            body: JSON.stringify(recorded),
+            url: new URL(url),
+          }),
+        }),
+    });
+
+    const [record] = await listScientSourceRecords(root);
+    expect(record?.editorialStatus).toMatchObject({
+      state: "retracted",
+      notices: [
+        { kind: "retraction", doi: "10.1016/s0140-6736(10)60175-4", date: "2010-02-06" },
+        { kind: "correction", doi: "10.1016/s0140-6736(04)15715-2", date: "2004-03-06" },
+      ],
+    });
   });
 });

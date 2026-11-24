@@ -480,7 +480,10 @@ function makeTestLayer(input: {
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly steerTurn?: ProviderAdapterV2SessionRuntime["steerTurn"];
   readonly invalidateInitiatedWork?: ProviderAdapterV2SessionRuntime["invalidateInitiatedWork"];
-  readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
+  readonly serverSettingsLayer?: Layer.Layer<
+    ServerSettings.ServerSettingsService,
+    Layer.Error<ReturnType<typeof ServerSettings.layerTest>>
+  >;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   /** Optional Scient Extensions services the manager reads with `serviceOption`. */
   readonly extensionsLayer?: Layer.Layer<ConnectorRuntime | ExtensionDeliveryReceipts>;

@@ -181,8 +181,11 @@ If a window still looks stale, refresh Limits to re-check every provider and hub
 
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
-closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
-anything. The command is offered only for providers that appear under **Usage → Limits**.
+closes when you dismiss it, change the selected Scient Agent route, or send your next message. In a
+Scient Agent thread, `/usage-limits` shows only limits applicable to the selected route, while
+**Usage → Limits** keeps the aggregate view across all accounts and scoped limits. It uses the same
+snapshot as **Usage → Limits**, so it does not run the agent or refresh anything. The command is
+offered only for providers that appear under **Usage → Limits**.
 
 To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
 The bottom of the thread details card then shows how much is left in each limit window of the
@@ -214,27 +217,20 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Subscription quota fallback
 
-For a new turn that needs a quota fallback and the explicit resume-after-limit action,
-Scient first tries your explicitly configured fallback, including another account of the
-same provider, a custom model, or an API connection you chose. A saved fallback remains
-eligible when only the default list hides it; explicitly hiding it in your provider
-settings disables it as a fallback. The model must be available, enabled for the project,
-able to generate text, and not out of quota. Saved aliases use the underlying model's limits.
+Opening a new draft keeps your selected or default model if it has quota or if its usage is unclear.
+Scient switches automatically only when current readings show the default is blocked and another
+model has quota. The composer names the limit that caused the switch and shows its reset time
+when known. You can still choose a model in the picker.
 
-If that fallback cannot be used, Scient considers eligible subscription accounts connected
-inside Scient Agent in this order: **OpenAI → Anthropic →
-Antigravity → Muse Code**, using each subscription's
-[preferred model](./providers.md#model-visibility-and-subscription-defaults), not catalog order.
-It skips hidden or unavailable models, signed-out accounts, exhausted quota, and models
-the provider reports as unsuitable for text generation.
+Scient first checks the fallback you set in **Settings → Threads**. If it cannot use that model,
+it checks eligible subscriptions inside Scient Agent in this order: **OpenAI → Anthropic →
+Antigravity → Muse Code**. It uses each subscription's
+[preferred models](./providers.md#model-visibility-and-subscription-defaults). It skips signed-out
+accounts and models that are unavailable, explicitly hidden, disabled for the project, or unsuitable
+for generating text.
 
-This automatic chain also applies when the limited thread uses a standalone provider;
-standalone providers are destinations only when explicitly configured as the fallback.
-Automatic candidates never silently route work to a metered API account. If no eligible
-subscription choice remains, choose a model or account explicitly or wait for quota to refill.
-Resuming a limited conversation remains an explicit action; the policy does not silently
-resume it or rewrite its saved model. Subscription defaults also leave existing threads,
-explicit selections, and your global default unchanged.
+When a conversation stops at a usage limit, you choose how to resume it. Scient can offer a
+configured API connection for recovery even when the connection reports no quota.
 
 ## Connect a CLIProxyAPI hub
 

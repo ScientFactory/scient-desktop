@@ -120,7 +120,7 @@ function packagedAnalyticsWorkerUrl(): URL {
 
 /** No-op analytics for tests and callers that intentionally disable analytics. */
 export const disabledAnalyticsService: AnalyticsService["Service"] = {
-  record: () => Effect.void,
+  record: () => Effect.succeed(false),
   recordOwners: () => Effect.void,
   flush: Effect.void,
 };
@@ -193,12 +193,17 @@ export const make = Effect.gen(function* () {
   });
 
   const record: AnalyticsService["Service"]["record"] = (event, properties) =>
-    Effect.try({
-      try: () => {
-        runtime.record(event, properties);
-      },
-      catch: () => "analytics-record-failed" as const,
-    }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics event could not be queued")));
+    // Agent feedback reports carry agent-written text; Scient holds them (ScientAgentFeedbackGate).
+    event === "agent.feedback"
+      ? Effect.succeed(false)
+      : Effect.try({
+          try: () => runtime.record(event, properties),
+          catch: () => "analytics-record-failed" as const,
+        }).pipe(
+          Effect.catch(() =>
+            Effect.logWarning("Scient analytics event could not be queued").pipe(Effect.as(false)),
+          ),
+        );
 
   const recordedOwners = new Set<string>();
   const recordOwners: AnalyticsService["Service"]["recordOwners"] = (owners, observedBy) =>

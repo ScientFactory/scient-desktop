@@ -89,15 +89,21 @@ it("gives every Library-only organize action an action of the library organize t
       .flatMap((match) => JSON.parse(match[1]!) as ReadonlyArray<string>),
   );
   const missing = Object.entries(LIBRARY_ORGANIZE_ACTION_PARITY).flatMap(([action, tools]) =>
-    tools.filter((name) => !agentActions.has(name)).map((name) => `${action} -> ${name}`),
+    "kind" in tools
+      ? []
+      : tools.filter((name) => !agentActions.has(name)).map((name) => `${action} -> ${name}`),
   );
   expect(missing).toEqual([]);
 });
 
-// Gaps pass, one named test each, so every run lists them; the orchestrator decides how each closes.
-const gaps = Object.entries({ ...LIBRARY_COMMAND_PARITY, ...LIBRARY_READ_PARITY }).flatMap(
-  ([tag, entry]) => (entry.kind === "gap" ? [{ tag, reason: entry.reason }] : []),
+// Every run lists what an agent cannot do yet; the tables above hold each reason.
+const gaps = [
+  ...Object.entries({ ...LIBRARY_COMMAND_PARITY, ...LIBRARY_READ_PARITY }),
+  ...Object.entries(LIBRARY_ORGANIZE_ACTION_PARITY).map(
+    ([action, entry]) => [`organize ${action}`, entry] as const,
+  ),
+].flatMap(([tag, entry]) =>
+  "kind" in entry && entry.kind === "gap" ? [`${tag}: ${entry.reason}`] : [],
 );
-it.each(gaps)("gap: $tag has no agent tool yet ($reason)", ({ reason }) => {
-  expect(reason).not.toBe("");
-});
+it("reports what an agent cannot do yet", ({ annotate }) =>
+  Promise.all(gaps.map((gap) => annotate(`agent gap: ${gap}`))));

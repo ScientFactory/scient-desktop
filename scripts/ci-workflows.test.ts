@@ -267,7 +267,7 @@ describe("CI workflow decisions", () => {
     ],
     [
       "docs",
-      ["docs/operations/development.md"],
+      ["docs/operations/00_development.md"],
       "pull_request",
       ["lint", "test_web", "test_server", "test", "build"],
       [
@@ -308,7 +308,7 @@ describe("CI workflow decisions", () => {
     ],
     [
       "main backstop",
-      ["docs/operations/development.md"],
+      ["docs/operations/00_development.md"],
       "push",
       [
         "queue_ci",
@@ -481,7 +481,7 @@ describe("CI workflow decisions", () => {
   it.each([
     ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 42],
     ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 48],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 42],
+    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 42],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
     ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 58],
     ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 57],
@@ -496,10 +496,10 @@ describe("CI workflow decisions", () => {
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 43],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/development.md", "push", false, 71],
-    ["nightly", "docs/operations/development.md", "schedule", false, 70],
+    ["main push", "docs/operations/00_development.md", "push", false, 71],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 70],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
-    ["reused main push", "docs/operations/development.md", "push", true, 9],
+    ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

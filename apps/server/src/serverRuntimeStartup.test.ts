@@ -151,7 +151,6 @@ it.effect.each([
       }),
       Layer.mock(ServerSettings.ServerSettingsService)({
         start: Effect.void,
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
         getSettings: Effect.succeed({
           ...DEFAULT_SERVER_SETTINGS,
           defaultModelSelection:

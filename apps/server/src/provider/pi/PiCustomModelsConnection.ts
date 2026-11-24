@@ -16,7 +16,7 @@ import {
   type PiRpcRecord,
   type PiRpcSpawnOptions as ConnectionSpawnOptions,
 } from "@t3tools/provider-pi/server";
-import type { ServerSettingsService } from "../../serverSettings.ts";
+import type { CustomModelSettingsSource } from "../../scientServerSettings.ts";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import {
   PiRpcProtocolError,
@@ -105,10 +105,7 @@ function modelClient(connection: PiRpcConnection): PiRpcClient {
 /** Instance-scoped custom-model authority over the same raw connection V2 executes. */
 export const makePiCustomModelsConnectionFactory = Effect.fn("PiCustomModelsConnection.make")(
   function* (
-    settings: Pick<
-      ServerSettingsService["Service"],
-      "resolveCustomModels" | "getSettings" | "subscribeChanges"
-    >,
+    settings: CustomModelSettingsSource<"getSettings" | "subscribeChanges", "resolveCustomModels">,
     instanceId: ProviderInstanceId,
     stateDir: string,
     spawn: (

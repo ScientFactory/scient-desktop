@@ -1,5 +1,3 @@
-import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -8,7 +6,6 @@ import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -25,6 +22,7 @@ import { runMigrations } from "../persistence/Migrations.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -34,6 +32,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ScientHarnessLayers from "./testkit/ScientHarnessLayers.ts"; // SCIENT-FORK
 
 const projectId = ProjectId.make("project:upgrade");
 const icon = { kind: "emoji", emoji: "🦊" } as const;
@@ -120,18 +119,13 @@ const unusedEnrichment = {
   repositoryIdentityResolved: false,
 };
 
-const makeRuntimeLayer = (dbPath: string) => {
-  const platform = Layer.mergeAll(
-    Layer.mock(ProviderRegistry.ProviderRegistry)({
-      setProviderAuthenticationFailure: () =>
-        Effect.die("Authentication control is not exercised by project migration fixtures."),
-    }),
-    Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
-    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, ThreadCommandExecutor.layer),
+const layerRuntime = (dbPath: string) => {
+  const layerPlatform = Layer.merge(
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
-  );
+  ).pipe(Layer.merge(ScientHarnessLayers.layerRuntimeHarness)); // SCIENT-FORK: Scient's services.
   const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-project-upgrade-",
   });
@@ -140,7 +134,7 @@ const makeRuntimeLayer = (dbPath: string) => {
       VcsDriverRegistry.layer.pipe(
         Layer.provide(VcsProcess.layer),
         Layer.provide(layerServerConfig),
-        Layer.provide(platform),
+        Layer.provide(layerPlatform),
       ),
     ),
   );
@@ -174,7 +168,6 @@ const makeRuntimeLayer = (dbPath: string) => {
         listUnavailable: Effect.succeed([]),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.never,
-        rebuildInstance: () => Effect.die("Unexpected provider rebuild"),
       }),
     ),
     Layer.provide(
@@ -182,8 +175,9 @@ const makeRuntimeLayer = (dbPath: string) => {
         pruneWorktrees: () => Effect.void,
       }),
     ),
+    Layer.provide(Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({})),
     Layer.provide(layerNoTaskFolders),
-    Layer.provide(platform),
+    Layer.provide(layerPlatform),
   );
 };
 
@@ -201,11 +195,7 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
         assert.deepEqual(yield* readSettings, expectedSettings);
         const project = yield* (yield* ProjectService.ProjectService).getById(projectId);
         assert.equal(project._tag, "Some");
-      }).pipe(Effect.provide(makeRuntimeLayer(dbPath)));
+      }).pipe(Effect.provide(layerRuntime(dbPath)));
     }),
-  ).pipe(
-    Effect.provide(
-      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, ThreadCommandExecutor.layer),
-    ),
-  ),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

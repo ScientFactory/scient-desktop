@@ -870,6 +870,34 @@
       }
     },
     {
+      "case": "provider.readiness.observed:fallbacks",
+      "name": "provider.readiness.observed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "provider": "unknown",
+        "state": "unknown",
+        "runtimeSource": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "provider.readiness.observed:representative",
+      "name": "provider.readiness.observed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "provider": "antigravity",
+        "state": "ready",
+        "runtimeSource": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
       "case": "provider.readiness.changed:fallbacks",
       "name": "provider.readiness.changed",
       "privacyLevel": "product",
@@ -1704,6 +1732,54 @@
       "consentLevel": "product",
       "properties": {
         "feature": "search",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.opened:fallbacks",
+      "name": "latex.visual.opened",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.opened:representative",
+      "name": "latex.visual.opened",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.source-fallback:fallbacks",
+      "name": "latex.visual.source-fallback",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.source-fallback:representative",
+      "name": "latex.visual.source-fallback",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "unknown",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -2556,6 +2632,98 @@
         "actor": "agent",
         "entry": "cell",
         "runtimeSource": "managed",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "provider.readiness.observed:provider-initial-warning",
+      "name": "provider.readiness.observed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "provider": "claudeAgent",
+        "state": "warning",
+        "runtimeSource": "system",
+        "checkFailure": "not_authenticated",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "provider.readiness.observed:provider-unrecognized-values",
+      "name": "provider.readiness.observed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "provider": "unknown",
+        "state": "unknown",
+        "runtimeSource": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.opened:visual-editable",
+      "name": "latex.visual.opened",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "editable",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.opened:visual-source-only",
+      "name": "latex.visual.opened",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "source-only-content",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.opened:visual-unavailable",
+      "name": "latex.visual.opened",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "unavailable",
+        "reason": "source-truncated",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.opened:visual-private-input",
+      "name": "latex.visual.opened",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "open-error",
+        "reason": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "latex.visual.source-fallback:visual-source-fallback",
+      "name": "latex.visual.source-fallback",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "outcome": "open-error",
+        "reason": "projection",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"

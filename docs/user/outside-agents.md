@@ -1,8 +1,8 @@
 # Outside agents
 
 Agents that Scient did not start can work with an environment through its MCP
-server. They can read projects and threads, start and message threads, and
-check which providers and models are available. This covers Claude Code or
+server. They can read projects and threads, start and message threads, work
+with your Library, and check which providers and models are available. This covers Claude Code or
 Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
 in once, and you choose what it may do.
 
@@ -49,11 +49,12 @@ Then choose what the agent may do. With a code, **Auto** is selected by default,
 or the closest lower mode allowed by your organization’s policy. Approving
 without a code starts at **Read only**:
 
-- **Read only** lets the agent read projects and threads and see
-  the available providers and models. It cannot change anything.
+- **Read only** lets the agent read projects and threads, read your Library and
+  see the available providers and models. It cannot change anything.
 - **Supervised** through **Full access** also let it start, message and stop
-  threads in every project. A thread it starts or steers cannot run with more
-  permissions than the mode you chose.
+  threads in every project, and change your Library as an agent in a thread can.
+  A thread it starts or steers cannot run with more permissions than the mode
+  you chose.
 
 ## What outside agents can call
 
@@ -70,6 +71,26 @@ Scient.
   `projectId` or `threadId`.
 - To list threads across projects, call `scient_thread_list` with
   `allProjects: true`, or use `scient_thread_search`.
+
+## Your Library
+
+An outside agent gets the same Library tools as an agent in a thread
+(`scient_sources_list`, `scient_sources_get`, `scient_sources_add` and the
+rest), with one more input, `projectId`. Highlights and notes in PDFs,
+systematic reviews and reference checks stay with agents in a thread for now.
+
+- **Without `projectId`** the agent works with the whole Library: it lists all
+  of its papers (`scope: "library"`), reads Recent changes, backs the Library
+  up, restores it, and adds from another Library. Nothing it reads this way
+  shows a project's citation keys, notes or pins.
+- **With `projectId`** it works in that project, as an agent in a thread of the
+  project does: it adds papers to the project, cites them and keeps the
+  project's bibliography. `scient_project_list` lists the projects and their
+  ids. A call that needs a project and has none says so.
+
+In **Read only** the agent can list, read and search, but each call that would
+change something is refused and changes nothing. In the other modes it makes
+the same changes with these tools as an agent in a thread.
 
 ## Claude Code
 
@@ -110,6 +131,23 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
+when something happens without reading threads over and over: a turn ended, an
+agent waits on a person, a guest asked something, a watched pull request woke
+its thread. [Workflow runs](workflows.md) are events too: a run started, paused,
+resumed or ended, or waits on a person. A bot can poll, stream, or receive each
+event type by webhook, narrowed to projects and threads or to workflows and
+runs; runs another run started are left out unless asked for, as subagent
+threads are, and narrowing thread events to a run picks out its agent steps.
+The environment keeps its latest 1,000 milestones in memory, so a bot that was
+away longer, or reconnects after a restart, is told some may be missing and
+should reread what it cares about. Webhooks go only to public `https` addresses,
+a subscription lasts at most an hour before the bot must renew it, and signing
+the bot out ends its subscriptions. To test with a receiver on your own machine
+or network, start the environment with `T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS` set to
+its host names, for example `localhost,127.0.0.1`; those hosts may also use
+plain `http`.
+
 ## Scripts on the host
 
 On the machine that runs the environment, `scient thread` uses the same tools
@@ -131,9 +169,10 @@ started in the app are. `send` never interrupts: a busy thread gets the message
 as its next turn. Pass `-` as the message to read it from stdin.
 
 To choose the model, pass `--provider <instance-id> --model <slug>`. Add
-`--option id=value` for each model option, such as `--option effort=high`.
-Option ids and values depend on the model; `true` and `false` set on/off
-options.
+`--option id=value` for each model option. For reasoning effort, Codex uses
+`--option reasoningEffort=high`, while Claude uses `--option effort=high`.
+Option ids and allowed values depend on the provider and model; use those
+reported by `orchestrator_capabilities`. `true` and `false` set on/off options.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a

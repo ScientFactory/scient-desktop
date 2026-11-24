@@ -8,7 +8,7 @@ test("every diff runs all test lanes, build and typecheck without a package subs
   for (const files of [
     [],
     null,
-    ["docs/operations/development.md"],
+    ["docs/operations/00_development.md"],
     ["docs/fixtures/scient-chat-plotly.md"],
     ["apps/mobile/src/features/review/reviewModel.ts"],
     ["packages/scient-analytics/src/wireContract.ts"],

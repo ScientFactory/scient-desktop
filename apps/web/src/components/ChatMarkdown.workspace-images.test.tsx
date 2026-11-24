@@ -158,6 +158,13 @@ describe("ChatMarkdown workspace images", () => {
       "/workspace/project/images/diagram.png",
       "images/diagram.png",
     ],
+    // A folder name ending in `:05` is not a line suffix.
+    [
+      "/workspace/project",
+      "2026-11-23T14:05/README.md",
+      "/workspace/project/2026-11-23T14:05/images/diagram.png",
+      "2026-11-23T14:05/images/diagram.png",
+    ],
   ])(
     "uses rooted asset access for standalone, inline, and centered images beside a file in %s",
     (cwd, relativePath, expectedPath, expectedRelativePath) => {

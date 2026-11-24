@@ -33,11 +33,18 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { filePublicationTestHelper } from "../scient/workspace/fileExchange.testkit.ts";
 import * as WorkspaceFileMutations from "../scient/workspace/WorkspaceFileMutations.ts";
+import {
+  awaitNativeReport,
+  awaitWatchHint,
+  syncNativeWatch,
+  within,
+  type NativeWatchReports,
+} from "../scient/workspace/nativeFileWatch.testkit.ts";
 const publicationHelper = await filePublicationTestHelper();
 
 const watchReceipts = vi.hoisted(() => ({
   afterStart: undefined as (() => void) | undefined,
-  afterCallback: undefined as ((filename: string | Buffer | null) => void) | undefined,
+  reports: new Map() as NativeWatchReports,
   callbackFilename: undefined as string | Buffer | null | undefined,
   afterOffer: undefined as
     | ((value: unknown, filename: string | Buffer | null | undefined) => void)
@@ -72,7 +79,7 @@ vi.mock("node:fs", async (importOriginal) => {
           } finally {
             watchReceipts.callbackFilename = undefined;
           }
-          watchReceipts.afterCallback?.(filename);
+          watchReceipts.reports.get(String(filename))?.();
         },
       ]);
       watchReceipts.afterStart?.();
@@ -174,27 +181,6 @@ const makeWslHost = Effect.gen(function* () {
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
-    it.effect("reads UTF-8 files relative to the workspace root", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
-
-        const result = yield* workspaceFileSystem.readFile({
-          cwd,
-          relativePath: "src/index.ts",
-        });
-
-        expect(result).toEqual({
-          relativePath: "src/index.ts",
-          contents: "export const answer = 42;\n",
-          byteLength: 26,
-          truncated: false,
-          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-        });
-      }),
-    );
-
     // Windows cannot hold a file name that ends in a space.
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "reads the file a path names when a sibling differs only by a trailing space",
@@ -311,7 +297,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(result).toEqual({
           relativePath: "src/index.ts",
           contents: "export const answer = 42;\n",
-          revision: expect.any(String),
+          // SCIENT-FORK: a revision-checked save needs a well-formed token.
+          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           byteLength: 26,
           truncated: false,
         });
@@ -1036,12 +1023,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
         yield* writeTextFile(cwd, "notes.txt", "unchanged\n");
 
-        const event = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "analysis.m" })
-          .pipe(
+        const event = yield* awaitWatchHint(
+          {
+            hint: "The hint for analysis.m",
+            reported: "analysis.m",
+            reports: watchReceipts.reports,
+            directory: cwd,
+          },
+          workspaceFileSystem.watchFile({ cwd, relativePath: "analysis.m" }).pipe(
             Stream.tap((event) =>
               event._tag === "watch-ready"
                 ? Effect.gen(function* () {
+                    yield* syncNativeWatch(watchReceipts.reports, cwd);
                     yield* writeTextFile(cwd, "notes.txt", "unrelated\n");
                     yield* writeTextFile(cwd, "analysis.m", "answer = 2;\n");
                   })
@@ -1049,7 +1042,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             ),
             Stream.filter((event) => event._tag === "file-changed"),
             Stream.runHead,
-          );
+          ),
+        );
 
         expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath: "analysis.m" }));
       }),
@@ -1068,7 +1062,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               watchReceipts.afterStart = undefined;
-              watchReceipts.afterCallback = undefined;
               watchReceipts.afterOffer = undefined;
             }),
           );
@@ -1076,28 +1069,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           // Workspace-relative and absolute spellings both name the spaced file.
           for (const relativePath of ["notes.md ", path.join(cwd, "notes.md ")]) {
             const started = Promise.withResolvers<void>();
-            const unrelatedObserved = Promise.withResolvers<void>();
-            const selectedObserved = Promise.withResolvers<void>();
             const ready = yield* Deferred.make<void>();
+            const firstHint = yield* Deferred.make<unknown>();
+            let counting = false;
             watchReceipts.afterStart = () => started.resolve();
-            watchReceipts.afterCallback = (filename) => {
-              if (filename?.toString() === "notes.md") unrelatedObserved.resolve();
-              if (filename?.toString() === "notes.md ") selectedObserved.resolve();
-            };
-            const changes = yield* Effect.forkChild(
+            const watching = yield* Effect.forkChild(
               workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
-                Stream.tap((event) =>
-                  event._tag === "watch-ready" ? Deferred.succeed(ready, undefined) : Effect.void,
-                ),
-                Stream.filter((event) => event._tag === "file-changed"),
-                Stream.take(1),
-                Stream.runCollect,
+                Stream.runForEach((event) => {
+                  if (event._tag === "watch-ready") return Deferred.succeed(ready, undefined);
+                  return counting ? Deferred.succeed(firstHint, event) : Effect.void;
+                }),
               ),
               { startImmediately: true },
             );
-            yield* Effect.promise(() => started.promise);
+            yield* Effect.promise(() => started.promise).pipe(
+              within(`native watch registration for ${JSON.stringify(relativePath)}`),
+            );
             yield* TestClock.adjust("100 millis");
-            yield* Deferred.await(ready);
+            yield* Deferred.await(ready).pipe(
+              within(`watch-ready for ${JSON.stringify(relativePath)}`),
+            );
+            // Changes made before the watch started can still be reported; flush them uncounted.
+            yield* syncNativeWatch(watchReceipts.reports, cwd);
+            yield* TestClock.adjust("100 millis");
+            counting = true;
             // Pending publication settlement must not hide a wrongly queued hint.
             const unrelatedHints: unknown[] = [];
             const selectedHints: unknown[] = [];
@@ -1105,19 +1100,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               if (filename?.toString() === "notes.md") unrelatedHints.push(event);
               if (filename?.toString() === "notes.md ") selectedHints.push(event);
             };
-            yield* writeTextFile(cwd, "notes.md", "plain, edited\n");
-            yield* Effect.promise(() => unrelatedObserved.promise);
+            yield* awaitNativeReport(
+              watchReceipts.reports,
+              "notes.md",
+              writeTextFile(cwd, "notes.md", "plain, edited\n"),
+            );
             yield* TestClock.adjust("250 millis");
             expect(unrelatedHints).not.toContainEqual(
               expect.objectContaining({ _tag: "file-changed" }),
             );
-            yield* writeTextFile(cwd, "notes.md ", "spaced, edited\n");
-            yield* Effect.promise(() => selectedObserved.promise);
+            yield* awaitNativeReport(
+              watchReceipts.reports,
+              "notes.md ",
+              writeTextFile(cwd, "notes.md ", "spaced, edited\n"),
+            );
             yield* TestClock.adjust("100 millis");
-            const events = yield* Fiber.join(changes);
+            expect(
+              yield* Deferred.await(firstHint).pipe(
+                within(`hint for ${JSON.stringify(relativePath)} after its native report`),
+              ),
+            ).toEqual({
+              _tag: "file-changed",
+              relativePath,
+            });
+            yield* Fiber.interrupt(watching);
             expect(selectedHints).toContainEqual({ _tag: "file-changed", relativePath });
             watchReceipts.afterOffer = undefined;
-            expect([...events]).toEqual([{ _tag: "file-changed", relativePath }]);
             expect(yield* workspaceFileSystem.viewFile({ cwd, relativePath })).toMatchObject({
               contents: "spaced, edited\n",
             });
@@ -1134,17 +1142,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
 
-        const event = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "analysis.m" })
-          .pipe(
+        const event = yield* awaitWatchHint(
+          {
+            hint: "The hint for removing analysis.m",
+            reported: "analysis.m",
+            reports: watchReceipts.reports,
+            directory: cwd,
+          },
+          workspaceFileSystem.watchFile({ cwd, relativePath: "analysis.m" }).pipe(
             Stream.tap((event) =>
               event._tag === "watch-ready"
-                ? fileSystem.remove(path.join(cwd, "analysis.m"))
+                ? syncNativeWatch(watchReceipts.reports, cwd).pipe(
+                    Effect.andThen(fileSystem.remove(path.join(cwd, "analysis.m"))),
+                  )
                 : Effect.void,
             ),
             Stream.filter((event) => event._tag === "file-changed"),
             Stream.runHead,
-          );
+          ),
+        );
 
         expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath: "analysis.m" }));
       }),
@@ -1155,17 +1171,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
 
-        const event = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "analysis.m" })
-          .pipe(
+        const event = yield* awaitWatchHint(
+          {
+            hint: "The hint for creating analysis.m",
+            reported: "analysis.m",
+            reports: watchReceipts.reports,
+            directory: cwd,
+          },
+          workspaceFileSystem.watchFile({ cwd, relativePath: "analysis.m" }).pipe(
             Stream.tap((event) =>
               event._tag === "watch-ready"
-                ? writeTextFile(cwd, "analysis.m", "answer = 2;\n")
+                ? syncNativeWatch(watchReceipts.reports, cwd).pipe(
+                    Effect.andThen(writeTextFile(cwd, "analysis.m", "answer = 2;\n")),
+                  )
                 : Effect.void,
             ),
             Stream.filter((event) => event._tag === "file-changed"),
             Stream.runHead,
-          );
+          ),
+        );
 
         expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath: "analysis.m" }));
       }),
@@ -1181,11 +1205,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
         let observedChanges = 0;
 
-        const events = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "analysis.m" })
-          .pipe(
+        const events = yield* awaitWatchHint(
+          {
+            hint: "The hints for deleting and recreating analysis.m",
+            reported: "analysis.m",
+            reports: watchReceipts.reports,
+            directory: cwd,
+          },
+          workspaceFileSystem.watchFile({ cwd, relativePath: "analysis.m" }).pipe(
             Stream.tap((event) => {
-              if (event._tag === "watch-ready") return fileSystem.remove(absolutePath);
+              if (event._tag === "watch-ready")
+                return syncNativeWatch(watchReceipts.reports, cwd).pipe(
+                  Effect.andThen(fileSystem.remove(absolutePath)),
+                );
               observedChanges += 1;
               return observedChanges === 1
                 ? writeTextFile(cwd, "analysis.m", "answer = 2;\n")
@@ -1194,7 +1226,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             Stream.filter((event) => event._tag === "file-changed"),
             Stream.take(2),
             Stream.runCollect,
-          );
+          ),
+        );
 
         expect([...events]).toEqual([
           { _tag: "file-changed", relativePath: "analysis.m" },
@@ -1269,17 +1302,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           path.join(cwd, "analysis.m"),
         );
 
-        const event = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "analysis.m" })
-          .pipe(
+        const event = yield* awaitWatchHint(
+          {
+            hint: "The hint for the linked sources/analysis.m",
+            reported: "analysis.m",
+            reports: watchReceipts.reports,
+            directory: path.join(cwd, "sources"),
+          },
+          workspaceFileSystem.watchFile({ cwd, relativePath: "analysis.m" }).pipe(
             Stream.tap((event) =>
               event._tag === "watch-ready"
-                ? writeTextFile(cwd, "sources/analysis.m", "answer = 2;\n")
+                ? syncNativeWatch(watchReceipts.reports, path.join(cwd, "sources")).pipe(
+                    Effect.andThen(writeTextFile(cwd, "sources/analysis.m", "answer = 2;\n")),
+                  )
                 : Effect.void,
             ),
             Stream.filter((event) => event._tag === "file-changed"),
             Stream.runHead,
-          );
+          ),
+        );
 
         expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath: "analysis.m" }));
       }),
@@ -1301,14 +1342,26 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }
 
         for (const [index, relativePath] of spellings.entries()) {
-          const event = yield* workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
-            Stream.tap((event) =>
-              event._tag === "watch-ready"
-                ? writeTextFile(outsideDir, "analysis.m", `answer = ${index + 2};\n`)
-                : Effect.void,
+          const event = yield* awaitWatchHint(
+            {
+              hint: `The hint for ${relativePath}`,
+              reported: "analysis.m",
+              reports: watchReceipts.reports,
+              directory: outsideDir,
+            },
+            workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
+              Stream.tap((event) =>
+                event._tag === "watch-ready"
+                  ? syncNativeWatch(watchReceipts.reports, outsideDir).pipe(
+                      Effect.andThen(
+                        writeTextFile(outsideDir, "analysis.m", `answer = ${index + 2};\n`),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+              Stream.filter((event) => event._tag === "file-changed"),
+              Stream.runHead,
             ),
-            Stream.filter((event) => event._tag === "file-changed"),
-            Stream.runHead,
           );
 
           expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath }));

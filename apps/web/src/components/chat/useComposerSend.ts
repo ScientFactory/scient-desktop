@@ -13,13 +13,12 @@ import { declineShownApprovalsBeforeSend } from "./approvalSendGuard";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
-import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
+import { collectSelectedScientSkillNames } from "~/scient/skills/selectedSkillNames";
 import {
   queueSubmissionId,
   acknowledgeQueueSubmission,
   composerSubmissionMatchesDraft,
 } from "../../scient/threadQueue/submission";
-import { composerTargetKey } from "../../composerDraftStore";
 import { CommandId } from "@t3tools/contracts";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { isStandaloneForkSlashCommand } from "../../composer-logic";
@@ -97,7 +96,7 @@ import {
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -107,6 +106,7 @@ import {
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -147,6 +147,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
@@ -533,7 +534,9 @@ export function useComposerSend(input: ComposerSendInput) {
     detachedOverride?: DetachedSendOverride,
   ) => {
     e?.preventDefault();
-    const promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
+    // What the user pressed send on; uploads below can take a while, and a redirect must not
+    // decline approvals for a draft that changed meanwhile.
+    let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
     // The composer and its prompt belong to whichever thread is on screen.
     const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
     const pendingApprovalIdsAtSend = pendingApprovalsRef.current.map(
@@ -551,6 +554,7 @@ export function useComposerSend(input: ComposerSendInput) {
       !directAnnotation &&
       directPrompt === null &&
       !draftHasNonPromptContent(composerDraftTarget) &&
+      countPreparingComposerImages(composerTargetKey(composerDraftTarget)) === 0 &&
       isUsageLimitsCommand(promptAtSend)
     ) {
       if (openUsageLimits()) {
@@ -565,7 +569,8 @@ export function useComposerSend(input: ComposerSendInput) {
 
     // Capture before queue recovery yields: submitting releases the typing hold,
     // but a revealed question must not replace this draft's attachment snapshot.
-    const sendCtx = detachedOverride
+    // Read before any wait; the composer on screen may belong to another thread after it.
+    let sendCtx = detachedOverride
       ? detachedOverride.sendContext
       : composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
@@ -635,6 +640,34 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
       );
       return;
+    }
+    // SCIENT-FORK:START — a direct prompt sends only its own text, so it never waits for the
+    // draft's images; a send that waited may finish after its thread left the screen.
+    const heldForImages =
+      directAnnotation || directPrompt !== null ? null : holdComposerSend(composerDraftTarget);
+    let releasedFromImageHold = false;
+    // SCIENT-FORK:END
+    if (heldForImages) {
+      if ((await heldForImages).status === "cancelled") return;
+      // SCIENT-FORK: the held send was pressed on its thread; leaving afterwards does not cancel it.
+      releasedFromImageHold = true;
+      const draftAfterHold = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (!draftAfterHold) return;
+      // A dictation sent after leaving the thread carries its transcript outside the draft.
+      promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
+      if (sendCtx) {
+        sendCtx = {
+          ...sendCtx,
+          prompt: promptAtSend,
+          images: draftAfterHold.images,
+          files: draftAfterHold.files,
+          terminalContexts: draftAfterHold.terminalContexts,
+          previewAnnotations: draftAfterHold.previewAnnotations,
+          reviewComments: draftAfterHold.reviewComments,
+          threadContexts: draftAfterHold.threadContexts,
+          environmentContexts: draftAfterHold.environmentContexts,
+        };
+      }
     }
     const startDraftAttachmentUploads = (
       attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
@@ -831,8 +864,9 @@ export function useComposerSend(input: ComposerSendInput) {
     let draftClearedForSend = false;
     const isCurrentDraft = () =>
       draftClearedForSend ||
-      // A detached dictation send left its thread on purpose; only its draft must be unchanged.
-      ((detachedOverride !== undefined || isCurrentRouteThread()) &&
+      // A detached dictation send left its thread on purpose, and a send held for its images may
+      // finish after the thread left the screen; only their draft must be unchanged.
+      ((detachedOverride !== undefined || releasedFromImageHold || isCurrentRouteThread()) &&
         (directPrompt !== null ||
           composerSubmissionMatchesDraft(
             draftSnapshotForSend,
@@ -1448,6 +1482,7 @@ export function useComposerSend(input: ComposerSendInput) {
               : "foreground";
           // SCIENT-FORK:END
           if (
+            isCurrentRouteThread() &&
             shouldDockDraftHeroForSubmission({
               isDraftHeroState,
               activeThreadKey,
@@ -1525,7 +1560,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
           if (sendQueuesBehindSetup) {
             setSetupQueueSendThreadKey(activeThreadKey);
-          } else {
+          } else if (isCurrentRouteThread()) {
             beginLocalDispatch({
               preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
               submissionIntent: resolvedSubmissionIntent,
@@ -2077,7 +2112,7 @@ export function useComposerSend(input: ComposerSendInput) {
             setDockedDraftHeroThreadKey((currentThreadKey) =>
               currentThreadKey === activeThreadKey ? null : currentThreadKey,
             );
-            if (!sendQueuesBehindSetup) resetLocalDispatch();
+            if (!sendQueuesBehindSetup && isCurrentRouteThread()) resetLocalDispatch();
           }
           if (turnStartSucceeded && submissionId && !sendQueuesBehindSetup) resetLocalDispatch();
         });
@@ -2123,6 +2158,19 @@ export function useComposerSend(input: ComposerSendInput) {
     onError: setThreadError,
   });
   // SCIENT-FORK:END
+  const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
+    const refresh =
+      args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
+        ? null
+        : refreshBeforeSend();
+    if (refresh === null) return onSend(...args);
+    sendInFlightRef.current = true;
+    const ready = await refresh.finally(() => {
+      sendInFlightRef.current = false;
+    });
+    if (ready) return onSendLatest(...args);
+  };
+  const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
     // SCIENT-FORK:START — only a plain new message is for people.
@@ -2149,19 +2197,24 @@ export function useComposerSend(input: ComposerSendInput) {
           (roomSendCtx?.shownPendingApprovalIds.length ?? 0) > 0,
         prompt: promptRef.current,
       })
-    )
-      return postToRoom.post();
+    ) {
+      // An image still compressing would be left out of the post, so it waits as a send to the
+      // agent does; the people stay its destination.
+      const held = holdComposerSend(composerDraftTarget);
+      if (held === null) return postToRoom.post();
+      if ((await held).status === "cancelled") return;
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      return postToRoom.post({ prompt: draft?.prompt ?? "" });
+    }
     // SCIENT-FORK:END
-    const refresh =
-      args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
-        ? null
-        : refreshBeforeSend();
-    if (refresh === null) return onSend(...args);
+    const workspaceDefault =
+      draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
+    if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
     sendInFlightRef.current = true;
-    const ready = await refresh.finally(() => {
+    await workspaceDefault.finally(() => {
       sendInFlightRef.current = false;
     });
-    if (ready) return onSendLatest(...args);
+    return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
   // only time a detached send runs, so the draft keeps the environment it was dictated for.

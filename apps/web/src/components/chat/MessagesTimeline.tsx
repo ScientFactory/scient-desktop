@@ -36,6 +36,7 @@ import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
 import { subagentWorkflowIdsFor } from "~/scient/presentation/subagentRowGroups";
 import { T, useGT, useMessages, Var } from "gt-react";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -62,6 +63,7 @@ import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
+import { preserveReadingPosition } from "~/lib/preserveReadingPosition";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
@@ -258,6 +260,7 @@ interface MessagesTimelineProps {
   activeTurnStartedAt?: string | null;
   /** Replaces "Thinking" while the active run's provider has not started a turn. */
   providerStartingLabel?: string | null;
+  providerStarting?: NonNullable<ThreadRunSummary["providerStarting"]> | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
@@ -277,6 +280,7 @@ interface MessagesTimelineProps {
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
   // SCIENT-FORK:END
   latestRun: TimelineLatestRun | null;
+  usageLimitRunId?: RunId | null;
   /** The run the screen reader announcer follows; see announcedRun. */
   announcedRun?: { readonly runId: RunId; readonly status: TimelineLatestRun["status"] } | null;
   /** See isDetailBehindShell. */
@@ -288,7 +292,6 @@ interface MessagesTimelineProps {
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
   onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
-  onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
@@ -307,6 +310,8 @@ interface MessagesTimelineProps {
     readonly sideChat?: boolean;
     /** Where it runs, when that is another environment. */
     readonly environmentLabel?: string;
+    /** What this thread is to it, when not its subagent or side chat: `Step of`, say. */
+    readonly relation?: { readonly label: string; readonly actionLabel: string };
     readonly open?: () => void;
   } | null;
 
@@ -407,6 +412,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   runlessWorkActive = false,
   activeTurnStartedAt = null,
   providerStartingLabel = null,
+  providerStarting = null,
   worktreeSetup = null,
   footer = null,
   onCancelWorktreeSetup,
@@ -429,6 +435,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeFindMatch = null,
   findNavigationId = 0,
   latestRun,
+  usageLimitRunId = null,
   announcedRun = null,
   detailBehindShell = false,
   runningRunId = null,
@@ -437,7 +444,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   displayThreadKey,
   announceTurnStatus = true,
   onOpenToolDiff,
-  onOpenTurnDiff,
   onOpenThread,
   renderHtmlRender,
   turnItemSource,
@@ -918,6 +924,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     timelineEntries,
     pendingApprovalRequestIds,
     latestRun,
+    usageLimitRunId,
     runningRunId,
     expandedRunIds: visibleExpandedRunIds,
     expandedAttemptIds: visibleExpandedAttemptIds,
@@ -1054,6 +1061,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useLayoutEffect(() => {
     restoreInputsRef.current = restoreInputs;
   });
+  // A running restore, cleared the moment it reports the thread positioned: the reader's scroll
+  // that ends it is the reading position to keep, before the positioned state commits.
+  const restoreRunningRef = useRef(false);
   // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores LegendList's scroll position for the shown thread before paint, after the list's own layout
   useLayoutEffect(() => {
@@ -1069,6 +1079,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setPositionedThreadKey(listIdentityKey);
       return;
     }
+    restoreRunningRef.current = true;
+    const onPositioned = (threadKey: string) => {
+      restoreRunningRef.current = false;
+      setPositionedThreadKey(threadKey);
+    };
     const followingPromptId = rememberedPosition?.followingPromptId;
     if (followingPromptId && citationRequest === null) {
       return startFollowResume({
@@ -1076,7 +1091,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         viewport,
         composerInset,
         promptId: followingPromptId,
-        onPositioned: setPositionedThreadKey,
+        onPositioned,
         onResumed: () => onResumeFollow?.(followingPromptId),
         listIdentityKey,
       });
@@ -1101,9 +1116,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       resolveRow: () => (found ? { index: restoreRowIndex, offsetWithinRow: restoreOffset } : null),
       onUnsettled: setAbandonedPositionKey,
       // SCIENT-FORK:END
-      onPositioned: setPositionedThreadKey,
+      // SCIENT-FORK: the restore's end is seen at once (restoreRunningRef).
+      onPositioned,
     });
     return () => {
+      // SCIENT-FORK:START
+      restoreRunningRef.current = false;
+      // SCIENT-FORK:END
       stopRestore();
       stopWatchingEnd?.();
     };
@@ -1540,7 +1559,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFileDownload,
     openPullRequest,
     onOpenToolDiff,
-    onOpenTurnDiff,
     onOpenThread,
     renderHtmlRender,
     turnItemSource,
@@ -1611,6 +1629,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
     providerStartingLabel,
+    providerStarting,
     latestRunId: latestRun?.runId ?? null,
     liveAnswerPreview:
       isWorking && toolCallVisibility === "zen" ? liveAnswerPreview(timelineEntries) : null,
@@ -1642,13 +1661,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
             label={
-              parentThreadLink.sideChat
+              parentThreadLink.relation?.label ??
+              (parentThreadLink.sideChat
                 ? gt("Context from", {
                     $context: "divider label; the parent thread title follows as a link",
                   })
                 : gt("Subagent of", {
                     $context: "divider label; the parent thread title follows as a link",
-                  })
+                  }))
             }
             detail={
               parentThreadLink.environmentLabel === undefined
@@ -1661,7 +1681,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
             icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}
-              : { actionLabel: gt("Open parent thread"), onAction: parentThreadLink.open })}
+              : {
+                  actionLabel: parentThreadLink.relation?.actionLabel ?? gt("Open parent thread"),
+                  onAction: parentThreadLink.open,
+                })}
           />
         </div>
       </div>
@@ -1676,6 +1699,43 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
+  // SCIENT-FORK:START — the answer follow and idle end keeping (at the reading end, measured now:
+  // the bookkeeping's record trails a scroll by a frame) own the view where they apply. A width
+  // change is judged by where the reader was before it: a wider list clamps them to the end.
+  const readingEndByWidthRef = useRef<{ width: number; atEnd: boolean } | null>(null);
+  const readerAtReadingEndNow = () => {
+    const list = listRef.current;
+    const viewport = list?.getScrollableNode();
+    if (!list || !viewport) return false;
+    const previous = readingEndByWidthRef.current;
+    const width = viewport.clientWidth;
+    let atEnd = previous?.atEnd ?? false;
+    if (!previous || previous.width === width) {
+      const state = list.getState();
+      const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
+      atEnd = gap !== null && gap <= readingEndAllowance(state);
+    }
+    readingEndByWidthRef.current = { width, atEnd };
+    return atEnd;
+  };
+  // SCIENT-FORK:END
+  const shouldPreserveReadingPosition = useStableCallback(() => {
+    // SCIENT-FORK:START — measured on every call, so the width it was measured at stays current.
+    const atReadingEnd = readerAtReadingEndNow();
+    // SCIENT-FORK:END
+    return (
+      // SCIENT-FORK:START
+      followingPromptId() === null &&
+      !timelinePositioningPending &&
+      !atReadingEnd &&
+      // SCIENT-FORK:END
+      !anchoredEndSpace &&
+      !findActive &&
+      !citationPositioning &&
+      // SCIENT-FORK: a restore that just ended counts as ended (restoreRunningRef).
+      !(restoringThreadPosition && (!restoreReady || restoreRunningRef.current))
+    );
+  });
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
@@ -1696,6 +1756,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // SCIENT-FORK:START — the reading follow listens to the viewport's navigation.
     setAttachedViewport(viewport);
     // SCIENT-FORK:END
+    const stopPreservingReadingPosition = scrollNode
+      ? preserveReadingPosition(scrollNode, shouldPreserveReadingPosition)
+      : undefined;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopDisclosureReveal = viewport?.subscribe(() => {
       disclosureRevealRef.current = null;
@@ -1745,6 +1808,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scheduleContentSizeChanged();
     return () => {
       stopListeningToContentSize?.();
+      stopPreservingReadingPosition?.();
       stopDisclosureReveal?.();
       // SCIENT-FORK:START
       stopReaderInput?.();

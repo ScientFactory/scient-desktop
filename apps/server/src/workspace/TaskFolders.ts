@@ -1,4 +1,5 @@
 import {
+  GitCommandError,
   type ProjectId,
   type ProjectTrackedFolder,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
@@ -13,8 +14,10 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { flattenTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -178,13 +181,15 @@ export class TaskFolders extends Context.Service<
       readonly newBranch: string;
       readonly exactName?: boolean;
     }) => Effect.Effect<{ readonly branch: string }, TaskFolderError>;
-    /** Puts back whatever is missing; `recreate` checks a branch out again at a path. */
+    // SCIENT-FORK:START task-folder-restore-setup
+    /** Puts back whatever is missing, and says whether it rebuilt anything; `recreate` checks a branch out again at a path. */
     readonly restore: <E>(input: {
       readonly taskFolder: TaskFolder;
       /** The thread's branch, for a project that lays its folder out with its own command. */
       readonly branch: string;
       readonly recreate: (checkout: TaskFolderCheckout) => Effect.Effect<void, E>;
-    }) => Effect.Effect<void, TaskFolderError | E>;
+    }) => Effect.Effect<boolean, TaskFolderError | E>;
+    // SCIENT-FORK:END task-folder-restore-setup
     // SCIENT-FORK:START task-folder-rewind
     /** Whether the folder is a worktree of the repository, registered at that path: what `restore` keeps. */
     readonly isLinkedCheckout: (checkout: TaskFolderCheckout) => Effect.Effect<boolean>;
@@ -236,6 +241,8 @@ export const layoutAnchor = (
   }
   return { anchor, unreachable };
 };
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -318,7 +325,7 @@ const make = Effect.gen(function* () {
       processes
         .run({
           operation: "TaskFolders.worktreeLayout",
-          command: onWindows ? "cmd.exe" : "sh",
+          command: onWindows ? windowsSystem32Path(hostEnvironment, "cmd.exe") : "sh",
           args: onWindows ? ["/d", "/s", "/c", command] : ["-c", command],
           cwd: taskFolder.projectRoot,
           env: {
@@ -899,6 +906,7 @@ const make = Effect.gen(function* () {
     branch: string,
     startFromOrigin: boolean,
     baseBranch: string | undefined,
+    recordBranch: <A, E>(exit: Exit.Exit<A, E>) => Effect.Effect<void>,
   ) {
     const worktreePath = mapped(taskFolder, repository.path);
     // The project's own checkout (a post-checkout hook, say) already provided this repository.
@@ -910,13 +918,15 @@ const make = Effect.gen(function* () {
       return null;
     yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true });
     const start = yield* repositoryStart(repository.path, startFromOrigin, baseBranch);
-    yield* git.createWorktree({
-      cwd: repository.path,
-      refName: start.refName,
-      newRefName: branch,
-      baseRefName: start.baseRefName,
-      path: worktreePath,
-    });
+    yield* git
+      .createWorktree({
+        cwd: repository.path,
+        refName: start.refName,
+        newRefName: branch,
+        baseRefName: start.baseRefName,
+        path: worktreePath,
+      })
+      .pipe(Effect.onExit(recordBranch));
     return {
       repository: {
         repositoryPath: repository.path,
@@ -969,15 +979,32 @@ const make = Effect.gen(function* () {
       // A layout command may check out a branch that was already there; a rollback leaves it.
       const hadBranch = new Set<string>();
       let layoutStarted = false;
-      // Where this attempt makes the branch: a checkout that fails halfway leaves it behind.
-      let branchMadeIn = [
+      // Where this attempt may make the branch: none of them had it when listed.
+      const branchMissingIn = new Set([
         ...taskPlan.repositories
           .filter((_, index) => !names[index]!.includes(branch))
           .map((repository) => repository.path),
         ...(taskPlan.projectIsRepository && !projectNames.includes(branch)
           ? [taskPlan.projectRoot]
           : []),
-      ];
+      ]);
+      // Where this attempt made the branch: a checkout that fails halfway leaves it behind. Only
+      // a checkout it ran counts, and not one Git refused because another creation made it first.
+      let branchMadeIn: string[] = [];
+      const recordBranch =
+        (cwd: string) =>
+        <A, E>(exit: Exit.Exit<A, E>) =>
+          Effect.sync(() => {
+            const refused =
+              Exit.isFailure(exit) &&
+              exit.cause.reasons.some(
+                (reason) =>
+                  Cause.isFailReason(reason) &&
+                  isGitCommandError(reason.error) &&
+                  reason.error.operation === "GitVcsDriver.createWorktree.createBranch",
+              );
+            if (branchMissingIn.has(cwd) && !refused) branchMadeIn.push(cwd);
+          });
       return yield* Effect.gen(function* () {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
@@ -1046,16 +1073,18 @@ const make = Effect.gen(function* () {
         }
         if (taskPlan.projectIsRepository) {
           yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
-          yield* git.createWorktree(
-            {
-              cwd: taskPlan.projectRoot,
-              refName: input.projectStart.refName,
-              newRefName: branch,
-              baseRefName: input.projectStart.baseRefName,
-              path: empty.projectPath,
-            },
-            input.projectProgress === undefined ? {} : { progress: input.projectProgress },
-          );
+          yield* git
+            .createWorktree(
+              {
+                cwd: taskPlan.projectRoot,
+                refName: input.projectStart.refName,
+                newRefName: branch,
+                baseRefName: input.projectStart.baseRefName,
+                path: empty.projectPath,
+              },
+              input.projectProgress === undefined ? {} : { progress: input.projectProgress },
+            )
+            .pipe(Effect.onExit(recordBranch(taskPlan.projectRoot)));
         } else {
           yield* linkFolder(taskPlan.projectRoot, empty.projectPath, taskPlan.trackedRepositories);
         }
@@ -1085,6 +1114,7 @@ const make = Effect.gen(function* () {
                     branch,
                     input.startFromOrigin,
                     input.baseBranch,
+                    recordBranch(repository.path),
                   )
               ).pipe(
                 Effect.tap((worktree) =>
@@ -1400,6 +1430,8 @@ const make = Effect.gen(function* () {
     recreate,
   }) {
     const restoreFailed = fail("create", "Could not restore the worktrees");
+    // SCIENT-FORK: task-folder-restore-setup
+    let rebuilt = false;
     // A project that lays its own folder out rebuilds it; whatever is still missing after that
     // comes back as a plain checkout below.
     const layout = yield* worktreeLayout(taskFolder.projectRoot);
@@ -1408,6 +1440,8 @@ const make = Effect.gen(function* () {
       exists,
     );
     if (layout !== null && present.includes(false)) {
+      // SCIENT-FORK: task-folder-restore-setup
+      rebuilt = true;
       yield* fileSystem
         .makeDirectory(taskFolder.root, { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
@@ -1432,6 +1466,8 @@ const make = Effect.gen(function* () {
       yield* fileSystem
         .makeDirectory(path.dirname(checkout.worktreePath), { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
+      // SCIENT-FORK: task-folder-restore-setup
+      rebuilt = true;
       yield* recreate(checkout);
     });
     if (taskFolder.projectIsWorktree) {
@@ -1445,6 +1481,8 @@ const make = Effect.gen(function* () {
         (yield* trackedFolders(project)).map((folder) => path.resolve(folder.path)),
         isRepository,
       );
+      // SCIENT-FORK: task-folder-restore-setup
+      rebuilt = true;
       // A recorded repository the project no longer tracks still gets its worktree, never a link.
       yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, [
         ...tracked,
@@ -1456,6 +1494,8 @@ const make = Effect.gen(function* () {
     )) {
       yield* recreateMissing(repository);
     }
+    // SCIENT-FORK: task-folder-restore-setup
+    return rebuilt;
   });
 
   return TaskFolders.of({

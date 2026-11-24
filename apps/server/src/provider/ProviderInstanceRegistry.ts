@@ -46,9 +46,6 @@ export interface ProviderInstanceRegistryShape {
   readonly getInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ScientProviderInstance | undefined>;
-  /** Rebuild for dependencies outside settings, such as app-private runtime updates.
-   * Unknown ids are a no-op; close the old scope before creating the replacement. */
-  readonly rebuildInstance: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
   /**
    * Every available (driver-registered, successfully created) instance,
    * in stable settings-author order.
@@ -82,6 +79,7 @@ interface LiveEntry {
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
   readonly secrets: InstanceSecrets;
+  readonly setPresentation: (entry: ProviderInstanceConfig) => void;
 }
 
 interface RegistryState {
@@ -95,6 +93,55 @@ interface RegistryState {
 
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
+
+const withoutPresentation = ({
+  displayName: _displayName,
+  accentColor: _accentColor,
+  ...runtime
+}: ProviderInstanceConfig) => runtime;
+
+// Display name and accent colour are only labels; changing them must not stop the instance's sessions.
+const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
+  Equal.equals(withoutPresentation(a), withoutPresentation(b));
+
+// Drivers stamp the presentation they were created with into every snapshot, so a renamed
+// instance kept live restamps what it reports.
+const withLivePresentation = (instance: ProviderInstance, created: ProviderInstanceConfig) => {
+  let current = created;
+  const restamp = <S extends ServerProvider>(snapshot: S): S => {
+    const next: { -readonly [K in keyof S]: S[K] } = { ...snapshot };
+    for (const key of ["displayName", "accentColor"] as const) {
+      const value = current[key];
+      if (value === created[key]) continue;
+      if (value) next[key] = value;
+      else delete next[key];
+    }
+    return next;
+  };
+  const { snapshot, snapshotForCwd } = instance;
+  const wrapped: ProviderInstance = {
+    ...instance,
+    get displayName() {
+      return current.displayName;
+    },
+    get accentColor() {
+      return current.accentColor;
+    },
+    snapshot: {
+      ...snapshot,
+      getSnapshot: Effect.suspend(() => snapshot.getSnapshot).pipe(Effect.map(restamp)),
+      refresh: Effect.suspend(() => snapshot.refresh).pipe(Effect.map(restamp)),
+      streamChanges: Stream.suspend(() => snapshot.streamChanges).pipe(Stream.map(restamp)),
+    },
+    ...(snapshotForCwd
+      ? { snapshotForCwd: (cwd: string) => snapshotForCwd(cwd).pipe(Effect.map(restamp)) }
+      : {}),
+  };
+  const setPresentation = (entry: ProviderInstanceConfig) => {
+    current = entry;
+  };
+  return { instance: wrapped, setPresentation };
+};
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -392,14 +439,16 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     };
   }
 
+  // SCIENT-FORK:START — sessions are owned before the live label wraps the instance; its getters
+  // would not survive the ownership wrapper's spread.
+  const { instance, setPresentation } = withLivePresentation(
+    ownNativeSessionLifetimes(createResult.success, childScope),
+    entry,
+  );
+  // SCIENT-FORK:END
   return {
     kind: "live" as const,
-    live: {
-      instance: ownNativeSessionLifetimes(createResult.success, childScope),
-      scope: childScope,
-      entry,
-      secrets,
-    },
+    live: { instance, scope: childScope, entry, secrets, setPresentation },
   };
 });
 
@@ -436,7 +485,7 @@ const makeReconcile = <R>(input: {
         const nextEntry = configMap[instanceId];
         if (
           rebuild.has(instanceId) ||
-          (nextEntry !== undefined && !entryEqual(live.entry, nextEntry))
+          (nextEntry !== undefined && !runtimeEqual(live.entry, nextEntry))
         ) {
           replacedIds.add(instanceId);
         }
@@ -482,6 +531,7 @@ const makeReconcile = <R>(input: {
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
       const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
       let orderChanged = false;
+      let presentationChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
 
@@ -491,7 +541,13 @@ const makeReconcile = <R>(input: {
 
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
-          builtEntries.set(instanceId, existing);
+          if (entryEqual(existing.entry, entry)) {
+            builtEntries.set(instanceId, existing);
+          } else {
+            existing.setPresentation(entry);
+            builtEntries.set(instanceId, { ...existing, entry });
+            presentationChanged = true;
+          }
           continue;
         }
         const parked = parkedSnapshot(instanceId, entry);
@@ -531,6 +587,7 @@ const makeReconcile = <R>(input: {
       }
 
       const entriesChanged =
+        presentationChanged ||
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||
@@ -605,19 +662,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
           Effect.provideContext(driverContext),
         ),
       );
-  // SCIENT-FORK:START — rebuild for app-private runtime updates, serialized with reconcile.
-  const rebuildInstanceUnserialized = Effect.fn(
-    "ProviderInstanceRegistry.rebuildInstanceUnserialized",
-  )(function* (instanceId: ProviderInstanceId) {
-    const currentConfigMap = yield* Ref.get(configMapRef);
-    if (!(instanceId in currentConfigMap)) return;
-    yield* reconcileWithR(currentConfigMap, new Set([instanceId])).pipe(
-      Effect.provideContext(driverContext),
-    );
-  });
-  const rebuildInstance: ProviderInstanceRegistryShape["rebuildInstance"] = (instanceId) =>
-    semaphore.withPermits(1)(rebuildInstanceUnserialized(instanceId));
-  // SCIENT-FORK:END
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
   // not restart providers whose credentials are the same. Without `checked` the cached values are
@@ -710,7 +754,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
           ),
         { reference, value },
       );
-
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
     Ref.set(configMapRef, input.configMap).pipe(
@@ -741,7 +784,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
   const registry: ProviderInstanceRegistry["Service"] = {
     getInstance: (id) => Ref.get(entries).pipe(Effect.map((map) => map.get(id)?.instance)),
-    rebuildInstance,
     listInstances: Ref.get(entries).pipe(
       Effect.map(
         (map) =>

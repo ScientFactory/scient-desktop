@@ -12,6 +12,9 @@ import {
   watchSignInPopup,
 } from "../scient/browser/googleSignInRecovery.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
+import { pinchZoomFactor, watchPinchZoom } from "../scient/browser/pinchZoom.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -390,6 +393,10 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
   if (direction === "in") {
     return ZOOM_LEVELS[Math.min(step + 1, ZOOM_LEVELS.length - 1)] ?? current;
   }
+  // SCIENT-FORK:START — Scient Browser: a pinch leaves the zoom between steps; out goes to the step below.
+  if (step >= 0 && Math.abs(ZOOM_LEVELS[step]! - current) >= ZOOM_EPSILON)
+    return ZOOM_LEVELS[step]!;
+  // SCIENT-FORK:END
   return ZOOM_LEVELS[Math.max(step - 1, 0)] ?? current;
 };
 
@@ -499,7 +506,7 @@ const IN_PLACE_DENIED_PROTOCOLS = new Set([
   "view-source:",
 ]);
 
-/** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
+/** Popups bypass will-attach-webview hardening, so they are isolated and sandboxed here. */
 const POPUP_WINDOW_OPTIONS = {
   webPreferences: {
     contextIsolation: true,
@@ -1256,6 +1263,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
     let signIn: TabSignIn | null = null;
     // SCIENT-FORK:END
+    // SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
+    let stopPinchZoom = () => {};
+    // SCIENT-FORK:END
     let documentId = 0;
     let nextRequestId = 0;
     let activeCapture: {
@@ -1726,6 +1736,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         signIn?.dispose();
         signIn = null;
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
+        stopPinchZoom();
+        // SCIENT-FORK:END
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1750,6 +1763,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         signIn?.dispose();
         signIn = followTabSignIn(wc, (event) => runFork(emitSignInBlocked({ tabId, ...event })));
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
+        stopPinchZoom();
+        stopPinchZoom = watchPinchZoom(wc, {
+          pinch: (deltaY) =>
+            runFork(
+              applyZoom(tabId, (current) => pinchZoomFactor(current, deltaY, ZOOM_LEVELS)).pipe(
+                Effect.ignore,
+              ),
+            ),
+          step: (direction) =>
+            runFork(
+              applyZoom(tabId, (current) => nextZoomLevel(current, direction)).pipe(Effect.ignore),
+            ),
+        });
+        // SCIENT-FORK:END
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
           if (action === "popup") {
@@ -1770,9 +1798,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             );
             return { action: "deny" };
           }
+          const { postBody } = details;
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(details.url),
+              postBody
+                ? wc.loadURL(details.url, {
+                    postData: postBody.data,
+                    extraHeaders: postBody.boundary
+                      ? `content-type: ${postBody.contentType}; boundary=${postBody.boundary}`
+                      : `content-type: ${postBody.contentType}`,
+                  })
+                : wc.loadURL(details.url),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };

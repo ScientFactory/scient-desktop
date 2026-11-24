@@ -4,7 +4,8 @@ A thread is one conversation and its continuing work history inside a project.
 Use separate threads for separate questions or outcomes so their instructions,
 results, and follow-up work remain easy to find. You can run several threads in
 parallel; use an isolated worktree when simultaneous tasks should not edit the
-same project files.
+same project files. Threads in the same checkout share its branch, so Scient
+refuses a branch switch there while one of them is working.
 
 Pin a thread from its context menu to keep it in the pinned section above your active work.
 `mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
@@ -415,8 +416,9 @@ Work in progress, pending questions or approvals, and background work the agent
 is waiting on prevent automatic settlement. An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
-resumed after it closed. Only your own messages count as resuming. A turn that
-finished background work or a pull request watch starts on its own does not.
+resumed after it closed. Your own messages count as resuming, and so does a
+message an agent sends with `scient_thread_send` or `scient thread send`. A turn that finished
+background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick
@@ -432,12 +434,20 @@ rules to connected environments that support shared settings. Offline environmen
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
 
-## Panel motion
+### Settle or archive
 
-The main sidebar, right panel, and terminal drawer open and close immediately by default. Under
-**Settings → Appearance → Motion**, move the **Panel animations** slider above 0 ms to add motion.
-The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
-0 ms, it snaps between the same open and closed states.
+Settle is for work that is done for now. A settled thread stays in the sidebar's Settled
+section and in search, and a message to it, from you, an agent, or a scheduled task, makes it
+active again. Archive is for work you want out of the way. An archived thread leaves the
+sidebar and search and shows only in **Settings → Archive**, where you can unarchive or
+delete it. It refuses new messages, including ones from agents and scheduled tasks, until you
+unarchive it. Removing a project deletes its threads either way.
+
+A scheduled task that posts into one thread keeps running after you archive that thread, and
+each run fails. Settle the thread instead, or move or pause the task in **Settings → Scheduled
+tasks**.
+
+## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your
 apps are closed. Settled threads keep their saved links. Update the server if
@@ -447,6 +457,13 @@ On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread** to select a different PR. Use **Unlink from thread** on the
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
+
+## Panel motion
+
+The main sidebar, right panel, and terminal drawer open and close immediately by default. Under
+**Settings → Appearance → Motion**, move the **Panel animations** slider above 0 ms to add motion.
+The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
+0 ms, it snaps between the same open and closed states.
 
 ## Icon rail
 
@@ -481,14 +498,15 @@ opens the same palette.
 
 ## Environment icons
 
-When you are connected to more than one environment, every thread that lives somewhere other than
-the machine you are on wears a small icon for that machine at the end of its row: a server, a cloud
-VM, a desktop, a laptop, a Mac mini, or a Mac Studio. In the hosted web app and the mobile app,
-where every environment is remote, each row wears its machine so you can tell them apart at a
-glance. The same icon appears wherever an environment is named: the thread tooltip, the command
-palette, the "Run on" picker, the pull request server filter, the provider settings device tabs,
-and the environment lists under **Settings → Environments**. On mobile it appears in the thread
-lists, the archive, the new-task environment picker, and the Environments and storage settings.
+On web and desktop, when you are connected to more than one environment, a thread's card names
+the environment it runs in under its title, with a small icon for that machine: a server, a cloud
+VM, a desktop, a laptop, a Mac mini, or a Mac Studio. With a single environment the card leaves the
+name out. The thread's environment, branch and worktree folder are always in its tooltip. In the mobile app, where every environment
+is remote, each row wears its machine so you can tell them apart at a glance. The same icon appears
+wherever an environment is named: the thread tooltip, the command palette, the "Run on" picker, the
+pull request server filter, the provider settings device tabs, and the environment lists under
+**Settings → Environments**. On mobile it appears in the thread lists, the archive, the new-task
+environment picker, and the Environments and storage settings.
 
 Servers pick the icon themselves from the hardware they run on. A Mac reports its model, a Linux
 machine reports its chassis type and whether it is a virtual machine, and anything without a usable

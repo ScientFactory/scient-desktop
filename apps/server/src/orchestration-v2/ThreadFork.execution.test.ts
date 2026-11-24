@@ -1000,6 +1000,8 @@ const writeParentRun = (input: {
     const providerThreadId = input.stable
       ? ProviderThreadId.make(`${input.runId}:provider-thread`)
       : null;
+    const setupUnfinished =
+      input.status === "preparing" || input.status === "failed" || input.status === "interrupted";
     yield* eventSink.write({
       events: [
         ...(providerThreadId === null
@@ -1052,7 +1054,8 @@ const writeParentRun = (input: {
             status: input.status,
             queuePosition: null,
             requestedAt: now,
-            startedAt: now,
+            // A cancelled run here never started, so its queued input was never delivered.
+            startedAt: setupUnfinished || input.status === "cancelled" ? null : now,
             completedAt:
               input.status === "preparing" ||
               input.status === "running" ||
@@ -1061,9 +1064,7 @@ const writeParentRun = (input: {
                 : now,
             checkpointId: input.stable ? CheckpointId.make(`${input.runId}:checkpoint`) : null,
             contextHandoffId: null,
-            ...(input.status === "preparing" ||
-            input.status === "failed" ||
-            input.status === "interrupted"
+            ...(setupUnfinished
               ? { workspacePreparation: { type: "worktree" as const, baseRef: "main" } }
               : {}),
           },
@@ -2172,6 +2173,34 @@ it.effect("merge-back rejects a second fork's context until the first is consume
         [first.threadId, "pending"],
       ],
     );
+
+    // Archiving or deleting a parent cascades only to side chats, so the full fork can still merge back.
+    const mergeNestedInto = (commandId: string) =>
+      orchestrator
+        .dispatch({
+          type: "thread.merge_back",
+          commandId: CommandId.make(commandId),
+          sourceThreadId: nested.threadId,
+          targetThreadId: first.threadId,
+          sourcePoint: { type: "run", runId: nestedRunId },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.flip);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("merge-back-guard-archive-first"),
+      threadId: first.threadId,
+    });
+    const intoArchived = yield* mergeNestedInto("merge-back-guard-into-archived");
+    assert.equal(intoArchived._tag, "OrchestratorDispatchError");
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("merge-back-guard-delete-first"),
+      threadId: first.threadId,
+    });
+    const intoDeleted = yield* mergeNestedInto("merge-back-guard-into-deleted");
+    assert.equal(intoDeleted._tag, "OrchestratorDispatchError");
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
@@ -2437,6 +2466,7 @@ const runForkWithFailingNativeSource = (forkFailures: number) => {
       ProviderReplayHarness.layerWithRegistry(
         { name: "fork-missing-native-source" },
         ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { runEffectWorker: false },
       ),
     ),
   );

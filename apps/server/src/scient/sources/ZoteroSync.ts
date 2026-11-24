@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
 import {
+  editableMetadataFromRecord,
   normalizeScientSourceEditableMetadata,
   scientLibraryIdentityProblem,
   workLevelIdentifierKey,
@@ -46,6 +47,7 @@ import {
   addNotBrought,
   decodeZoteroRawItem,
   zoteroItemMaterial,
+  zoteroNoteOriginals,
   type ZoteroItemMaterial,
   type ZoteroRawItem,
 } from "./ZoteroItems.ts";
@@ -55,6 +57,7 @@ import {
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
+import { zoteroNotesMarkdown } from "./ZoteroNoteMarkdown.ts";
 import {
   planZoteroRefresh,
   refreshedFieldProvenance,
@@ -89,6 +92,25 @@ function sameZoteroLibrary(left: string, right: string, verifiedLocalOwner?: str
     );
   }
   return left === right;
+}
+
+function legacyZoteroBaselineSha256(
+  base: ScientSourceZoteroSync | null,
+  record: ScientSourceRecord,
+  itemKey: string,
+): string | undefined {
+  if (
+    base?.libraryId !== "0" ||
+    base.sourceId !== record.sourceId ||
+    base.itemKey !== itemKey ||
+    base.importOperationId === undefined ||
+    base.importOperationId !== record.origin?.operationId
+  ) {
+    return undefined;
+  }
+  // Move and restore can rekey the sidecar while keeping its Zotero contents.
+  const { sourceId: _sourceId, ...contents } = base;
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(contents)).digest("hex");
 }
 
 const libraryIdOfWeb = (library: ZoteroWebLibrary): string =>
@@ -195,29 +217,46 @@ export async function recordZoteroSync(input: {
   readonly attachmentKeys: ReadonlyArray<string>;
   readonly pdfs: Readonly<Record<string, string>> | undefined;
   readonly annotationLibraryId?: string;
-}): Promise<void> {
+  /** The notes of an earlier base, kept when what was written to Zotero had none. */
+  readonly notes?: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
+  /** The originating import operation when this write is the import's initial sync write. */
+  readonly initialImportOperationId?: string;
+}): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const reference = zoteroReference(input.material.candidate);
-  if (!reference) return;
+  if (!reference) return { omittedOriginalNoteHtmlCount: 0 };
+  const notes = input.notes ?? input.material;
+  const zoteroNote = input.notes?.zoteroNote;
   const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata({
     ...input.material.candidate,
     customType: input.material.candidate.customType ?? null,
   });
-  await writeScientSourceZoteroSync(input.root, {
-    formatVersion: 1,
-    sourceId: input.record.sourceId,
-    libraryId: reference.libraryId,
-    ...(input.annotationLibraryId !== undefined && input.annotationLibraryId !== reference.libraryId
-      ? { annotationLibraryId: input.annotationLibraryId }
-      : {}),
-    itemKey: reference.itemKey,
-    itemVersion: reference.itemVersion,
-    syncedAt: new Date().toISOString(),
-    metadata,
-    note: input.material.note,
-    notes: [...input.material.notes],
-    attachmentKeys: [...input.attachmentKeys],
-    ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
-  });
+  return writeScientSourceZoteroSync(
+    input.root,
+    {
+      formatVersion: 1,
+      sourceId: input.record.sourceId,
+      libraryId: reference.libraryId,
+      ...(input.annotationLibraryId !== undefined &&
+      input.annotationLibraryId !== reference.libraryId
+        ? { annotationLibraryId: input.annotationLibraryId }
+        : {}),
+      itemKey: reference.itemKey,
+      itemVersion: reference.itemVersion,
+      syncedAt: new Date().toISOString(),
+      metadata,
+      note: notes.note,
+      ...(zoteroNote !== undefined ? { zoteroNote } : {}),
+      ...(notes.notes ? { notes: [...notes.notes] } : {}),
+      ...(input.record.origin?.operationId !== undefined
+        ? { importOperationId: input.record.origin.operationId }
+        : {}),
+      attachmentKeys: [...input.attachmentKeys],
+      ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
+    },
+    ...(input.initialImportOperationId !== undefined
+      ? [{ initialImportOperationId: input.initialImportOperationId }]
+      : []),
+  );
 }
 
 /** The connection to use: the one asked for, else whichever is ready now. */
@@ -375,9 +414,17 @@ async function refreshOne(input: {
     action: "refresh",
   });
   const currentLibraryId = currentReference!.libraryId;
+  const legacyBaselineSha256 = legacyZoteroBaselineSha256(
+    savedBase,
+    input.record,
+    reference.itemKey,
+  );
+  const legacyOwnBase =
+    legacyBaselineSha256 !== undefined &&
+    reference.zoteroLegacyBaselineSha256 === legacyBaselineSha256;
   const base =
     savedBase?.itemKey === reference.itemKey &&
-    sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner)
+    (sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner) || legacyOwnBase)
       ? savedBase
       : null;
   const annotationLibraryId = base?.annotationLibraryId ?? base?.libraryId ?? reference.libraryId;
@@ -428,13 +475,25 @@ async function refreshOne(input: {
     record = result.record;
   }
   if (plan.note) {
+    // Against the note the plan read, so an edit elsewhere in the source does not refuse it.
     const result = await updateScientSourceNote({
       root: input.root,
       sourceId: record.sourceId,
       expectedRevision: record.revision,
+      expectedNote: input.record.note ?? null,
       note: plan.note.value,
       actor: input.actor,
     });
+    // No base is written, so the next refresh still sees Zotero's note as new.
+    if (result.outcome === "stale") {
+      return {
+        ...summary,
+        ...empty,
+        changedFields,
+        outcome: "stale",
+        message: "This source changed during the refresh. Refresh again.",
+      };
+    }
     if (result.outcome === "updated") changedFields.push("note");
     record = result.record;
   }
@@ -458,8 +517,14 @@ async function refreshOne(input: {
     current &&
     (current.itemVersion !== reference.itemVersion || current.libraryId !== reference.libraryId)
   ) {
+    // Publish the proof with the link so an interrupted sync write can reuse the exact legacy base.
+    const linked =
+      legacyBaselineSha256 !== undefined &&
+      (legacyOwnBase || (reference.libraryId === "0" && verifiedLocalOwner === current.libraryId))
+        ? { ...current, zoteroLegacyBaselineSha256: legacyBaselineSha256 }
+        : current;
     const references = record.externalReferences.map((entry) =>
-      entry === zoteroReference(record) ? current : entry,
+      entry === zoteroReference(record) ? linked : entry,
     );
     record = (
       await updateScientSourceExternalReferences({
@@ -471,7 +536,7 @@ async function refreshOne(input: {
       })
     ).record;
   }
-  await writeScientSourceZoteroSync(input.root, {
+  const savedSync = await writeScientSourceZoteroSync(input.root, {
     formatVersion: 1,
     sourceId: record.sourceId,
     libraryId: currentLibraryId,
@@ -481,7 +546,11 @@ async function refreshOne(input: {
     syncedAt: new Date().toISOString(),
     metadata: plan.base.metadata,
     note: plan.base.note,
+    ...(plan.base.zoteroNote !== undefined ? { zoteroNote: plan.base.zoteroNote } : {}),
     ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
+    ...(record.origin?.operationId !== undefined
+      ? { importOperationId: record.origin.operationId }
+      : {}),
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
   });
@@ -500,6 +569,12 @@ async function refreshOne(input: {
   addNotBrought(notBrought, "highlights", highlights.unplaced, "unplaced");
   addNotBrought(notBrought, "highlights", highlights.elsewhere, "no-file");
   addNotBrought(notBrought, "highlights", highlights.tooLong, "too-long");
+  if (
+    savedSync.omittedOriginalNoteHtmlCount > 0 ||
+    plan.base.notes?.some((entry) => entry.html === undefined)
+  ) {
+    addNotBrought(notBrought, "note-cut", 1, "original");
+  }
   const updated = changedFields.length > 0 || attached.added > 0;
   return {
     ...summary,
@@ -644,11 +719,27 @@ function writeToken(record: ScientSourceRecord, purpose: string): string {
     .slice(0, 32);
 }
 
+/** Stale answers in a row before a Send stops trying to link the source to its item. */
+const LINK_ATTEMPTS = 5;
+
+/**
+ * Links the source to its item and moves the base only by what this Send wrote: Zotero's values
+ * when the item is still at `sentVersion`, so a change made there meanwhile stays for Refresh,
+ * and the earlier base's notes for an item that was only updated, as no note was sent to it:
+ * none when that base is another item's, so Refresh compares the item's notes as new.
+ */
 async function syncAfterSend(input: {
   readonly root: ScientSourceStoreLocation;
   readonly library: ZoteroWebLibrary;
   readonly record: ScientSourceRecord;
   readonly itemKey: string;
+  /** The item's version once this Send's write landed, or as read when nothing was written. */
+  readonly sentVersion: number;
+  /** Present when this Send created the item; records the parent item and note base acknowledged by create. */
+  readonly created?: {
+    readonly item?: ZoteroRawItem;
+    readonly notes: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
+  };
   readonly actor: ScientSourceActor;
   readonly reference?: ScientSourceExternalReference;
   readonly verifiedLocalOwner?: string | undefined;
@@ -656,36 +747,103 @@ async function syncAfterSend(input: {
   const material = await readZoteroItemMaterial(input.library.transport, input.itemKey);
   const fresh = zoteroReference(material.candidate);
   if (!fresh) return;
-  const others = input.record.externalReferences.filter(
-    (entry) =>
-      !(
-        entry.system === "zotero" &&
-        ((entry.libraryId === fresh.libraryId && entry.itemKey === fresh.itemKey) ||
-          (input.reference &&
-            entry.libraryId === input.reference.libraryId &&
-            entry.itemKey === input.reference.itemKey))
-      ),
-  );
-  const updated = await updateScientSourceExternalReferences({
-    root: input.root,
-    sourceId: input.record.sourceId,
-    expectedRevision: input.record.revision,
-    externalReferences: [fresh, ...others],
-    actor: input.actor,
-  });
-  const previous = await readScientSourceZoteroSync(input.root, input.record.sourceId);
+  let legacyBaselineSha256: string | undefined;
+  if (input.reference?.itemKey === fresh.itemKey) {
+    if (input.reference.libraryId === "0" && input.verifiedLocalOwner === fresh.libraryId) {
+      legacyBaselineSha256 = legacyZoteroBaselineSha256(
+        await readScientSourceZoteroSync(input.root, input.record.sourceId),
+        input.record,
+        fresh.itemKey,
+      );
+    } else if (input.reference.libraryId === fresh.libraryId) {
+      legacyBaselineSha256 = input.reference.zoteroLegacyBaselineSha256;
+    }
+  }
+  const linked = {
+    ...fresh,
+    itemVersion: input.sentVersion,
+    ...(legacyBaselineSha256 !== undefined
+      ? { zoteroLegacyBaselineSha256: legacyBaselineSha256 }
+      : {}),
+  };
+  let record = input.record;
+  // Against the record as it is now: an edit made during the Send keeps itself and the link.
+  for (let attempt = 1; ; attempt += 1) {
+    const others = record.externalReferences.filter(
+      (entry) =>
+        !(
+          entry.system === "zotero" &&
+          ((entry.libraryId === fresh.libraryId && entry.itemKey === fresh.itemKey) ||
+            (input.reference &&
+              entry.libraryId === input.reference.libraryId &&
+              entry.itemKey === input.reference.itemKey))
+        ),
+    );
+    const result = await updateScientSourceExternalReferences({
+      root: input.root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      externalReferences: [linked, ...others],
+      actor: input.actor,
+    });
+    record = result.record;
+    if (result.outcome !== "stale") break;
+    if (attempt === LINK_ATTEMPTS) {
+      throw new Error(
+        `Zotero has item ${fresh.itemKey} from this Send, but Scient could not link this source to it while the source kept changing. Look for the item in Zotero before you send this source again.`,
+      );
+    }
+  }
+  if (fresh.itemVersion !== input.sentVersion) {
+    if (!input.created) return;
+    // Parent changed in Zotero before readback; record the acknowledged creation baseline
+    // fenced at `sentVersion` from Zotero's saved parent object so Refresh sees no false conflict.
+    const createdCandidate = input.created.item
+      ? zoteroItemMaterial(input.created.item, []).candidate
+      : null;
+    const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata(
+      createdCandidate
+        ? { ...createdCandidate, customType: createdCandidate.customType ?? null }
+        : editableMetadataFromRecord(input.record),
+    );
+    const annotationLibraryId = input.reference?.libraryId ?? fresh.libraryId;
+    await writeScientSourceZoteroSync(input.root, {
+      formatVersion: 1,
+      sourceId: record.sourceId,
+      libraryId: fresh.libraryId,
+      ...(annotationLibraryId !== fresh.libraryId ? { annotationLibraryId } : {}),
+      itemKey: fresh.itemKey,
+      itemVersion: input.sentVersion,
+      syncedAt: new Date().toISOString(),
+      metadata,
+      note: input.created.notes.note,
+      ...(input.created.notes.zoteroNote !== undefined
+        ? { zoteroNote: input.created.notes.zoteroNote }
+        : {}),
+      ...(input.created.notes.notes ? { notes: [...input.created.notes.notes] } : {}),
+      ...(record.origin?.operationId !== undefined
+        ? { importOperationId: record.origin.operationId }
+        : {}),
+      attachmentKeys: [],
+    });
+    return;
+  }
+  const previous = await readScientSourceZoteroSync(input.root, record.sourceId);
   const same =
     previous?.itemKey === fresh.itemKey &&
-    sameZoteroLibrary(previous.libraryId, fresh.libraryId, input.verifiedLocalOwner);
+    (sameZoteroLibrary(previous.libraryId, fresh.libraryId, input.verifiedLocalOwner) ||
+      (legacyBaselineSha256 !== undefined &&
+        legacyBaselineSha256 === legacyZoteroBaselineSha256(previous, record, fresh.itemKey)));
   await recordZoteroSync({
     root: input.root,
-    record: updated.record,
+    record,
     material,
     attachmentKeys: same ? previous.attachmentKeys : [],
     pdfs: same ? previous.pdfs : undefined,
     annotationLibraryId: same
       ? (previous.annotationLibraryId ?? previous.libraryId)
       : (input.reference?.libraryId ?? fresh.libraryId),
+    notes: same ? previous : (input.created?.notes ?? { note: null, notes: [] }),
   });
 }
 
@@ -863,7 +1021,13 @@ async function sendOne(input: {
     const patch = zoteroPatchFor({ record, current });
     if (Object.keys(patch).length === 0) {
       if (reference !== zoteroReference(record) || reference.libraryId === "0") {
-        await syncAfterSend({ ...input, reference, verifiedLocalOwner, itemKey: current.key });
+        await syncAfterSend({
+          ...input,
+          reference,
+          verifiedLocalOwner,
+          itemKey: current.key,
+          sentVersion: current.version,
+        });
       }
       return { ...summary, outcome: "unchanged", itemKey: current.key, message: null };
     }
@@ -876,7 +1040,13 @@ async function sendOne(input: {
         message: CHANGED_IN_ZOTERO,
       };
     }
-    await syncAfterSend({ ...input, reference, verifiedLocalOwner, itemKey: current.key });
+    await syncAfterSend({
+      ...input,
+      reference,
+      verifiedLocalOwner,
+      itemKey: current.key,
+      sentVersion: result.version,
+    });
     return { ...summary, outcome: "updated", itemKey: current.key, message: null };
   }
   const itemType = zoteroItemTypeFor(record);
@@ -901,13 +1071,54 @@ async function sendOne(input: {
       message: "zotero.org did not accept this source.",
     };
   }
+  let createdItem = created.item;
+  if (!createdItem) {
+    try {
+      createdItem = decodeZoteroRawItem({
+        key: created.key,
+        version: created.version,
+        library: library.groupId
+          ? { type: "group", id: Number(library.groupId) }
+          : { type: "user", id: Number(library.account.userId) },
+        data: { ...data, key: created.key, version: created.version },
+      });
+    } catch {
+      createdItem = undefined;
+    }
+  }
+  let createdNotes: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes"> = {
+    note: null,
+    notes: [],
+  };
   if (record.note?.trim()) {
-    await library.createItems(
-      [{ itemType: "note", parentItem: created.key, note: zoteroNoteHtml(record.note) }],
+    const noteHtml = zoteroNoteHtml(record.note);
+    const [createdNote] = await library.createItems(
+      [{ itemType: "note", parentItem: created.key, note: noteHtml }],
       writeToken(record, "note"),
     );
+    if (createdNote) {
+      const savedHtml = createdNote.item?.data.note ?? noteHtml;
+      const convertedNote = zoteroNotesMarkdown([
+        { itemKey: createdNote.key, html: savedHtml },
+      ]).markdown;
+      createdNotes = {
+        note: record.note,
+        ...(convertedNote !== record.note ? { zoteroNote: convertedNote } : {}),
+        notes: zoteroNoteOriginals([
+          {
+            key: createdNote.key,
+            data: { itemType: "note", note: savedHtml },
+          },
+        ]),
+      };
+    }
   }
-  await syncAfterSend({ ...input, itemKey: created.key });
+  await syncAfterSend({
+    ...input,
+    itemKey: created.key,
+    sentVersion: created.version,
+    created: { ...(createdItem ? { item: createdItem } : {}), notes: createdNotes },
+  });
   return { ...summary, outcome: "created", itemKey: created.key, message: null };
 }
 

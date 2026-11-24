@@ -140,7 +140,7 @@ verified delivery channel. Unsupported provider context fails closed rather
 than using a hidden message prefix or project/global config side channel.
 
 Evidence: `docs/internals/provider-lifecycle.md`,
-`docs/internals/providers.md`, `docs/internals/scient-codex-runtime-auth.md`,
+`docs/internals/scient-providers.md`, `docs/internals/scient-codex-runtime-auth.md`,
 `packages/scient-provider-runtime/`, `apps/server/src/scient/providerLifecycle/`,
 `apps/server/src/provider/ScientAwareness.ts`,
 `apps/server/src/provider/ScientAwareness.test.ts`, and PRs #27–#28, #58, #130,

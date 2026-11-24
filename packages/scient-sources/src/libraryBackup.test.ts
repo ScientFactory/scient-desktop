@@ -380,12 +380,8 @@ describe("backing up the Library", () => {
     expect(await NodeFSP.readdir(destination)).toEqual([]);
   });
 
-  it("leaves nothing behind when it is stopped, fails, or cannot start", async () => {
+  it("leaves nothing behind when it fails or cannot start", async () => {
     const { root, library, destination } = await fixture();
-    let asked = 0;
-    expect(
-      await backUpScientLibrary({ library, destination, shouldStop: () => (asked += 1) > 2 }),
-    ).toEqual({ outcome: "stopped" });
 
     // A record that cannot be read stops the backup with its error.
     const [record] = await listScientSourceRecords(library);

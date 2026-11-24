@@ -52,6 +52,8 @@ export function makeAnalyticsUiAdapter(
       event.name === "settings.viewed" ||
       event.name === "usage.viewed" ||
       event.name === "feature.viewed" ||
+      event.name === "latex.visual.opened" ||
+      event.name === "latex.visual.source-fallback" ||
       event.name === "usage.availability" ||
       (event.name === "feature.used" && FENCED_FEATURES.has(String(event.properties.feature)))
     ) {

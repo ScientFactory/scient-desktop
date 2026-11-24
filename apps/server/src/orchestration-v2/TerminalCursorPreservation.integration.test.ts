@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../scientServerSettings.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { makeOmpCustomModelsClientFactory } from "../provider/omp/OmpCustomModels.ts";
 import { layer as gateLayer } from "../provider/omp/OmpExecutableGate.ts";
@@ -123,7 +124,7 @@ it.live(
         const settings = yield* ServerSettings.ServerSettingsService;
         const makeProcess = yield* makeOmpCustomModelsClientFactory(
           ompTarget,
-          settings,
+          customModelSettingsSource(settings, yield* ScientServerSettings),
           instanceId,
           config.stateDir,
         );
@@ -285,7 +286,10 @@ it.live(
             yield* sessions.closeInstance(instanceId);
             yield* create(sourceId);
             yield* send(sourceId, "real-source");
-            yield* waitFor(sourceId, (p) => p.runs[0]?.status === "completed");
+            yield* waitFor(
+              sourceId,
+              (p) => p.runs[0]?.status === "completed" && p.runs[0].checkpointId !== null,
+            );
             yield* (yield* OrchestrationEffectWorkerV2).drain();
             const source = yield* orchestrator.getThreadProjection(sourceId);
             const target = yield* orchestrator.getThreadProjection(targetId);

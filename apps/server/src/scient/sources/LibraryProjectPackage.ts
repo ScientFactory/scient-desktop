@@ -86,6 +86,8 @@ export async function exportLibraryProjectPackage(
       collections: counts.collections,
       unavailable: exported.unavailable.length,
       insideProject: exported.insideProject,
+      keptCopiesLeftOut: exported.keptCopies.leftOut,
+      keptCopiesUnreadable: exported.keptCopies.unreadable,
     },
   };
 }

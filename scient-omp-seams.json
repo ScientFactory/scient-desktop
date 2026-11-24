@@ -214,6 +214,11 @@
       "purpose": "Validate the live native child owner before calling its optional cancellation operation."
     },
     {
+      "path": "packages/scient-analytics/src/contract.ts",
+      "anchor": "provider: closedCategory(property(input, \"provider\"), READINESS_PROVIDERS)",
+      "purpose": "Keep Oh My Pi and Scient Agent distinct in the closed provider-readiness categories without exposing configured instance identifiers."
+    },
+    {
       "path": "packages/scient-analytics/src/conformance.ts",
       "anchor": "[\"scient\", \"omp\", \"muse\", \"acpRegistry\"]",
       "purpose": "Exercise named provider categories across existing content-free prompt, outcome, usage, installation and lifecycle events in the generated gateway corpus."

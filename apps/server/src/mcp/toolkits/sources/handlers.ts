@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Idempotent Scient source operation IDs use the existing synchronous content fingerprint.
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -35,10 +36,18 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
+import {
+  readScientLibraryAliases,
+  resolveScientLibraryAlias,
+} from "@scientfactory/scient-sources/library-aliases";
 import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
 import {
+  ensureScientLibrary,
+  ScientLibraryRestoreUnfinishedError,
   scientLibraryLocation,
+  scientLibraryRestoreUnfinished,
   scientLibraryRootFor,
+  type ScientLibraryLocation,
 } from "@scientfactory/scient-sources/library-root";
 import {
   pinScientLibrarySource,
@@ -70,6 +79,8 @@ import * as Option from "effect/Option";
 import { AgentInvocationContext } from "../../../scient/operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import {
+  finishInterruptedLibraryMerges,
+  libraryExists,
   resolveScientSourcesStoreFor,
   ScientSourcesBackend,
   type ScientSourcesLibraryStore,
@@ -119,6 +130,7 @@ import {
   refreshZoteroForInvocation,
   sendToZoteroForInvocation,
 } from "./zoteroHandlers.ts";
+import { ScientSourcesOutsideCall } from "./outside.ts";
 import {
   ScientSourcesLibraryToolkit,
   ScientSourcesToolError,
@@ -160,6 +172,12 @@ import {
   readLibraryMoveStatus,
   scientLibraryMoveNotice,
 } from "../../../scient/sources/LibraryMove.ts";
+import { startLibraryBackup } from "../../../scient/sources/LibraryBackupRuns.ts";
+import { startLibraryJoin, undoLibraryJoin } from "../../../scient/sources/LibraryJoinRuns.ts";
+import {
+  changeLibraryRestore,
+  readLibraryCopies,
+} from "../../../scient/sources/LibraryRestoreRuns.ts";
 import {
   bothInLibrary,
   libraryDuplicates,
@@ -167,6 +185,7 @@ import {
   libraryRecentChanges,
   libraryPinMatches,
   isPinRepairAction,
+  keptCopiesOf,
   repairLibraryPin,
   moveBackResult,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
@@ -349,6 +368,14 @@ function mergePreparedAgentPdfCandidate(
 
 export const resolveScientSourcesProject = Effect.fn("ScientSourcesToolkit.resolveProject")(
   function* () {
+    const outside = yield* ScientSourcesOutsideCall;
+    if (outside) {
+      if (outside.project) return outside.project;
+      return yield* toolError(
+        "project-required",
+        "This acts on one project: pass its projectId (scient_project_list lists them).",
+      );
+    }
     const workspace = yield* consumeAgentWorkspace().pipe(
       Effect.mapError((error) => toolError(error.code, error.message)),
     );
@@ -359,15 +386,23 @@ export const resolveScientSourcesProject = Effect.fn("ScientSourcesToolkit.resol
   },
 );
 
+/** A write is refused before any store is resolved unless the caller holds sources:write. */
+const requireSourcesWrite = Effect.gen(function* () {
+  const outside = yield* ScientSourcesOutsideCall;
+  const capabilities = outside
+    ? outside.capabilities
+    : (yield* AgentInvocationContext).capabilities;
+  if (!capabilities.has("sources:write")) {
+    return yield* toolError("operation-failed", "This operation needs sources:write access.");
+  }
+});
+
 /** Resolves only the access this operation needs; a broad grant never turns a read into a write. */
 export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolveStore")(function* (
   access: "read" | "write" = "read",
 ) {
   const project = yield* resolveScientSourcesProject();
-  const invocation = yield* AgentInvocationContext;
-  if (access === "write" && !invocation.capabilities.has("sources:write")) {
-    return yield* toolError("operation-failed", "This operation needs sources:write access.");
-  }
+  if (access === "write") yield* requireSourcesWrite;
   return yield* resolveScientSourcesStoreFor(project, access, "agent").pipe(
     // The move goes on; the message names its progress so the agent can say so and retry.
     Effect.catchTags({
@@ -380,6 +415,48 @@ export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolve
     }),
   );
 });
+
+/** The server's Library alone, for a call that names no project: no checkout's keys, notes or pins. */
+interface WholeLibrary {
+  readonly kind: "whole-library";
+  readonly library: ScientLibraryLocation;
+  readonly store: ScientLibraryLocation;
+  readonly exists: boolean;
+}
+
+/**
+ * Admits a call as the Library's write path does, without a project to move in: a read creates
+ * nothing, a write waits for no unfinished restore and finishes interrupted merges first.
+ */
+const resolveWholeLibrary = Effect.fn("ScientSourcesToolkit.resolveWholeLibrary")(function* (
+  access: "read" | "write",
+) {
+  if (access === "write") yield* requireSourcesWrite;
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  if ((yield* ScientSourcesBackend) !== "library" || Option.isNone(config)) {
+    return yield* toolError("operation-failed", "This needs the personal Library.");
+  }
+  const root = scientLibraryRootFor(config.value.stateDir);
+  const library = scientLibraryLocation(root);
+  if (access === "read") {
+    const exists = yield* Effect.promise(() => libraryExists(root));
+    return { kind: "whole-library", library, store: library, exists } satisfies WholeLibrary;
+  }
+  if (yield* Effect.promise(() => scientLibraryRestoreUnfinished(root).catch(() => false))) {
+    return yield* toolError("operation-failed", new ScientLibraryRestoreUnfinishedError().message);
+  }
+  yield* Effect.promise(() => ensureScientLibrary(root));
+  yield* finishInterruptedLibraryMerges(library).pipe(
+    Effect.mapError((error) => toolError("operation-failed", error.message)),
+  );
+  return { kind: "whole-library", library, store: library, exists: true } satisfies WholeLibrary;
+});
+
+/** An outside call that names no project. */
+const namesNoProject = Effect.map(
+  ScientSourcesOutsideCall,
+  (outside) => outside !== null && outside.project === null,
+);
 
 /** Library backend only: the project's move while it has something to say. Reads only. */
 const libraryMoveNotice = Effect.fn("ScientSourcesToolkit.moveNotice")(function* (root: string) {
@@ -414,9 +491,21 @@ const afterLibraryChange = (store: ScientSourcesStore, sourceIds: ReadonlyArray<
       )
     : Effect.void;
 
-/** False for a read-only library call: it reads PDF text without storing it in the shared library. */
+/** An outside client approved for Read only leaves no file behind, not even a cache. */
+const writesDerivedFiles = Effect.map(
+  ScientSourcesOutsideCall,
+  (outside) => outside === null || outside.capabilities.has("sources:write"),
+);
+
+/**
+ * False for a read-only library call and for any call from an outside client approved for Read
+ * only, which may reach a project's own store: PDF text is read without being stored.
+ */
 const storesFullText = (store: ScientSourcesStore) =>
-  !(store.kind === "library" && store.access === "read");
+  Effect.map(
+    writesDerivedFiles,
+    (writes) => writes && !(store.kind === "library" && store.access === "read"),
+  );
 
 /** Intake from a project pins what it added, so the person sees it here. */
 const pinAdded = (store: ScientSourcesStore, sourceIds: ReadonlyArray<string | null>) =>
@@ -454,12 +543,15 @@ const doiValue = (record: Pick<ListedRecord, "identifiers">) =>
   record.identifiers.find((identifier) => identifier.scheme.toLowerCase() === "doi")?.value ?? null;
 
 /** Without the server's state folder (tests), the style catalogue is kept in memory only. */
-const citationStyleDependencies = Effect.map(
-  Effect.serviceOption(ServerConfig.ServerConfig),
-  (config) => ({
-    cacheRoot: Option.isSome(config) ? citationStyleCacheRoot(config.value.stateDir) : null,
-  }),
-);
+const citationStyleDependencies = Effect.gen(function* () {
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  return {
+    cacheRoot:
+      Option.isSome(config) && (yield* writesDerivedFiles)
+        ? citationStyleCacheRoot(config.value.stateDir)
+        : null,
+  };
+});
 
 /** At most this many pairs and merges per page of a list call with duplicates. */
 const AGENT_DUPLICATE_PAIRS = 25;
@@ -531,16 +623,36 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly revision?: string;
     readonly mergeId?: string;
     readonly recentChanges?: boolean;
+    readonly libraryCopies?: boolean;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    if (input.libraryCopies) {
+      const { library } = yield* resolveWholeLibrary("read");
+      return {
+        records: [],
+        total: 0,
+        nextOffset: null,
+        libraryCopies: yield* attempt(() => readLibraryCopies(library.root)),
+      };
+    }
+    // Only the whole Library's lists are served without a project; every other list needs one.
+    const wholeLibrary =
+      (yield* namesNoProject) &&
+      (input.recentChanges === true || input.scope === "library") &&
+      !input.duplicates &&
+      input.mergeId === undefined &&
+      input.citationStyles === undefined;
+    const store = wholeLibrary
+      ? yield* resolveWholeLibrary("read")
+      : yield* resolveScientSourcesStore();
     const root = store.store;
+    /** The project's own Library view: its pins, keys and notes. */
     const library = store.kind === "library" ? store : null;
     if (input.recentChanges) {
-      if (!library) {
+      if (store.kind === "project") {
         return yield* toolError("operation-failed", "Recent changes need the personal Library.");
       }
       const listed = yield* attempt(() =>
-        libraryRecentChanges(library, { limit: input.limit ?? 50 }),
+        libraryRecentChanges(store, { limit: input.limit ?? 50 }),
       );
       return {
         records: [],
@@ -616,7 +728,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         },
       };
     }
-    if (input.citationStyles !== undefined) {
+    if (input.citationStyles !== undefined && store.kind !== "whole-library") {
       const query = input.citationStyles;
       const deps = yield* citationStyleDependencies;
       const found = yield* attempt(() => searchCitationStyles({ root: store.root, query }, deps));
@@ -634,7 +746,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
       };
     }
     // A read on a computer with no library yet still lists the project's pins from snapshots.
-    const readable = library === null || library.exists;
+    const readable = store.kind === "project" || store.exists;
     const listsPins = library !== null && !input.inTrash && input.scope !== "library";
     const trash =
       input.inTrash && readable
@@ -714,7 +826,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(50, Math.max(1, input.limit ?? 25));
     const page = matching.slice(offset, offset + limit);
-    const move = yield* libraryMoveNotice(store.root);
+    const move = store.kind === "whole-library" ? null : yield* libraryMoveNotice(store.root);
     const snapshotIds = new Set(
       page.flatMap((record) => (fromSnapshot.has(record.sourceId) ? [record.sourceId] : [])),
     );
@@ -760,7 +872,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           : {}),
         ...(fromSnapshot.has(record.sourceId) ? { fromSnapshot: true } : {}),
         ...(matches.has(record.sourceId) ? { libraryMatch: matches.get(record.sourceId)! } : {}),
-        ...(library ? scientSourceReadingState(record) : null),
+        ...(store.kind === "project" ? null : scientSourceReadingState(record)),
       })),
       total: matching.length,
       ...(move ? { move } : {}),
@@ -826,7 +938,7 @@ export const organizeScientSourcesForInvocation = Effect.fn("ScientSourcesToolki
 
 type LibraryOrganizeChange = Exclude<
   ScientSourcesLibraryOrganizeAction,
-  ScientSourcesOrganizeAction
+  ScientSourcesOrganizeAction | LibraryCopyChange
 >;
 
 const isLibraryOrganizeChange = (
@@ -847,11 +959,137 @@ const isLibraryOrganizeChange = (
   change.action === "list-package-imports" ||
   isPinRepairAction(change);
 
+type LibraryCopyChange = Extract<
+  ScientSourcesLibraryOrganizeAction,
+  {
+    readonly action:
+      | "back-up-library"
+      | "restore-library"
+      | "put-back-library"
+      | "cancel-restore"
+      | "add-from-library"
+      | "undo-join";
+  }
+>;
+
+const isLibraryCopyChange = (
+  change: ScientSourcesLibraryOrganizeAction,
+): change is LibraryCopyChange =>
+  change.action === "back-up-library" ||
+  change.action === "restore-library" ||
+  change.action === "put-back-library" ||
+  change.action === "cancel-restore" ||
+  change.action === "add-from-library" ||
+  change.action === "undo-join";
+
+const CANCEL_OUTCOMES = {
+  cancelled: "restore-cancelled",
+  "nothing-waiting": "nothing-waiting",
+  begun: "restore-begun",
+  another: "another-restore",
+  preparing: "restore-preparing",
+  failed: "restore-failed",
+} as const;
+
+/** A restore request needs write access but resolves only the Library's folder, as the panel's. */
+const requestLibraryRestore = Effect.fn("ScientSourcesToolkit.requestLibraryRestore")(function* (
+  request: Parameters<typeof changeLibraryRestore>[1],
+) {
+  yield* requireSourcesWrite;
+  const { library } = yield* resolveWholeLibrary("read");
+  const outcome = yield* attempt(() => changeLibraryRestore(library.root, request, "agent"));
+  return {
+    library,
+    outcome: outcome === "requested" ? ("restore-requested" as const) : CANCEL_OUTCOMES[outcome],
+  };
+});
+
+/** Agents often write the home folder as "~"; the runners take absolute folders only. */
+export const libraryCopyFolder = (folder: string, home = NodeOS.homedir()): string =>
+  folder === "~"
+    ? home
+    : folder.startsWith("~/") || folder.startsWith("~\\")
+      ? NodePath.join(home, folder.slice(2))
+      : folder;
+
+/** What the agent tells the user after starting one: these runs end later, or at the next start. */
+const LIBRARY_COPY_MESSAGES = {
+  "backup-started":
+    "The backup runs on. scient_sources_list libraryCopies shows backup.state done with its path and counts, or failed with a reason.",
+  "restore-requested":
+    "Nothing changes now: Scient swaps in this Library when it next starts. Until then cancel-restore with libraryCopies.restore.restoreId stops it. Tell the user.",
+  "restore-preparing":
+    "A restore copy is still being made; libraryCopies.restore shows when it is ready. It applies when Scient next starts.",
+  "join-undone":
+    "Sources in joinUndone.leftSourceIds changed since the join (edited, starred, pinned, filed or highlighted), so they stay. Name them to the user; remove one only if the user asks.",
+  "join-started":
+    "Adding runs on. scient_sources_list libraryCopies shows join.state, and undo-join with its joinId takes it back.",
+} as const;
+
+const withMessage = <A extends { readonly outcome: string }>(changed: A) =>
+  changed.outcome in LIBRARY_COPY_MESSAGES
+    ? {
+        ...changed,
+        message: LIBRARY_COPY_MESSAGES[changed.outcome as keyof typeof LIBRARY_COPY_MESSAGES],
+      }
+    : changed;
+
+/**
+ * The whole Library's backup, restore and additions from another Library, by the runners the
+ * panel uses. A restore never touches the Library or moves a project in: the swap waits for the
+ * next start. Projects pick up an undone join through their normal refresh.
+ */
+const changeLibraryCopies = Effect.fn("ScientSourcesToolkit.libraryCopies")(function* (
+  change: LibraryCopyChange,
+) {
+  const answer = <A extends { readonly outcome: string }>(
+    library: ScientLibraryLocation,
+    changed: A,
+  ) =>
+    attempt(() => readLibraryCopies(library.root)).pipe(
+      Effect.map((libraryCopies) => ({ ...withMessage(changed), libraryCopies })),
+    );
+  switch (change.action) {
+    case "restore-library":
+    case "put-back-library":
+    case "cancel-restore": {
+      const { library, outcome } = yield* requestLibraryRestore(
+        change.action === "restore-library"
+          ? { action: "prepare", fromFolder: libraryCopyFolder(change.fromFolder) }
+          : change.action === "put-back-library"
+            ? { action: "put-back", folder: libraryCopyFolder(change.folder) }
+            : { action: "cancel", restoreId: change.restoreId },
+      );
+      return yield* answer(library, { outcome });
+    }
+    case "back-up-library": {
+      const { library } = yield* resolveWholeLibrary("write");
+      return yield* answer(
+        library,
+        startLibraryBackup(library, libraryCopyFolder(change.inFolder)),
+      );
+    }
+    case "add-from-library": {
+      const { library } = yield* resolveWholeLibrary("write");
+      return yield* answer(
+        library,
+        startLibraryJoin(library, libraryCopyFolder(change.fromFolder), "agent"),
+      );
+    }
+    case "undo-join": {
+      const { library } = yield* resolveWholeLibrary("write");
+      const undone = yield* attempt(() => undoLibraryJoin(library, change.joinId, "agent"));
+      return yield* answer(library, undone);
+    }
+  }
+});
+
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
   "ScientSourcesToolkit.organizeLibrary",
 )(function* (input: { readonly change: ScientSourcesLibraryOrganizeAction }) {
   const { change } = input;
+  if (isLibraryCopyChange(change)) return yield* changeLibraryCopies(change);
   if (!isLibraryOrganizeChange(change)) {
     return yield* organizeScientSourcesForInvocation({ change });
   }
@@ -1202,6 +1440,25 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
             : listProjectSourceUses({ root: store.root, sourceId }),
         )
       : null;
+    // Only after a merge Undo replaced this project's saved details; absent otherwise.
+    const keptId =
+      fromSnapshot && store.kind === "library" && store.exists && work
+        ? resolveScientLibraryAlias(
+            yield* attempt(() => readScientLibraryAliases(store.library)),
+            work.projectSourceId,
+          )
+        : sourceId;
+    const kept =
+      store.kind === "library"
+        ? yield* attempt(() =>
+            keptCopiesOf(
+              store,
+              keptId,
+              record,
+              fromSnapshot && work ? { citationKey: work.citationKey } : undefined,
+            ),
+          )
+        : {};
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;
@@ -1211,6 +1468,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstractTruncated,
       note: store.kind === "library" ? null : (record.note ?? null),
       revisions: revisions ?? [],
+      ...kept,
       ...(categories
         ? {
             categories: {
@@ -1992,13 +2250,14 @@ export const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
     const sourceIds = input.sourceIds
       ? yield* Effect.forEach(input.sourceIds, (sourceId) => sourceIdIn(store, sourceId))
       : undefined;
+    const persist = yield* storesFullText(store);
     const { hits, status } = yield* attempt(() =>
       searchSourceFullText({
         root: store.store,
         query: input.query,
         limit: Math.min(25, Math.max(1, input.limit ?? 10)),
         ...(sourceIds ? { sourceIds } : {}),
-        persist: storesFullText(store),
+        persist,
       }),
     );
     const pins =
@@ -2036,6 +2295,7 @@ export const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit
     const store = yield* resolveScientSourcesStore();
     if (store.kind === "library" && !store.exists) return { outcome: "source-not-found" as const };
     const sourceId = yield* sourceIdIn(store, input.sourceId);
+    const persist = yield* storesFullText(store);
     return yield* attempt(() =>
       readSourceText({
         root: store.store,
@@ -2043,7 +2303,7 @@ export const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit
         ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
         fromPage: Math.max(1, input.fromPage ?? 1),
         maxCharacters: Math.min(30_000, Math.max(1_000, input.maxCharacters ?? 12_000)),
-        persist: storesFullText(store),
+        persist,
       }),
     );
   },
@@ -2066,9 +2326,8 @@ export const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesTool
             Effect.map((resolved) => ({ quote, sourceId: resolved })),
           ),
     );
-    const results = yield* attempt(() =>
-      checkSourceQuotes({ root: store.store, quotes, persist: storesFullText(store) }),
-    );
+    const persist = yield* storesFullText(store);
+    const results = yield* attempt(() => checkSourceQuotes({ root: store.store, quotes, persist }));
     return { results };
   },
 );

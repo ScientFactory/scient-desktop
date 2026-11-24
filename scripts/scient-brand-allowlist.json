@@ -576,5 +576,145 @@
     "rules": ["bare-t3"],
     "kind": "relay-gated",
     "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/mobile/src/features/threads/FeedbackRequestCard.tsx",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/server/src/cli/feedback.ts",
+    "rules": ["bare-t3", "inherited-brand"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/server/src/feedback/FeedbackReport.ts",
+    "rules": ["bare-t3", "inherited-brand", "t3-command"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/server/src/mcp/toolkits/feedback/tools.ts",
+    "rules": ["bare-t3", "inherited-brand"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/server/src/workflows/WorkflowRuntime.ts",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's durable workflows (#38882) are off by default (workflowsEnabled) with no Scient UI; `T3.workflow` is the workflow-file API name. Rebrand before Scient enables or documents workflows."
+  },
+  {
+    "path": "apps/server/src/workflows/Workflows.ts",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's durable workflows (#38882) are off by default (workflowsEnabled) with no Scient UI; `T3.workflow` is the workflow-file API name. Rebrand before Scient enables or documents workflows."
+  },
+  {
+    "path": "apps/web/src/components/chat/FeedbackRequestCard.tsx",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/mobile/src/features/settings/ThreadSettingsSections.tsx",
+    "line": "{ mode: \"off\", label: msg(\"Off\"), description: msg(\"Agents send no feedback to the T3 team.\") },",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/mobile/src/features/settings/ThreadSettingsSections.tsx",
+    "line": "description: msg(\"Agents also report T3 Code problems they hit on their own.\"),",
+    "rules": ["bare-t3", "inherited-brand"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/mobile/src/features/settings/ThreadSettingsSections.tsx",
+    "line": "Reports go to the T3 team. A report you ask for is shown to you first in a card, with an",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/mobile/src/lib/threadActivity.ts",
+    "line": "return resolve(msg(\"Feedback for the T3 team\"));",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/server/src/mcp/OrchestratorMcpService.ts",
+    "line": "return `Asked the user to approve a ${item.preview.kind} report about ${item.preview.subject} for the T3 team: ${item.feedbackStatus}.`;",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
+    "line": "title: \"Feedback for the T3 team\",",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
+    "line": "off: msg(\"Agents send no feedback to the T3 team.\"),",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
+    "line": "\"When you ask, agents show you a short report about T3 Code and send it to the T3 team if you approve.\",",
+    "rules": ["bare-t3", "inherited-brand"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
+    "line": "\"Agents also report T3 Code problems they hit on their own, such as a T3 tool that failed.\",",
+    "rules": ["bare-t3", "inherited-brand"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "packages/provider-core/src/server/runtimeInstructions.ts",
+    "line": "\"on-request\": \"Use `t3_feedback` only when the user asks you to send T3 feedback.\",",
+    "rules": ["bare-t3"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "packages/provider-core/src/server/runtimeInstructions.ts",
+    "line": "auto: \"`t3_feedback` reports are wanted and cheap. Send one, then continue, when a T3 tool or `t3` command fails or gives a wrong result, the user corrects how you use T3 Code, or a T3 capability you looked for is missing. Once per problem; also when the user asks. Only about T3 Code, never the user's code or other tools.\",",
+    "rules": ["bare-t3", "inherited-brand"],
+    "kind": "dormant-service",
+    "reason": "T3's agent feedback (#35871) is held off in Scient by apps/server/src/scient/ScientAgentFeedbackGate.ts: no capability, no Labs switch, no CLI command, and agents never get the tool. Rebrand this text before enabling it."
+  },
+  {
+    "path": "apps/web/src/components/workflows/WorkflowDefinitionEditor.tsx",
+    "line": "const NEW_FILE = `const { workflow, step, agent, ask, stop } = T3;",
+    "rules": ["bare-t3"],
+    "kind": "api-name",
+    "reason": "`T3` is the name of the global API that the workflow runtime gives every workflow script; renaming it would break workflow files."
+  },
+  {
+    "path": "docs/user/workflows.md",
+    "line": "const { workflow, step, ask, stop, title } = T3;",
+    "rules": ["bare-t3"],
+    "kind": "api-name",
+    "reason": "`T3` is the global API the workflow runtime gives every workflow script."
+  },
+  {
+    "path": "docs/user/workflows.md",
+    "line": "Start it with `scient workflow start release --input '{\"name\":\"v1.4\"}' --key v1.4`, then answer its question in the app. `T3`, `Effect`, `Schema` and `Option` are provided; a workflow file imports nothing from T3 or Effect. Name files with letters, digits, `-`, `_` and `.`; other names are skipped with a warning.",
+    "rules": ["bare-t3"],
+    "kind": "api-name",
+    "reason": "`T3` is the global API the workflow runtime gives every workflow script."
   }
 ]

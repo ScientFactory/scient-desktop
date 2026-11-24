@@ -1,5 +1,4 @@
 import type { Options as ReactMarkdownOptions } from "react-markdown";
-import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
 import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
@@ -14,13 +13,10 @@ import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";
 type RemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 /**
- * Document Markdown joins single line breaks; chat preserves them. Keep shared grammar/plugin order
- * aligned with chat's parity test. Document pages parse both profiles as document because chat
- * bundles already encode hard breaks explicitly.
+ * The document page's Markdown grammar (chat renders with Words). Single line breaks join, as in
+ * documents; a chat bundle already writes its hard breaks explicitly.
  */
-export type ScientMarkdownProfile = "document" | "chat";
-
-export const SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS: RemarkPlugins = [
+export const SCIENT_DOCUMENT_REMARK_PLUGINS: RemarkPlugins = [
   remarkGfm,
   remarkScientMath,
   remarkScientSingleDollarMath,
@@ -30,13 +26,3 @@ export const SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS: RemarkPlugins = [
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
 ];
-
-const PROFILE_LINE_BREAK_PLUGINS = {
-  document: [],
-  chat: [remarkBreaks],
-} satisfies Record<ScientMarkdownProfile, RemarkPlugins>;
-
-/** The complete remark plugin list for one profile, outside chat's own directives. */
-export function scientMarkdownRemarkPlugins(profile: ScientMarkdownProfile): RemarkPlugins {
-  return [...SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS, ...PROFILE_LINE_BREAK_PLUGINS[profile]];
-}
