@@ -456,6 +456,56 @@ const parseEnvironmentVariables = (
   return variables;
 };
 
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+/**
+ * Pairs macOS `ps -E -ww -o pid=,command=` with the same `ps` without `-E`: the environment is
+ * what `-E` appends after argv. macOS appends none for Apple platform binaries such as
+ * `/bin/bash`, so such a process is unreadable and left out, never read from its argv.
+ */
+export const parsePsEnvironmentVariables = (
+  withEnvironment: string,
+  withoutEnvironment: string,
+  names: ReadonlyArray<string>,
+): ReadonlyMap<number, ReadonlyMap<string, string>> => {
+  const commands = new Map<number, string>();
+  for (const line of withoutEnvironment.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    if (match) commands.set(Number(match[1]), match[2]!);
+  }
+  const variables = new Map<number, ReadonlyMap<string, string>>();
+  for (const line of withEnvironment.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    const argv = match ? commands.get(Number(match[1])) : undefined;
+    if (match && argv !== undefined && match[2]!.startsWith(`${argv} `)) {
+      variables.set(
+        Number(match[1]),
+        parseEnvironmentVariables(match[2]!.slice(argv.length + 1), /\s+/, names),
+      );
+    }
+  }
+  return variables;
+};
+
+/** The readable process nearest `leader` among its descendants in its group. */
+const nearestReadableGroupMember = (
+  variables: ReadonlyMap<number, ReadonlyMap<string, string>>,
+  table: ReadonlyMap<number, ProcessTableRow>,
+  leader: ProcessTableRow,
+): ReadonlyMap<string, string> | undefined => {
+  const members = [...table.values()].filter((row) => row.pgid === leader.pgid);
+  for (let level = [leader.pid]; level.length > 0;) {
+    const parents = new Set(level);
+    level = members
+      .filter((row) => parents.has(row.ppid))
+      .map((row) => row.pid)
+      .toSorted((left, right) => left - right);
+    const readable = level.find((pid) => variables.has(pid));
+    if (readable !== undefined) return variables.get(readable);
+  }
+  return undefined;
+};
+// SCIENT-FORK:END macos-unreadable-environment
+
 /**
  * The agent commands that signaling a group stops, by the variable naming each. A CLI starts a
  * command as a group leader and names it in the command's environment, which the CLI itself does
@@ -465,12 +515,17 @@ const parseEnvironmentVariables = (
 export const agentCommandsInGroup = (
   variables: ReadonlyMap<number, ReadonlyMap<string, string>>,
   leader: ProcessTableRow,
+  // SCIENT-FORK: macos-unreadable-environment — offered upstream.
+  table: ReadonlyMap<number, ProcessTableRow> = new Map(),
 ): ReadonlyMap<string, string> => {
   const commands = new Map<string, string>();
   const parent = variables.get(leader.ppid);
   // An unreadable parent cannot rule out an inherited name.
   if (parent === undefined) return commands;
-  for (const [name, command] of variables.get(leader.pid) ?? []) {
+  // SCIENT-FORK: macos-unreadable-environment — an unreadable leader, such as a macOS shell
+  // around the command, reads as its nearest readable member, which inherited the name from it.
+  const own = variables.get(leader.pid) ?? nearestReadableGroupMember(variables, table, leader);
+  for (const [name, command] of own ?? []) {
     if (command !== "" && parent.get(name) !== command) commands.set(name, command);
   }
   return commands;
@@ -1217,34 +1272,46 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return new Map(read.flatMap(Option.toArray));
     }
-    const result = yield* processRunner
-      .run({
-        command: "ps",
-        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
-        timeout: Duration.millis(PS_TIMEOUT_MS),
-        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-      })
-      .pipe(Effect.option);
-    const variables = new Map<number, ReadonlyMap<string, string>>();
-    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
-      const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
-      }
-    }
-    return variables;
+    // SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+    const [withEnvironment, withoutEnvironment] = yield* Effect.forEach(
+      [["-E"], []],
+      (environmentFlag) =>
+        processRunner.run({
+          command: "ps",
+          args: [...environmentFlag, "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
+          timeout: Duration.millis(PS_TIMEOUT_MS),
+          maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+        }),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.orElseSucceed(() => [undefined, undefined]));
+    return withEnvironment === undefined || withoutEnvironment === undefined
+      ? new Map<number, ReadonlyMap<string, string>>()
+      : parsePsEnvironmentVariables(withEnvironment.stdout, withoutEnvironment.stdout, names);
+    // SCIENT-FORK:END macos-unreadable-environment
   });
 
   const agentCommandStops = Effect.fn("PortDiscovery.agentCommandStops")(function* (
     leader: ProcessTableRow | undefined,
+    // SCIENT-FORK: macos-unreadable-environment — offered upstream.
+    table: ReadonlyMap<number, ProcessTableRow>,
   ) {
     const watchers = [...agentCommandStopWatchers];
     if (leader === undefined || watchers.length === 0) return [];
     const names = [...new Set(watchers.map((watcher) => watcher.variable))];
-    const commands = agentCommandsInGroup(
-      yield* readEnvironmentVariables([leader.pid, leader.ppid], names),
-      leader,
-    );
+    // SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+    const variables = new Map(yield* readEnvironmentVariables([leader.pid, leader.ppid], names));
+    if (!variables.has(leader.pid)) {
+      const members = [...table.values()]
+        .filter((row) => row.pgid === leader.pgid && row.pid !== leader.pid)
+        .map((row) => row.pid);
+      if (members.length > 0) {
+        for (const entry of yield* readEnvironmentVariables(members, names)) {
+          variables.set(...entry);
+        }
+      }
+    }
+    const commands = agentCommandsInGroup(variables, leader, table);
+    // SCIENT-FORK:END macos-unreadable-environment
     return watchers.flatMap((watcher) => {
       const command = commands.get(watcher.variable);
       return command === undefined ? [] : [{ watcher, command }];
@@ -1321,7 +1388,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }
       });
     // Told before the signal, since the CLI can report the exit before a later step runs.
-    const commandStops = yield* agentCommandStops(table.get(group));
+    const commandStops = yield* agentCommandStops(table.get(group), table); // SCIENT-FORK: macos-unreadable-environment
     yield* Effect.forEach(commandStops, ({ watcher, command }) => watcher.onStop(command), {
       discard: true,
     });

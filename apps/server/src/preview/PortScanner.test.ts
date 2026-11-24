@@ -1861,6 +1861,54 @@ effectIt.effect("stops only a job's own process group", () =>
   }),
 );
 
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+effectIt.effect("reads no environment from a macOS platform binary's argv", () =>
+  Effect.sync(() => {
+    // `ps -E` appends no environment to `/bin/bash`, whose argv spells the assignment out.
+    const withEnvironment = [
+      "  200 /usr/local/bin/codex app-server HOME=/Users/a",
+      "  300 /bin/bash -c COMMAND=b npm run dev & wait",
+      "  301 /usr/local/bin/node /usr/local/bin/npm run dev COMMAND=a HOME=/Users/a",
+      "  302 /usr/local/bin/node vite COMMAND=a HOME=/Users/a",
+    ].join("\n");
+    const withoutEnvironment = [
+      "  200 /usr/local/bin/codex app-server",
+      "  300 /bin/bash -c COMMAND=b npm run dev & wait",
+      "  301 /usr/local/bin/node /usr/local/bin/npm run dev",
+      "  302 /usr/local/bin/node vite",
+    ].join("\n");
+    const variables = PortScanner.parsePsEnvironmentVariables(withEnvironment, withoutEnvironment, [
+      "COMMAND",
+      "HOME",
+    ]);
+    expect([...variables.keys()]).toEqual([200, 301, 302]);
+    expect([...variables.get(200)!]).toEqual([["HOME", "/Users/a"]]);
+    expect(variables.get(301)!.get("COMMAND")).toBe("a");
+
+    // The agent CLI starts the tool shell as the command's leader; the shell runs the server.
+    const rows = [
+      { pid: 200, ppid: 1, pgid: 200 },
+      { pid: 300, ppid: 200, pgid: 300 },
+      { pid: 301, ppid: 300, pgid: 300 },
+      { pid: 302, ppid: 301, pgid: 300 },
+    ];
+    const table = new Map(rows.map((row) => [row.pid, row]));
+    expect([...PortScanner.agentCommandsInGroup(variables, table.get(300)!, table)]).toEqual([
+      ["COMMAND", "a"],
+    ]);
+    // A readable parent that carries the name means the leader only inherited it.
+    const inherited = new Map([
+      ...variables,
+      [200, new Map([...variables.get(200)!, ["COMMAND", "a"]])],
+    ]);
+    expect(PortScanner.agentCommandsInGroup(inherited, table.get(300)!, table).size).toBe(0);
+    // A job whose parent is the unreadable shell cannot be told apart from the command.
+    const job = { pid: 301, ppid: 300, pgid: 301 };
+    expect(PortScanner.agentCommandsInGroup(variables, job, table).size).toBe(0);
+  }),
+);
+// SCIENT-FORK:END macos-unreadable-environment
+
 const AGENT_SERVER_SCRIPT = `
 const server = require("node:http").createServer((_, response) => {
   response.writeHead(200, { "content-type": "text/html" });
@@ -1873,10 +1921,20 @@ server.listen(0, "127.0.0.1", () => {
 
 const AGENT_COMMAND_ENV = "T3CODE_TEST_AGENT_COMMAND";
 
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+// The CLI is node, as agent CLIs are: macOS hides a platform binary's environment, such as bash's.
+const AGENT_CLI_SCRIPT = `
+require("node:child_process").spawn("bash", ["-c", '"$0" -e "$1" & wait', process.execPath, process.argv[1]], {
+  detached: true,
+  env: { ...process.env, ${AGENT_COMMAND_ENV}: "command-live" },
+  stdio: ["ignore", "inherit", "ignore"],
+});
+`;
+
 /**
- * A real HTML server with an agent's environment, started the way an agent's tool shell starts a
- * job: under a detached shell with job control, in a group of its own. Release kills only the pids
- * it started.
+ * A real HTML server with an agent's environment, started the way an agent CLI starts a command:
+ * a detached tool shell, in a group of its own, that names the command and runs the server.
+ * Release kills only the pids it started.
  */
 const agentServer = () =>
   Effect.acquireRelease(
@@ -1887,17 +1945,12 @@ const agentServer = () =>
       readonly exited: Promise<void>;
     }>((resume) => {
       const env = { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-live" };
-      // dash ignores `set -m` without a terminal; bash, like agent tool shells, honors it.
       const child = NodeChildProcess.spawn(
-        "bash",
-        [
-          "-c",
-          `set -m; ${AGENT_COMMAND_ENV}=command-live "$0" -e "$1" & wait`,
-          process.execPath,
-          AGENT_SERVER_SCRIPT,
-        ],
+        process.execPath,
+        ["-e", AGENT_CLI_SCRIPT, AGENT_SERVER_SCRIPT],
         { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
       );
+      // SCIENT-FORK:END macos-unreadable-environment
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       child.once("error", (error) => resume(Effect.die(error)));
       child.stdout?.once("data", (chunk) => {
@@ -1960,7 +2013,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       expect(stops).toEqual([["command-live", true]]);
-      // The shell waits on its job, so it exits once the job has.
+      // SCIENT-FORK: macos-unreadable-environment — the CLI exits once its tool shell has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
     }).pipe(
