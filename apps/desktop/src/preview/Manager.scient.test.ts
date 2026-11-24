@@ -544,6 +544,11 @@ describe("PreviewManager and trackpad pinch", () => {
           yield* manager.registerWebview("tab_1", 42);
           expect(second.guest.setZoomFactor).toHaveBeenLastCalledWith(expect.closeTo(5 / 3));
 
+          // Zoom Out from between steps goes to the step just below.
+          yield* manager.zoomOut("tab_1");
+          expect(yield* Queue.take(zooms)).toBe(1.5);
+          second.pinch(1.1);
+          expect(yield* Queue.take(zooms)).toBeCloseTo(1.65);
           yield* manager.zoomIn("tab_1");
           expect(yield* Queue.take(zooms)).toBe(1.75);
           yield* manager.resetZoom("tab_1");

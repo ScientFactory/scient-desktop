@@ -4,6 +4,9 @@ import type { WebContents } from "electron";
 export const PINCH_ZOOM_CHANNEL = "preview:pinch-zoom";
 // A busy page reports a pinch's last frames after main sees it end.
 const PINCH_SETTLE_MS = 500;
+// Smaller pinch steps wait until they add up to a zoom change main does not ignore as a no-op.
+const MIN_PINCH_DELTA_Y = 0.5;
+const ZOOM_SNAP = 0.001;
 const DOM_DELTA_PIXEL = 0;
 
 /**
@@ -37,12 +40,15 @@ export function reportPinchWheel(target: Window, send: (deltaY: number) => void)
   );
 }
 
-/** The tab zoom a pinch of `deltaY` leads to, kept within the tab's zoom range. */
-export const pinchZoomFactor = (
+/** The tab zoom a pinch of `deltaY` leads to, within the tab's zoom steps and onto one it reaches. */
+export function pinchZoomFactor(
   current: number,
   deltaY: number,
-  range: { readonly min: number; readonly max: number },
-): number => Math.min(range.max, Math.max(range.min, current * Math.exp(-deltaY / 100)));
+  levels: ReadonlyArray<number>,
+): number {
+  const next = Math.min(levels.at(-1)!, Math.max(levels[0]!, current * Math.exp(-deltaY / 100)));
+  return levels.find((level) => Math.abs(level - next) < ZOOM_SNAP) ?? next;
+}
 
 interface PinchZoomActions {
   readonly pinch: (deltaY: number) => void;
@@ -62,16 +68,26 @@ export function watchPinchZoom(
 ): () => void {
   let pinching = false;
   let pinchEndedAt = Number.NEGATIVE_INFINITY;
+  let pendingDeltaY = 0;
   const inPinch = () => pinching || now() - pinchEndedAt <= PINCH_SETTLE_MS;
   const inputEvent = (_event: unknown, input: Electron.InputEvent): void => {
-    if (input.type === "gesturePinchBegin") pinching = true;
-    else if (input.type === "gesturePinchEnd") {
+    if (input.type === "gesturePinchBegin") {
+      pinching = true;
+      pendingDeltaY = 0;
+    } else if (input.type === "gesturePinchEnd") {
       pinching = false;
       pinchEndedAt = now();
+    } else if (!pinching && (input.type === "mouseWheel" || input.type === "gestureScrollBegin")) {
+      // New wheel input after a pinch is not part of it.
+      pinchEndedAt = Number.NEGATIVE_INFINITY;
     }
   };
   const pinchReported = (_event: unknown, deltaY?: unknown): void => {
-    if (inPinch() && typeof deltaY === "number" && Number.isFinite(deltaY)) actions.pinch(deltaY);
+    if (!inPinch() || typeof deltaY !== "number" || !Number.isFinite(deltaY)) return;
+    pendingDeltaY += deltaY;
+    if (Math.abs(pendingDeltaY) < MIN_PINCH_DELTA_Y) return;
+    actions.pinch(pendingDeltaY);
+    pendingDeltaY = 0;
   };
   const zoomChanged = (_event: unknown, direction: unknown): void => {
     if (!inPinch() && (direction === "in" || direction === "out")) actions.step(direction);

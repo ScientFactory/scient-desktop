@@ -150,9 +150,6 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 ];
 
 const DEFAULT_ZOOM_FACTOR = 1.0;
-// SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
-const PINCH_ZOOM_RANGE = { min: ZOOM_LEVELS[0]!, max: ZOOM_LEVELS.at(-1)! };
-// SCIENT-FORK:END
 const ZOOM_EPSILON = 0.001;
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
@@ -396,6 +393,10 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
   if (direction === "in") {
     return ZOOM_LEVELS[Math.min(step + 1, ZOOM_LEVELS.length - 1)] ?? current;
   }
+  // SCIENT-FORK:START — Scient Browser: a pinch leaves the zoom between steps; out goes to the step below.
+  if (step >= 0 && Math.abs(ZOOM_LEVELS[step]! - current) >= ZOOM_EPSILON)
+    return ZOOM_LEVELS[step]!;
+  // SCIENT-FORK:END
   return ZOOM_LEVELS[Math.max(step - 1, 0)] ?? current;
 };
 
@@ -1767,9 +1768,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         stopPinchZoom = watchPinchZoom(wc, {
           pinch: (deltaY) =>
             runFork(
-              applyZoom(tabId, (current) =>
-                pinchZoomFactor(current, deltaY, PINCH_ZOOM_RANGE),
-              ).pipe(Effect.ignore),
+              applyZoom(tabId, (current) => pinchZoomFactor(current, deltaY, ZOOM_LEVELS)).pipe(
+                Effect.ignore,
+              ),
             ),
           step: (direction) =>
             runFork(

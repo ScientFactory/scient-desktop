@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { PINCH_ZOOM_CHANNEL, reportPinchWheel, watchPinchZoom } from "./pinchZoom.ts";
+import {
+  PINCH_ZOOM_CHANNEL,
+  pinchZoomFactor,
+  reportPinchWheel,
+  watchPinchZoom,
+} from "./pinchZoom.ts";
 
 const makeGuest = () => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
@@ -39,6 +44,26 @@ describe("watchPinchZoom", () => {
     expect(pinch.mock.calls).toEqual([[-5], [-7]]);
   });
 
+  it("adds up a slow pinch's small steps, and ends the settling on new wheel input", () => {
+    const { guest, fire } = makeGuest();
+    const pinch = vi.fn<(deltaY: number) => void>();
+    const step = vi.fn<(direction: "in" | "out") => void>();
+    watchPinchZoom(guest, { pinch, step }, () => 1_000);
+
+    fire("input-event", { type: "gesturePinchBegin" });
+    for (let frame = 0; frame < 6; frame += 1) fire(PINCH_ZOOM_CHANNEL, -0.1);
+    fire("input-event", { type: "gesturePinchEnd" });
+    expect(pinch).toHaveBeenCalledOnce();
+    expect(pinch.mock.calls[0]![0]).toBeCloseTo(-0.5);
+
+    // Ctrl+mouse wheel right after the pinch is its own input, not the pinch's last frames.
+    fire("input-event", { type: "mouseWheel" });
+    fire(PINCH_ZOOM_CHANNEL, -12);
+    fire("zoom-changed", "in");
+    expect(pinch).toHaveBeenCalledOnce();
+    expect(step.mock.calls).toEqual([["in"]]);
+  });
+
   it("steps for ctrl+mouse wheel, but not for the wheel events of a pinch", () => {
     const { guest, fire } = makeGuest();
     const step = vi.fn<(direction: "in" | "out") => void>();
@@ -54,6 +79,16 @@ describe("watchPinchZoom", () => {
     fire("zoom-changed", "in");
 
     expect(step.mock.calls).toEqual([["out"], ["in"]]);
+  });
+});
+
+describe("pinchZoomFactor", () => {
+  it("stays within the zoom steps and lands on a step it reaches", () => {
+    const levels = [0.5, 1, 1.5, 2];
+    expect(pinchZoomFactor(1, -100 * Math.log(1.2), levels)).toBeCloseTo(1.2);
+    expect(pinchZoomFactor(1.4991, -0.05, levels)).toBe(1.5);
+    expect(pinchZoomFactor(1.5, -100, levels)).toBe(2);
+    expect(pinchZoomFactor(1, 100, levels)).toBe(0.5);
   });
 });
 
