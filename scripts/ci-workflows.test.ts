@@ -556,6 +556,7 @@ describe("CI workflow decisions", () => {
       if?: string;
       uses?: string;
       run?: string;
+      "continue-on-error"?: boolean;
       with?: Record<string, string>;
     };
     const action = YAML.parse(
@@ -586,20 +587,30 @@ describe("CI workflow decisions", () => {
     const refresh = steps.find((candidate) => candidate.name === "Refresh the Linux store")!;
     expect(refresh).toMatchObject({ uses: "./.github/actions/setup-ci-deps" });
     expect(refresh.with).toBeUndefined();
+    // A lookup that fails is a miss: it neither fails the job nor skips the refresh.
+    for (const id of ["exact_store", "exact_verified"])
+      expect(step(id)["continue-on-error"], id).toBe(true);
+    // `cache-hit` is one name in an Actions expression, a subtraction in JavaScript.
+    const evaluate = (condition: string, steps: object) =>
+      NodeVM.runInNewContext(condition.replaceAll(".cache-hit", '["cache-hit"]'), { steps });
+    const lookup = (outcome: string, hit: string) => ({ outcome, outputs: { "cache-hit": hit } });
+    expect(evaluate(step("exact_verified").if!, { exact_store: lookup("failure", "") })).toBe(
+      false,
+    );
     for (const [store, verified, runs] of [
-      ["true", "true", false],
-      ["true", "false", true],
-      ["false", "", true],
-      ["", "", true],
+      [lookup("success", "true"), lookup("success", "true"), false],
+      [lookup("success", "true"), lookup("success", "false"), true],
+      [lookup("success", "true"), lookup("failure", ""), true],
+      [lookup("success", "false"), lookup("skipped", ""), true],
+      [lookup("success", ""), lookup("skipped", ""), true],
+      [lookup("failure", ""), lookup("skipped", ""), true],
+      // A failure after the lookup set its output is still a miss.
+      [lookup("failure", "true"), lookup("success", "true"), true],
+      [lookup("success", "true"), lookup("failure", "true"), true],
     ] as const)
       expect(
-        // `cache-hit` is one name in an Actions expression, a subtraction in JavaScript.
-        NodeVM.runInNewContext(refresh.if!.replaceAll(".cache-hit", '["cache-hit"]'), {
-          steps: {
-            exact_store: { outputs: { "cache-hit": store } },
-            exact_verified: { outputs: { "cache-hit": verified } },
-          },
-        }),
+        evaluate(refresh.if!, { exact_store: store, exact_verified: verified }),
+        JSON.stringify([store, verified]),
       ).toBe(runs);
   });
 

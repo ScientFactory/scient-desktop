@@ -1064,6 +1064,7 @@ jobs:
         run: echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
       - name: Look up main's exact store
         id: exact_store
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.store.outputs.path }}
@@ -1071,7 +1072,8 @@ jobs:
           lookup-only: true
       - name: Look up main's exact lockfile verification
         id: exact_verified
-        if: steps.exact_store.outputs.cache-hit == 'true'
+        if: steps.exact_store.outcome == 'success' && steps.exact_store.outputs.cache-hit == 'true'
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
@@ -1079,7 +1081,7 @@ jobs:
           lookup-only: true
       # Restores the full store and saves it under a new key when the lockfile changed.
       - name: Refresh the Linux store
-        if: steps.exact_store.outputs.cache-hit != 'true' || steps.exact_verified.outputs.cache-hit != 'true'
+        if: steps.exact_store.outcome != 'success' || steps.exact_store.outputs.cache-hit != 'true' || steps.exact_verified.outcome != 'success' || steps.exact_verified.outputs.cache-hit != 'true'
         uses: ./.github/actions/setup-ci-deps
   # SCIENT-FORK:END
 
