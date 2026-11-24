@@ -8,7 +8,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { savedViewReferences, savedViewUnresolvedRelations } from "@t3tools/shared/savedDataView";
 import * as Schema from "effect/Schema";
 import { useGT } from "gt-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { Button } from "~/components/ui/button";
@@ -26,7 +26,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { DataProfileButton } from "./DataProfileButton";
-import { DataGrid } from "./DataGrid";
+import { DataGrid, type DataGridView } from "./DataGrid";
 import { canSaveDataView, isScientSavedViewFile } from "./dataFiles";
 import {
   dataFileTablePage,
@@ -34,7 +34,7 @@ import {
   dataViewRevision,
   type ProfileTarget,
 } from "./dataTableState";
-import { DataViewActions, type DataWorkspaceFile } from "./DataViewActions";
+import { DataViewActions, DataViewExportMenuItem, type DataWorkspaceFile } from "./DataViewActions";
 import { UseDataInAnalysis } from "./UseDataInAnalysis";
 
 const isDataViewError = Schema.is(DataViewError);
@@ -85,6 +85,11 @@ export function DataFileTable(props: {
   const cwd = savedView?.cwd;
   const viewPath = savedView?.path;
   const viewKey = JSON.stringify([props.environmentId, cwd, viewPath]);
+  const [exportSelection, setExportSelection] = useState<{
+    key: string;
+    view: DataGridView;
+  } | null>(null);
+  const actionTrigger = useRef<HTMLButtonElement>(null);
   const [viewState, setViewState] = useState<{
     key: string;
     revision: string | null;
@@ -166,28 +171,17 @@ export function DataFileTable(props: {
     setSheets(result.value.sheets);
     return result.value;
   };
-  if (savedView !== null && viewError !== null)
-    return (
-      <FileSurfaceFailure
-        title={gt("Couldn't read this table")}
-        description={viewError}
-        onRetry={() => {
-          setViewState(null);
-          setViewAttempt((attempt) => attempt + 1);
-        }}
-      />
-    );
   const currentRevision = savedView === null ? revision : viewRevision;
-  if (currentRevision === null) return <FileSurfaceLoading />;
   const gridRevision = `${currentRevision}#${props.reloadKey}`;
   const target: ProfileTarget = viewInput
     ? { kind: "view", input: viewInput }
     : { kind: "file", input: { path: props.absolutePath, sheet } };
-  return (
+  const grid = (
     <div className="flex min-h-0 flex-1 flex-col">
       {savedView ? <SavedViewBanner sql={props.viewSql ?? ""} onShowSql={props.onShowSql} /> : null}
       <DataGrid
         key={savedView === null ? sheet : `${viewKey}#${gridRevision}`}
+        actionTriggerRef={actionTrigger}
         {...(viewInput === null ? {} : { validateCopy })}
         label={sheets[sheet] ?? props.name}
         revision={gridRevision}
@@ -208,15 +202,14 @@ export function DataFileTable(props: {
           ? {
               renderMenuActions: (view) => (
                 <>
-                  {savedView || canSaveDataView(workspace.path) ? (
+                  {savedView ? (
+                    <DataViewExportMenuItem
+                      environmentId={props.environmentId}
+                      onOpen={() => setExportSelection({ key: viewKey, view })}
+                    />
+                  ) : canSaveDataView(workspace.path) ? (
                     <DataViewActions
-                      {...(viewInput === null
-                        ? { kind: "save" as const }
-                        : {
-                            kind: "export" as const,
-                            revision: viewInput.revision,
-                            onFailure: onViewFailure,
-                          })}
+                      kind="save"
                       file={workspace}
                       view={view}
                       environmentId={props.environmentId}
@@ -254,6 +247,36 @@ export function DataFileTable(props: {
         }
       />
     </div>
+  );
+  return (
+    <>
+      {savedView !== null && viewError !== null ? (
+        <FileSurfaceFailure
+          title={gt("Couldn't read this table")}
+          description={viewError}
+          onRetry={() => {
+            setViewState(null);
+            setViewAttempt((attempt) => attempt + 1);
+          }}
+        />
+      ) : currentRevision === null ? (
+        <FileSurfaceLoading />
+      ) : (
+        grid
+      )}
+      {savedView !== null && exportSelection?.key === viewKey ? (
+        <DataViewActions
+          kind="export"
+          file={savedView}
+          view={exportSelection.view}
+          environmentId={props.environmentId}
+          revision={viewRevision}
+          onFailure={onViewFailure}
+          onClose={() => setExportSelection(null)}
+          finalFocus={() => actionTrigger.current}
+        />
+      ) : null}
+    </>
   );
 }
 

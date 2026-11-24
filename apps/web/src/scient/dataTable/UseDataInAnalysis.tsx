@@ -57,7 +57,7 @@ export function UseDataInAnalysis(props: {
   const [scriptPath, setScriptPath] = useState<string | null>(null);
   const [language, setLanguage] = useState<DataSnippetLanguage>("python");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ message: string; error: boolean } | null>(null);
   const { copyToClipboard } = useCopyToClipboard();
   const selection = useRef(0);
   const readNotebook = useAtomCommand(computeEnvironment.notebookRead, { reportFailure: false });
@@ -94,14 +94,14 @@ export function UseDataInAnalysis(props: {
     }
     setLanguage(nextLanguage);
     setScriptPath(path);
-    setError(null);
+    setFeedback(null);
   };
 
   const run = async () => {
     if (scriptPath === null || busy) return;
     const draft = draftKey === null ? undefined : useNotebookRunDrafts.getState().drafts[draftKey];
     setBusy(true);
-    setError(null);
+    setFeedback(null);
     await (async () => {
       let declared = draft?.inputs;
       if (declared === undefined) {
@@ -120,18 +120,30 @@ export function UseDataInAnalysis(props: {
         },
       });
       if (launched._tag !== "Success") throw squashAtomCommandFailure(launched);
-      if (launched.value._tag === "failed") {
-        setError(launched.value.message);
+      const outcome = launched.value;
+      if (outcome._tag === "failed") {
+        setFeedback({ message: outcome.message, error: true });
         return;
       }
-      if (draftKey !== null && draft?.inputs !== undefined) {
+      if (
+        (outcome._tag === "published" || outcome.notebookSaved) &&
+        draftKey !== null &&
+        draft?.inputs !== undefined
+      ) {
         const { drafts, update } = useNotebookRunDrafts.getState();
         if (drafts[draftKey]?.inputs === draft.inputs) update(draftKey, { inputs });
+      }
+      if (outcome._tag === "completed") {
+        setFeedback({
+          message: outcome.notebookMessage ?? outcome.message ?? gt("No linked results published."),
+          error: !outcome.notebookSaved,
+        });
+        return;
       }
       toastManager.add({ type: "success", title: gt("Analysis result saved") });
       setScriptPath(null);
     })()
-      .catch((failure: unknown) => setError(String(failure)))
+      .catch((failure: unknown) => setFeedback({ message: String(failure), error: true }))
       .finally(() => setBusy(false));
   };
 
@@ -214,9 +226,14 @@ export function UseDataInAnalysis(props: {
                 <code>{snippet}</code>
               </pre>
             ) : null}
-            {error === null ? null : (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
+            {feedback === null ? null : (
+              <p
+                role={feedback.error ? "alert" : "status"}
+                className={
+                  feedback.error ? "text-sm text-destructive" : "text-sm text-muted-foreground"
+                }
+              >
+                {feedback.message}
               </p>
             )}
             {draftKey === null ? null : (

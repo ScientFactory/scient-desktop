@@ -1,11 +1,13 @@
 import "../../index.css";
 
 import {
+  DataViewError,
   EnvironmentId,
   ThreadId,
   type DataProfileEvent,
   type DataViewMaterializeInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -13,8 +15,15 @@ import { render } from "../../../test/render";
 import type { ProfileTarget } from "./dataTableState";
 
 const { exported, sources } = vi.hoisted(() => ({
-  sources: { revision: "view-revision-1" },
-  exported: vi.fn(async ({ input }: { input: DataViewMaterializeInput }) => ({
+  sources: { revision: "view-revision-1", pending: null as Promise<string> | null },
+  exported: vi.fn<
+    (request: {
+      input: DataViewMaterializeInput;
+    }) => Promise<
+      | { _tag: "Success"; value: { path: string } }
+      | { _tag: "Failure"; cause: Cause.Cause<DataViewError> }
+    >
+  >(async ({ input }) => ({
     _tag: "Success",
     value: { path: input.destination },
   })),
@@ -28,7 +37,8 @@ vi.mock("~/state/use-atom-query-runner", () => ({
   useAtomQueryRunner:
     (family: string | undefined) =>
     async ({ input }: { input: { path: string; revision?: string } }) => {
-      if (family === "view-revision") return { _tag: "Success", value: sources.revision };
+      if (family === "view-revision")
+        return { _tag: "Success", value: await (sources.pending ?? sources.revision) };
       const rowCount = input.path.endsWith(".sql") ? 4 : 10;
       return {
         _tag: "Success",
@@ -42,7 +52,7 @@ vi.mock("~/state/use-atom-query-runner", () => ({
           sheets: [],
           rows: Array.from({ length: rowCount }, (_, index) => ({
             label: String(index + 1),
-            cells: [input.revision === "view-revision-2" ? "0.77" : "0.95"],
+            cells: [input.revision === "view-revision-3" ? "0.77" : "0.95"],
           })),
         },
       };
@@ -141,6 +151,7 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
 
     exported.mockClear();
     sources.revision = "view-revision-1";
+    sources.pending = null;
     const showSql = vi.fn();
     const open = vi.fn();
     const file = (path: string, viewSql?: string, refreshToken = "1") => (
@@ -224,16 +235,37 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
     await expect.element(destination).toHaveValue("high_risk.csv");
     await destination.fill("derived/high_risk.csv");
     await capture("derived-export-360");
-    await exportDialog.getByRole("button", { name: "Export table", exact: true }).click();
-    expect(exported).toHaveBeenCalledWith(
+    const nextRevision = Promise.withResolvers<string>();
+    sources.pending = nextRevision.promise;
+    const changed = new DataViewError({ reason: "view-changed" });
+    exported.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(changed) });
+    const exportButton = exportDialog.getByRole("button", { name: "Export table", exact: true });
+    await exportButton.click();
+    await expect.element(exportDialog.getByRole("alert")).toHaveTextContent(changed.message);
+    await expect.element(destination).toHaveValue("derived/high_risk.csv");
+    await expect.element(exportButton).toBeDisabled();
+
+    sources.revision = "view-revision-2";
+    sources.pending = null;
+    nextRevision.resolve(sources.revision);
+    await expect.element(exportButton).toBeEnabled();
+    await exportButton.click();
+    const input = {
+      cwd: "/project",
+      path: "views/high_risk.sql",
+      destination: "derived/high_risk.csv",
+      filter: { search: "", sort: null, minimum: { column: 0, value: 0.7 } },
+    };
+    expect(exported).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
-        input: {
-          cwd: "/project",
-          path: "views/high_risk.sql",
-          destination: "derived/high_risk.csv",
-          revision: "view-revision-1",
-          filter: { search: "", sort: null, minimum: { column: 0, value: 0.7 } },
-        },
+        input: { ...input, revision: "view-revision-1" },
+      }),
+    );
+    expect(exported).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        input: { ...input, revision: "view-revision-2" },
       }),
     );
     await expect.element(actions).toHaveFocus();
@@ -272,7 +304,7 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
     await capture("profile-wide");
     await profile.getByRole("button", { name: "Close" }).click();
 
-    sources.revision = "view-revision-2";
+    sources.revision = "view-revision-3";
     await screen.rerender(file(viewPath, viewSql, "2"));
     await expect.element(screen.getByText("0.77", { exact: true }).first()).toBeVisible();
     await expect.element(screen.getByText("Filter applied · score ≥ 0.7")).not.toBeInTheDocument();

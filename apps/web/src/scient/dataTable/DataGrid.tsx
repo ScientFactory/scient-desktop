@@ -16,6 +16,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 import { FileSurfaceFailure, FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
@@ -90,6 +91,7 @@ export interface DataGridProps {
   readonly loadPage: (query: DataTableQuery) => Promise<DataTablePage>;
   /** A new revision drops every loaded row, as when the source changes. */
   readonly revision: string;
+  readonly actionTriggerRef?: RefObject<HTMLButtonElement | null>;
   readonly toolbarStart?: ReactNode;
   readonly isCellChanged?: (rowLabel: string, column: number) => boolean;
   readonly toolbarEnd?: ReactNode;
@@ -102,7 +104,8 @@ export function DataGrid(props: DataGridProps) {
   const gt = useGT();
   const messages = useMessages();
   const [sort, setSort] = useState<DataTableSort | null>(null);
-  const actionTrigger = useRef<HTMLButtonElement>(null);
+  const localActionTrigger = useRef<HTMLButtonElement>(null);
+  const actionTrigger = props.actionTriggerRef ?? localActionTrigger;
   const launching = useRef(false);
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");

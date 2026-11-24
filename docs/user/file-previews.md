@@ -52,20 +52,24 @@ shown in its summary. Use **Cancel** to stop a profile in progress.
 4. Open **Actions** and choose **Export table…**. Choose CSV or Parquet
    and enter a new project path. The export includes all rows that match the
    grid’s search and filters, in grid order. Scient creates missing destination
-   folders and updates the Files tree after writing.
+   folders and updates the Files tree after writing. If the view changes during
+   export, try again after the grid refreshes. The dialog keeps your destination
+   and the search, filters and sort you chose when you opened it.
 
 Open **Actions** in the dataset or view and choose **Use in analysis…**. Pick a saved script or
 notebook. The example starts in the notebook’s language when Scient supports it.
 Use the language selector to change it. Copy the example into the analysis and save the code.
-Choose **Run fresh with input** to record the file as an input file for that run. For a notebook
-whose parameters you have not changed, the button reads **Run with input and saved values**.
+Choose **Run with input and saved values** for a notebook with its saved settings, or **Run fresh
+with input** for a script or a notebook with changed settings. Either records the file as an input
+file for that run. A notebook can save its outputs without publishing linked results.
 The Python, R and Julia examples for SQL views use DuckDB in the selected
 analysis environment. Run them from the project root.
 
 Ask an agent to profile data with `scient_data_profile`. It can request named
 columns on a wide table. Use `scient_data_preview_view` to see a bounded set of
-rows from a saved query. Agents create a view by writing its SQL file and use
-`scient_data_materialize_view` to export it to a new path. Pass the same
+rows from a saved query. Use `scient_data_save_view` to save a dataset selection
+with its columns, search, minimum filter and sort. Use
+`scient_data_materialize_view` to export a saved view to a new path. Pass the same
 filter and the revision returned by the preview to export the rows you inspected.
 
 ## Browse workspace files

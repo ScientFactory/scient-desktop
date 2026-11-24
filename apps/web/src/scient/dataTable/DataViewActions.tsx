@@ -48,6 +48,21 @@ export interface DataWorkspaceFile {
   readonly onOpenPath: (path: string) => void;
 }
 
+export function DataViewExportMenuItem(props: {
+  readonly environmentId: EnvironmentId;
+  readonly onOpen: () => void;
+}) {
+  const gt = useGT();
+  const menu = use(GridActionMenuContext);
+  const permission = useAtomValue(materializeDataView.permissionAtom(props.environmentId));
+  if (menu === null) return null;
+  return (
+    <MenuItem focus="edge" disabled={!permission} onClick={() => menu.launch(props.onOpen)}>
+      {gt("Export table…")}
+    </MenuItem>
+  );
+}
+
 export function DataViewActions(
   props: {
     readonly file: DataWorkspaceFile;
@@ -57,7 +72,9 @@ export function DataViewActions(
     | { readonly kind: "save" }
     | {
         readonly kind: "export";
-        readonly revision: string;
+        readonly revision: string | null;
+        readonly finalFocus: () => HTMLButtonElement | null;
+        readonly onClose: () => void;
         readonly onFailure: (failure: unknown) => void;
       }
   ),
@@ -69,26 +86,31 @@ export function DataViewActions(
   const permission = useAtomValue(command.permissionAtom(environmentId));
   const save = useAtomCommand(saveDataView, { reportFailure: false });
   const materialize = useAtomCommand(materializeDataView, { reportFailure: false });
-  const [open, setOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmWithoutSearch, setConfirmWithoutSearch] = useState(false);
   const formatId = useId();
   const [format, setFormat] = useState<ExportFormat>("parquet");
-  const [destination, setDestination] = useState("");
+  const base =
+    file.path
+      .split("/")
+      .at(-1)
+      ?.replace(/\.[^.]+$/u, "") || "table";
+  const [destination, setDestination] = useState(() =>
+    kind === "export" ? `${base}.parquet` : "",
+  );
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
   const title = kind === "save" ? gt("Save as view…") : gt("Export derived table…");
 
   const onOpenChange = (next: boolean) => {
     if (busy) return;
+    if (props.kind === "export") {
+      if (!next) props.onClose();
+      return;
+    }
     if (next) {
-      const base =
-        file.path
-          .split("/")
-          .at(-1)
-          ?.replace(/\.[^.]+$/u, "") || "table";
-      setFormat("parquet");
-      setDestination(kind === "save" ? `views/${base}.sql` : `${base}.parquet`);
+      setDestination(`views/${base}.sql`);
       setSelected(
         new Set(
           view.columns
@@ -103,20 +125,18 @@ export function DataViewActions(
       setError(null);
       setConfirmWithoutSearch(false);
     }
-    setOpen(next);
+    setSaveOpen(next);
   };
 
   const write = async () => {
-    setBusy(true);
-    setError(null);
     const projectPath = destination.trim();
     const input = {
       cwd: file.cwd,
       path: file.path,
       destination: kind === "export" ? withFormat(projectPath, format) : projectPath,
     };
-    const result = await (
-      kind === "save"
+    const writeRequest =
+      props.kind === "save"
         ? save({
             environmentId,
             input: {
@@ -127,21 +147,27 @@ export function DataViewActions(
               columns: [...selected].toSorted((a, b) => a - b),
             },
           })
-        : materialize({
-            environmentId,
-            input: {
-              ...input,
-              revision: props.revision,
-              filter: {
-                search: view.search,
-                sort: view.sort,
-                ...(view.minimum === null ? {} : { minimum: view.minimum }),
+        : props.revision === null
+          ? null
+          : materialize({
+              environmentId,
+              input: {
+                ...input,
+                revision: props.revision,
+                filter: {
+                  search: view.search,
+                  sort: view.sort,
+                  ...(view.minimum === null ? {} : { minimum: view.minimum }),
+                },
               },
-            },
-          })
-    ).finally(() => setBusy(false));
+            });
+    if (writeRequest === null) return;
+    setBusy(true);
+    setError(null);
+    const result = await writeRequest.finally(() => setBusy(false));
     if (result._tag === "Success") {
-      setOpen(false);
+      if (props.kind === "export") props.onClose();
+      else setSaveOpen(false);
       file.onOpenPath(result.value.path);
     } else {
       const failure = squashAtomCommandFailure(result);
@@ -159,17 +185,19 @@ export function DataViewActions(
     }
   };
 
-  if (menu === null) return null;
+  const finalFocus = props.kind === "export" ? props.finalFocus : menu?.finalFocus;
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <MenuItem
-        focus="edge"
-        disabled={!permission}
-        onClick={() => menu.launch(() => onOpenChange(true))}
-      >
-        {kind === "export" ? gt("Export table…") : title}
-      </MenuItem>
-      <DialogPopup finalFocus={menu.finalFocus}>
+    <Dialog open={kind === "export" || saveOpen} onOpenChange={onOpenChange}>
+      {kind === "save" && menu !== null ? (
+        <MenuItem
+          focus="edge"
+          disabled={!permission}
+          onClick={() => menu.launch(() => onOpenChange(true))}
+        >
+          {title}
+        </MenuItem>
+      ) : null}
+      <DialogPopup finalFocus={finalFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="wrap-anywhere">
@@ -281,6 +309,7 @@ export function DataViewActions(
               disabled={
                 busy ||
                 !permission ||
+                (props.kind === "export" && props.revision === null) ||
                 !destination.trim() ||
                 destination.trimEnd().endsWith("/") ||
                 (kind === "save" && selected.size === 0)

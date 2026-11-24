@@ -9,9 +9,9 @@ import { render } from "../../../test/render";
 const { run, project } = vi.hoisted(() => ({
   run: vi.fn(async (_input: { input: ComputeResultsRerunInput }) => ({
     _tag: "Success",
-    value: { _tag: "published" },
+    value: project.completed ? { _tag: "completed", notebookSaved: true } : { _tag: "published" },
   })),
-  project: { analysis: "threshold.ipynb" },
+  project: { analysis: "threshold.ipynb", completed: false },
 }));
 
 vi.mock("~/state/compute", async () => {
@@ -60,12 +60,14 @@ it.each([
   ["data/predictions.parquet", "threshold.ipynb", { threshold: "0.7" }, undefined],
   ["views/high_risk.sql", "threshold.ipynb", { threshold: "0.7" }, [] as string[]],
   ["data/predictions.csv", "threshold.ipynb", undefined, undefined],
-])(
+  ["data/inline.csv", "threshold.ipynb", undefined, undefined, true],
+] as const)(
   "declares %s for the selected saved analysis and keeps its existing inputs",
-  async (path, analysis, pending, inputs) => {
+  async (path, analysis, pending, inputs, completed?: true) => {
     run.mockClear();
     useNotebookRunDrafts.setState({ drafts: {} });
     project.analysis = analysis;
+    project.completed = completed === true;
     const environmentId = EnvironmentId.make("environment");
     if (pending !== undefined || inputs !== undefined) {
       useNotebookRunDrafts
@@ -115,6 +117,11 @@ it.each([
         ? "Run with input and saved values"
         : "Run fresh with input";
     await page.getByRole("button", { name: button }).click();
+    if (completed) {
+      const dialog = page.getByRole("dialog", { name: "Use in analysis" });
+      await expect.element(dialog.getByText("No linked results published.")).toBeVisible();
+      await expect.element(page.getByText("Analysis result saved")).not.toBeInTheDocument();
+    }
     await vi.waitFor(() =>
       expect(run).toHaveBeenCalledWith({
         environmentId,
