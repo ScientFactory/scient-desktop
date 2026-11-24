@@ -23,7 +23,11 @@ import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { ResultRunSetup, type ResultRunOptions } from "./ResultRunSetup";
 import { ExportResultPackageButton } from "./handoff/ExportResultPackageButton";
-import { ResultAttemptStatus } from "./ResultAttemptStatus";
+import {
+  ResultAttemptStatus,
+  ResultRunFailureNotice,
+  type ResultRunFailure,
+} from "./ResultAttemptStatus";
 import { ResultRunEvidence } from "./ResultRunEvidence";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { computeEnvironment } from "~/state/compute";
@@ -573,10 +577,7 @@ function ResultCard(props: {
   const [setupOpen, setSetupOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [runFailure, setRunFailure] = useState<{
-    message: string;
-    previousAttempt?: string | undefined;
-  } | null>(null);
+  const [runFailure, setRunFailure] = useState<ResultRunFailure | null>(null);
   const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
   const canPlace = useAtomValue(
     computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
@@ -667,11 +668,7 @@ function ResultCard(props: {
           attempt={lastAttempt}
         />
       )}
-      {runFailure !== null && runFailure.previousAttempt === lastAttempt?.finishedAt ? (
-        <p role="alert" className="text-destructive">
-          {runFailure.message}
-        </p>
-      ) : null}
+      <ResultRunFailureNotice failure={runFailure} lastAttempt={lastAttempt} />
       {state === "newer" || state === "current" ? null : (
         <span className="text-muted-foreground" data-result-card-state={state}>
           {messages(RESULT_STATE_LABEL[state])}

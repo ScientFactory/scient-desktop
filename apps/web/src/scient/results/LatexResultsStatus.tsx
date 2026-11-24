@@ -23,7 +23,11 @@ import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { resultErrorMessage } from "./resultState";
 import { resultCauseText } from "./resultState";
-import { ResultAttemptStatus } from "./ResultAttemptStatus";
+import {
+  ResultAttemptStatus,
+  ResultRunFailureNotice,
+  type ResultRunFailure,
+} from "./ResultAttemptStatus";
 import { ResultRunEvidence } from "./ResultRunEvidence";
 import { ResultRunSetup, type ResultRunOptions } from "./ResultRunSetup";
 
@@ -235,7 +239,7 @@ function ScriptResults(props: {
   const gt = useGT();
   const messages = useMessages();
   const { script } = props;
-  const scriptPath = script.summary.scriptPath;
+  const { scriptPath, lastAttempt } = script.summary;
   const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
   const updateFiles = useAtomCommand(computeEnvironment.resultsUpdateFiles, {
     reportFailure: false,
@@ -251,6 +255,7 @@ function ScriptResults(props: {
   );
   const [busy, setBusy] = useState<"rerun" | "update" | "undo" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [runFailure, setRunFailure] = useState<ResultRunFailure | null>(null);
   // Edited files the user was warned about, as they were then, for the run the warning was about;
   // confirming replaces only those, and only for that run.
   const [warning, setWarning] = useState<{
@@ -263,6 +268,7 @@ function ScriptResults(props: {
   const act = (kind: "rerun" | "update" | "undo", run: () => Promise<void>) => {
     setBusy(kind);
     setMessage(null);
+    setRunFailure(null);
     void run().finally(() => {
       setBusy(null);
       props.onChanged();
@@ -278,8 +284,9 @@ function ScriptResults(props: {
     });
     if (response._tag !== "Success")
       setMessage(resultErrorMessage(response, gt("The script could not run.")));
-    else if (response.value._tag === "failed") setMessage(response.value.message);
-    else if (response.value._tag === "completed") {
+    else if (response.value._tag === "failed") {
+      setRunFailure({ message: response.value.message, previousAttempt: lastAttempt?.finishedAt });
+    } else if (response.value._tag === "completed") {
       setMessage(
         response.value.message ??
           response.value.notebookMessage ??
@@ -337,15 +344,16 @@ function ScriptResults(props: {
     <div className="flex flex-col gap-1.5" data-results-script={scriptPath}>
       <span className="font-medium text-foreground">{scriptPath}</span>
       <ResultRunEvidence summary={script.summary} />
-      {script.summary.lastAttempt === undefined ? null : (
+      {lastAttempt === undefined ? null : (
         <ResultAttemptStatus
-          key={script.summary.lastAttempt.finishedAt}
+          key={lastAttempt.finishedAt}
           environmentId={props.environmentId}
           cwd={props.cwd}
           scriptPath={scriptPath}
-          attempt={script.summary.lastAttempt}
+          attempt={lastAttempt}
         />
       )}
+      <ResultRunFailureNotice failure={runFailure} lastAttempt={lastAttempt} />
       {causes.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
           {causes.map((cause) => (

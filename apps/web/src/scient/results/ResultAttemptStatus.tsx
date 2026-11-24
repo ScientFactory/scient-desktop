@@ -33,6 +33,24 @@ type AttemptTextBlock =
   | { readonly key: string; readonly text: string }
   | { readonly key: string; readonly summary: string; readonly traceback: string };
 
+export interface ResultRunFailure {
+  readonly message: string;
+  readonly previousAttempt: string | undefined;
+}
+
+export function ResultRunFailureNotice(props: {
+  readonly failure: ResultRunFailure | null;
+  readonly lastAttempt: ComputeResultLastAttempt | undefined;
+}) {
+  const { failure, lastAttempt } = props;
+  if (failure === null || failure.previousAttempt !== lastAttempt?.finishedAt) return null;
+  return (
+    <p role="alert" className="text-destructive">
+      {failure.message}
+    </p>
+  );
+}
+
 export function ResultAttemptStatus(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
