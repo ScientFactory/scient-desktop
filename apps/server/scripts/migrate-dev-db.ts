@@ -399,8 +399,10 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
     );
   const comparable = (resolved: string) =>
     platform === "linux" ? resolved : resolved.toLowerCase();
-  const target = comparable(yield* resolve(databasePath));
-  const inside = (directory: string) => target.startsWith(`${comparable(directory)}${path.sep}`);
+  // Case is folded only to compare paths; the filesystem is asked with the real spelling.
+  const target = yield* resolve(databasePath);
+  const inside = (directory: string) =>
+    comparable(target).startsWith(`${comparable(directory)}${path.sep}`);
   const sharedHome = yield* resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
   const scientHome = yield* resolve(
     options.scientHome ?? path.join(NodeOS.homedir(), SCIENT_DESKTOP_IDENTITY.baseDirName),
@@ -444,6 +446,7 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
     ),
   );
   for (const file of live) {
+    if (comparable(file) === comparable(target)) continue;
     const candidate = yield* identity(file);
     if (Option.isSome(candidate) && candidate.value === targetIdentity.value) {
       return yield* new MigrateDevDbSharedHomeError();

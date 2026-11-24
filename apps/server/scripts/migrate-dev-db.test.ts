@@ -383,6 +383,23 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       }),
   );
 
+  it.effect("prunes a copy in a checkout Scient manages, which the home scan also visits", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const scientHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-scient-" });
+      const options = { sharedHome: "/nonexistent-t3-home", scientHome, scratchRoots: [] };
+      const checkout = path.join(scientHome, "worktrees", "example");
+      yield* fs.makeDirectory(checkout, { recursive: true });
+      yield* fs.writeFileString(path.join(checkout, ".git"), "gitdir: /elsewhere\n");
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
+      const copy = path.join(checkout, "statev2.sqlite");
+      yield* fs.copyFile(yield* createFixtureSource(sourceDir), copy);
+
+      assert.equal(yield* dropResumableFamilies(copy, options), 4);
+    }),
+  );
+
   it.effect("prunes and rebuilds a worktree's dev home inside a Git checkout", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
