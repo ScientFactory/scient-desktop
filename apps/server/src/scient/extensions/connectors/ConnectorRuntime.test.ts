@@ -497,8 +497,10 @@ const resetVendor = (base: string): FakeVendor => ({
 
 const listen = async (target: NodeHttp.Server) => {
   const listening = Promise.withResolvers<void>();
+  target.once("error", listening.reject);
   target.listen(0, "127.0.0.1", listening.resolve);
   await listening.promise;
+  target.off("error", listening.reject);
   const address = target.address();
   if (address === null || typeof address === "string") throw new Error("server has no port");
   return `http://127.0.0.1:${address.port}`;
@@ -3755,19 +3757,16 @@ createInterface({ input: process.stdin }).on("line", () => process.exit(4));`,
 
 /** A connector an agent writes: logs a line, then answers `version` with its manifest version. */
 const AGENT_SERVER = `
-import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { get } from "node:http";
 import { createInterface } from "node:readline";
 const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
 process.stderr.write("starting " + manifest.version + "\\n");
 if (process.env.MODE === "broken") { process.stderr.write("cannot find module ./lib.mjs\\n"); process.exit(1); }
-// MODE "gate:<file>": answers its first message only once <file> exists.
+// MODE "gate:<url>": answers its first message only once a request to <url> is answered.
 const gate = process.env.MODE?.startsWith("gate:") ? process.env.MODE.slice(5) : undefined;
-const opened = gate === undefined ? Promise.resolve() : new Promise((resolve) => {
-  const check = () => { if (existsSync(gate)) { watcher.close(); resolve(); } };
-  const watcher = watch(dirname(gate), check);
-  writeFileSync(gate + ".started", "");
-  check();
+const opened = gate === undefined ? Promise.resolve() : new Promise((resolve, reject) => {
+  get(gate, (response) => { response.resume(); response.on("end", resolve); }).on("error", reject);
 });
 const send = (message) => opened.then(() => process.stdout.write(JSON.stringify(message) + "\\n"));
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -3872,15 +3871,29 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-/** Succeeds once `path` exists, watching its folder rather than polling; the watch ends with it. */
-const appears = (path: string) =>
-  Effect.callback<void>((resume) => {
-    const watcher = NodeFS.watch(NodePath.dirname(path), () => {
-      if (NodeFS.existsSync(path)) resume(Effect.void);
+/** What a "gate:<url>" connector waits on; its request is the receipt that it started. */
+const connectorGate = Effect.acquireRelease(
+  Effect.promise(async () => {
+    const started = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<void>();
+    const server = NodeHttp.createServer((_request, response) => {
+      started.resolve();
+      void opened.promise.then(() => response.end());
     });
-    if (NodeFS.existsSync(path)) resume(Effect.void);
-    return Effect.sync(() => watcher.close());
-  });
+    return { server, url: await listen(server), started, opened };
+  }),
+  ({ server }) =>
+    Effect.promise(() => {
+      server.closeAllConnections();
+      return new Promise<void>((closed) => server.close(() => closed()));
+    }),
+).pipe(
+  Effect.map(({ url, started, opened }) => ({
+    mode: `gate:${url}`,
+    started: Effect.promise(() => started.promise),
+    open: Effect.sync(() => opened.resolve()),
+  })),
+);
 
 /** Each change that reaches a connector's lock, and a wait for the n-th one to arrive. */
 const lockArrivals = () => {
@@ -4487,19 +4500,18 @@ describe("connectors agents make and fix", () => {
       yield* writeConnectorFolder(work, { version: "1.1.0" });
       yield* harness.runtime.saveFolder({ folder: work, connector: connectorId }, undefined);
 
-      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
-      yield* writeConnectorFolder(work, { version: "1.2.0", mode: `gate:${gate}` });
+      const gate = yield* connectorGate;
+      yield* writeConnectorFolder(work, { version: "1.2.0", mode: gate.mode });
       locks.reset();
       const saving = yield* harness.runtime
         .saveFolder({ folder: work, connector: connectorId }, undefined)
         .pipe(Effect.forkScoped);
       // The save is in its check; an Undo now must wait for it rather than run inside it.
-      yield* appears(`${gate}.started`);
+      yield* gate.started;
       const undoing = yield* harness.runtime.undo({ connectorId }).pipe(Effect.forkScoped);
       // Receipt: the Undo has reached the connector's lock (or, unlocked, already ran).
       yield* Effect.raceFirst(locks.reached(2), Fiber.await(undoing));
-      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* gate.open;
       yield* Fiber.join(saving);
       yield* Fiber.join(undoing);
       // regression: Undo ran during the save, which then wrote over what it restored.
@@ -4517,25 +4529,24 @@ describe("connectors agents make and fix", () => {
       yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false, region: true });
       const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
       const connectorId = saved.connector.connectorId;
-      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
+      const gate = yield* connectorGate;
       yield* writeConnectorFolder(work, {
         version: "1.1.0",
         keyRequired: false,
         region: true,
-        mode: `gate:${gate}`,
+        mode: gate.mode,
       });
       locks.reset();
       const saving = yield* harness.runtime
         .saveFolder({ folder: work, connector: connectorId }, undefined)
         .pipe(Effect.forkScoped);
-      yield* appears(`${gate}.started`);
+      yield* gate.started;
       const setting = yield* harness.runtime
         .update({ connectorId, localSetup: { settings: { region: "eu" }, keys: {} } })
         .pipe(Effect.forkScoped);
       // Receipt: the setup has reached the connector's lock (or, unlocked, already ran).
       yield* Effect.raceFirst(locks.reached(2), Fiber.await(setting));
-      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* gate.open;
       yield* Fiber.join(saving);
       yield* Fiber.join(setting);
       const after = (yield* harness.runtime.list()).connectors[0]!;
