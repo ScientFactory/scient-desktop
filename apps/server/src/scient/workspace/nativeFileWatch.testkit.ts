@@ -1,7 +1,7 @@
 /**
  * For tests that drive a real native file watch. Platform file events can arrive late, or not
  * at all while the OS event service is saturated (macOS `fseventsd`), so every wait here has a
- * deadline on the live clock and a failure that says which side stalled.
+ * deadline on the live clock, and a failure says what was and was not observed.
  */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -11,14 +11,29 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
 /** Far above normal event latency, far below the 120 s test ceiling. */
-const NATIVE_EVENT_DEADLINE_SECONDS = 10;
+const DEADLINE_SECONDS = 10;
 
-export const PLATFORM_STALLED =
-  "the platform's file events are stalled (on macOS, check fseventsd's CPU). That is the machine, not a wrong result";
+/** Where to look when native events do not arrive. */
+const SLOW_EVENTS = "on macOS, a saturated fseventsd delays every native event";
 
 /** Native events arrive in real time, whether or not the test runs on a TestClock. */
 const onLiveClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Clock.clockWith((clock) => ("withLive" in clock ? TestClock.withLive(effect) : effect));
+
+/** Wait for `effect` up to the deadline on the live clock; then fail with "No `what` within 10 s". */
+export const within =
+  (what: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.timeoutOption(`${DEADLINE_SECONDS} seconds`),
+      onLiveClock,
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.die(new Error(`No ${what} within ${DEADLINE_SECONDS} s.`)),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
 
 /**
  * Waiters keyed by file name as the native watch reports it. A test's `node:fs` `watch` mock
@@ -38,7 +53,7 @@ const reportedInTime = <E, R>(
     () =>
       change.pipe(
         Effect.andThen(Effect.promise(() => seen.promise)),
-        Effect.timeoutOption(`${NATIVE_EVENT_DEADLINE_SECONDS} seconds`),
+        Effect.timeoutOption(`${DEADLINE_SECONDS} seconds`),
         Effect.map(Option.isSome),
         onLiveClock,
       ),
@@ -46,10 +61,7 @@ const reportedInTime = <E, R>(
   );
 };
 
-/**
- * Run `change`, then wait until the native watch reports `name`. No report in time means the
- * platform's events stalled, so the failure says so instead of waiting out the test timeout.
- */
+/** Run `change`, then wait until the native watch reports `name`. */
 export const awaitNativeReport = <E, R>(
   reports: NativeWatchReports,
   name: string,
@@ -61,7 +73,7 @@ export const awaitNativeReport = <E, R>(
         ? Effect.void
         : Effect.die(
             new Error(
-              `The native watch did not report ${name} within ${NATIVE_EVENT_DEADLINE_SECONDS} s: ${PLATFORM_STALLED}.`,
+              `The native watch did not report ${name} within ${DEADLINE_SECONDS} s (${SLOW_EVENTS}).`,
             ),
           ),
     ),
@@ -93,7 +105,7 @@ export const syncNativeWatch = Effect.fn("syncNativeWatch")(function* (
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => names.forEach((name) => reports.delete(name))),
   );
-  for (let attempt = 0; attempt < NATIVE_EVENT_DEADLINE_SECONDS; attempt += 1) {
+  for (let attempt = 0; attempt < DEADLINE_SECONDS; attempt += 1) {
     const sync = yield* writeSyncFile(directory);
     names.push(sync.name);
     reports.set(sync.name, seen.resolve);
@@ -106,7 +118,7 @@ export const syncNativeWatch = Effect.fn("syncNativeWatch")(function* (
   }
   return yield* Effect.die(
     new Error(
-      `The native watch did not report any of ${String(NATIVE_EVENT_DEADLINE_SECONDS)} sync files in ${directory} within ${NATIVE_EVENT_DEADLINE_SECONDS} s: ${PLATFORM_STALLED}.`,
+      `The native watch reported none of ${String(DEADLINE_SECONDS)} sync files written to ${directory} over ${DEADLINE_SECONDS} s (${SLOW_EVENTS}).`,
     ),
   );
 }, Effect.scoped);
@@ -117,18 +129,17 @@ export type StartNativeWatch = (
   onReport: (name: string) => void,
 ) => Promise<() => Promise<void>>;
 
-/**
- * How long `start`'s watch on `directory` takes to report a fresh file, if it does within the
- * deadline: tells a broken product watch apart from a platform whose file events are slow.
- */
+/** How long a fresh watch from `start` on `directory` takes to report a new file, if it does in time. */
 export const platformFileEventLatency = Effect.fn("platformFileEventLatency")(function* (
   directory: string,
   start: StartNativeWatch,
 ) {
   const reports: NativeWatchReports = new Map();
   yield* Effect.acquireRelease(
-    Effect.promise(() => start(directory, (name) => reports.get(name)?.())),
-    (stop) => Effect.promise(stop),
+    Effect.promise(() => start(directory, (name) => reports.get(name)?.())).pipe(
+      within(`subscription to ${directory}`),
+    ),
+    (stop) => Effect.promise(stop).pipe(within(`unsubscribe from ${directory}`)),
   );
   const sync = yield* writeSyncFile(directory);
   const [latency, reported] = yield* reportedInTime(reports, sync.name, sync.write).pipe(
@@ -139,9 +150,8 @@ export const platformFileEventLatency = Effect.fn("platformFileEventLatency")(fu
 }, Effect.scoped);
 
 /**
- * Await a hint for a change, made after `syncNativeWatch`, that the native watch reports as
- * `reported`. Late, the failure says where it was lost: the product (the change was reported),
- * the platform (only a later sync file was), or a stalled platform (nothing was).
+ * Await a hint for a change that the native watch reports as `reported`. Late, the failure says
+ * whether the native watch reported it and, if not, whether it reported a file written after.
  */
 export const awaitWatchHint = <A, E, R>(
   input: {
@@ -152,19 +162,18 @@ export const awaitWatchHint = <A, E, R>(
   },
   hint: Effect.Effect<A, E, R>,
 ) => {
+  // The hint's own sync takes up to one deadline, the change up to another.
+  const late = `${input.hint} did not arrive within ${2 * DEADLINE_SECONDS} s`;
   let reported = false;
-  const lost = Effect.suspend(() =>
+  const missed = Effect.suspend(() =>
     reported
-      ? Effect.die(
-          new Error(
-            `${input.hint} did not arrive within ${2 * NATIVE_EVENT_DEADLINE_SECONDS} s although the native watch reported ${input.reported}, so the product dropped it.`,
-          ),
-        )
-      : syncNativeWatch(input.reports, input.directory).pipe(
-          Effect.andThen(
+      ? Effect.die(new Error(`${late}; the native watch reported ${input.reported}.`))
+      : writeSyncFile(input.directory).pipe(
+          Effect.flatMap((sync) => reportedInTime(input.reports, sync.name, sync.write)),
+          Effect.flatMap((later) =>
             Effect.die(
               new Error(
-                `The native watch never reported ${input.reported}, though it was armed before the change and reported a file written after it: the platform lost the change. That is the machine, not a wrong result.`,
+                `${late}; the native watch did not report ${input.reported}, and ${later ? "did" : "did not"} report a sync file written after that.`,
               ),
             ),
           ),
@@ -180,8 +189,7 @@ export const awaitWatchHint = <A, E, R>(
       // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off -- the fallback must run while the watch is still open, and timeoutOrElse closes it first.
       Effect.raceFirst(
         hint,
-        // The hint's own sync takes up to one deadline, the change up to another.
-        Effect.sleep(`${2 * NATIVE_EVENT_DEADLINE_SECONDS} seconds`).pipe(Effect.andThen(lost)),
+        Effect.sleep(`${2 * DEADLINE_SECONDS} seconds`).pipe(Effect.andThen(missed)),
       ),
     () => Effect.sync(() => input.reports.delete(input.reported)),
   ).pipe(onLiveClock);

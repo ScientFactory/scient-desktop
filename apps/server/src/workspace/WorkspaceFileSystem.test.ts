@@ -37,6 +37,7 @@ import {
   awaitNativeReport,
   awaitWatchHint,
   syncNativeWatch,
+  within,
   type NativeWatchReports,
 } from "../scient/workspace/nativeFileWatch.testkit.ts";
 const publicationHelper = await filePublicationTestHelper();
@@ -1081,9 +1082,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               ),
               { startImmediately: true },
             );
-            yield* Effect.promise(() => started.promise);
+            yield* Effect.promise(() => started.promise).pipe(
+              within(`native watch registration for ${JSON.stringify(relativePath)}`),
+            );
             yield* TestClock.adjust("100 millis");
-            yield* Deferred.await(ready);
+            yield* Deferred.await(ready).pipe(
+              within(`watch-ready for ${JSON.stringify(relativePath)}`),
+            );
             // Changes made before the watch started can still be reported; flush them uncounted.
             yield* syncNativeWatch(watchReceipts.reports, cwd);
             yield* TestClock.adjust("100 millis");
@@ -1110,7 +1115,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               writeTextFile(cwd, "notes.md ", "spaced, edited\n"),
             );
             yield* TestClock.adjust("100 millis");
-            expect(yield* Deferred.await(firstHint)).toEqual({
+            expect(
+              yield* Deferred.await(firstHint).pipe(
+                within(`hint for ${JSON.stringify(relativePath)} after its native report`),
+              ),
+            ).toEqual({
               _tag: "file-changed",
               relativePath,
             });

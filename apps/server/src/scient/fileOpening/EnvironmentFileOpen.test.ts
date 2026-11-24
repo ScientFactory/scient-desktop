@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   awaitNativeReport,
   syncNativeWatch,
+  within,
   type NativeWatchReports,
 } from "../workspace/nativeFileWatch.testkit.ts";
 import {
@@ -45,7 +46,7 @@ const startWatch = Effect.fn("startWatch")(function* (selectedPath: string) {
     Effect.forkScoped({ startImmediately: true }),
   );
   yield* TestClock.adjust("100 millis");
-  yield* Deferred.await(ready);
+  yield* Deferred.await(ready).pipe(within(`watch-ready for ${selectedPath}`));
   yield* syncNativeWatch(watchReports, path.dirname(selectedPath));
   yield* TestClock.adjust("100 millis");
   hints.length = 0;

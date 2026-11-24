@@ -21,7 +21,6 @@ import {
 } from "./ComputeProjectOutputObserver.ts";
 import { makeProjectWriteWatches, type ProjectWatchBackend } from "./ComputeProjectWriteWatch.ts";
 import {
-  PLATFORM_STALLED,
   platformFileEventLatency,
   type StartNativeWatch,
 } from "../workspace/nativeFileWatch.testkit.ts";
@@ -148,27 +147,26 @@ const startProjectWatchBackend: StartNativeWatch = async (directory, onReport) =
 };
 
 /**
- * The real watch is unavailable when its sync files do not come back in time, as when macOS's
- * fseventsd is saturated. The observer then rightly falls back to a scan, so this says whether
- * the machine or the watch is at fault instead of failing on the coverage it reports.
+ * The observer rightly falls back to a scan when its real watch's sync files do not come back in
+ * time. Then, instead of failing on the coverage alone, this says how fast a fresh subscription
+ * on the same folder reports a new file. That is evidence, not a verdict on which side is slow.
  */
 const expectRealWatchAvailable = (root: string, coverageReason: string | undefined) =>
   coverageReason !== "watch-unavailable"
     ? Effect.void
     : platformFileEventLatency(root, startProjectWatchBackend).pipe(
         Effect.provide(NodeServices.layer),
-        Effect.map(
-          Option.match({
-            onNone: () =>
-              expect.fail(`The platform file watch was unavailable: ${PLATFORM_STALLED}.`),
-            onSome: (latency) =>
-              expect.fail(
-                // Latency varies from one sync file to the next, so only a clear margin convicts.
-                Duration.isGreaterThan(latency, Duration.divideUnsafe(WATCH_SYNC_WAIT, 2))
-                  ? `The platform file watch was unavailable: it took ${Duration.format(latency)} to report a new file, too close to the ${Duration.format(WATCH_SYNC_WAIT)} the project watch waits for one. That is the machine (on macOS, check fseventsd's CPU), not a wrong result.`
-                  : `The project watch was unavailable although its native watch reported a new file in ${Duration.format(latency)}, well within the ${Duration.format(WATCH_SYNC_WAIT)} it waits, so the project watch is broken.`,
-              ),
-          }),
+        Effect.map((latency) =>
+          expect.fail(
+            `The project watch reported watch-unavailable (it waits ${Duration.format(WATCH_SYNC_WAIT)} for each sync file); a fresh @parcel/watcher subscription on the same folder then ${Option.match(
+              latency,
+              {
+                onNone: () => "reported no new file within 10 s",
+                onSome: (taken) =>
+                  `reported a new file in ${Math.round(Duration.toMillis(taken))} ms`,
+              },
+            )}.`,
+          ),
         ),
       );
 
