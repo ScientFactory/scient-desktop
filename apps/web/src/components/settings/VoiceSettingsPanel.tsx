@@ -171,8 +171,6 @@ const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
   hour_1: msg("After 1 hour"),
 };
 type ModelCardProps = {
-  /** SCIENT-FORK: draws the card's own border, for a grid of cards. */
-  readonly framed?: boolean;
   /** SCIENT-FORK: download and remove only; the engine is chosen elsewhere. */
   readonly manageOnly?: boolean;
   readonly model: EnvironmentSpeechModel;
@@ -210,6 +208,7 @@ function EngineCard(props: ModelCardProps) {
   const gt = useGT();
   const locale = useLocale();
   const { model } = props;
+  const infoButton = useRef<HTMLButtonElement>(null);
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   const size = formatSize(model.size);
@@ -232,108 +231,193 @@ function EngineCard(props: ModelCardProps) {
       ]}
     />
   );
-  return (
-    <div
-      className={cn(
-        "@container/model",
-        // SCIENT-FORK: Transcription settings show models as cards, like the Voice page did.
-        props.framed ? "rounded-xl border border-border/70 bg-card/50 p-4" : "px-3 py-3",
-      )}
+  const detailLabel = gt("Details for {model}", { model: model.name });
+  const downloadAction = downloading ? (
+    <Button
+      size="icon-sm"
+      variant="outline"
+      aria-label={gt("Cancel {name} download", { name: model.name })}
+      disabled={!props.canCancel}
+      onClick={props.onCancel}
     >
+      <XIcon className="size-3.5" />
+    </Button>
+  ) : model.state === "downloadable" ? (
+    <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
+      <DownloadIcon />
+      <T>Download</T>
+    </Button>
+  ) : null;
+  const progressBar = downloading ? (
+    <div className="mt-2">
+      <div
+        role="progressbar"
+        aria-label={gt("{name} download progress", { name: model.name })}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress)}
+        className="h-1 overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className="h-full bg-primary transition-[width] duration-200"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <p className="mt-1 text-2xs text-muted-foreground">
+        {model.state === "verifying"
+          ? gt("Verifying download…")
+          : gt("{percent}% downloaded", { percent: Math.round(progress) })}
+      </p>
+    </div>
+  ) : null;
+  if (props.manageOnly) {
+    return (
+      <Popover>
+        <div className="relative rounded-xl border border-border/70 bg-card/50 px-3 py-2.5 transition-colors has-[[data-speech-model-body]:hover]:bg-muted/50 has-[[data-speech-model-body]:focus-visible]:outline has-[[data-speech-model-body]:focus-visible]:outline-ring">
+          <div className="flex items-center gap-2">
+            <PopoverTrigger
+              data-speech-model-body
+              aria-label={gt("Open details for {model}", { model: model.name })}
+              render={
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 text-start outline-none after:absolute after:inset-0 after:rounded-xl"
+                />
+              }
+            >
+              <span className="text-sm font-medium leading-5">{model.name}</span>
+              <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <span className="text-xs text-muted-foreground tabular-nums">{size}</span>
+                {props.recommendation === "recommended" ? (
+                  <Badge variant="info" size="sm">
+                    <StarIcon />
+                    {props.recommendationLanguage
+                      ? gt("Recommended for {language}", {
+                          language: languageLabel(props.recommendationLanguage, locale),
+                        })
+                      : gt("Recommended")}
+                  </Badge>
+                ) : null}
+                {props.recommendationContext && props.recommendation !== "recommended" ? (
+                  <Badge variant="outline" size="sm">
+                    {props.recommendationContext}
+                  </Badge>
+                ) : null}
+              </span>
+            </PopoverTrigger>
+            <div className="pointer-events-none relative z-10 flex shrink-0 items-center gap-1.5 [&>*]:pointer-events-auto">
+              <PopoverTrigger
+                openOnHover
+                delay={150}
+                closeDelay={100}
+                render={
+                  <Button
+                    ref={infoButton}
+                    tabIndex={-1}
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={detailLabel}
+                  />
+                }
+              >
+                <InfoIcon />
+              </PopoverTrigger>
+              {downloadAction}
+              {model.state === "installed" ? (
+                <Button
+                  size="sm"
+                  variant="ghost-muted"
+                  disabled={props.busy}
+                  onClick={props.onDelete}
+                >
+                  {model.linkedFrom ? <T>Stop using file</T> : <T>Remove</T>}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          {progressBar}
+        </div>
+        <PopoverPopup anchor={infoButton} width="sm" padding="comfortable" align="end">
+          <div className="space-y-2">
+            <PopoverTitle>{model.name}</PopoverTitle>
+            {props.recommendationContext && props.recommendation === "recommended" ? (
+              <Badge variant="outline" size="sm">
+                {props.recommendationContext}
+              </Badge>
+            ) : null}
+            {model.description ? (
+              <PopoverDescription size="compact">{model.description}</PopoverDescription>
+            ) : null}
+            {model.linkedFrom ? (
+              <p className="text-xs text-muted-foreground">
+                <T>Uses a model file already on this computer.</T>
+              </p>
+            ) : null}
+            {benchmarks}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    );
+  }
+  return (
+    <div className="@container/model px-3 py-3">
       <div
         className={cn(
           "flex flex-col gap-2.5",
-          props.manageOnly && "h-full",
           !props.stacked &&
             "@min-[28rem]/model:flex-row @min-[28rem]/model:items-start @min-[28rem]/model:gap-4",
         )}
       >
         <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-2">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              <span className="text-sm font-medium leading-5">{model.name}</span>
-              {props.recommendation ? (
-                <ModelBadge
-                  icon={<StarIcon className="mr-1 size-3" />}
-                  label={
-                    props.recommendation === "recommended"
-                      ? props.recommendationLanguage
-                        ? gt("Recommended for {language}", {
-                            language: languageLabel(props.recommendationLanguage, locale),
-                          })
-                        : gt("Recommended")
-                      : props.recommendation === "faster"
-                        ? gt("Faster", { $context: "speech model badge, quicker than Recommended" })
-                        : gt("More accurate")
-                  }
-                  tooltip={
-                    props.recommendation === "recommended"
-                      ? gt(
-                          "Balanced accuracy and speed for your selected languages on Handy’s reference benchmarks.",
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-medium leading-5">{model.name}</span>
+            {props.recommendation ? (
+              <ModelBadge
+                icon={<StarIcon className="mr-1 size-3" />}
+                label={
+                  props.recommendation === "recommended"
+                    ? props.recommendationLanguage
+                      ? gt("Recommended for {language}", {
+                          language: languageLabel(props.recommendationLanguage, locale),
+                        })
+                      : gt("Recommended")
+                    : props.recommendation === "faster"
+                      ? gt("Faster", { $context: "speech model badge, quicker than Recommended" })
+                      : gt("More accurate")
+                }
+                tooltip={
+                  props.recommendation === "recommended"
+                    ? gt(
+                        "Balanced accuracy and speed for your selected languages on Handy’s reference benchmarks.",
+                      )
+                    : props.recommendation === "faster"
+                      ? gt("Quicker than Recommended on this reference tier, with useful accuracy.")
+                      : gt(
+                          "Higher accuracy with a longer reference processing budget for your selected languages.",
                         )
-                      : props.recommendation === "faster"
-                        ? gt(
-                            "Quicker than Recommended on this reference tier, with useful accuracy.",
-                          )
-                        : gt(
-                            "Higher accuracy with a longer reference processing budget for your selected languages.",
-                          )
-                  }
-                />
-              ) : null}
-              {props.recommendationContext ? (
-                <Badge variant="outline">{props.recommendationContext}</Badge>
-              ) : null}
-              {!props.dictation && model.supportsStreaming ? (
-                <ModelBadge
-                  icon={<AudioLinesIcon className="mr-1 size-3" />}
-                  label={gt("Live preview")}
-                  tooltip={gt(
-                    "Shows words in your draft as you speak, before the recording finishes.",
-                  )}
-                />
-              ) : null}
-              {!props.dictation && model.supportsTranslation ? (
-                <ModelBadge
-                  icon={<LanguagesIcon className="mr-1 size-3" />}
-                  label={gt("Translate")}
-                  tooltip={gt(
-                    "Can write English text from speech in another language. Turn on Translate to English to use it.",
-                  )}
-                />
-              ) : null}
-            </div>
-            {props.manageOnly ? (
-              <Popover>
-                <PopoverTrigger
-                  openOnHover
-                  delay={150}
-                  closeDelay={100}
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      aria-label={gt("Details for {model}", { model: model.name })}
-                    />
-                  }
-                >
-                  <InfoIcon />
-                </PopoverTrigger>
-                <PopoverPopup width="sm" padding="comfortable" align="end">
-                  <div className="space-y-2">
-                    <PopoverTitle>{model.name}</PopoverTitle>
-                    {model.description ? (
-                      <PopoverDescription size="compact">{model.description}</PopoverDescription>
-                    ) : null}
-                    {benchmarks}
-                  </div>
-                </PopoverPopup>
-              </Popover>
+                }
+              />
+            ) : null}
+            {!props.dictation && model.supportsStreaming ? (
+              <ModelBadge
+                icon={<AudioLinesIcon className="mr-1 size-3" />}
+                label={gt("Live preview")}
+                tooltip={gt(
+                  "Shows words in your draft as you speak, before the recording finishes.",
+                )}
+              />
+            ) : null}
+            {!props.dictation && model.supportsTranslation ? (
+              <ModelBadge
+                icon={<LanguagesIcon className="mr-1 size-3" />}
+                label={gt("Translate")}
+                tooltip={gt(
+                  "Can write English text from speech in another language. Turn on Translate to English to use it.",
+                )}
+              />
             ) : null}
           </div>
-          {props.manageOnly ? (
-            <p className="mt-1 text-xs text-muted-foreground tabular-nums">{size}</p>
-          ) : model.description ? (
+          {model.description ? (
             <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
               {model.description}
             </p>
@@ -343,62 +427,23 @@ function EngineCard(props: ModelCardProps) {
               <T>Uses a model file already on this computer.</T>
             </p>
           ) : null}
-          {props.manageOnly ? null : benchmarks}
-          {downloading ? (
-            <div className="mt-2">
-              <div
-                role="progressbar"
-                aria-label={gt("{name} download progress", { name: model.name })}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(progress)}
-                className="h-1 overflow-hidden rounded-full bg-muted"
-              >
-                <div
-                  className="h-full bg-primary transition-[width] duration-200"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="mt-1 text-2xs text-muted-foreground">
-                {model.state === "verifying"
-                  ? gt("Verifying download…")
-                  : gt("{percent}% downloaded", { percent: Math.round(progress) })}
-              </p>
-            </div>
-          ) : null}
+          {benchmarks}
+          {progressBar}
         </div>
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
           {props.testControls}
-          {downloading ? (
-            <Button
-              size="icon-sm"
-              variant="outline"
-              aria-label={gt("Cancel {name} download", { name: model.name })}
-              disabled={!props.canCancel}
-              onClick={props.onCancel}
-            >
-              <XIcon className="size-3.5" />
-            </Button>
-          ) : model.state === "downloadable" ? (
-            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
-              <DownloadIcon />
-              <T>Download</T>
-            </Button>
-          ) : props.manageOnly ? null : model.active ? (
-            <Button size="sm" variant="secondary" disabled>
-              <CheckIcon />
-              <T>Selected</T>
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
-              <T>Use model</T>
-            </Button>
-          )}
-          {model.state === "installed" && props.manageOnly ? (
-            <Button size="sm" variant="ghost-muted" disabled={props.busy} onClick={props.onDelete}>
-              {model.linkedFrom ? <T>Stop using file</T> : <T>Remove</T>}
-            </Button>
-          ) : model.state === "installed" ? (
+          {downloadAction ??
+            (model.active ? (
+              <Button size="sm" variant="secondary" disabled>
+                <CheckIcon />
+                <T>Selected</T>
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
+                <T>Use model</T>
+              </Button>
+            ))}
+          {model.state === "installed" ? (
             <Button
               size="icon-sm"
               variant="outline"
@@ -856,9 +901,7 @@ export function DictationEngineCatalog({
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {visibleModels.map((model) => (
             <EngineCard
-              framed
               manageOnly
-              stacked
               key={model.id}
               model={{
                 ...model,

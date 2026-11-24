@@ -316,7 +316,6 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .toHaveTextContent("Automatic");
     await expect.element(screen.getByRole("button", { name: "Choose a saved key…" })).toBeVisible();
     await expect.element(screen.getByText("25 languages")).not.toBeInTheDocument();
-    await expect.element(screen.getByText("for dictation", { exact: true })).toBeVisible();
     await expect.element(screen.getByText("for recordings", { exact: true })).toBeVisible();
     expect(screen.container.querySelector(".bg-warning")).toBeNull();
     if (screenshots) {
@@ -338,13 +337,17 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
     }
 
     const details = screen.getByRole("button", { name: "Details for Parakeet TDT 0.6B v3" });
+    const cardBody = screen.getByRole("button", {
+      name: "Open details for Parakeet TDT 0.6B v3",
+    });
     if (theme === "light") {
       await details.hover();
     } else {
-      details.element().focus();
+      cardBody.element().focus();
       await userEvent.keyboard("{Enter}");
     }
     const modelDetails = page.getByRole("dialog", { name: "Parakeet TDT 0.6B v3" });
+    await expect.element(modelDetails.getByText("for dictation", { exact: true })).toBeVisible();
     await expect.element(modelDetails.getByText("25 languages")).toBeVisible();
     await expect.element(modelDetails.getByText("Multilingual dictation")).toBeVisible();
     await expect.element(modelDetails.getByText(/Speed:/)).toBeVisible();
@@ -354,6 +357,12 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
     }
     await userEvent.keyboard("{Escape}");
     await expect.element(modelDetails).not.toBeInTheDocument();
+    if (theme === "light") {
+      await cardBody.click();
+      await expect.element(modelDetails).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(modelDetails).not.toBeInTheDocument();
+    }
 
     await screen.getByRole("button", { name: "Add a provider…" }).click();
     await expect.element(page.getByRole("dialog", { name: "Add a cloud engine" })).toBeVisible();
