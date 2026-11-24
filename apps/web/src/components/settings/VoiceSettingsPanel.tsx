@@ -483,9 +483,7 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
       settingKeys={[modelKey]}
       {...setting("speech-post-processing-model")}
       title={recordings ? gt("Correction model") : gt("Cleanup model")}
-      description={gt(
-        "Model for transcript cleanup, such as a cheaper or faster one. When disabled, use the text generation model configured for this environment.",
-      )}
+      description={gt("Uses the default text generation model when off.")}
       control={
         connectedEnvironments.length === 0 ? (
           <span className="text-sm text-muted-foreground">
