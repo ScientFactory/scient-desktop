@@ -331,7 +331,8 @@ Every changed line in a file that exists upstream is a future conflict. Change o
    schemes, the `scient/` branch prefix, commit identity, process names and displayed paths;
 3. a required behavior change, inside `SCIENT-FORK:START` … `SCIENT-FORK:END`;
 4. the minimal test edit asserting one of the above, including fixtures and test titles that
-   encode a Scient policy; or
+   encode a Scient policy (a new Scient test is not an edit: it goes in the `.scient.` sibling,
+   or, when it needs the file's private helpers, inside `SCIENT-FORK:START` … `SCIENT-FORK:END`); or
 5. a comment the change would otherwise make false. Prefer a marker comment over rewriting
    upstream prose; if prose must change, change only the false words and never re-wrap it.
 
@@ -516,8 +517,23 @@ add `--snapshot index` for staged content or `--head <candidate-sha>` for an exa
 Without `--base`, the result checks current locators only and explicitly does **not** audit a
 changed-file diff. The local snapshot uses private temporary Git index/objects and includes
 deletions and non-ignored untracked files. Reference snapshots under `.repos/` are counted but
-not scanned as product code. The command reports `passed`, `review-needed`, `failed`, or
-`unavailable`; it proves neither behavior nor ancestry. A moved locator is a review signal:
+not scanned as product code.
+
+It also checks test placement, line by line: in a T3 test file, a test declaration with a
+literal title (`it(`, `test(` and modifiers such as `it.effect(`, `it.skipIf(…)(`,
+`it.each<T>(…)(` or a multiline `it.for([…])(`; not an `it.layer(…)(` suite) outside a
+`SCIENT-FORK:START`/`END` pair (each marker a comment line that starts with it) is new when
+that title occurs unmarked more often than in the base or at the frozen upstream, so tests an
+alignment brings from T3 are not new. Each unmarked test the change drops (a T3 test T3 still
+has, one T3 added since the base, or Scient's own) offsets one new title as a retitle; a test
+T3 deleted, a retitle an earlier change made, or one inside a region offsets nothing. New
+titles beyond the offsets are `review-needed`, listed as candidates when an offset applied. A
+title held in a variable, new rows in an existing `.each` table, a declaration line inside a
+block comment, and a marker-shaped line inside a multiline string are beyond a line scan and
+left to review.
+
+The command reports `passed`, `review-needed`, `failed`, or `unavailable`; it proves neither
+behavior nor ancestry. A moved locator is a review signal:
 trace the new implementation and callers, update the manifest only after establishing the same
 behavior, then rerun the behavioral tests. Never remove an assertion just to turn the gate green.
 The existing per-feature commands, including CI entry points, now use this same implementation;
