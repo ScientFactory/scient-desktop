@@ -428,7 +428,8 @@ it("replays through the selected cell and labels saved and empty output inline",
     document.querySelector('[data-notebook-cell="parameter"]')!,
   );
   const outputCell = page.elementLocator(document.querySelector('[data-notebook-cell="compute"]')!);
-  await expect.element(setupCell.getByText("No output", { exact: true })).toBeVisible();
+  // A cell that ran and printed nothing says nothing.
+  await expect.element(setupCell.getByText("No output", { exact: true })).not.toBeInTheDocument();
   // Nothing has run in this session, so saved outputs need no label.
   await expect
     .element(outputCell.getByText("Saved output", { exact: true }))

@@ -281,7 +281,8 @@ that, the Console and anything you have typed simply move to the new language. I
 Console ran on is no longer available, the Console says so and keeps your code. It never runs it in
 another language on its own.
 **Variables** appears once there are variables. **Save as notebook** turns what worked into an
-`.ipynb` in the project and opens it; runs that failed are left out. **Run file…**, **Restart session**
+`.ipynb` in the project and opens it. Runs that failed are left out, a restart is marked where it
+happened, and output Scient did not keep is noted in its cell. **Run file…**, **Restart session**
 and **Stop session** are in the **⋯** menu.
 
 Opening a file from an empty Console replaces it, as an address does in a new browser tab. A Console
@@ -628,7 +629,7 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   name that an earlier cell defines, the error offers that replay if the cell has not run in this
   session, or a jump to the cell if it failed. Full tracebacks stay collapsed under **Details**.
 - Text, figures, observed written file links and errors appear below the cell that produced them.
-  Silent cells show a compact **No output** line. Once any cell has run in this session, outputs
+  A cell that ran and printed nothing shows nothing. Once any cell has run in this session, outputs
   from an earlier session show when they ran and that they have not run in the current session. Choose **Show outputs** if a cell's
   output is folded.
 - A dot and dimmed output mark a cell whose code changed or whose output may be out of date.

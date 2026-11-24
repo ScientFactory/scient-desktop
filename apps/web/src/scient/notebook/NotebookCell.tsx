@@ -318,7 +318,6 @@ function CodeCellTopRow(props: {
   readonly language: string;
   readonly theme: "light" | "dark";
   readonly wrapped: boolean;
-  readonly silentResult: boolean;
   readonly folded: boolean;
   readonly onFoldChange: (folded: boolean) => void;
   readonly onWrapChange: (wrapped: boolean) => void;
@@ -337,7 +336,6 @@ function CodeCellTopRow(props: {
       wrapped={props.wrapped}
       onWrapChange={props.onWrapChange}
       readCode={props.readCode}
-      status={props.silentResult ? <T>No output</T> : undefined}
       folded={props.folded}
       onFoldChange={props.onFoldChange}
     >
@@ -538,12 +536,6 @@ export function NotebookCell(props: {
     liveRun.generation === props.place.liveSessionGeneration &&
     cell.run?.execution === liveRun.executionId;
   const writtenFiles = producedInLiveSession ? liveRun.writtenFiles : undefined;
-  const silentResult =
-    activity === null &&
-    cell.pendingExecution === null &&
-    cell.run !== null &&
-    cell.outputs.length === 0 &&
-    (writtenFiles?.length ?? 0) === 0;
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
@@ -605,7 +597,6 @@ export function NotebookCell(props: {
               language={language}
               theme={theme}
               wrapped={wrapped}
-              silentResult={silentResult}
               folded={sourceFolded}
               onFoldChange={(folded) => controller.setFold(cellId, "source", folded)}
               onWrapChange={setWrapped}
