@@ -2436,10 +2436,30 @@ const make = Effect.gen(function* () {
   let keptDeletedWorktrees: ReadonlyArray<string> = [];
   let deletions = 0;
   let sweptDeletions = 0;
+  // SCIENT-FORK:START — an outbox completion matters only to deletion work that waits on it.
+  // A deleted thread's checkpoint refs wait for its pending effects; a completion during a
+  // sweep may finish work that sweep already passed, so it asks for another.
+  let deletedEffectsWait = true;
+  let sweeping = false;
+  // SCIENT-FORK:END
   const sweep = Effect.fn("StorageCleanup.sweep")(function* (
     trigger: StorageCleanupReport["trigger"],
   ) {
     const deletionsAtStart = deletions;
+    // SCIENT-FORK:START — read before the refs are cleaned, so a completion after this read
+    // either finds it true or arrives during the sweep.
+    deletedEffectsWait = yield* sql<{ readonly waiting: number }>`
+      SELECT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_threads t
+        JOIN orchestration_v2_effect_outbox e ON e.thread_id = t.thread_id
+        WHERE t.deleted_at IS NOT NULL AND e.status IN ('pending', 'running')
+      ) AS waiting
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.map((rows) => Number(rows[0]?.waiting ?? 0) !== 0),
+      Effect.orElseSucceed(() => true),
+    );
+    // SCIENT-FORK:END
     const now = yield* Clock.currentTimeMillis;
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
@@ -2567,7 +2587,20 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(
     (completion: Deferred.Deferred<StorageCleanupReport, ServerSettingsError> | undefined) =>
       (completion === undefined ? Ref.set(automaticSweepQueued, false) : Effect.void).pipe(
-        Effect.andThen(sweep(completion === undefined ? "automatic" : "manual")),
+        // SCIENT-FORK:START
+        Effect.andThen(
+          Effect.acquireUseRelease(
+            Effect.sync(() => {
+              sweeping = true;
+            }),
+            () => sweep(completion === undefined ? "automatic" : "manual"),
+            () =>
+              Effect.sync(() => {
+                sweeping = false;
+              }),
+          ),
+        ),
+        // SCIENT-FORK:END
         Effect.exit,
         Effect.flatMap((exit) =>
           completion === undefined
@@ -2619,7 +2652,16 @@ const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
     );
-    yield* forkParked(Stream.runForEach(completions, () => requestSweep));
+    // SCIENT-FORK:START — most completions belong to live threads; only waiting deletion work
+    // or a running sweep needs another one.
+    yield* forkParked(
+      Stream.runForEach(completions, () =>
+        sweeping || deletedEffectsWait || deletedWorktreeWaits || deletions !== sweptDeletions
+          ? requestSweep
+          : Effect.void,
+      ),
+    );
+    // SCIENT-FORK:END
     yield* forkParked(
       Stream.runForEach(changes, (settings) => {
         if (

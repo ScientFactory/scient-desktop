@@ -417,6 +417,7 @@ const cleanupFixture = (
       remove: () => Effect.succeed({ removed: [], kept: [] }),
     };
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
+    let completions: Stream.Stream<void> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
       Effect.provideService(ServerConfig.ServerConfig, config),
@@ -546,7 +547,7 @@ const cleanupFixture = (
         streamDomainEvents: Stream.suspend(() => events),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
       Effect.provideService(EffectOutbox.EffectOutboxV2, {
-        subscribeCompletions: Effect.succeed(Stream.empty),
+        subscribeCompletions: Effect.succeed(Stream.suspend(() => completions)),
       } as unknown as EffectOutbox.EffectOutboxV2["Service"]),
       // SCIENT-FORK:START retiring-session-worktree-retention — wraps the SQL mock below: it
       // records session reads, gives each row its id, and honors a recorded-status filter, as
@@ -756,8 +757,12 @@ const cleanupFixture = (
       statusCommands: () => statusCommands,
       snapshotReads: () => snapshotReads,
       sessionLiveChecks: () => sessionLiveChecks,
-      activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
+      activate: (
+        domainEvents: Stream.Stream<OrchestrationV2DomainEvent>,
+        outboxCompletions: Stream.Stream<void> = Stream.empty,
+      ) => {
         events = domainEvents;
+        completions = outboxCompletions;
         return Deferred.succeed(activated, undefined);
       },
     };
@@ -963,6 +968,42 @@ describe("checkpoint ref cleanup", () => {
       }).pipe(Effect.provide(Sqlite.layerMemory)),
     ),
   );
+
+  // SCIENT-FORK:START — completion-triggered sweeps are kept for waiting deletion work.
+  it.live("prunes a deleted thread's refs when its last pending effect completes", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, sql, addThread, listRefs, activate } = yield* checkpointCleanupFixture();
+        const refs = yield* addThread("capturing", { deleted: true });
+        yield* sql`INSERT INTO orchestration_v2_effect_outbox ${sql.insert({
+          effect_id: "capture",
+          command_id: "capture",
+          thread_id: "capturing",
+          effect_type: "checkpoint.capture",
+          payload_json: "{}",
+          status: "running",
+          available_at: "2026-01-01T00:00:00Z",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        })}`;
+        const completions = yield* Queue.unbounded<void>();
+        yield* activate(Stream.empty, Stream.fromQueue(completions));
+        yield* service.reports.pipe(
+          Stream.filter((report) => report !== null),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* service.drain;
+        expect(yield* listRefs()).toEqual(refs.toSorted());
+        yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+        yield* Queue.offer(completions, undefined);
+        yield* Effect.yieldNow;
+        yield* service.drain;
+        expect(yield* listRefs()).toEqual([]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+  // SCIENT-FORK:END
 
   it.live("deletes a symbolic checkpoint ref without its target or neighbouring refs", () =>
     runCleanupTest(
@@ -2452,6 +2493,37 @@ describe("deleted thread worktrees", () => {
       expect(reads, "a live thread's stopped session re-read every thread").toBe(0);
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
+
+  // SCIENT-FORK:START — a live thread's outbox work cannot change any cleanup decision.
+  it.effect("does not sweep when outbox effects complete and no deletion waits", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      const startupSwept = yield* Deferred.make<void>();
+      const delivered = yield* Deferred.make<void>();
+      yield* fixture.activate(
+        Stream.empty,
+        Stream.fromEffect(Deferred.await(startupSwept)).pipe(
+          Stream.flatMap(() => Stream.make(undefined, undefined, undefined)),
+          Stream.concat(
+            Stream.fromEffect(Deferred.succeed(delivered, undefined)).pipe(Stream.drain),
+          ),
+        ),
+      );
+      yield* fixture.service.reports.pipe(
+        Stream.filter((report) => report !== null),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      yield* fixture.service.drain;
+      const readsBefore = fixture.snapshotReads();
+      yield* Deferred.succeed(startupSwept, undefined);
+      yield* Deferred.await(delivered);
+      yield* fixture.service.drain;
+      expect(fixture.snapshotReads() - readsBefore, "unrelated completions swept").toBe(0);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("removes a deleted thread's worktree once its session stops", () =>
     Effect.gen(function* () {
