@@ -88,7 +88,7 @@ import * as OverleafSync from "./overleaf/OverleafSync.ts";
 export const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
   Layer.provideMerge(ScientSkillSession.layer),
   Layer.provideMerge(PersonalSkills.layer),
-  Layer.provideMerge(Layer.merge(ScientSkillRegistry.layer, ScientSkillPolicy.layer)),
+  Layer.provideMerge(Layer.merge(ScientSkillRegistry.layerForEnvironment, ScientSkillPolicy.layer)),
 );
 
 export const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.pipe(
