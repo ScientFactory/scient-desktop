@@ -420,6 +420,8 @@ it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
                     : {},
               }),
             }),
+          // SCIENT-FORK: the intake reads the pending question before claiming its answer's files.
+          getThreadRecords: noPendingRuntimeRequests,
         }),
       ),
       Effect.result,
