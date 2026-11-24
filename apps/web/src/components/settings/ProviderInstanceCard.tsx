@@ -101,6 +101,9 @@ import {
   getProviderVersionLabel,
   providerAuthLabel,
 } from "./providerStatus";
+// SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
+// SCIENT-FORK:END
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -1122,6 +1125,12 @@ export function ProviderInstanceCard({
         {inlineStatusDetail ? (
           <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
+        {/* SCIENT-FORK:START — Only the provider on this desktop can offer its app update. */}
+        <ProviderAppUpdateButton
+          environmentId={environmentId}
+          requiresAppUpdate={effectiveProvider?.requiresAppUpdate}
+        />
+        {/* SCIENT-FORK:END */}
         {/* SCIENT-FORK:START — a failed update stays visible while signed in. */}
         {failureInfoNode ? (
           <>
@@ -1142,6 +1151,12 @@ export function ProviderInstanceCard({
       {inlineStatusDetail ? (
         <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
       ) : null}
+      {/* SCIENT-FORK:START — Only the provider on this desktop can offer its app update. */}
+      <ProviderAppUpdateButton
+        environmentId={environmentId}
+        requiresAppUpdate={effectiveProvider?.requiresAppUpdate}
+      />
+      {/* SCIENT-FORK:END */}
     </>
   );
   const versionAdvisoryNode = versionAdvisory ? (

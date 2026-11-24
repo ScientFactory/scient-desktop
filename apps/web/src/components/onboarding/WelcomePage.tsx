@@ -115,6 +115,9 @@ import { toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+// SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
+// SCIENT-FORK:END
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = msg(
@@ -619,6 +622,9 @@ function AgentsSection({
       {found.map((provider) => (
         <AgentRow
           key={provider.instanceId}
+          // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+          environmentId={environmentId}
+          // SCIENT-FORK:END
           provider={provider}
           state={stateOf(provider)}
           action={actionFor(provider)}
@@ -657,6 +663,9 @@ function AgentsSection({
             {available.map((provider) => (
               <AgentRow
                 key={provider.instanceId}
+                // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+                environmentId={environmentId}
+                // SCIENT-FORK:END
                 provider={provider}
                 state={stateOf(provider)}
                 compact
@@ -1179,11 +1188,17 @@ function TerminalAction({
 
 function AgentRow({
   provider,
+  // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+  environmentId,
+  // SCIENT-FORK:END
   state,
   action,
   compact = false,
 }: {
   readonly provider: ServerProvider;
+  // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+  readonly environmentId: EnvironmentId;
+  // SCIENT-FORK:END
   readonly state: ReturnType<typeof welcomeAgentState>;
   readonly action?: ReactNode;
   // A row in the "Add more agents" grid: the button carries the state, so no detail line.
@@ -1227,6 +1242,12 @@ function AgentRow({
             {detail}
           </p>
         ) : null}
+        {/* SCIENT-FORK:START — Only the provider on this desktop can offer its app update. */}
+        <ProviderAppUpdateButton
+          environmentId={environmentId}
+          requiresAppUpdate={provider.requiresAppUpdate}
+        />
+        {/* SCIENT-FORK:END */}
       </div>
       <div className="shrink-0">
         {state === "ready" ? (

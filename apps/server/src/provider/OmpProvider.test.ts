@@ -557,6 +557,34 @@ describe("Oh My Pi provider executable checks", () => {
       expect(result.status).toBe("error");
       expect(result.installed).toBe(true);
       expect(result.message).toBe(ompTarget.unsupportedDetail);
+      expect(result.requiresAppUpdate).toBeUndefined();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("asks for a newer Scient when a Scient Agent release speaks only newer protocols", () =>
+    Effect.gen(function* () {
+      const result = yield* checkOmpProviderStatus(
+        scientAgentTarget,
+        settings,
+        { PATH: "/usr/bin" },
+        yield* realProcess,
+      ).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          versionProbe(
+            `${JSON.stringify({
+              product: "scient-agent",
+              version: "3.0.0",
+              upstream: { name: "oh-my-pi", version: "24.0.0" },
+              rpcProtocolVersions: [3],
+            })}\n`,
+          ),
+        ),
+      );
+      expect(result.status).toBe("error");
+      expect(result.message).toBe(scientAgentTarget.newerAppDetail);
+      expect(result.requiresAppUpdate).toBe(true);
+      expect(result.checkFailure).toBe("version_failed");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

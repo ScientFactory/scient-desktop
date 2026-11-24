@@ -400,6 +400,9 @@ export const ServerProvider = Schema.Struct({
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
+  // SCIENT-FORK:START — the provider can require a newer version of Scient.
+  requiresAppUpdate: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
   updateState: Schema.optionalKey(ServerProviderUpdateState),
   /**
    * Optional Scient lifecycle overlay. Installed/authenticated/version truth
