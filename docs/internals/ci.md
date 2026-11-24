@@ -67,8 +67,10 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
 - **Dependency caches**: `.github/actions/setup-ci-deps` restores the pnpm store and lockfile
   verification record. Merge-queue runs never save them: a `gh-readonly-queue/...` ref's caches
   serve only reruns of that entry, and their ~1 GB stores would evict main's within the 10 GB limit.
-  `Test` and `Test 6` install build-essential only when the image's `cc` cannot build and run a
-  pthread program (`.github/scripts/pthread-cc.sh`), then require that it can.
+  A reused main push saves main's store in `Main dependency store`, which first looks up the
+  exact store and verification record without downloading them and refreshes only when one is
+  missing. `Test` and `Test 6` install build-essential only when the image's `cc` cannot build
+  and run a pthread program (`.github/scripts/pthread-cc.sh`), then require that it can.
 - **Rust**: `cargo fmt --check` and `cargo test --locked` for the native resource monitor, split
   out of Check and Test so neither lane pays a ~7-9s Rust toolchain install for checks that take
   under 3s.

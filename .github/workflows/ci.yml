@@ -1052,8 +1052,34 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
+      # When main's exact store and lockfile verification are saved already, there is nothing to
+      # refresh: look both up without downloading them. The keys and paths are setup-ci-deps' own
+      # (scripts/ci-workflows.test.ts keeps them equal); a miss or a failed lookup refreshes.
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install: "false"
+      - name: Resolve the pnpm store
+        id: store
+        run: echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+      - name: Look up main's exact store
+        id: exact_store
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          lookup-only: true
+      - name: Look up main's exact lockfile verification
+        id: exact_verified
+        if: steps.exact_store.outputs.cache-hit == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          lookup-only: true
       # Restores the full store and saves it under a new key when the lockfile changed.
       - name: Refresh the Linux store
+        if: steps.exact_store.outputs.cache-hit != 'true' || steps.exact_verified.outputs.cache-hit != 'true'
         uses: ./.github/actions/setup-ci-deps
   # SCIENT-FORK:END
 

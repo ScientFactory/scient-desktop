@@ -549,6 +549,59 @@ describe("CI workflow decisions", () => {
     expect(Object.keys(workflow.jobs).filter((id) => id.includes("performance"))).toEqual([]);
   });
 
+  it("refreshes main's store only when its exact store or verification is missing", () => {
+    type Step = {
+      name?: string;
+      id?: string;
+      if?: string;
+      uses?: string;
+      with?: Record<string, string>;
+    };
+    const action = YAML.parse(
+      NodeFS.readFileSync(
+        new URL("../.github/actions/setup-ci-deps/action.yml", import.meta.url),
+        "utf8",
+      ),
+    ) as { runs: { steps: Array<Step> } };
+    const own = (name: string) => action.runs.steps.find((step) => step.name === name)!;
+    const steps = workflow.jobs.main_caches!.steps! as Array<Step>;
+    const step = (id: string) => steps.find((candidate) => candidate.id === id)!;
+    // The same entries setup-ci-deps restores and saves, for the whole-workspace store.
+    expect(step("exact_store").with).toEqual({
+      path: "${{ steps.store.outputs.path }}",
+      key: own("Restore pnpm store").with!.key!.replace(
+        "${{ steps.pnpm_store.outputs.namespace }}",
+        "full",
+      ),
+      "lookup-only": true,
+    });
+    expect(step("exact_verified").with).toEqual({
+      path: "${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl",
+      key: own("Restore lockfile verification").with!.key,
+      "lookup-only": true,
+    });
+    expect(step("exact_store").uses).toBe(own("Restore pnpm store").uses);
+    expect(step("store").run).toBe('echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"');
+    const refresh = steps.find((candidate) => candidate.name === "Refresh the Linux store")!;
+    expect(refresh).toMatchObject({ uses: "./.github/actions/setup-ci-deps" });
+    expect(refresh.with).toBeUndefined();
+    for (const [store, verified, runs] of [
+      ["true", "true", false],
+      ["true", "false", true],
+      ["false", "", true],
+      ["", "", true],
+    ] as const)
+      expect(
+        // `cache-hit` is one name in an Actions expression, a subtraction in JavaScript.
+        NodeVM.runInNewContext(refresh.if!.replaceAll(".cache-hit", '["cache-hit"]'), {
+          steps: {
+            exact_store: { outputs: { "cache-hit": store } },
+            exact_verified: { outputs: { "cache-hit": verified } },
+          },
+        }),
+      ).toBe(runs);
+  });
+
   it("installs the C toolchain only when the image's cannot build a pthread program", () => {
     type Step = { name?: string; id?: string; if?: string; run?: string };
     const steps = workflow.jobs.test!.steps! as Array<Step>;
