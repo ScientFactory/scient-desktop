@@ -9,6 +9,70 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.34",
+    publishedAt: "2026-11-25",
+    format: "paragraphs",
+    headline: "Recordings, more powerful notebooks, and easier ways to work with your research",
+    highlights: [
+      {
+        id: "recordings-0634",
+        title: "Record and transcribe audio and video",
+        description:
+          "Open Recordings from the sidebar or a project. Record with your microphone, add audio or video files, or import an existing transcript. Choose a local model, ChatGPT, or a cloud service. You can pause and resume long jobs, queue several files, and search across transcripts. Transcription requires FFmpeg on the computer running the Scient server.",
+      },
+      {
+        id: "transcript-notes-0634",
+        title: "Turn recordings into useful notes",
+        description:
+          "Read the transcript as the recording plays and replay uncertain words to check them. Add names and technical terms to Words to help with transcription. Export the transcript, ask Scient questions about the recording, or save a summary, study notes, or action items in your project.\n\nWords and aliases from older versions carry over. Use the updated Words editor to edit or delete them. Deleting a Word in an older version only clears that older version’s view.",
+      },
+      {
+        id: "notebook-runs-0634",
+        title: "Run notebooks with different settings",
+        description:
+          "Choose parameters and input files, then run a notebook with different values. Open Reader view to explore saved results, tables and figures alongside the code that produced them. When a run stops at an error, jump to the failed cell or run the earlier cells again to restore its setup.",
+      },
+      {
+        id: "compare-results-0634",
+        title: "Compare and share your results",
+        description:
+          "Compare saved runs to see changes in code, parameters, inputs, tables and figures. Link a result to a Markdown or LaTeX paper, or export the code, results, environment details and selected data so someone else can rerun the analysis.",
+      },
+      {
+        id: "data-views-0634",
+        title: "Explore and save data views",
+        description:
+          "Inspect columns and missing values in your data. Filter and sort a table, save it as a reusable SQL view, and export the matching rows as CSV or Parquet.",
+      },
+      {
+        id: "python-packages-0634",
+        title: "Add missing Python packages",
+        description:
+          "When your code needs a package Scient recognizes, choose Add beside the error. Scient adds it separately from your existing environment, and your current session keeps its variables.",
+      },
+      {
+        id: "library-0634",
+        title: "Do more with your Library",
+        description:
+          "Select papers in My Library and add them directly to a project. Large libraries reopen faster, and Zotero sync and retraction checks are more reliable. Agents connected from outside Scient can also use your Library with the permissions you choose.",
+      },
+      {
+        id: "editor-fonts-0634",
+        title: "Choose fonts and sizes in your documents",
+        description:
+          "In the Markdown and LaTeX Visual editors, choose a font and size for selected text. You can also set the document’s main font and base size in Document settings.",
+      },
+      {
+        id: "agent-sign-in-0634",
+        title: "Sign in to services when your agent needs them",
+        description:
+          "When an agent needs an MCP server that requires sign-in, a button appears in the conversation. New threads keep your default model unless its usage limit is confirmed to be reached. Scient also supports newer compatible versions of Scient Agent.",
+      },
+    ],
+    alsoIncluded:
+      "Pinch to zoom browser tabs on Mac, or use Ctrl+scroll on Windows and Linux. Find past release notes in Settings → About → Release history. OpenAthens checks recognize active university sign-ins more reliably. Extensions can offer an Antigravity update when one is needed.",
+  },
+  {
     version: "0.6.33",
     publishedAt: "2026-11-22",
     format: "paragraphs",
