@@ -179,7 +179,7 @@ type ModelCardProps = {
   readonly comparisonLanguages: readonly string[];
   readonly recommendation: SpeechRecommendationRole | undefined;
   readonly recommendationContext?: string | undefined;
-  readonly catalogBadge?: { label: string; variant: "info" | "outline" } | undefined;
+  readonly catalogBadge?: string | undefined;
   readonly recommendationLanguage?: string | null | undefined;
   readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   readonly busy: boolean;
@@ -310,9 +310,9 @@ function EngineCard(props: ModelCardProps) {
               <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                 <span className="text-xs text-muted-foreground tabular-nums">{size}</span>
                 {props.catalogBadge ? (
-                  <Badge variant={props.catalogBadge.variant} size="sm">
-                    {props.catalogBadge.variant === "info" ? <StarIcon /> : null}
-                    {props.catalogBadge.label}
+                  <Badge variant="info" size="sm">
+                    <StarIcon />
+                    {props.catalogBadge}
                   </Badge>
                 ) : null}
                 {props.recommendationContext && !props.catalogBadge ? (
@@ -935,20 +935,14 @@ export function DictationEngineCatalog({
   );
   const visibleModels = showAllModels ? ordered : defaultModels;
   const hiddenCount = ordered.length - defaultModels.length;
-  const catalogBadge = (model: EnvironmentSpeechModel): ModelCardProps["catalogBadge"] => {
-    if (model.id === WHISPER_SMALL_MODEL_ID)
-      return { label: gt("Lightweight multilingual"), variant: "outline" };
-    if (model.id === HEBREW_RECORDING_MODEL_ID)
-      return { label: gt("Recommended for Hebrew"), variant: "info" };
-    if (model.id === MULTILINGUAL_RECORDING_MODEL_ID)
-      return { label: gt("Recommended for mixed languages"), variant: "info" };
+  const catalogBadge = (model: EnvironmentSpeechModel) => {
+    if (model.id === WHISPER_SMALL_MODEL_ID) return gt("Lightweight multilingual");
+    if (model.id === HEBREW_RECORDING_MODEL_ID) return gt("Recommended for Hebrew");
+    if (model.id === MULTILINGUAL_RECORDING_MODEL_ID) return gt("Recommended for mixed languages");
     if (model.id === recommendedModel?.id && effectiveLanguage !== "he")
-      return {
-        label: gt("Recommended for {language}", {
-          language: languageLabel(effectiveLanguage, locale),
-        }),
-        variant: "info",
-      };
+      return gt("Recommended for {language}", {
+        language: languageLabel(effectiveLanguage, locale),
+      });
     return undefined;
   };
   return (
