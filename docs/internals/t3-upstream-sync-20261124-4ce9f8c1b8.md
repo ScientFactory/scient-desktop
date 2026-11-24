@@ -87,6 +87,7 @@ tests need a short `TMPDIR` on macOS. The `.github` script tests pass (38/38 in 
 `scient-seam-check` passes.
 
 Live test: a dev app from `146c74cce9a`; record in `reviews/t3-sync-364c-20261124/RECORD.md`.
+
 - Turns in a throwaway project: a file change and its reply link, without the changed-files card.
 - Background command completion, and Stop.
 - The demo login page in the built-in browser.
