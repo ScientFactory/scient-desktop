@@ -419,6 +419,9 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
     await expect.element(modelDetails.getByText("25 languages")).toBeVisible();
     await expect.element(modelDetails.getByText("Multilingual dictation")).toBeVisible();
     await expect.element(modelDetails.getByText(/Speed:/)).toBeVisible();
+    await expect
+      .element(modelDetails.getByRole("button", { name: "Remove download" }))
+      .toBeEnabled();
     if (screenshots) {
       await expect.poll(() => getComputedStyle(modelDetails.element()).opacity).toBe("1");
       await page.screenshot({ path: `${screenshots}/speech-model-details-${theme}.png` });

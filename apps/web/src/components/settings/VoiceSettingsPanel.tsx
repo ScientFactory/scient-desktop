@@ -100,6 +100,7 @@ import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import {
   Popover,
+  PopoverClose,
   PopoverDescription,
   PopoverPopup,
   PopoverTitle,
@@ -321,7 +322,7 @@ function EngineCard(props: ModelCardProps) {
                 ) : null}
               </span>
             </PopoverTrigger>
-            <div className="pointer-events-none relative z-10 flex shrink-0 items-center gap-1.5 [&>*]:pointer-events-auto">
+            <div className="pointer-events-none relative z-10 flex shrink-0 items-center gap-1.5 [&>button]:pointer-events-auto">
               <PopoverTrigger
                 openOnHover
                 delay={150}
@@ -338,34 +339,26 @@ function EngineCard(props: ModelCardProps) {
               >
                 <InfoIcon />
               </PopoverTrigger>
-              {downloadAction}
-              {model.state === "installed" ? (
-                <>
-                  {model.active ? (
-                    <Badge size="sm" variant="success">
-                      <T>In use</T>
-                    </Badge>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      aria-label={gt("Use {model} for dictation", { model: model.name })}
-                      disabled={props.busy || props.selectionPending}
-                      onClick={props.onSelect}
-                    >
-                      <T>Use</T>
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost-muted"
-                    disabled={props.busy}
-                    onClick={props.onDelete}
-                  >
-                    {model.linkedFrom ? <T>Stop using file</T> : <T>Remove</T>}
-                  </Button>
-                </>
-              ) : null}
+              <div className="grid min-w-10 place-items-center [&>button]:pointer-events-auto">
+                {downloadAction ??
+                  (model.state === "installed" ? (
+                    model.active ? (
+                      <Badge size="sm" variant="success">
+                        <T>In use</T>
+                      </Badge>
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        aria-label={gt("Use {model} for dictation", { model: model.name })}
+                        disabled={props.busy || props.selectionPending}
+                        onClick={props.onSelect}
+                      >
+                        <T>Use</T>
+                      </Button>
+                    )
+                  ) : null)}
+              </div>
             </div>
           </div>
           {progressBar}
@@ -387,6 +380,23 @@ function EngineCard(props: ModelCardProps) {
               </p>
             ) : null}
             {benchmarks}
+            {model.state === "installed" ? (
+              <div className="flex justify-end border-t border-border/60 pt-2">
+                <PopoverClose
+                  render={
+                    <Button
+                      size="xs"
+                      variant="ghost-destructive"
+                      disabled={props.busy}
+                      onClick={props.onDelete}
+                    />
+                  }
+                >
+                  {model.linkedFrom ? <UnlinkIcon /> : <Trash2Icon />}
+                  {model.linkedFrom ? <T>Stop using file</T> : <T>Remove download</T>}
+                </PopoverClose>
+              </div>
+            ) : null}
           </div>
         </PopoverPopup>
       </Popover>
