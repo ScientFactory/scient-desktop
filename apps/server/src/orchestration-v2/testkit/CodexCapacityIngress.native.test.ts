@@ -1010,10 +1010,11 @@ it.live(
             yield* p.usage(777, "foreign-native-thread");
             yield* p.usage(777, p.nativeId, "old-native-turn");
             yield* p.complete;
-            const completed = yield* waitFor(
-              source,
-              (projection) => projection.runs.at(-1)?.status === "completed",
-            );
+            // The run completes before its turn-end checkpoint capture; reject after both.
+            const completed = yield* waitFor(source, (projection) => {
+              const run = projection.runs.at(-1);
+              return run?.status === "completed" && run.checkpointId !== null;
+            });
             assert.equal(completed.runs.length, 1);
             yield* reject("post-terminal", base);
             assert.equal(
