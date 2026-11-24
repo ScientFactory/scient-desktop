@@ -18606,12 +18606,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // commits; a running-turn fork captures the turn's unsaved text before it locks.
     if (command.type === "thread.fork" && command.sideChat !== true) {
       // An existing destination (perhaps the source's delegated child or parent) is only replayed
-      // or refused, so it takes that thread's lock alone, as a side chat fork does.
+      // or refused, so it takes that thread's lock alone, as a side chat fork does. So is a fork
+      // from a missing source: two forks between missing threads must not wait on each other.
       const existing = yield* threadDispatch.withLock(
         command.targetThreadId,
-        findThread(command.targetThreadId).pipe(
-          Effect.flatMap((target) =>
-            target === null
+        Effect.all([findThread(command.targetThreadId), findThread(command.sourceThreadId)]).pipe(
+          Effect.flatMap(([target, source]) =>
+            target === null && source !== null
               ? Effect.succeedNone
               : Effect.asSome(dispatchWithReceiptEffect(command)),
           ),

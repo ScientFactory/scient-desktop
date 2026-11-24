@@ -1600,6 +1600,47 @@ it.effect.each(["delegated child", "parent", "new thread"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+// Forks in both directions between two missing threads would each hold one lock and wait for the
+// other's if they took both, so a missing source is refused under the destination's lock alone.
+it.effect("forks in both directions between missing threads each take one lock and fail", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const [first, second] = [
+      ThreadId.make("thread:fork-missing:a"),
+      ThreadId.make("thread:fork-missing:b"),
+    ];
+    const withLock = executor.withLock;
+    const locked: Array<ThreadId> = [];
+    const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+      key,
+      effect,
+    ) =>
+      Effect.flatMap(Effect.service(ForkUnderTest), (marked) => {
+        if (marked) locked.push(key);
+        return withLock(key, effect);
+      });
+    const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+    const fork = (sourceThreadId: ThreadId, targetThreadId: ThreadId) =>
+      orchestrator
+        .dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`fork-missing:${sourceThreadId}`),
+          sourceThreadId,
+          targetThreadId,
+          sourcePoint: { type: "latest_stable" },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.provideService(ForkUnderTest, true), Effect.exit);
+    const results = yield* Effect.all([fork(first, second), fork(second, first)], {
+      concurrency: "unbounded",
+    }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+    assert.isTrue(results.every(Exit.isFailure));
+    assert.sameMembers(locked, [first, second]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
