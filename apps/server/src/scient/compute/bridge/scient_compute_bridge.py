@@ -74,6 +74,8 @@ MAX_IOPUB_BATCH = 256
 STARTUP_TIMEOUT = 30
 SHUTDOWN_TIMEOUT = 5
 IDLE_POLL_INTERVAL = 0.02
+# A quiet idle kernel is checked less and less often, up to this, instead of 50 times a second.
+IDLE_POLL_MAX_INTERVAL = 0.25
 QUICK_REPLY_WINDOW = 0.02
 QUICK_REPLY_POLL_INTERVAL = 0.002
 LIVENESS_INTERVAL = 1.0
@@ -1687,18 +1689,24 @@ class ScientBridge:
     async def _monitor_kernel(self) -> None:
         """Drain idle/late IOPub and detect a kernel that dies between cells."""
         last_liveness = time.monotonic()
+        interval = IDLE_POLL_INTERVAL
         try:
             while self._running and not self._stop.is_set():
                 if self._mapping.active_request_id is None and not self._kernel_transitioning:
                     if await self._drain_idle_iopub():
                         await self._flush()
+                        interval = IDLE_POLL_INTERVAL
+                    else:
+                        interval = min(interval * 2, IDLE_POLL_MAX_INTERVAL)
                     now = time.monotonic()
                     if now - last_liveness >= LIVENESS_INTERVAL:
                         last_liveness = now
                         if not await self._kernel_alive():
                             await self._fail_fatal("The kernel process exited while idle.")
                             return
-                await asyncio.sleep(IDLE_POLL_INTERVAL)
+                else:
+                    interval = IDLE_POLL_INTERVAL
+                await asyncio.sleep(interval)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - reported as session loss

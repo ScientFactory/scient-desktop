@@ -10,7 +10,9 @@ import unittest
 from unittest.mock import patch
 
 STUBS = {
-    "duckdb": types.SimpleNamespace(Error=Exception, __version__="test"),
+    "duckdb": types.SimpleNamespace(
+        Error=Exception, __version__="test", StatementType=types.SimpleNamespace(SELECT="select")
+    ),
     "ipykernel": types.SimpleNamespace(),
     "ipykernel.kernelapp": types.SimpleNamespace(IPKernelApp=object),
     "ipykernel.kernelbase": types.SimpleNamespace(Kernel=object),
@@ -32,6 +34,29 @@ class DecimalTableTest(unittest.TestCase):
             json.loads(wire, parse_float=decimal.Decimal),
             {"a": "9007199254740993.00", "b": "1000000000000000128", "c": decimal.Decimal("0.1")},
         )
+
+
+
+class StreamingTest(unittest.TestCase):
+    def test_shows_finished_tables_when_a_later_statement_fails(self):
+        statement = lambda query: types.SimpleNamespace(query=query, type="select")  # noqa: E731
+
+        class Connection:
+            def extract_statements(self, code):
+                return [statement(part) for part in code.split(";")]
+
+            def execute(self, query):
+                if query.query == "fail":
+                    raise Exception("no such table")
+                return types.SimpleNamespace(description=[("n",)], fetchmany=lambda _: [(1,)])
+
+        kernel = sql.ScientSqlKernel.__new__(sql.ScientSqlKernel)
+        kernel._connection = Connection()
+        kernel._cancelled = __import__("threading").Event()
+        shown = []
+        with self.assertRaises(sql.StatementError):
+            kernel._execute("first;second;fail", lambda bundle, last: shown.append(last))
+        self.assertEqual(shown, [False, False])
 
 
 if __name__ == "__main__":

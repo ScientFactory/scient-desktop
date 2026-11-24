@@ -39,6 +39,14 @@ import * as ServerConfig from "../../config.ts";
  * Without either receipt, recovery treats the request as in flight.
  */
 
+type TranscriptResource = {
+  readonly mediaType: ComputeMediaType;
+  readonly contentHash: string;
+  readonly byteLength: number;
+};
+/** Transcripts whose resource lists are kept in memory. */
+const MAX_RESOURCE_INDEXES = 32;
+
 const SessionJson = Schema.fromJsonString(ComputeSessionRecord);
 const RequestJson = Schema.fromJsonString(
   Schema.Struct({
@@ -915,6 +923,59 @@ const make = Effect.gen(function* () {
     return entries;
   });
 
+  /**
+   * The resources a transcript names, by content hash. Read once per version of the transcript
+   * file, so a run with many figures is not decoded again for each one.
+   */
+  const resourceIndexes = new Map<
+    string,
+    {
+      readonly size: number;
+      readonly mtimeMs: number;
+      readonly byHash: ReadonlyMap<string, ReadonlyArray<TranscriptResource>>;
+    }
+  >();
+  const transcriptResources = Effect.fn("LocalComputeStore.transcriptResources")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId | null,
+    owner: string,
+  ) {
+    const filePath = path.join(owner, "output.ndjson");
+    const version = yield* Effect.promise(() => NodeFSP.stat(filePath).catch(() => null));
+    const cached = resourceIndexes.get(filePath);
+    if (version !== null && cached?.size === version.size && cached.mtimeMs === version.mtimeMs)
+      return cached.byHash;
+    const { outputs } = yield* loadOutputs(projectId, sessionId, executionId);
+    const byHash = new Map<string, TranscriptResource[]>();
+    const add = (resource: TranscriptResource) =>
+      byHash.set(resource.contentHash, [...(byHash.get(resource.contentHash) ?? []), resource]);
+    for (const output of outputs) {
+      if (output._tag === "image") add(output);
+      if (
+        output._tag !== "display-data" &&
+        output._tag !== "execute-result" &&
+        output._tag !== "display-update"
+      )
+        continue;
+      for (const representation of output.bundle.representations) {
+        if (representation.data._tag !== "resource") continue;
+        add({
+          mediaType: representation.mediaType,
+          contentHash: representation.data.contentHash,
+          byteLength: representation.data.byteLength,
+        });
+      }
+    }
+    if (version !== null) {
+      resourceIndexes.delete(filePath);
+      resourceIndexes.set(filePath, { size: version.size, mtimeMs: version.mtimeMs, byHash });
+      if (resourceIndexes.size > MAX_RESOURCE_INDEXES)
+        resourceIndexes.delete(resourceIndexes.keys().next().value ?? "");
+    }
+    return byHash;
+  });
+
   const resolveOutputResource = Effect.fn("LocalComputeStore.resolveOutputResource")(function* (
     ref: ComputeOutputResourceRef,
   ) {
@@ -925,39 +986,10 @@ const make = Effect.gen(function* () {
     // The record decides, not the request. Everything below is a check
     // against what was stored, so a caller cannot name a file the transcript
     // never mentioned.
-    const { outputs } = yield* loadOutputs(ref.projectId, ref.sessionId, ref.executionId);
-    type ResourceMetadata = {
-      readonly mediaType: ComputeMediaType;
-      readonly contentHash: string;
-      readonly byteLength: number;
-    };
-    const matches: ResourceMetadata[] = [];
-    for (const output of outputs) {
-      if (output._tag === "image" && output.contentHash === ref.contentHash) {
-        matches.push(output);
-        continue;
-      }
-      if (
-        output._tag !== "display-data" &&
-        output._tag !== "execute-result" &&
-        output._tag !== "display-update"
-      ) {
-        continue;
-      }
-      for (const representation of output.bundle.representations) {
-        if (
-          representation.data._tag !== "resource" ||
-          representation.data.contentHash !== ref.contentHash
-        ) {
-          continue;
-        }
-        matches.push({
-          mediaType: representation.mediaType,
-          contentHash: representation.data.contentHash,
-          byteLength: representation.data.byteLength,
-        });
-      }
-    }
+    const matches =
+      (yield* transcriptResources(ref.projectId, ref.sessionId, ref.executionId, owner)).get(
+        ref.contentHash,
+      ) ?? [];
     const metadata = matches[0];
     if (metadata === undefined) return null;
     if (
