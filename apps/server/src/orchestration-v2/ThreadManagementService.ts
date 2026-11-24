@@ -2003,6 +2003,8 @@ const make = Effect.gen(function* () {
             ...(input.reason === undefined ? {} : { reason: input.reason }),
           }).pipe(Effect.provideService(Orchestrator.DelegatedStopHandledByCaller, threadId));
         }
+        // SCIENT-FORK: a skipped idle child still gets the settlement its own Stop would run.
+        else yield* orchestrator.settleIdleDelegatedChild(threadId);
         if (hasAppOwnedChildren) {
           yield* stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason });
         }

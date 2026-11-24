@@ -528,6 +528,12 @@ export interface OrchestratorV2Shape {
       dispatch: OrchestratorV2Shape["dispatch"],
     ) => Effect.Effect<void, E, R>;
   }) => Effect.Effect<void, E | OrchestratorV2Error, R>;
+  // SCIENT-FORK:START — a parent's Stop that skips an idle child still runs the settlement
+  // the child's own Stop would: an unsent result or a stopped task's question left pending.
+  readonly settleIdleDelegatedChild: (
+    childThreadId: ThreadId,
+  ) => Effect.Effect<void, OrchestratorProjectionError>;
+  // SCIENT-FORK:END
   readonly delegatedTaskResultPending: (
     childThreadId: ThreadId,
     taskId?: NodeId,
@@ -19447,6 +19453,58 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  // SCIENT-FORK:START — the work finalizeAppOwnedSubagent can still do for a child whose
+  // terminal row and result transfer committed: a task without its sent result, or the
+  // dismissal of a message-mode question, which runs after that commit. A settled child
+  // takes no lock and writes nothing.
+  const settleIdleDelegatedChild = Effect.fn("Orchestrator.settleIdleDelegatedChild")(
+    function* (childThreadId: ThreadId) {
+      const child = yield* projectionStore.getThreadRecords(childThreadId, [
+        "contextTransfers",
+        "runtimeRequests",
+      ]);
+      const parentThreadId = child.thread.lineage.parentThreadId;
+      if (
+        child.thread.lineage.relationshipToParent !== "subagent" ||
+        parentThreadId === null ||
+        child.thread.forkedFrom?.type !== "node"
+      )
+        return;
+      const questionPending = child.runtimeRequests.some(
+        (request) =>
+          request.status === "pending" &&
+          request.kind === "user_input" &&
+          request.responseCapability.type === "message",
+      );
+      if (!questionPending) {
+        const resultSent = child.contextTransfers.some(
+          (transfer) =>
+            transfer.type === "subagent_result" &&
+            transfer.sourceThreadId === childThreadId &&
+            transfer.targetThreadId === parentThreadId,
+        );
+        const { subagents } = yield* projectionStore.getThreadRecords(
+          parentThreadId,
+          ["subagents"],
+          { subagentChildThreadIds: [childThreadId] },
+        );
+        if (
+          !subagents.some(
+            (task) =>
+              task.origin === "app_owned" &&
+              task.childThreadId === childThreadId &&
+              !(task.result !== null && resultSent),
+          )
+        )
+          return;
+      }
+      yield* withSubagentParentLock(childThreadId, finalizeAppOwnedSubagent(childThreadId));
+    },
+    (effect, threadId) =>
+      effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+  );
+  // SCIENT-FORK:END
+
   const shellProjectionError = (cause: unknown) =>
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
@@ -19455,6 +19513,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     recoverDelegatedTasks,
     recoverDelegatedTask,
     cancelDelegatedTask,
+    // SCIENT-FORK: a parent's Stop settles the idle children it skips.
+    settleIdleDelegatedChild,
     delegatedTaskResultPending,
     restartContinuationPending: Effect.fn("OrchestratorV2.restartContinuationPending")(
       function (run) {
