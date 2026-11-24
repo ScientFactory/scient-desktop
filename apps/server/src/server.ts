@@ -43,7 +43,7 @@ import * as ScientKeepAwakeService from "./scient/keepAwake/KeepAwakeService.ts"
 import * as ServerConfig from "./config.ts";
 import { withRootRequestSpans, withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
-import { wordDiagramRequestBodyLayer } from "./scient/pandoc/wordDiagramBodyLimit.ts";
+import { largeRequestBodyLayer } from "./scient/largeRequestBodies.ts";
 import { scientFeatureUsageLayer } from "./telemetry/ScientFeatureUsage.ts";
 import {
   guardHttpResponseWriteErrors,
@@ -1064,7 +1064,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     conversationImportUploadRouteLayer,
-    wordDiagramRequestBodyLayer,
+    largeRequestBodyLayer,
     scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
     libraryMovePassLayer,

@@ -1126,7 +1126,7 @@
   "src/scient/pandoc/PandocWordConverter.integration.test.ts": 0.001,
   "src/scient/pandoc/PandocWordConverter.test.ts": 1.187,
   "src/scient/pandoc/scientReferenceDocument.test.ts": 0.036,
-  "src/scient/pandoc/wordDiagramBodyLimit.test.ts": 0.307,
+  "src/scient/largeRequestBodies.test.ts": 0.307,
   "src/scient/pandoc/wordDiagramCapture.test.ts": 0.027,
   "src/scient/pandoc/WordFileExport.test.ts": 0.557,
   "src/scient/papers/getPaper.test.ts": 0.028,
