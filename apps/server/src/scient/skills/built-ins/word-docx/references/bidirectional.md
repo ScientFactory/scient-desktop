@@ -9,7 +9,8 @@
   edge alignment unless the document calls for another layout. If an edit
   should fix a Hebrew paragraph that sits on the wrong edge, use logical
   start alignment (`w:jc w:val="start"`) with `w:bidi` and check the rendered
-  edge. A hard-coded physical right setting can flip in LibreOffice.
+  edge. A hard-coded physical right setting can land on the left edge in
+  Microsoft Word and LibreOffice.
 - Choose an installed font with Hebrew and Latin glyph coverage. Set
   `w:rFonts/@w:cs` for the Hebrew font and Hebrew language on
   `w:lang/@w:bidi` where needed. Check size and weight on the complex-script

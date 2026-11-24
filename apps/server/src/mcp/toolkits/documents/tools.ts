@@ -205,7 +205,7 @@ const ScientDocumentExportTool = Tool.make("scient_document_export", {
 
 const ScientDocumentRuntimeTool = Tool.make("scient_document_runtime", {
   description:
-    "Find the Document Lab desktop preview's Python, document helpers and native tool paths. Call before using a built-in Word, Excel, PowerPoint or PDF processing skill. The runtime is available in opted-in development apps for trusted fixtures.",
+    "Find Python, document helpers and native tool paths when using a Document Lab preview skill. The runtime is available in opted-in development apps for trusted fixtures.",
   parameters: Schema.Record(Schema.String, Schema.Never),
   success: DocumentLabRuntime.DocumentLabRuntimeStatus,
   dependencies: [DocumentLabRuntime.DocumentLabRuntime],
