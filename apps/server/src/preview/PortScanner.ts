@@ -456,6 +456,37 @@ const parseEnvironmentVariables = (
   return variables;
 };
 
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+/**
+ * Pairs macOS `ps -E -ww -o pid=,command=` with the same `ps` without `-E`: the environment is
+ * what `-E` appends after argv. macOS appends none for Apple platform binaries such as
+ * `/bin/bash`, so such a process is unreadable and left out, never read from its argv.
+ */
+export const parsePsEnvironmentVariables = (
+  withEnvironment: string,
+  withoutEnvironment: string,
+  names: ReadonlyArray<string>,
+): ReadonlyMap<number, ReadonlyMap<string, string>> => {
+  const commands = new Map<number, string>();
+  for (const line of withoutEnvironment.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    if (match) commands.set(Number(match[1]), match[2]!);
+  }
+  const variables = new Map<number, ReadonlyMap<string, string>>();
+  for (const line of withEnvironment.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    const argv = match ? commands.get(Number(match[1])) : undefined;
+    if (match && argv !== undefined && match[2]!.startsWith(`${argv} `)) {
+      variables.set(
+        Number(match[1]),
+        parseEnvironmentVariables(match[2]!.slice(argv.length + 1), /\s+/, names),
+      );
+    }
+  }
+  return variables;
+};
+// SCIENT-FORK:END macos-unreadable-environment
+
 /**
  * The agent commands that signaling a group stops, by the variable naming each. A CLI starts a
  * command as a group leader and names it in the command's environment, which the CLI itself does
@@ -1217,22 +1248,22 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return new Map(read.flatMap(Option.toArray));
     }
-    const result = yield* processRunner
-      .run({
-        command: "ps",
-        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
-        timeout: Duration.millis(PS_TIMEOUT_MS),
-        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-      })
-      .pipe(Effect.option);
-    const variables = new Map<number, ReadonlyMap<string, string>>();
-    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
-      const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
-      }
-    }
-    return variables;
+    // SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+    const [withEnvironment, withoutEnvironment] = yield* Effect.forEach(
+      [["-E"], []],
+      (environmentFlag) =>
+        processRunner.run({
+          command: "ps",
+          args: [...environmentFlag, "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
+          timeout: Duration.millis(PS_TIMEOUT_MS),
+          maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+        }),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.orElseSucceed(() => [undefined, undefined]));
+    return withEnvironment === undefined || withoutEnvironment === undefined
+      ? new Map<number, ReadonlyMap<string, string>>()
+      : parsePsEnvironmentVariables(withEnvironment.stdout, withoutEnvironment.stdout, names);
+    // SCIENT-FORK:END macos-unreadable-environment
   });
 
   const agentCommandStops = Effect.fn("PortDiscovery.agentCommandStops")(function* (

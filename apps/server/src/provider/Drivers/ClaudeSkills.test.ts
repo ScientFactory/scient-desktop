@@ -574,6 +574,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["a_b", undefined, "renamed"],
         ["PSTACK", "PSTACK", "shouted"],
       ] as const) {
+        // SCIENT-FORK: case-insensitive-disk — `PSTACK` is `pstack` on a macOS or Windows disk.
+        if (directory === "PSTACK" && (yield* fs.exists(path.join(bucket, directory)))) continue;
         yield* writeSkill(path.join(bucket, directory, "skills"), skill, "# Synced");
         if (prefix === undefined) continue;
         yield* fs.makeDirectory(path.join(bucket, directory, ".claude-plugin"));

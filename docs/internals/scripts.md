@@ -192,12 +192,38 @@ The test gate is `pnpm run test` in two parts:
   packages run again if the summary cannot be read, and the aggregate's failure still fails the
   gate. The receipt names every failed package.
 - **The server suite** runs alone with files in parallel, like hosted CI's server shards:
-  half the CPUs, at most six, and at least 4 GiB of memory per worker (`--server-workers N`
-  overrides it; `1` is the serial run). The server's config keeps `fileParallelism: false`, so
-  ordinary and targeted local runs are unchanged. When up to 20 files fail, each runs once
-  more, alone, and the receipt lists it under "failed again alone" or "passed when rerun alone".
-  Both fail the gate. One passing rerun does not show why the file failed; treat it as a
-  fault to investigate, not a pass. More failures are listed without a rerun.
+  half the CPUs, at most six, at least 4 GiB of memory per worker, and never more than half of
+  the CPUs the load average leaves free (`--server-workers N` overrides it; `1` is the serial
+  run). The server's config keeps `fileParallelism: false`, so ordinary and targeted local runs
+  are unchanged.
+
+**What a red test gate means.** Server failures are compared by test ID (`<file> > <full name>`)
+with a baseline of the same machine on main:
+
+- **New failures** block. Their files run once more, alone, as evidence: "failed again alone",
+  or "passed when rerun alone (load, or a race with other files)". Either way the gate fails, as
+  a race this branch added also passes alone.
+- **Failures main also has here**, the same test failing the same way (a timeout, or the same
+  error name), are listed with the main commit and do not block.
+- **Baseline failures absent from this run's failures** are listed, so a fix shows (they may also
+  have been skipped, renamed or deleted).
+- **Never waived:** a package failure (a package name is too coarse to match), a server file that
+  failed to load, an error in a file or suite hook, an error outside any test, an interrupted
+  run, files that never finished, an empty report, and a failed exit the report does not account
+  for. `scripts/vitest-run-outcome-reporter.mjs` reports what Vitest's JSON report leaves out.
+
+Record the baseline from a clean checkout of `origin/main` (fetch it first) with
+`pnpm alignment:gates --only test --record-baseline` (add `--tests` on Windows); it works once main
+has the recorder. It keeps every server failure of that run,
+in `<git common dir>/scient-test-baseline/<platform>-<arch>-node<N>.json`, shared by every
+worktree. A baseline is used only while it is at most seven days old and its main commit is in
+the candidate's history; otherwise, or without one, every failure blocks, and up to 20 failed
+server files rerun alone as evidence.
+
+The table's first line records the load average and, on macOS, `fseventsd` CPU at the start, and
+names a busy machine (load above three quarters of the CPUs, or `fseventsd` at 80% or more). A
+saturated `fseventsd` delivers file change events late or never, so file-watch tests fail or time
+out. Tests that timed out are listed as such.
 
 A run that includes typecheck, test, build or smoke first takes a lock in the repository's
 shared Git directory, so full runs from different worktrees queue instead of slowing each other
