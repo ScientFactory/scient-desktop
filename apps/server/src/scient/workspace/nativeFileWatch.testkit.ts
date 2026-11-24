@@ -136,9 +136,16 @@ export const platformFileEventLatency = Effect.fn("platformFileEventLatency")(fu
 ) {
   const reports: NativeWatchReports = new Map();
   yield* Effect.acquireRelease(
-    Effect.promise(() => start(directory, (name) => reports.get(name)?.())).pipe(
-      within(`subscription to ${directory}`),
-    ),
+    Effect.suspend(() => {
+      const started = start(directory, (name) => reports.get(name)?.());
+      return Effect.promise(() => started).pipe(
+        within(`subscription to ${directory}`),
+        // A subscription that arrives after the deadline has no finalizer: stop it when it does.
+        Effect.onError(() =>
+          Effect.sync(() => void started.then((stop) => stop()).catch(() => {})),
+        ),
+      );
+    }),
     (stop) => Effect.promise(stop).pipe(within(`unsubscribe from ${directory}`)),
   );
   const sync = yield* writeSyncFile(directory);
