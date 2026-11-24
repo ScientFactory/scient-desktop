@@ -1318,15 +1318,6 @@ const make = Effect.gen(function* () {
         path.resolve(adminDir, gitdir) === path.join(leftover.entry.path, ".git"))
     );
   });
-  // Deleted under a name of its own, so a worktree Git creates at the old name meanwhile is kept.
-  const asidePrefix = ".scient-removing-";
-  const leftoverAside = (leftover: WorktreeLeftover) =>
-    path.basename(leftover.adminDir).startsWith(asidePrefix)
-      ? leftover.adminDir
-      : path.join(
-          path.dirname(leftover.adminDir),
-          `${asidePrefix}${path.basename(leftover.adminDir)}-${leftover.identity ?? ""}`,
-        );
   // SCIENT-FORK:END
   const noteLeftover = Effect.fn("StorageCleanup.noteLeftover")(
     function* (adminDir: string, entry: StorageCleanupReportEntry) {
@@ -1365,23 +1356,10 @@ const make = Effect.gen(function* () {
       const current = yield* worktreeAdminDir(path.dirname(gitFile.value));
       if ((yield* fs.realPath(current)) === (yield* fs.realPath(adminDir))) return false;
     }
-    // SCIENT-FORK:START — moved aside and checked again before the recursive delete. What it
-    // could not delete goes back under its name while that is still free.
-    const aside = leftoverAside(leftover);
-    const putBack = fs
-      .exists(adminDir)
-      .pipe(Effect.flatMap((taken) => (taken ? Effect.void : fs.rename(aside, adminDir))));
-    if (aside !== adminDir) {
-      yield* fs.rename(adminDir, aside);
-      if (!(yield* isNotedLeftover(leftover, aside))) {
-        yield* putBack;
-        return false;
-      }
-    }
-    yield* fs
-      .remove(aside, { recursive: true })
-      .pipe(Effect.tapError(() => (aside === adminDir ? Effect.void : Effect.ignore(putBack))));
+    // SCIENT-FORK:START — checked again just before the delete, after the Git call above.
+    if (!(yield* isNotedLeftover(leftover, adminDir))) return false;
     // SCIENT-FORK:END
+    yield* fs.remove(adminDir, { recursive: true });
     return true;
   });
   const retryLeftovers = Effect.fn("StorageCleanup.retryLeftovers")(function* (
@@ -1405,12 +1383,7 @@ const make = Effect.gen(function* () {
         Effect.catch((error) => Effect.succeed(error)),
       );
       if (failure === null) continue;
-      // SCIENT-FORK:START — a leftover moved aside before its delete failed is retried there.
-      const aside = leftoverAside(leftover);
-      const movedAside =
-        aside !== adminDir && (yield* fs.exists(aside).pipe(Effect.orElseSucceed(() => false)));
-      remaining.push(movedAside ? { ...leftover, adminDir: aside } : leftover);
-      // SCIENT-FORK:END
+      remaining.push(leftover);
       entries.push({
         ...entry,
         outcome: "failed",
