@@ -15,7 +15,7 @@ import {
 } from "@scientfactory/scient-markdown";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
-import { EditorState, NodeSelection, PluginKey, Selection, TextSelection } from "prosemirror-state";
+import { EditorState, NodeSelection, Selection, TextSelection } from "prosemirror-state";
 
 import {
   createScientMarkdownProjection,
@@ -27,16 +27,19 @@ import {
   type ScientMarkdownProjection,
 } from "./projection";
 import { selectionOutsideNode } from "./safeSelection";
-import { buildScientMarkdownPlugins } from "./plugins";
+import {
+  buildScientMarkdownPlugins,
+  scientMarkdownTransactionOriginKey,
+  type ScientMarkdownTransactionOrigin,
+} from "./plugins";
 import { findScientMarkdownReferenceDefinition } from "./referenceLinks";
 import { scientMarkdownParser } from "./schema";
 import { prepareScientExternalProjection } from "./externalProjection";
 
-export type ScientMarkdownTransactionOrigin = "user" | "external" | "system";
-
-export const scientMarkdownTransactionOriginKey = new PluginKey<ScientMarkdownTransactionOrigin>(
-  "scientMarkdownTransactionOrigin",
-);
+export {
+  scientMarkdownTransactionOriginKey,
+  type ScientMarkdownTransactionOrigin,
+} from "./plugins";
 
 export interface ScientProseMirrorSessionOptions {
   /** Current local document bytes, including a restored optimistic draft. */

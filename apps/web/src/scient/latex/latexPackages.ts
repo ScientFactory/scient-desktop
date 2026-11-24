@@ -61,6 +61,10 @@ const commandPackages: Readonly<Record<string, readonly string[]>> = {
   hypertarget: ["hyperref"],
   autoref: ["hyperref"],
   url: ["url"],
+  // Computer Modern has only fixed sizes; fix-cm makes any `\fontsize` exact.
+  fontsize: ["fix-cm"],
+  fontspec: ["fontspec"],
+  IfFontExistsTF: ["fontspec"],
   cref: ["cleveref"],
   Cref: ["cleveref"],
 };
@@ -74,6 +78,13 @@ const providedPackages: Readonly<Record<string, readonly string[]>> = {
   xcolor: ["color"],
   hyperref: ["url"],
   algorithm: ["float"],
+  // Scalable font packages already give every size.
+  lmodern: ["fix-cm"],
+  fontspec: ["fix-cm"],
+  newtxtext: ["fix-cm"],
+  newpxtext: ["fix-cm"],
+  tgtermes: ["fix-cm"],
+  tgpagella: ["fix-cm"],
 };
 
 /** Existing commands do not turn an unrelated prose edit into a package edit. */
@@ -122,6 +133,7 @@ export function newLatexCommandPackages(
 export function latexPackageInventory(source: string) {
   const clean = maskLatexSource(source.slice(0, latexPreambleEnd(source)), { literals: true });
   let end = clean.length;
+  let documentClass: number | undefined;
   let directionBoundary: number | null = null;
   const declarations: { name: string; from: number; options: string }[] = [];
   let depth = 0;
@@ -129,6 +141,7 @@ export function latexPackageInventory(source: string) {
   for (const token of clean.matchAll(/\\([A-Za-z]+|[^\r\n])|[{}]/gu)) {
     if (token[0] === "{") depth++;
     else if (token[0] === "}") depth--;
+    else if (depth === 0 && token[1] === "documentclass") documentClass ??= token.index;
     else if (
       depth === 0 &&
       token[1] === "begin" &&
@@ -165,7 +178,14 @@ export function latexPackageInventory(source: string) {
   )
     loaded.add("colortbl");
   for (const name of loaded) providedPackages[name]?.forEach((provided) => loaded.add(provided));
-  return { preamble: clean.slice(0, end), end, declarations, loaded, directionBoundary };
+  return {
+    documentClass,
+    preamble: clean.slice(0, end),
+    end,
+    declarations,
+    loaded,
+    directionBoundary,
+  };
 }
 
 /** Only add missing declarations; keep user options and never remove packages on undo. */
@@ -220,9 +240,13 @@ export function ensureLatexPackages(
         ["bidi", "xepersian"].includes(declaration.name) ||
         (declaration.name === "esint" && ["amsmath", "mathtools"].includes(name)),
     );
-    const at = Math.min(end, directionBoundary ?? end, ...before.map(({ from }) => from));
+    const classOffset = name === "fix-cm" ? destination.documentClass : undefined;
+    const at =
+      classOffset ?? Math.min(end, directionBoundary ?? end, ...before.map(({ from }) => from));
     const lines = insertions.get(at) ?? [];
-    lines.push(`\\usepackage${name === "wasysym" ? "[nointegrals]" : ""}{${name}}${eol}`);
+    lines.push(
+      `\\${name === "fix-cm" ? "RequirePackage" : "usepackage"}${name === "wasysym" ? "[nointegrals]" : ""}{${name}}${eol}`,
+    );
     insertions.set(at, lines);
   }
   if (needsBreakable) {

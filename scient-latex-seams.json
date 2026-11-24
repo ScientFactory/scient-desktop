@@ -225,6 +225,11 @@
       "purpose": "Map each bounded LaTeX failure class to who owns the failure (document, environment or Scient) without reading compiler output."
     },
     {
+      "path": "apps/web/src/scient/markdownEditor/ui/MarkdownDocumentSettings.tsx",
+      "anchor": "LatexSelect",
+      "purpose": "Reuse the LaTeX select in the Markdown Document settings card so both editors' cards look and behave the same."
+    },
+    {
       "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.scient.ts",
       "anchor": "latexDir: path.join(stateDir, \"latex\")",
       "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."

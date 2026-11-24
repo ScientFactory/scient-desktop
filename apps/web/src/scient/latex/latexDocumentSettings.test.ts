@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { documentLayoutSettings } from "./latexDocumentLayoutSettings";
 import { updateLatexDocumentSettingsSource } from "./latexDocumentSettingsSource";
 import { latexDocumentLanguage, latexLanguageLabels } from "./latexLanguage";
 import { DOCUMENT_TEMPLATES, createNewDocumentSource } from "../documents/documentTemplates";
@@ -114,5 +115,104 @@ describe("document settings language application", () => {
     expect(next.replaceAll("\r\n", "")).not.toContain("\n");
     expect(documentBody(next)).toBe(documentBody(source));
     expect(updateLatexDocumentSettingsSource(body, { language: "hebrew" })).toBeNull();
+  });
+});
+
+describe("document settings font family", () => {
+  it.each([
+    ["serif", "rmdefault"],
+    ["sans-serif", "sfdefault"],
+    ["monospace", "ttdefault"],
+  ] as const)("writes and reads the %s default", (fontFamily, command) => {
+    const next = updateLatexDocumentSettingsSource(document(), { fontFamily })!;
+    expect(next).toContain(`\\renewcommand{\\familydefault}{\\${command}}`);
+    expect(documentLayoutSettings(next).fontFamily).toBe(fontFamily);
+    expect(documentBody(next)).toBe(documentBody(document()));
+  });
+
+  it("replaces a previous choice and removes it on Default", () => {
+    const sans = updateLatexDocumentSettingsSource(document(), { fontFamily: "sans-serif" })!;
+    const mono = updateLatexDocumentSettingsSource(sans, { fontFamily: "monospace" })!;
+    expect(mono.match(/familydefault/gu)).toHaveLength(1);
+    const none = updateLatexDocumentSettingsSource(mono, { fontFamily: "default" })!;
+    expect(none).not.toContain("familydefault");
+    expect(documentLayoutSettings(none).fontFamily).toBe("default");
+  });
+
+  it("removes only the active family declaration on Default", () => {
+    const commented = String.raw`% \renewcommand{\familydefault}{\sfdefault}
+\newcommand{\mono}{\renewcommand{\familydefault}{\ttdefault}}
+`;
+    const withActive = updateLatexDocumentSettingsSource(
+      document().replace("\\begin{document}", `${commented}\\begin{document}`),
+      { fontFamily: "serif" },
+    )!;
+    const none = updateLatexDocumentSettingsSource(withActive, { fontFamily: "default" })!;
+    expect(none).toContain("% \\renewcommand{\\familydefault}{\\sfdefault}");
+    expect(none).toContain("\\newcommand{\\mono}{\\renewcommand{\\familydefault}{\\ttdefault}}");
+    expect(none).not.toContain("{\\rmdefault}");
+    expect(documentLayoutSettings(none).fontFamily).toBe("default");
+  });
+});
+
+describe("document settings named fonts", () => {
+  const xelatex = (preamble = "") => document(`% !TEX program = xelatex\n${preamble}`);
+
+  it("writes a pdfLaTeX family code for a font with a look-alike, and reads it back", () => {
+    const next = updateLatexDocumentSettingsSource(document(), { fontFamily: "Times New Roman" })!;
+    expect(next).toContain("\\renewcommand{\\familydefault}{ptm}");
+    expect(documentLayoutSettings(next).fontFamily).toBe("Times New Roman");
+    expect(documentBody(next)).toBe(documentBody(document()));
+  });
+
+  it("refuses a font pdfLaTeX has no look-alike for, and an unknown name", () => {
+    expect(updateLatexDocumentSettingsSource(document(), { fontFamily: "Garamond" })).toBeNull();
+    expect(updateLatexDocumentSettingsSource(document(), { fontFamily: "Comic Sans" })).toBeNull();
+  });
+
+  it("writes setmainfont under XeLaTeX and no familydefault", () => {
+    const sans = updateLatexDocumentSettingsSource(xelatex(), { fontFamily: "sans-serif" })!;
+    const next = updateLatexDocumentSettingsSource(sans, { fontFamily: "Garamond" })!;
+    expect(next).toContain("\\setmainfont{Garamond}");
+    expect(next).toContain("\\usepackage{fontspec}");
+    expect(next).not.toContain("familydefault");
+    expect(documentLayoutSettings(next).fontFamily).toBe("Garamond");
+    expect(documentBody(next)).toBe(documentBody(document()));
+  });
+
+  it("preserves an optioned main font and custom family across picker changes", () => {
+    const source = xelatex("\\usepackage{fontspec}\n\\setmainfont[Ligatures=TeX]{Georgia}\n");
+    expect(documentLayoutSettings(source).fontFamily).toBe("Georgia");
+    const next = updateLatexDocumentSettingsSource(source, { fontFamily: "Garamond" })!;
+    expect(next).toContain("\\IfFontExistsTF{Garamond}{\\setmainfont[Ligatures=TeX]{Garamond}}{}");
+    expect(documentLayoutSettings(next).fontFamily).toBe("Garamond");
+    const reset = updateLatexDocumentSettingsSource(next, { fontFamily: "default" })!;
+    expect(reset).toContain("\\setmainfont[Ligatures=TeX]{Georgia}");
+    const custom = document("\\renewcommand{\\familydefault}{mycustom}\n");
+    expect(updateLatexDocumentSettingsSource(custom, { fontFamily: "default" })).toBe(custom);
+  });
+
+  it("applies a font together with the engine change in one update", () => {
+    const next = updateLatexDocumentSettingsSource(document(), {
+      engine: "xelatex",
+      fontFamily: "Garamond",
+    })!;
+    expect(next).toContain("\\setmainfont{Garamond}");
+    expect(documentLayoutSettings(next)).toMatchObject({
+      engine: "xelatex",
+      fontFamily: "Garamond",
+    });
+  });
+
+  it("clears a catalogue main font on a new choice or Default, and keeps the author's own", () => {
+    const named = updateLatexDocumentSettingsSource(xelatex(), { fontFamily: "Garamond" })!;
+    const serif = updateLatexDocumentSettingsSource(named, { fontFamily: "serif" })!;
+    expect(serif).not.toContain("\\setmainfont");
+    expect(serif).toContain("\\renewcommand{\\familydefault}{\\rmdefault}");
+    const none = updateLatexDocumentSettingsSource(named, { fontFamily: "default" })!;
+    expect(none).not.toContain("\\setmainfont");
+    const own = xelatex("\\usepackage{fontspec}\n\\setmainfont{Charter}\n");
+    const kept = updateLatexDocumentSettingsSource(own, { fontFamily: "default" })!;
+    expect(kept).toContain("\\setmainfont{Charter}");
   });
 });

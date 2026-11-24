@@ -1,3 +1,10 @@
+import { latexFontEngine } from "./latexTextFormatting";
+import { GUARDED_MAIN_FONT } from "@scientfactory/scient-document/latex";
+import {
+  FONT_CATALOGUE,
+  catalogueFont,
+  fontForLatexCode,
+} from "@scientfactory/scient-markdown/fonts";
 import { latexPreambleEnd, latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 import { latexLengthInches, latexVisualLayoutProfile } from "./latexVisualLayout";
 import { latexRunningPageSourceFields, latexRunningPageStyle } from "./latexPageLayouts";
@@ -16,6 +23,8 @@ export interface DocumentLayoutSettings {
   gutter?: string;
   mirroredMargins?: boolean;
   engine?: "pdflatex" | "xelatex" | "lualatex";
+  /** "default", a generic family, or the name of a catalogue font (written for the document's engine). */
+  fontFamily?: string;
   mainFont?: string;
   sansFont?: string;
   monoFont?: string;
@@ -38,9 +47,24 @@ export interface DocumentLayoutSettings {
   evenFooterRight?: string;
 }
 
+/** The default-family declaration written for each generic family. */
+const FAMILY_DEFAULTS = { serif: "rmdefault", "sans-serif": "sfdefault", monospace: "ttdefault" };
+/** `\familydefault` holds a generic (`\rmdefault`) or a font family code (`qtm`) for a catalogue font. */
+const FAMILY_DEFAULT_PATTERN = /\\renewcommand\s*\{\\familydefault\}\s*\{\\?([A-Za-z0-9]+)\}/gu;
+const MAIN_FONT_PATTERN = /\\setmainfont\s*(\[[^\]{}]*\])?\s*\{([^{}]+)\}/gu;
+const isGenericFamily = (value: string) => value === "default" || value in FAMILY_DEFAULTS;
+
 const length = (value: string) =>
   /^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt|bp|em|ex)$/u.test(value.trim());
 const plain = (value: string) => !/[\\{}%#$&_~^\r\n]/u.test(value);
+
+/** What the Font select shows: a generic family, or the catalogue font the declarations name. */
+function documentFontChoice(familyDefault: string | undefined, mainFont: string | undefined) {
+  const generic = Object.entries(FAMILY_DEFAULTS).find(([, command]) => command === familyDefault);
+  if (generic && familyDefault !== "rmdefault") return generic[0];
+  const named = fontForLatexCode(familyDefault) ?? catalogueFont(mainFont?.trim() ?? "");
+  return named?.name ?? generic?.[0] ?? "default";
+}
 
 /** Current literal settings, scoped to active preamble declarations rather than macro bodies. */
 export function documentLayoutSettings(source: string) {
@@ -56,6 +80,7 @@ export function documentLayoutSettings(source: string) {
   const family = (name: string) =>
     last(new RegExp(`\\\\set${name}font\\s*(?:\\[[^\\]]*\\])?\\s*\\{([^{}]+)\\}`, "gu"))?.[1] ?? "";
   const classOptions = last(/\\documentclass\s*(?:\[([^\]]*)\])?\s*\{[^{}]+\}/gu)?.[1] ?? "";
+  const familyDefault = last(FAMILY_DEFAULT_PATTERN)?.[1];
   const running = latexRunningPageStyle(source);
   const odd = latexRunningPageSourceFields(running, 1);
   const even = latexRunningPageSourceFields(running, 2);
@@ -84,6 +109,11 @@ export function documentLayoutSettings(source: string) {
     gutter: `${profile.bindingOffsetIn.toFixed(4)}in`,
     mirroredMargins: profile.twoSided,
     engine,
+    fontEngine: latexFontEngine(source),
+    fontFamily: documentFontChoice(
+      familyDefault,
+      latexDocumentLanguage(source).mainFont ?? undefined,
+    ),
     mainFont: latexDocumentLanguage(source).mainFont ?? family("main"),
     sansFont: family("sans"),
     monoFont: family("mono"),
@@ -145,20 +175,24 @@ export function updateDocumentLayoutSettings(
   )
     return null;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const replace = (pattern: RegExp, declaration: string) => {
+  // Matches of a declaration that are active preamble commands, not comments or macro bodies.
+  const activeMatches = (pattern: RegExp) => {
     const end = latexPreambleEnd(result);
     const active = new Set(
       latexSourceCommands(result.slice(0, end))
         .filter((command) => command.depth === 0)
         .map((command) => command.from),
     );
-    const matches = [...result.slice(0, end).matchAll(pattern)].filter((match) =>
-      active.has(match.index),
-    );
-    const found = matches.at(-1);
+    return [...result.slice(0, end).matchAll(pattern)].filter((match) => active.has(match.index));
+  };
+  const replace = (pattern: RegExp, declaration: string) => {
+    const found = activeMatches(pattern).at(-1);
     result = found
       ? result.slice(0, found.index) + declaration + result.slice(found.index + found[0].length)
-      : result.slice(0, end) + declaration + eol + result.slice(end);
+      : result.slice(0, latexPreambleEnd(result)) +
+        declaration +
+        eol +
+        result.slice(latexPreambleEnd(result));
   };
   const requirePackage = (name: string) => {
     const preamble = result.slice(0, latexPreambleEnd(result));
@@ -253,6 +287,59 @@ export function updateDocumentLayoutSettings(
       /\\(?:raggedright|RaggedRight|justifying)\b/gu,
       update.alignment === "left" ? "\\RaggedRight" : "\\justifying",
     );
+  }
+  // Named fonts are written for the document's engine: a family code under pdfLaTeX, `\setmainfont`
+  // under XeLaTeX and LuaLaTeX. The select only ever touches what it can show, so a
+  // `\setmainfont` naming a catalogue font is cleared whenever the choice changes.
+  if (update.fontFamily !== undefined) {
+    const options = activeMatches(MAIN_FONT_PATTERN).at(-1)?.[1] ?? "";
+    for (const match of activeMatches(GUARDED_MAIN_FONT).reverse())
+      result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+    const ownedDefaults = () =>
+      activeMatches(FAMILY_DEFAULT_PATTERN).filter(
+        (m) => Object.values(FAMILY_DEFAULTS).includes(m[1]!) || fontForLatexCode(m[1]),
+      );
+    const setFamilyDefault = (declaration: string) => {
+      const last = activeMatches(FAMILY_DEFAULT_PATTERN).at(-1);
+      replace(
+        last && ownedDefaults().some((match) => match.index === last.index)
+          ? FAMILY_DEFAULT_PATTERN
+          : /(?!) /gu,
+        declaration,
+      );
+    };
+    for (const match of activeMatches(MAIN_FONT_PATTERN).reverse()) {
+      if (!match[1] && FONT_CATALOGUE.some((font) => font.latex.fontspec === match[2]?.trim()))
+        result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+    }
+    const named = isGenericFamily(update.fontFamily) ? null : catalogueFont(update.fontFamily);
+    if (named === null && !isGenericFamily(update.fontFamily)) return null;
+    const unicode = update.engine
+      ? update.engine !== "pdflatex"
+      : latexFontEngine(source) === "fontspec";
+    if (named !== null && unicode) {
+      for (const match of ownedDefaults().reverse())
+        result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+      if (/\\babelfont\b/u.test(result.slice(0, latexPreambleEnd(result)))) return null;
+      requirePackage("fontspec");
+      if (activeMatches(FAMILY_DEFAULT_PATTERN).length)
+        setFamilyDefault("\\renewcommand{\\familydefault}{\\rmdefault}");
+      const family = named.latex.fontspec;
+      replace(
+        /(?!) /gu,
+        "\\IfFontExistsTF{" + family + "}{\\setmainfont" + options + "{" + family + "}}{}",
+      );
+    } else if (named !== null) {
+      if (named.latex.pdftex === null) return null;
+      setFamilyDefault(`\\renewcommand{\\familydefault}{${named.latex.pdftex}}`);
+    } else if (update.fontFamily === "default") {
+      for (const match of ownedDefaults().reverse())
+        result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+    } else {
+      setFamilyDefault(
+        `\\renewcommand{\\familydefault}{\\${FAMILY_DEFAULTS[update.fontFamily as keyof typeof FAMILY_DEFAULTS]}}`,
+      );
+    }
   }
   if (update.engine !== undefined) {
     if (

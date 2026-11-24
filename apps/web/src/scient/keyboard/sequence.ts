@@ -44,6 +44,31 @@ export class ShortcutSequence {
     const keys = prefix ? prefix + " " + stroke : stroke;
     const bindings = this.bindings();
     const exact = bindings.find((binding) => binding.keys === keys);
+    // Saved logical strokes (including sequence prefixes) take precedence over
+    // the two physical size defaults. Recording keeps the original key names.
+    const overrides = getKeyboardPreferences().preferences.overrides;
+    if (
+      !prefix &&
+      event.shiftKey &&
+      !event.altKey &&
+      (this.mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+    ) {
+      const symbol = event.code === "Period" ? "." : event.code === "Comma" ? "," : null;
+      const saved = bindings.some(
+        (binding) =>
+          Object.hasOwn(overrides, binding.command) &&
+          (binding.keys === keys || binding.keys.startsWith(keys + " ")),
+      );
+      if (symbol && !saved) {
+        const physical = this.bindings().find(
+          (binding) =>
+            /\.fontSize(?:Larger|Smaller)$/u.test(binding.command) &&
+            !Object.hasOwn(overrides, binding.command) &&
+            binding.keys === normalizeKeys("mod+shift+" + symbol, this.mac),
+        );
+        if (physical) return { command: physical.command };
+      }
+    }
     if (exact) return { command: exact.command };
     if (bindings.some((binding) => binding.keys.startsWith(keys + " "))) return { prefix: keys };
     return prefix ? { cancel: true } : null;

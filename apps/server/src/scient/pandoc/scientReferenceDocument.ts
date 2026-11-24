@@ -7,10 +7,12 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as yazl from "yazl";
+import { catalogueFont } from "@scientfactory/scient-markdown";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const BODY_FONT = `<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Arial"/>`;
 const CODE_FONT = `<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>`;
+const HYPERLINK_LOOK = `<w:color w:val="0563C1"/><w:u w:val="single"/>`;
 const HEADING_COLOR = "1F3864";
 
 interface StyleSpec {
@@ -44,11 +46,19 @@ function style(spec: StyleSpec): string {
   ].join("");
 }
 
-const size = (points: number) => `<w:sz w:val="${points * 2}"/><w:szCs w:val="${points * 2}"/>`;
+// Word sizes are whole half points.
+const size = (points: number) => {
+  const halfPoints = Math.round(points * 2);
+  return `<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/>`;
+};
+
+/** Heading sizes in points, level 1 first. */
+const HEADING_POINTS = [18, 15, 13, 12, 11, 11, 11, 11, 11] as const;
+/** Footnote text size in points. */
+const FOOTNOTE_POINTS = 9;
 
 function headingStyles(): Array<StyleSpec> {
-  const sizes = [18, 15, 13, 12, 11, 11, 11, 11, 11];
-  return sizes.map((points, index) => ({
+  return HEADING_POINTS.map((points, index) => ({
     type: "paragraph",
     id: `Heading${index + 1}`,
     name: `heading ${index + 1}`,
@@ -188,7 +198,7 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
     name: "footnote text",
     basedOn: "Normal",
     pPr: `<w:spacing w:after="40"/>`,
-    rPr: size(9),
+    rPr: size(FOOTNOTE_POINTS),
   },
   {
     type: "paragraph",
@@ -270,7 +280,7 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
     type: "character",
     id: "Hyperlink",
     name: "Hyperlink",
-    rPr: `<w:color w:val="0563C1"/><w:u w:val="single"/>`,
+    rPr: HYPERLINK_LOOK,
   },
   {
     type: "table",
@@ -343,13 +353,65 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
   },
 ];
 
-function scientReferenceStylesXml(): string {
+/** The document's base text size and font name (null for the default font), from its settings. */
+export interface WordBaseFont {
+  readonly sizePoints: number;
+  readonly family: string | null;
+}
+
+export const DEFAULT_WORD_BASE_FONT: WordBaseFont = { sizePoints: 11, family: null };
+
+/** A local size in points and/or a font name; a Word run carries only one style. */
+export interface WordLocalFont {
+  readonly size?: number | undefined;
+  readonly family?: string | undefined;
+  /** Inside a link: the run keeps the link's look, since a run carries only one style. */
+  readonly link?: boolean | undefined;
+}
+
+const escapeXml = (text: string): string =>
+  text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+/** Word font attributes; the complex-script font (Hebrew) is the same font only when it has Hebrew. */
+const familyFonts = (family: string | null): string => {
+  if (family === null) return BODY_FONT;
+  const name = escapeXml(family);
+  const complex = catalogueFont(family)?.hebrew === true ? name : "Arial";
+  return `<w:rFonts w:ascii="${name}" w:hAnsi="${name}" w:eastAsia="${name}" w:cs="${complex}"/>`;
+};
+
+/** Word style name for a local font: "12 pt", "Times New Roman" or "Times New Roman 12 pt". */
+export const wordFontStyleName = (font: WordLocalFont): string =>
+  [font.family, font.size === undefined ? null : `${font.size} pt`, font.link ? "link" : null]
+    .filter((part) => part !== undefined && part !== null)
+    .join(" ");
+
+function fontStyle(font: WordLocalFont): StyleSpec {
+  const name = wordFontStyleName(font);
+  return {
+    type: "character",
+    id: `Scient${name.replaceAll(".", "_").replaceAll(/[^A-Za-z0-9_]/gu, "")}`,
+    name,
+    custom: true,
+    rPr: [
+      font.family === undefined ? "" : familyFonts(font.family),
+      font.size === undefined ? "" : size(font.size),
+      font.link ? HYPERLINK_LOOK : "",
+    ].join(""),
+  };
+}
+
+function scientReferenceStylesXml(base: WordBaseFont, used: ReadonlyArray<WordLocalFont>): string {
   return [
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
     `<w:styles xmlns:w="${W}">`,
-    `<w:docDefaults><w:rPrDefault><w:rPr>${BODY_FONT}${size(11)}<w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault>`,
+    `<w:docDefaults><w:rPrDefault><w:rPr>${familyFonts(base.family)}${size(base.sizePoints)}<w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault>`,
     `<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`,
-    ...SCIENT_REFERENCE_STYLES.map(style),
+    ...[...SCIENT_REFERENCE_STYLES, ...used.map(fontStyle)].map(style),
     `</w:styles>`,
   ].join("");
 }
@@ -421,34 +483,59 @@ const DOCUMENT_RELATIONSHIPS = [
 /** Fixed entry time, so the reference document is byte-for-byte reproducible. */
 const ENTRY_TIME = DateTime.toDateUtc(DateTime.makeUnsafe("2026-01-01T00:00:00Z"));
 
-export function scientReferenceDocumentParts(): ReadonlyArray<readonly [string, string]> {
+export function scientReferenceDocumentParts(
+  base: WordBaseFont = DEFAULT_WORD_BASE_FONT,
+  used: ReadonlyArray<WordLocalFont> = [],
+): ReadonlyArray<readonly [string, string]> {
   return [
     ["[Content_Types].xml", CONTENT_TYPES],
     ["_rels/.rels", PACKAGE_RELATIONSHIPS],
     ["word/document.xml", DOCUMENT_XML],
     ["word/_rels/document.xml.rels", DOCUMENT_RELATIONSHIPS],
-    ["word/styles.xml", scientReferenceStylesXml()],
+    ["word/styles.xml", scientReferenceStylesXml(base, used)],
   ];
 }
 
-let cached: Promise<Uint8Array> | null = null;
+// Reuse common combinations without retaining every document’s style set for the server lifetime.
+const cached = new Map<string, Promise<Uint8Array>>();
 
-function packReferenceDocument(): Promise<Uint8Array> {
+function packReferenceDocument(
+  base: WordBaseFont,
+  used: ReadonlyArray<WordLocalFont>,
+): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const zip = new yazl.ZipFile();
     const chunks: Array<Buffer> = [];
     zip.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk));
     zip.outputStream.on("error", reject);
     zip.outputStream.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
-    for (const [name, contents] of scientReferenceDocumentParts()) {
+    for (const [name, contents] of scientReferenceDocumentParts(base, used)) {
       zip.addBuffer(Buffer.from(contents, "utf8"), name, { mtime: ENTRY_TIME, mode: 0o100644 });
     }
     zip.end();
   });
 }
 
-/** The packed reference document; built once per process. */
-export const scientReferenceDocument = Effect.promise(() => {
-  cached ??= packReferenceDocument();
-  return cached;
-});
+/** The packed reference document for a base font and the local fonts used; recent combinations are reused. */
+export const scientReferenceDocumentFor = (
+  base: WordBaseFont,
+  used: ReadonlyArray<WordLocalFont> = [],
+) =>
+  Effect.promise(() => {
+    const key = [
+      `${base.sizePoints}/${base.family ?? ""}`,
+      ...used.map(wordFontStyleName).toSorted(),
+    ].join("|");
+    const existing = cached.get(key);
+    if (existing !== undefined) return existing;
+    const packed = packReferenceDocument(base, used);
+    const oldest = cached.keys().next();
+    if (cached.size >= 16 && !oldest.done) cached.delete(oldest.value);
+    cached.set(key, packed);
+    void packed.catch(() => {
+      if (cached.get(key) === packed) cached.delete(key);
+    });
+    return packed;
+  });
+
+export const scientReferenceDocument = scientReferenceDocumentFor(DEFAULT_WORD_BASE_FONT);

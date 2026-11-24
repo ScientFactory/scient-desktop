@@ -953,6 +953,9 @@ importers:
       '@scientfactory/scient-cloud':
         specifier: workspace:*
         version: link:../../packages/scient-cloud
+      '@scientfactory/scient-document':
+        specifier: workspace:*
+        version: link:../../packages/scient-document
       '@scientfactory/scient-markdown':
         specifier: workspace:*
         version: link:../../packages/scient-markdown
@@ -1500,6 +1503,9 @@ importers:
       remark-parse:
         specifier: 'catalog:'
         version: 11.0.0(supports-color@8.1.1)
+      remark-rehype:
+        specifier: 'catalog:'
+        version: 11.1.2
       saxes:
         specifier: 6.0.0
         version: 6.0.0
@@ -1533,6 +1539,9 @@ importers:
       vega-tooltip:
         specifier: 1.0.0
         version: 1.0.0
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zustand:
         specifier: ^5.0.11
         version: 5.0.14(@types/react@19.3.0)(react@19.3.0)(use-sync-external-store@1.6.0(react@19.3.0))

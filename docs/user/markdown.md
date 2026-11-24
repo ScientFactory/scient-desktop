@@ -376,6 +376,49 @@ continuous undo stack. Untouched source ranges are reused, but editing a rich
 block can normalize that block's Markdown. Use Source when exact syntax is the
 purpose of the edit.
 
+## Font and size
+
+**Text > Font / Size** sets the font and the size of the selected text. With only a
+caret, it applies to the word under the caret; between two words it applies to
+what you type next. The size is a number of points from 1 to 100, typed in the
+field or stepped with the minus and plus buttons (1 pt; 0.5 pt with Alt; 10 pt
+with Shift). The field shows the current size, and is empty when the selection
+mixes several sizes; the buttons then move each word by 1 pt, so the words keep
+their differences, as in Word. A click in the field lists common sizes (8 to 72).
+**Cmd+Shift+.** and **Cmd+Shift+,** (Ctrl on Windows and Linux) do the same as the
+plus and minus buttons. They name the key's position on a US keyboard, unless a saved shortcut already matches the event. On a French keyboard, use the `:` and `;` keys. Sizes are absolute, as in Word: 12 means 12 pt whatever the
+surrounding text.
+
+Press Enter in the size field, or choose a font, and the panel closes with the
+selection kept, so the result shows at once. The font list opens when you click
+the font button; it is searchable and scrolls inside its panel; each name is
+shown in its own face. A selection that mixes fonts shows "Mixed fonts".
+**Default** removes the local setting. The selection toolbar has the same panel
+behind its size button (**Aa**, or the size of the selection).
+
+The choice is saved in the file as `<span style="font-size:12pt">…</span>` and
+`<span style="font-family:'Times New Roman'">…</span>`. Only these exact forms
+are read; any other span stays literal source. A size inside another size, or a
+font inside another font, is not read either: the outer span stays source so no
+text silently loses its font. Fonts come from a fixed list; a name outside it is
+never applied. A size or font span is written inside links and outside bold, italic and strikethrough (`<span style="font-size:14pt">**word**</span>`).
+
+A space or line break at the edge of a style carries no style. Applying a size or
+font to a selection that ends with a space leaves that space unsized, and a space
+between two words sized one at a time is unsized. The same holds for bold, italic and
+strikethrough: Markdown cannot open or close them on a space, so Scient writes the
+space outside. When the size or font of a selection is read, spaces are ignored,
+so words sized one by one show their common size. Inline code keeps its own look;
+a size or font applied across it skips the code.
+
+**Document > Document settings** sets the whole document's font and base size
+(10, 11 or 12 pt) in the file's front matter, as `mainfont:` and `fontsize:`.
+Only the key you change is rewritten; other lines and comments stay as they are.
+
+PDF export prints with the fonts installed on the machine; a font that is not
+installed is replaced by a similar one. Word export writes the font name and
+size, and Word substitutes when the reader lacks the font.
+
 ## Direction, spelling, and shortcuts
 
 Choose **Text → Direction → Auto**, **LTR**, or **RTL** for the current block.

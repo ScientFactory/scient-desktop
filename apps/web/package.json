@@ -124,6 +124,7 @@
     "remark-gfm": "catalog:",
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",
+    "remark-rehype": "catalog:",
     "saxes": "6.0.0",
     "shiki": "4.2.0",
     "sql.js": "1.15.0",
@@ -135,6 +136,7 @@
     "vega-embed": "7.1.0",
     "vega-lite": "6.4.3",
     "vega-tooltip": "1.0.0",
+    "yaml": "catalog:",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

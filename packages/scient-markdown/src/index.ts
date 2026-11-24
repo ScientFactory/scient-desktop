@@ -41,3 +41,21 @@ export {
   resolveMarkdownDocumentRelativePath,
   type MarkdownDocumentInspection,
 } from "./documentResources.ts";
+export {
+  DOCUMENT_FONT_SIZES,
+  MARKDOWN_FONT_SPAN_CLOSE,
+  normalizeFontSize,
+  markdownFontSpanOpen,
+  markdownFontSpanStyle,
+  parseMarkdownFontSpanOpen,
+  parseMarkdownFontSpanStyle,
+  type DocumentFontSize,
+  type MarkdownFontSpan,
+} from "./fontSpans.ts";
+export {
+  FONT_CATALOGUE,
+  catalogueFont,
+  fontForLatexCode,
+  type CatalogueFont,
+  type FontCategory,
+} from "./fontCatalogue.ts";

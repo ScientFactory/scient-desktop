@@ -298,3 +298,17 @@ describe("nested block kinds", () => {
     expect(ledger.blocks[0]?.directionWrappedKind).toBe("heading");
   });
 });
+
+describe("font spans inside containers", () => {
+  it("do not make a list or quote source-only, other inline HTML still does", () => {
+    const kinds = (source: string) =>
+      createMarkdownSourceLedger(source).blocks.map((block) => block.nestedBlockKinds);
+    expect(kinds('- a <span style="font-size:14pt">b</span>\n')[0]).not.toContain("html");
+    expect(kinds("> a <span style=\"font-family:'Arial'\">b</span>\n")[0]).not.toContain("html");
+    expect(kinds('- a <span style="color:red">b</span>\n')[0]).toContain("html");
+    expect(kinds('- a <span style="font-size:14pt">b\n')[0]).toContain("html");
+    expect(kinds('- a <span style="font-size:1.2em">b</span>\n')[0]).toContain("html");
+    expect(kinds("- a <span style=\"font-family:'Unknown'\">b</span>\n")[0]).toContain("html");
+    expect(kinds("- a </span>\n")[0]).toContain("html");
+  });
+});
