@@ -534,6 +534,7 @@ export function layerWithRegistry<Error>(
         layerServerConfig,
         layerServerSettings,
         Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+        layerDatabase, // SCIENT-FORK: turn start reads persisted model windows from this database.
       ),
     ),
   );
