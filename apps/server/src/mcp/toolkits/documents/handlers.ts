@@ -24,6 +24,7 @@ import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevi
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
+import * as DocumentLabRuntime from "../../../scient/documents/DocumentLabRuntime.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import type { WorkspacePathsError } from "../../../workspace/WorkspacePaths.ts";
 import type { WorkspaceMutationError } from "../../../scient/workspace/WorkspaceFileMutations.ts";
@@ -38,7 +39,11 @@ import {
   resolveProjectSourceFile,
   prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
-import { ScientDocumentsToolkit, ScientPdfBuildToolError } from "./tools.ts";
+import {
+  ScientDocumentRuntimeToolkit,
+  ScientDocumentsToolkit,
+  ScientPdfBuildToolError,
+} from "./tools.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientPdfBuildToolError>[0]["code"];
 
@@ -431,3 +436,8 @@ export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer
     } satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
   }),
 );
+
+export const ScientDocumentRuntimeToolkitHandlersLive = ScientDocumentRuntimeToolkit.toLayer({
+  scient_document_runtime: () =>
+    DocumentLabRuntime.DocumentLabRuntime.use((runtime) => runtime.status),
+});

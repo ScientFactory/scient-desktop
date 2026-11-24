@@ -2323,11 +2323,16 @@ py -3 -m venv "$env:TEMP\\pdf-review-env"
 \`render_pdf.py\` is this skill's \`scripts/render_pdf.py\` (read it with \`scient_skill_read_resource\` and save it in the temporary folder). Omit \`--pages\` for every page; the output folder must not exist yet, so use a new one after each rebuild. It prints the page count and the image paths.
 
 Open the images with your image-view tool and actually look at them. If you can't render or view them, say that visual inspection was not performed and why. Page images don't show live links, font embedding or tags; check those in the PDF structure when they are required.
+
+For Hebrew and mixed-direction layouts, check the actual PDF page image
+against the source. Check the paragraph edge separately from inline reading
+order, including the words before and after a language switch and any wrap.
+Inspect punctuation, minus signs, ranges and table order where they appear.
 `,
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.pdf-authoring",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 40,
