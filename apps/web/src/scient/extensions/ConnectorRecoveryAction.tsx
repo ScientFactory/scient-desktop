@@ -15,7 +15,7 @@ import { openAuthorizationPage } from "./openAuthorizationPage";
 
 const stopRowToggle = (event: KeyboardEvent<HTMLElement>) => event.stopPropagation();
 
-const CONNECTOR_LOOKUP_TOOL = /(?:^|[_.\s·/])scient_connector_(?:list|check)$/u;
+const CONNECTOR_LOOKUP_TOOL = /(?:^|[_.\s·/])scient_connector_check$/u;
 
 /** The connector a Scient lookup or check named, under every provider's tool spelling. */
 export function connectorRecoveryTarget(toolName: string | null, input: unknown): string | null {
