@@ -33,7 +33,8 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   server, web app, and monorepo root, dropping the dependency-ordering wait that only bought idle
   runner time. Six runners share it: `Test` runs every package the others don't name, so a new
   package always runs; `Test 3` runs client-runtime, scripts, provider-runtime and shared;
-  `Test 2` and `Test 4` run halves of mobile (`--shard 1/2`, `2/2`); `Test 5` runs the oxlint
+  `Test 2` and `Test 4` run halves of mobile (`--shard 1/2`, `2/2`), and whichever half has the
+  React Compiler sweep, mobile's longest file, starts it first; `Test 5` runs the oxlint
   plugin; and `Test 6` runs desktop with its Electron runtime, browser secret helper libraries and
   export smokes. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
