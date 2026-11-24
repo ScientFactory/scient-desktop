@@ -197,7 +197,10 @@ it.effect("runs background Git in its own lane so user commands never queue behi
     }).pipe(Effect.forkChild);
 
     yield* TestClock.adjust("2 seconds");
-    const started = yield* Queue.takeAll(starts);
+    // SCIENT-FORK:START git-lane-starts — each start follows real I/O, so wait for it; offered upstream.
+    const started = yield* Queue.takeN(starts, 6);
+    assert.equal(yield* Queue.size(starts), 0);
+    // SCIENT-FORK:END git-lane-starts
     assert.deepStrictEqual([...started].toSorted(), [
       "background",
       "background",
