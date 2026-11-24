@@ -207,6 +207,7 @@ Follow their linked successors for current behavior.
 - [Development commands and prerequisites](./operations/00_development.md)
 - [Dev container](./operations/01_devcontainer.md)
 - [Stable dev-app review](./operations/dev-app-review.md)
+- [Worktree sweep](./operations/worktree-sweep.md)
 - [CI flake register and delivery limits](./operations/ci-flakes.md)
 - [Compute backend qualification](./operations/compute-backend-qualification.md)
 - [Windows dev app](./operations/local-dev-app-windows.md)
