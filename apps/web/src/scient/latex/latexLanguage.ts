@@ -49,6 +49,8 @@ function preambleDeclarations(source: string) {
   };
 }
 
+import { GUARDED_MAIN_FONT } from "@scientfactory/scient-document/latex";
+
 export function latexDocumentLanguage(source: string) {
   const { find } = preambleDeclarations(source);
   const packages = find(/\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}/gu);
@@ -97,7 +99,11 @@ export function latexDocumentLanguage(source: string) {
     ).at(-1)?.[1] ??
     null;
   const mainFont =
-    babelFont(main) ?? find(/\\setmainfont\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu).at(-1)?.[1] ?? null;
+    babelFont(main) ??
+    [...find(GUARDED_MAIN_FONT), ...find(/\\setmainfont\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu)]
+      .sort((a, b) => a.index - b.index)
+      .at(-1)?.[1] ??
+    null;
   const englishFont = babelFont("english") ?? mainFont;
   const languageTags = new Map<string, LatexWritingLanguage>();
   for (const declaration of find(/\\babeltags\s*\{([^{}]+)\}/gu)) {

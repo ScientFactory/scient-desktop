@@ -88,7 +88,10 @@ import {
 } from "./latexLiteral";
 import {
   LATEX_INLINE_MARKS,
-  LATEX_TEXT_DECLARATIONS,
+  latexFontGroupSource,
+  latexMarkKey,
+  latexMarkNode,
+  latexTextDeclarationAt,
   latexTextMarkSource,
   withLatexTextMark,
 } from "./latexTextFormatting";
@@ -566,7 +569,7 @@ function textNode(text: string, marks: readonly string[]): JSONContent | null {
   return {
     type: "text",
     text,
-    ...(marks.length === 0 ? {} : { marks: marks.map((type) => ({ type })) }),
+    ...(marks.length === 0 ? {} : { marks: marks.map(latexMarkNode) }),
   };
 }
 
@@ -759,13 +762,10 @@ function inlineGroup(source: string, at: number, marks: readonly string[]): Inli
         );
   // Declarations affect the rest of this group and stop at its closing brace.
   for (;;) {
-    const declaration = /^\\([A-Za-z]+)(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u.exec(
-      source.slice(from, close),
-    );
-    const declaredMark = declaration ? LATEX_TEXT_DECLARATIONS[declaration[1]!] : undefined;
-    if (declaredMark === undefined) break;
-    nextMarks = withLatexTextMark(nextMarks, declaredMark);
-    from += declaration![0].length;
+    const declaration = latexTextDeclarationAt(source.slice(from, close));
+    if (declaration === null) break;
+    nextMarks = withLatexTextMark(nextMarks, declaration.mark);
+    from += declaration.length;
   }
   return { from, to: close, end: close + 1, marks: nextMarks, prefix: source.slice(at, from) };
 }
@@ -910,13 +910,13 @@ function inlinePiece(
   const group = inlineGroup(source, at, marks);
   if (group) return { end: group.end, group };
   if (scoped) {
-    const declaration = /^\\([A-Za-z]+)(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u.exec(rest);
-    const mark = declaration ? LATEX_TEXT_DECLARATIONS[declaration[1]!] : undefined;
-    if (mark !== undefined) return { end: at + declaration![0].length, declaration: mark };
+    const declaration = latexTextDeclarationAt(rest);
+    if (declaration !== null)
+      return { end: at + declaration.length, declaration: declaration.mark };
   }
   const marked = (node: JSONContent): JSONContent => ({
     ...node,
-    ...(marks.length ? { marks: marks.map((type) => ({ type })) } : {}),
+    ...(marks.length ? { marks: marks.map(latexMarkNode) } : {}),
   });
   const columnBreak = /^\\columnbreak\b(?:[\t ]*\[4\])?[\t ]*(?:\r?\n[\t ]*)?/u.exec(rest);
   if (columnBreak) {
@@ -4855,6 +4855,31 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
     }
     return result;
   }
+  // One group covers a whole run of equal size (or font), with its math and other marks inside.
+  const groupType = ["latexFontSize", "latexFontFamily"].find((type) =>
+    nodes?.some((node) => node.marks?.some((mark) => mark.type === type)),
+  );
+  if (groupType && nodes) {
+    let result = "";
+    for (let at = 0; at < nodes.length;) {
+      const group = nodes[at]!.marks?.find((mark) => mark.type === groupType);
+      const signature = JSON.stringify(group);
+      let end = at + 1;
+      while (
+        end < nodes.length &&
+        JSON.stringify(nodes[end]!.marks?.find((mark) => mark.type === groupType)) === signature
+      )
+        end++;
+      const content = nodes.slice(at, end).map((node) => ({
+        ...node,
+        marks: (node.marks ?? []).filter((mark) => mark.type !== groupType),
+      }));
+      const inner = serializeInline(content);
+      result += group ? latexFontGroupSource(group, inner) : inner;
+      at = end;
+    }
+    return result;
+  }
   const merged: JSONContent[] = [];
   for (const node of nodes ?? []) {
     const previous = merged.at(-1);
@@ -7289,14 +7314,14 @@ function minimallyPatchedBlock(
         if (
           start > end ||
           changed.some((node) =>
-            context.some((mark) => !node.marks?.some((item) => item.type === mark)),
+            context.some((mark) => !node.marks?.some((item) => latexMarkKey(item) === mark)),
           )
         )
           continue;
         const inserted = serializeInline(
           changed.map((node) => ({
             ...node,
-            marks: (node.marks ?? []).filter((mark) => !context.includes(mark.type)),
+            marks: (node.marks ?? []).filter((mark) => !context.includes(latexMarkKey(mark))),
           })),
         );
         const before = block.source.slice(0, start);

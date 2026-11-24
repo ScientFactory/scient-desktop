@@ -95,6 +95,9 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { isActiveProviderConnectionOperation } from "~/scient/providerConnection/providerConnectionPresentation";
 import { hasRuntimeModelCatalog } from "../../providerModels";
+// SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
+// SCIENT-FORK:END
 
 export type ModelPickerItem = {
   isDefault?: boolean | undefined;
@@ -205,11 +208,17 @@ function modelJumpLabelsByKey(
 
 function ModelPickerProviderNotices({
   setupEntries,
+  // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+  environmentId,
+  // SCIENT-FORK:END
   updateRequiredNotices,
   onRequestClose,
   onOpenProviderSetup,
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
+  // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+  environmentId: EnvironmentId | null;
+  // SCIENT-FORK:END
   updateRequiredNotices: ReadonlyArray<{
     instanceId: ProviderInstanceId;
     notice: string;
@@ -230,6 +239,12 @@ function ModelPickerProviderNotices({
               <p className="line-clamp-3 text-muted-foreground">
                 {getProviderStatusMessage(entry.snapshot, messages)}
               </p>
+              {/* SCIENT-FORK:START — Only the provider on this desktop can offer its app update. */}
+              <ProviderAppUpdateButton
+                environmentId={environmentId}
+                requiresAppUpdate={entry.snapshot.requiresAppUpdate}
+              />
+              {/* SCIENT-FORK:END */}
               <InlineButton
                 className="mt-1"
                 onClick={() => {
@@ -1456,6 +1471,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : null}
             <ModelPickerProviderNotices
               setupEntries={selectedSetupEntry ? [] : providerSetupEntries}
+              // SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
+              environmentId={props.environmentId}
+              // SCIENT-FORK:END
               updateRequiredNotices={updateRequiredNotices}
               onRequestClose={props.onRequestClose}
               onOpenProviderSetup={props.onOpenProviderSetup}

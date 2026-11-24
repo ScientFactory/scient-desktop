@@ -33,8 +33,16 @@ mode names are not a second public four-mode switch.
 Rich prose, headings, lists/tasks, GFM tables, links/wiki links, images, footnotes,
 citation syntax, math, code, scientific fences, and exact-source islands exist.
 Citation keys are not a claim of bibliography resolution or LaTeX citation parity.
-Inline font-size/color/highlight controls are not part of this surface's current
-formatting catalog. Shared menus, math commands, renderers and footer components
+The editor reads local font sizes and families from `<span style="font-size:12pt">` and
+`<span style="font-family:'Name'">`. Names come from the shared font catalogue.
+A block containing nested spans of the same kind remains editable as source.
+Whole-document font choices use the `fontsize` and `mainfont` keys in YAML front matter.
+The writer places font spans inside links and outside emphasis and strikethrough.
+Both editors share caret-word targeting, selection values and size steps in `writing/fontTarget.ts`.
+At a change of style, the live Markdown document and writer apply the same whitespace rule
+in `unstyleBoundaryWhitespace`. Links and code retain their whitespace. The writeback
+guard checks the reopened text and marks. Font commands skip inline code and ignore
+whitespace-only text when reading a selection. Shared menus, math commands, renderers and footer components
 do not merge the Markdown and LaTeX grammars, document models, or undo histories.
 
 Source preservation is bounded. Unchanged ledger ranges are reused exactly;

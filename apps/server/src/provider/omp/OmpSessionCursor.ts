@@ -113,20 +113,19 @@ export const ompSessionDirectoryKey = (instanceId: string, threadId: string): st
   NodeCrypto.createHash("sha256").update(`${instanceId}\0${threadId}`).digest("hex").slice(0, 32);
 
 /**
- * Resume across patch versions of the same major, and forward along `forwardMajors` (majors in
- * release order whose session files a later one reads). Any other major is refused.
+ * Resume across patch versions of the same major. With `resumesEarlier`, also resume a session an
+ * earlier release of any major wrote; a later one's is still refused.
  */
 export const ompMajorCompatible = (
   stored: string,
   running: string,
-  forwardMajors: ReadonlyArray<number> = [],
+  resumesEarlier = false,
 ): boolean => {
   const storedMajor = Number.parseInt(stored.split(".")[0] ?? "", 10);
   const runningMajor = Number.parseInt(running.split(".")[0] ?? "", 10);
   if (!Number.isInteger(storedMajor) || storedMajor <= 0) return false;
   if (storedMajor === runningMajor) return true;
-  const from = forwardMajors.indexOf(storedMajor);
-  return from >= 0 && forwardMajors.indexOf(runningMajor) > from;
+  return resumesEarlier && Number.isInteger(runningMajor) && runningMajor > storedMajor;
 };
 
 /** Lexical containment. A path that escapes the session root cannot be resumed. */
@@ -195,7 +194,7 @@ export const parseOmpSessionCursor = (
         !ompMajorCompatible(
           cursor.ompVersion,
           input.ompVersion,
-          input.target.resumableUpstreamMajors,
+          input.target.resumesEarlierUpstreamSessions,
         )
       ) {
         return Effect.fail(

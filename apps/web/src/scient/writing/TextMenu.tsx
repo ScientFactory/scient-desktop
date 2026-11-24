@@ -7,6 +7,7 @@ import { DockMenu } from "./dockChrome";
 export type TextMenuContents = {
   paragraphStyle: ReactNode;
   formatting: ReactNode;
+  font?: ReactNode;
   alignment?: ReactNode;
   direction?: ReactNode;
   directionLabel?: string;
@@ -32,6 +33,7 @@ export function TextMenuItems(props: TextMenuContents) {
     <>
       {category(gt("Paragraph style"), props.paragraphStyle)}
       {category(gt("Formatting", { $context: "text formatting commands" }), props.formatting)}
+      {props.font ? category(gt("Font / Size"), props.font) : null}
       {props.alignment
         ? category(gt("Alignment", { $context: "text alignment" }), props.alignment)
         : null}

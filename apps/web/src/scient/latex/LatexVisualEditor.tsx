@@ -6,7 +6,16 @@ import { resolvedLatexFontSize } from "./latexVisualLayout";
 import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
 import { latexQuote } from "../annotations/quoteFormat";
 import { latexSelectionClipboard } from "./latexClipboard";
+import { catalogueFont } from "@scientfactory/scient-markdown/fonts";
+import { FontControls } from "../writing/FontControls";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
+import {
+  latexFontAvailable,
+  latexFontEngine,
+  setLatexFontFamily,
+  setLatexFontSize,
+  stepLatexFontSize,
+} from "./latexFontCommands";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
 import { mathColorSource } from "./mathColorSyntax";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
@@ -5763,6 +5772,51 @@ const LatexTextMarks = LATEX_CANVAS_TEXT_MARKS.map(({ name, style }) =>
   ),
 );
 
+/** A numeric size (`\fontsize{12}{14.4}\selectfont`): size and baseline in TeX points. */
+const LatexFontSize = Mark.create({
+  name: "latexFontSize",
+  addAttributes() {
+    return { points: { default: 10 }, leading: { default: 12 } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-latex-font-size]" }];
+  },
+  renderHTML({ mark }) {
+    const pixels = (points: unknown) =>
+      `${(Number(points) * CSS_PIXELS_PER_INCH) / TEX_POINTS_PER_INCH}px`;
+    return [
+      "span",
+      {
+        "data-latex-font-size": String(mark.attrs.points),
+        style: `font-size:${pixels(mark.attrs.points)};line-height:${pixels(mark.attrs.leading)}`,
+      },
+      0,
+    ];
+  },
+});
+
+/** A named font from the catalogue; `engine` is the form it is written in (see latexTextFormatting). */
+const LatexFontFamily = Mark.create({
+  name: "latexFontFamily",
+  addAttributes() {
+    return { family: { default: "" }, engine: { default: "pdftex" } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-latex-font-family]" }];
+  },
+  renderHTML({ mark }) {
+    const font = catalogueFont(String(mark.attrs.family));
+    return [
+      "span",
+      {
+        "data-latex-font-family": String(mark.attrs.family),
+        ...(font ? { style: `font-family:${font.css}` } : {}),
+      },
+      0,
+    ];
+  },
+});
+
 const LatexColor = Mark.create({
   name: "latexColor",
   priority: 1100,
@@ -5812,6 +5866,8 @@ const LatexMonospace = Code.extend({ excludes: "" });
 
 const inlineFieldExtensions = [
   ...LatexTextMarks,
+  LatexFontSize,
+  LatexFontFamily,
   LatexColor,
   LatexColor.extend({
     name: "latexBackground",
@@ -5846,6 +5902,8 @@ const baseExtensions = [
     trailingNode: false,
   }),
   ...LatexTextMarks,
+  LatexFontSize,
+  LatexFontFamily,
   LatexColor,
   LatexColor.extend({
     name: "latexBackground",
@@ -8942,6 +9000,15 @@ function LatexVisualEditorReady(
       return mathTarget.current
         ? mathTarget.current.toggleTextFormat("monospace")
         : toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "code");
+    if (id === "latex.fontSizeLarger" || id === "latex.fontSizeSmaller")
+      return (
+        !mathTarget.current &&
+        stepLatexFontSize(
+          latexEditingTarget(editor),
+          id === "latex.fontSizeLarger" ? 1 : -1,
+          latexVisualLayoutProfile(mathSetupSource).baseFontPt,
+        )
+      );
     if (id === "latex.link") {
       const link = insertActions.find((action) => action.id === "link");
       if (!link || link.disabled || link.disabledReason) return false;
@@ -9669,7 +9736,10 @@ function LatexVisualEditorReady(
   // The same inline formatting, in the same order, as the Markdown bar; LaTeX
   // has no strikethrough.
   // Inline formatting acts on text; on an object (title, figure, equation) it is off.
-  const editingPresentation = useLatexEditingPresentation(editor);
+  const editingPresentation = useLatexEditingPresentation(
+    editor,
+    latexVisualLayoutProfile(mathSetupSource).baseFontPt,
+  );
   const editingTarget = editingPresentation.editor;
   const formattingAvailable = editingPresentation.formattingAvailable;
   const formatActions = [
@@ -10077,9 +10147,30 @@ function LatexVisualEditorReady(
       ))}
     </>
   );
+  const fontEngine = latexFontEngine(mathSetupSource);
   const writingTextContents = {
     paragraphStyle: writingStyleItems,
     formatting: writingFormattingItems,
+    font: (
+      <FontControls
+        family={editingPresentation.fontFamily}
+        size={editingPresentation.fontSize}
+        familyMixed={editingPresentation.fontFamilyMixed}
+        sizeMixed={editingPresentation.fontSizeMixed}
+        disabled={readOnly || !editor || !formattingAvailable || mathActive}
+        isAvailable={(name) => latexFontAvailable(fontEngine, name)}
+        unavailableNote={gt("Needs XeLaTeX or LuaLaTeX")}
+        onFamily={(family) => setLatexFontFamily(editingTarget, family, fontEngine)}
+        onSize={(size) => setLatexFontSize(editingTarget, size)}
+        onStep={(steps) =>
+          stepLatexFontSize(
+            editingTarget,
+            steps,
+            latexVisualLayoutProfile(mathSetupSource).baseFontPt,
+          )
+        }
+      />
+    ),
     direction: (
       <LatexDirectionMenuItems
         editor={editor}

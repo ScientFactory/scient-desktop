@@ -150,9 +150,10 @@ Body.`);
       nodes.find((node) => node.text === "Title")!.text = "New title";
     });
     expect(result?.source).toBe(source.replace("Title", "New title"));
+    // A group around one paragraph reopens as a numeric size mark on its text.
     expect(
-      descendants(projectLatexVisualDocument(result!.source).content).some(
-        (node) => node.attrs?.layout?.points === 19,
+      descendants(projectLatexVisualDocument(result!.source).content).some((node) =>
+        node.marks?.some((mark) => mark.type === "latexFontSize" && mark.attrs?.points === 19),
       ),
     ).toBe(true);
   });

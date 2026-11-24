@@ -11,6 +11,7 @@ import {
   saveKeyboardPreferences,
   subscribeKeyboardPreferences,
 } from "./preferences";
+import { EVENT_CODE_SHORTCUT_KEYS } from "@t3tools/shared/keybindingMatching";
 import { eventStroke, isMacKeyboard, normalizeKeys } from "./keys";
 import { ShortcutSequence } from "./sequence";
 import { attachShortcutHost } from "./host";
@@ -40,6 +41,24 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("portable keyboard preferences", () => {
+  it("dispatches persisted logical punctuation ahead of positional size defaults", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const sequence = new ShortcutSequence("latex", undefined, true);
+    const events = [
+      key(">", { code: "Period", metaKey: true, shiftKey: true }),
+      key(";", { code: "Semicolon", metaKey: true }),
+      key("+", { code: "Equal", metaKey: true, shiftKey: true }),
+    ];
+    expect(sequence.peek(events[0]!)).toEqual({ command: "latex.fontSizeLarger" });
+    saveKeyboardPreferences({
+      ...defaults,
+      overrides: { "latex.bold": ["meta+>", "meta+;", "meta+plus"] },
+    });
+    reloadKeyboardPreferences();
+    for (const event of events) expect(sequence.peek(event)).toEqual({ command: "latex.bold" });
+  });
   it("migrates legacy exact-key overrides and retains original persisted data", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -133,7 +152,13 @@ describe("sequence matching and ownership", () => {
         for (const [index, stroke] of strokes.entries()) {
           const parts = stroke.split("+");
           const value = parts.pop()!;
+          // A real key always carries its physical position, which digit and punctuation
+          // shortcuts are matched by.
+          const code =
+            Object.entries(EVENT_CODE_SHORTCUT_KEYS).find(([, symbol]) => symbol === value)?.[0] ??
+            "";
           const event = key(value === "plus" ? "+" : value === "space" ? " " : value, {
+            code,
             ctrlKey: parts.includes("ctrl"),
             metaKey: parts.includes("meta"),
             altKey: parts.includes("alt"),

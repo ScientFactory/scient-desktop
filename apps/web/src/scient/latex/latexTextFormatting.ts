@@ -1,3 +1,10 @@
+import { latexPackageInventory } from "./latexPackages";
+import { declaredLatexCompiler } from "./latexCompiler";
+import {
+  fontForLatexCode,
+  catalogueFont,
+  normalizeFontSize,
+} from "@scientfactory/scient-markdown/fonts";
 import { LATEX_DIRECTION_MARKS, latexDirectionMark } from "./latexLanguage";
 
 /** Text styles understood by both the source adapter and the editable canvas. */
@@ -29,7 +36,7 @@ export const LATEX_INLINE_MARKS: Readonly<Record<string, string>> = {
   ...Object.fromEntries(LATEX_DIRECTION_MARKS.map(({ command, name }) => [command, name])),
 };
 
-export const LATEX_TEXT_DECLARATIONS: Readonly<Record<string, string>> = {
+const LATEX_TEXT_DECLARATIONS: Readonly<Record<string, string>> = {
   bfseries: "bold",
   mdseries: "latexMedium",
   itshape: "italic",
@@ -41,6 +48,139 @@ export const LATEX_TEXT_DECLARATIONS: Readonly<Record<string, string>> = {
   sffamily: "latexSans",
   ...Object.fromEntries(LATEX_TEXT_SIZES.map((size) => [size, `latexSize_${size}`])),
 };
+
+/**
+ * A numeric size is one mark whose key carries its values (`latexFontSize:12/14.4`:
+ * size and baseline in points), so the parser can keep working on plain string marks.
+ */
+const FONT_SIZE_MARK = "latexFontSize";
+
+function latexFontSizeMark(points: number, leading?: number): string {
+  return `${FONT_SIZE_MARK}:${points}/${leading ?? Math.round(points * 1.2 * 100) / 100}`;
+}
+
+/**
+ * A named font is one mark whose key carries the catalogue name and the form it is written in
+ * (`latexFontFamily:pdftex:Times New Roman`), so the same bytes are written back on save.
+ */
+const FONT_FAMILY_MARK = "latexFontFamily";
+
+/** pdfLaTeX writes a font family code; XeLaTeX and LuaLaTeX write a guarded `\fontspec` name. */
+export type LatexFontEngine = "pdftex" | "fontspec";
+
+function latexFontFamilyMark(engine: LatexFontEngine, family: string): string {
+  return `${FONT_FAMILY_MARK}:${engine}:${family}`;
+}
+
+type LatexMarkNode = { type: string; attrs?: Record<string, number | string> };
+
+/** The ProseMirror mark a string mark stands for. */
+export function latexMarkNode(key: string): LatexMarkNode {
+  const size = new RegExp(`^${FONT_SIZE_MARK}:([\\d.]+)/([\\d.]+)$`, "u").exec(key);
+  if (size)
+    return { type: FONT_SIZE_MARK, attrs: { points: Number(size[1]), leading: Number(size[2]) } };
+  const font = new RegExp(`^${FONT_FAMILY_MARK}:(pdftex|fontspec):(.+)$`, "u").exec(key);
+  return font
+    ? { type: FONT_FAMILY_MARK, attrs: { engine: font[1]!, family: font[2]! } }
+    : { type: key };
+}
+
+/** The string mark key of a ProseMirror mark: the inverse of `latexMarkNode`. */
+export function latexMarkKey(mark: { type: string; attrs?: Record<string, unknown> }): string {
+  if (mark.type === FONT_FAMILY_MARK)
+    return latexFontFamilyMark(
+      mark.attrs?.engine === "fontspec" ? "fontspec" : "pdftex",
+      String(mark.attrs?.family),
+    );
+  return mark.type === FONT_SIZE_MARK
+    ? latexFontSizeMark(Number(mark.attrs?.points), Number(mark.attrs?.leading))
+    : mark.type;
+}
+
+const SIMPLE_DECLARATION = /^\\([A-Za-z]+)(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u;
+const FONT_SIZE_DECLARATION =
+  /^\\fontsize\s*\{\s*([\d.]+)\s*(?:pt)?\s*\}\s*\{\s*([\d.]+)\s*(?:pt)?\s*\}\s*\\selectfont(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u;
+const FONT_FAMILY_CODE_DECLARATION =
+  /^\\fontfamily\{([a-z0-9]+)\}\\selectfont(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u;
+const FONT_FAMILY_NAME_DECLARATION =
+  /^\\IfFontExistsTF\{([^{}]+)\}\{\\fontspec\{\1\}\}\{\\fontspec\{([^{}]+)\}\}(?:\{\}|[\t\r\n ]*)/u;
+
+/** The fonts used when a named font is missing under XeLaTeX or LuaLaTeX: Latin Modern files in the managed TeX distribution. */
+const FALLBACK_FONT: Readonly<Record<string, string>> = {
+  serif: "lmroman10-regular.otf",
+  "sans-serif": "lmsans10-regular.otf",
+  monospace: "lmmono10-regular.otf",
+};
+
+/** An explicit engine takes precedence over active preamble package declarations. */
+export function latexFontEngine(setupSource: string): LatexFontEngine {
+  const declared = declaredLatexCompiler(setupSource);
+  if (declared === "xelatex" || declared === "lualatex" || declared === "tectonic")
+    return "fontspec";
+  return declared !== "pdflatex" && latexPackageInventory(setupSource).loaded.has("fontspec")
+    ? "fontspec"
+    : "pdftex";
+}
+
+export function latexFontFamilyDeclaration(engine: LatexFontEngine, family: string): string | null {
+  const font = catalogueFont(family);
+  if (!font) return null;
+  if (engine === "pdftex")
+    return font.latex.pdftex === null ? null : `\\fontfamily{${font.latex.pdftex}}\\selectfont`;
+  const fallback = FALLBACK_FONT[font.category]!;
+  return `\\IfFontExistsTF{${font.latex.fontspec}}{\\fontspec{${font.latex.fontspec}}}{\\fontspec{${fallback}}}`;
+}
+
+/** A text style declaration at the start of `source`: `\large`, `\ttfamily`, `\fontsize{12}{14.4}\selectfont`. */
+export function latexTextDeclarationAt(source: string): { mark: string; length: number } | null {
+  const size = FONT_SIZE_DECLARATION.exec(source);
+  if (size) {
+    const points = normalizeFontSize(Number(size[1]));
+    const leading = Number(size[2]);
+    return points === null || !(leading > 0 && leading <= 150)
+      ? null
+      : { mark: latexFontSizeMark(points, leading), length: size[0].length };
+  }
+  const code = FONT_FAMILY_CODE_DECLARATION.exec(source);
+  if (code) {
+    const font = fontForLatexCode(code[1]);
+    return font && font.latex.pdftex === code[1]
+      ? { mark: latexFontFamilyMark("pdftex", font.name), length: code[0].length }
+      : null;
+  }
+  const named = FONT_FAMILY_NAME_DECLARATION.exec(source);
+  if (named) {
+    const font = catalogueFont(named[1]!);
+    const written = font && latexFontFamilyDeclaration("fontspec", font.name);
+    return font && named[0].startsWith(written ?? "\0")
+      ? { mark: latexFontFamilyMark("fontspec", font.name), length: named[0].length }
+      : null;
+  }
+  const simple = SIMPLE_DECLARATION.exec(source);
+  const mark = simple ? LATEX_TEXT_DECLARATIONS[simple[1]!] : undefined;
+  return simple && mark !== undefined ? { mark, length: simple[0].length } : null;
+}
+
+/** Source of a group around already serialised text; `{}` after the declaration keeps a leading space. */
+function declarationGroup(declaration: string, text: string): string {
+  return `{${declaration}${/^\s/u.test(text) ? "{}" : " "}${text}}`;
+}
+
+/** Source of the group a size or font-family ProseMirror mark stands for. */
+export function latexFontGroupSource(
+  mark: { type: string; attrs?: Record<string, unknown> },
+  text: string,
+): string {
+  if (mark.type === FONT_FAMILY_MARK) {
+    const engine = mark.attrs?.engine === "fontspec" ? "fontspec" : "pdftex";
+    const declaration = latexFontFamilyDeclaration(engine, String(mark.attrs?.family));
+    return declaration === null ? text : declarationGroup(declaration, text);
+  }
+  return declarationGroup(
+    `\\fontsize{${Number(mark.attrs?.points)}}{${Number(mark.attrs?.leading)}}\\selectfont`,
+    text,
+  );
+}
 
 export const LATEX_CANVAS_TEXT_MARKS = [
   { name: "latexSmallCaps", style: "small-caps" },
@@ -54,7 +194,8 @@ export const LATEX_CANVAS_TEXT_MARKS = [
 
 function markGroup(mark: string): string {
   if (latexDirectionMark(mark)) return "direction";
-  if (mark.startsWith("latexSize_")) return "size";
+  if (mark.startsWith("latexSize_") || mark.startsWith(`${FONT_SIZE_MARK}:`)) return "size";
+  if (mark.startsWith(`${FONT_FAMILY_MARK}:`)) return "family";
   if (["code", "latexRoman", "latexSans"].includes(mark)) return "family";
   if (["italic", "latexSlanted", "latexUpright", "latexSmallCaps"].includes(mark)) return "shape";
   if (["bold", "latexMedium"].includes(mark)) return "weight";
