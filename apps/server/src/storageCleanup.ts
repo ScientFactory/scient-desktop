@@ -90,9 +90,19 @@ const decodeCleanupSession = Schema.decodeUnknownEffect(
 );
 const decodeWorktreeLeftovers = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
-    Schema.Array(Schema.Struct({ adminDir: Schema.String, entry: StorageCleanupReportEntry })),
+    Schema.Array(
+      Schema.Struct({
+        adminDir: Schema.String,
+        entry: StorageCleanupReportEntry,
+        // SCIENT-FORK:START — the admin directory as noted, so a reused name is never deleted.
+        identity: Schema.optional(Schema.String),
+        gitdir: Schema.optional(Schema.NullOr(Schema.String)),
+        // SCIENT-FORK:END
+      }),
+    ),
   ),
 );
+type WorktreeLeftover = Effect.Success<ReturnType<typeof decodeWorktreeLeftovers>>[number];
 // pnpm 11 writes this file as JSON, older versions as YAML.
 const decodePnpmModulesManifest = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -1256,12 +1266,7 @@ const make = Effect.gen(function* () {
     Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("[]")),
     Effect.flatMap(decodeWorktreeLeftovers),
   );
-  const writeLeftovers = (
-    leftovers: ReadonlyArray<{
-      readonly adminDir: string;
-      readonly entry: StorageCleanupReportEntry;
-    }>,
-  ) =>
+  const writeLeftovers = (leftovers: ReadonlyArray<WorktreeLeftover>) =>
     leftovers.length === 0
       ? fs.remove(leftoversPath, { force: true })
       : writeFileStringAtomically({
@@ -1278,6 +1283,51 @@ const make = Effect.gen(function* () {
     });
     return gitDir.stdout.trim();
   });
+  // SCIENT-FORK:START — a leftover is bound to its original admin directory. Git can prune it and
+  // give its name to a new worktree, so a different directory, or one whose back-pointer changed,
+  // is kept and its record dropped.
+  const adminDirIdentity = (adminDir: string) =>
+    fs
+      .stat(adminDir)
+      .pipe(
+        Effect.map((info) =>
+          [
+            info.dev,
+            Option.getOrElse(info.ino, () => ""),
+            Option.getOrUndefined(info.birthtime)?.getTime() ?? "",
+          ].join("-"),
+        ),
+      );
+  const readGitdir = (adminDir: string) =>
+    fs.readFileString(path.join(adminDir, "gitdir")).pipe(
+      Effect.map((gitdir): string | null => gitdir.trim()),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(null)),
+    );
+  const isNotedLeftover = Effect.fn("StorageCleanup.isNotedLeftover")(function* (
+    leftover: WorktreeLeftover,
+    adminDir: string,
+  ) {
+    if (leftover.identity !== (yield* adminDirIdentity(adminDir))) return false;
+    // Git may have deleted the back-pointer, and moving the checkout back rewrites it.
+    const gitdir = yield* readGitdir(adminDir);
+    return (
+      gitdir === null ||
+      leftover.gitdir == null ||
+      gitdir === leftover.gitdir ||
+      (leftover.entry.path !== null &&
+        path.resolve(adminDir, gitdir) === path.join(leftover.entry.path, ".git"))
+    );
+  });
+  // Deleted under a name of its own, so a worktree Git creates at the old name meanwhile is kept.
+  const asidePrefix = ".scient-removing-";
+  const leftoverAside = (leftover: WorktreeLeftover) =>
+    path.basename(leftover.adminDir).startsWith(asidePrefix)
+      ? leftover.adminDir
+      : path.join(
+          path.dirname(leftover.adminDir),
+          `${asidePrefix}${path.basename(leftover.adminDir)}-${leftover.identity ?? ""}`,
+        );
+  // SCIENT-FORK:END
   const noteLeftover = Effect.fn("StorageCleanup.noteLeftover")(
     function* (adminDir: string, entry: StorageCleanupReportEntry) {
       if (entry.path === null || path.basename(path.dirname(adminDir)) !== "worktrees") return;
@@ -1285,13 +1335,23 @@ const make = Effect.gen(function* () {
       if (yield* fs.exists(entry.path).pipe(Effect.orElseSucceed(() => true))) return;
       if (!(yield* fs.exists(adminDir).pipe(Effect.orElseSucceed(() => true)))) return;
       const others = (yield* readLeftovers).filter((leftover) => leftover.adminDir !== adminDir);
-      yield* writeLeftovers([...others, { adminDir, entry }]);
+      // SCIENT-FORK:START — the admin directory as noted, so a reused name is never deleted.
+      const identity = yield* adminDirIdentity(adminDir);
+      const gitdir = yield* readGitdir(adminDir);
+      yield* writeLeftovers([...others, { adminDir, entry, identity, gitdir }]);
+      // SCIENT-FORK:END
     },
     Effect.catch((error) =>
       Effect.logWarning("storage cleanup could not record leftover git metadata", { error }),
     ),
   );
-  const removeLeftover = Effect.fn("StorageCleanup.removeLeftover")(function* (adminDir: string) {
+  const removeLeftover = Effect.fn("StorageCleanup.removeLeftover")(function* (
+    leftover: WorktreeLeftover,
+  ) {
+    const { adminDir } = leftover;
+    // SCIENT-FORK:START — only the admin directory that was noted is deleted.
+    if (!(yield* isNotedLeftover(leftover, adminDir))) return false;
+    // SCIENT-FORK:END
     // Pruning by hand frees the name, and a worktree recreated since may have taken it.
     const gitFile = yield* fs.readFileString(path.join(adminDir, "gitdir")).pipe(
       Effect.map((gitdir) => path.resolve(adminDir, gitdir.trim())),
@@ -1305,7 +1365,23 @@ const make = Effect.gen(function* () {
       const current = yield* worktreeAdminDir(path.dirname(gitFile.value));
       if ((yield* fs.realPath(current)) === (yield* fs.realPath(adminDir))) return false;
     }
-    yield* fs.remove(adminDir, { recursive: true });
+    // SCIENT-FORK:START — moved aside and checked again before the recursive delete. What it
+    // could not delete goes back under its name while that is still free.
+    const aside = leftoverAside(leftover);
+    const putBack = fs
+      .exists(adminDir)
+      .pipe(Effect.flatMap((taken) => (taken ? Effect.void : fs.rename(aside, adminDir))));
+    if (aside !== adminDir) {
+      yield* fs.rename(adminDir, aside);
+      if (!(yield* isNotedLeftover(leftover, aside))) {
+        yield* putBack;
+        return false;
+      }
+    }
+    yield* fs
+      .remove(aside, { recursive: true })
+      .pipe(Effect.tapError(() => (aside === adminDir ? Effect.void : Effect.ignore(putBack))));
+    // SCIENT-FORK:END
     return true;
   });
   const retryLeftovers = Effect.fn("StorageCleanup.retryLeftovers")(function* (
@@ -1316,7 +1392,7 @@ const make = Effect.gen(function* () {
     for (const leftover of leftovers) {
       const { adminDir, entry } = leftover;
       if (!(yield* fs.exists(adminDir).pipe(Effect.orElseSucceed(() => true)))) continue;
-      const failure = yield* removeLeftover(adminDir).pipe(
+      const failure = yield* removeLeftover(leftover).pipe(
         Effect.map((removed) => {
           if (removed)
             entries.push({
@@ -1329,7 +1405,12 @@ const make = Effect.gen(function* () {
         Effect.catch((error) => Effect.succeed(error)),
       );
       if (failure === null) continue;
-      remaining.push(leftover);
+      // SCIENT-FORK:START — a leftover moved aside before its delete failed is retried there.
+      const aside = leftoverAside(leftover);
+      const movedAside =
+        aside !== adminDir && (yield* fs.exists(aside).pipe(Effect.orElseSucceed(() => false)));
+      remaining.push(movedAside ? { ...leftover, adminDir: aside } : leftover);
+      // SCIENT-FORK:END
       entries.push({
         ...entry,
         outcome: "failed",
