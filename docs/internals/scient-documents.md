@@ -150,9 +150,8 @@ note names the Scient loader so agents can distinguish it from a provider's
 own loader when skill names or coverage overlap.
 
 Agents use `scient_document_runtime` to locate the staged tools on the
-candidate's server. The tool is visible on every platform and reports
-`preview-disabled` outside the preview. When ready it reports paths. It runs
-no document operations. Use the preview with trusted fixtures. The native tools come from the host, and the
+candidate's server. The server advertises it when the preview runtime is ready.
+Use the preview with trusted fixtures. The native tools come from the host, and the
 runtime does not isolate their filesystem or network access. Shipping requires
 patched, pinned native tools and isolation for document jobs. Google writes
 use the active Drive connector and require its edit scopes.

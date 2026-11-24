@@ -160,8 +160,14 @@ import {
 } from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
-import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
-import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
+import {
+  ScientDocumentRuntimeToolkitHandlersLive,
+  ScientDocumentsToolkitHandlersLive,
+} from "./toolkits/documents/handlers.ts";
+import {
+  ScientDocumentRuntimeToolkit,
+  ScientDocumentsToolkit,
+} from "./toolkits/documents/tools.ts";
 import * as DocumentLabRuntime from "../scient/documents/DocumentLabRuntime.ts";
 import * as DocumentOfficeToolchain from "../scient/documents/docxJob/DocumentOfficeToolchain.ts";
 import { ScientDocumentJobsToolkitHandlersLive } from "./toolkits/documents/docxTrackedReplaceHandler.ts";
@@ -1798,8 +1804,18 @@ export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientS
 
 const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(ScientDocumentsToolkit).pipe(
   Layer.provide(ScientDocumentsToolkitHandlersLive),
-  Layer.provide(DocumentLabRuntime.layer),
 );
+
+const ScientDocumentRuntimeToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const status = yield* (yield* DocumentLabRuntime.DocumentLabRuntime).status;
+    return status.status === "ready"
+      ? registerScientToolkit(ScientDocumentRuntimeToolkit).pipe(
+          Layer.provide(ScientDocumentRuntimeToolkitHandlersLive),
+        )
+      : Layer.empty;
+  }),
+).pipe(Layer.provide(DocumentLabRuntime.layer));
 
 // Advertised only where the pinned engine is set up and answers with its exact version.
 const ScientDocumentJobsToolkitRegistrationLive = Layer.unwrap(
@@ -2023,6 +2039,7 @@ export const layerTools = Layer.mergeAll(
   // SCIENT-FORK:END
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
+  ScientDocumentRuntimeToolkitRegistrationLive,
   ScientDocumentJobsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.
   ScientOverleafToolkitRegistrationLive,

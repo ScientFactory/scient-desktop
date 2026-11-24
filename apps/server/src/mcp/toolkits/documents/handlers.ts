@@ -39,7 +39,11 @@ import {
   resolveProjectSourceFile,
   prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
-import { ScientDocumentsToolkit, ScientPdfBuildToolError } from "./tools.ts";
+import {
+  ScientDocumentRuntimeToolkit,
+  ScientDocumentsToolkit,
+  ScientPdfBuildToolError,
+} from "./tools.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientPdfBuildToolError>[0]["code"];
 
@@ -424,8 +428,6 @@ export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer
           trigger: "agent",
         }),
       scient_latex_build: (input) => buildScientLatexForInvocation(input),
-      scient_document_runtime: () =>
-        DocumentLabRuntime.DocumentLabRuntime.use((runtime) => runtime.status),
       scient_document_export: (input) =>
         observeAnalyticsEffect(exportScientDocumentForInvocation(input).pipe(withAssetSigner), {
           kind: "pdf-export",
@@ -434,3 +436,8 @@ export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer
     } satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
   }),
 );
+
+export const ScientDocumentRuntimeToolkitHandlersLive = ScientDocumentRuntimeToolkit.toLayer({
+  scient_document_runtime: () =>
+    DocumentLabRuntime.DocumentLabRuntime.use((runtime) => runtime.status),
+});

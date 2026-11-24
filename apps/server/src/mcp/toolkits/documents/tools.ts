@@ -220,5 +220,6 @@ export const ScientDocumentsToolkit = Toolkit.make(
   ScientPdfBuildTool,
   ScientLatexBuildTool,
   ScientDocumentExportTool,
-  ScientDocumentRuntimeTool,
 );
+
+export const ScientDocumentRuntimeToolkit = Toolkit.make(ScientDocumentRuntimeTool);
