@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -21,6 +22,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1533,6 +1535,69 @@ it.effect("a send to an interrupted delegated child dismisses the task's open qu
       }),
     );
   }).pipe(Effect.provide(layerTest)),
+);
+
+// Marks the fork under test, so locks that background reactions take are not counted.
+const ForkUnderTest = Context.Reference<boolean>("test/ThreadStop/ForkUnderTest", {
+  defaultValue: () => false,
+});
+
+// A child's run-end steer replay holds its parent's lock while it waits for the child's, so a
+// fork locking the child first and then waiting for the parent would deadlock with it.
+it.effect.each(["delegated child", "parent", "new thread"] as const)(
+  "a fork onto its source's %s takes an ancestor's lock before a descendant's",
+  (destination) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const name = destination.replace(" ", "-");
+      const parentThreadId = ThreadId.make(`thread:fork-lock-order:${name}`);
+      yield* createWatchingThread(parentThreadId, 22);
+      yield* send(parentThreadId, "first", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, `fork lock order ${name}`);
+      const [sourceThreadId, targetThreadId] =
+        destination === "delegated child"
+          ? [parentThreadId, childThreadId]
+          : destination === "parent"
+            ? [childThreadId, parentThreadId]
+            : // Sorts before its source, so a lexical order would lock it first.
+              [parentThreadId, ThreadId.make("thread:0-fork-lock-order")];
+      const withLock = executor.withLock;
+      const locked: Array<ThreadId> = [];
+      const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+        key,
+        effect,
+      ) =>
+        Effect.flatMap(Effect.service(ForkUnderTest), (marked) => {
+          if (marked) locked.push(key);
+          return withLock(key, effect);
+        });
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+      const fork = yield* orchestrator
+        .dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`fork-lock-order:${name}`),
+          sourceThreadId,
+          targetThreadId,
+          sourcePoint: { type: "latest_stable" },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(
+          Effect.provideService(ForkUnderTest, true),
+          Effect.exit,
+          Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())),
+        );
+      if (destination === "new thread") {
+        // Its existence check releases the destination before the source and then it lock.
+        assert.deepEqual(locked, [targetThreadId, sourceThreadId, targetThreadId]);
+        return;
+      }
+      // An existing destination is refused under its own lock alone.
+      assert.isTrue(Exit.isFailure(fork));
+      assert.include(String(Exit.isFailure(fork) ? fork.cause : ""), "destination already exists");
+      assert.deepEqual(locked, [targetThreadId]);
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>

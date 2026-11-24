@@ -18591,18 +18591,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = Effect.fnUntraced(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
-    // Freeze fork source facts and destination identity under one lock order.
+    // SCIENT-FORK:START — ancestors lock before descendants. A fork that takes both locks has a
+    // new destination, which can only become its source's descendant, so the source goes first.
     const ids =
       command.type === "thread.fork"
-        ? [...new Set([command.sourceThreadId, command.targetThreadId])].sort()
+        ? [...new Set([command.sourceThreadId, command.targetThreadId])]
         : [commandThreadId(command)];
+    // SCIENT-FORK:END
     const dispatch = ids.reduceRight(
       (effect, id) => threadDispatch.withLock(id, effect),
       dispatchWithReceiptEffect(command),
     );
     // SCIENT-FORK:START — a conversation fork's attempt owns its checkpoint reservation until it
     // commits; a running-turn fork captures the turn's unsaved text before it locks.
-    if (command.type === "thread.fork" && command.sideChat !== true)
+    if (command.type === "thread.fork" && command.sideChat !== true) {
+      // An existing destination (perhaps the source's delegated child or parent) is only replayed
+      // or refused, so it takes that thread's lock alone, as a side chat fork does.
+      const existing = yield* threadDispatch.withLock(
+        command.targetThreadId,
+        findThread(command.targetThreadId).pipe(
+          Effect.flatMap((target) =>
+            target === null
+              ? Effect.succeedNone
+              : Effect.asSome(dispatchWithReceiptEffect(command)),
+          ),
+        ),
+      );
+      if (Option.isSome(existing)) return existing.value;
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const scope = yield* Effect.scope;
@@ -18614,6 +18629,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         }),
       );
+    }
     // SCIENT-FORK:END
 
     // A fork holds its source's lock, so a source deletion and its fork never interleave. A
