@@ -40,6 +40,9 @@ interface KeptToolResult {
 interface ToolResultState {
   readonly entries: ReadonlyMap<ThreadId, ReadonlyArray<KeptToolResult>>;
   readonly epochs: ReadonlyMap<ThreadId, number>;
+  // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
+  readonly nextEpoch: number;
+  // SCIENT-FORK:END
 }
 
 const hashText = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
@@ -181,11 +184,15 @@ const matchingToolResultIndex = (
 };
 
 const clearThreadToolResults = (state: ToolResultState, threadId: ThreadId): ToolResultState => {
+  // SCIENT-FORK:START — clearing drops the thread's generation: no later token equals it, so a
+  // late write is refused and a closed thread leaves nothing behind.
+  if (!state.entries.has(threadId) && !state.epochs.has(threadId)) return state;
   const entries = new Map(state.entries);
   entries.delete(threadId);
   const epochs = new Map(state.epochs);
-  epochs.set(threadId, (state.epochs.get(threadId) ?? 0) + 1);
-  return { entries, epochs };
+  epochs.delete(threadId);
+  return { ...state, entries, epochs };
+  // SCIENT-FORK:END
 };
 
 const make = Effect.gen(function* () {
@@ -194,6 +201,10 @@ const make = Effect.gen(function* () {
   const toolResultState = yield* Ref.make<ToolResultState>({
     entries: new Map(),
     epochs: new Map(),
+    // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
+    // Tokens start at 1, so a thread without one never matches a handed-out token.
+    nextEpoch: 1,
+    // SCIENT-FORK:END
   });
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
@@ -289,7 +300,14 @@ const make = Effect.gen(function* () {
       },
     ),
     toolResultEpoch: Effect.fn("McpProviderSessions.toolResultEpoch")(function (threadId) {
-      return Ref.get(toolResultState).pipe(Effect.map((state) => state.epochs.get(threadId) ?? 0));
+      // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
+      return Ref.modify(toolResultState, (state): [number, ToolResultState] => {
+        const current = state.epochs.get(threadId);
+        if (current !== undefined) return [current, state];
+        const epochs = new Map(state.epochs).set(threadId, state.nextEpoch);
+        return [state.nextEpoch, { ...state, epochs, nextEpoch: state.nextEpoch + 1 }];
+      });
+      // SCIENT-FORK:END
     }),
     recordToolResult: Effect.fn("McpProviderSessions.recordToolResult")(
       function* (threadId, toolName, input, output, options) {
