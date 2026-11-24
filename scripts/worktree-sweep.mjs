@@ -17,7 +17,8 @@ const DAY_MS = 24 * HOUR_MS;
 // A checkout made from main moments ago is "in main" before it has any work.
 const MERGED_QUIET_MS = 6 * HOUR_MS;
 
-export function parseArgs(argv, env = process.env) {
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
+export function parseArgs(argv, env = process.env, platform = process.platform) {
   const options = {
     apply: false,
     json: false,
@@ -41,6 +42,9 @@ export function parseArgs(argv, env = process.env) {
   if (!options.root) throw new Error("Pass --root <folder> or set SCIENT_WORKTREES_ROOT.");
   if (!Number.isFinite(options.idleDays) || options.idleDays < 1) {
     throw new Error("--idle-days must be a number of at least 1.");
+  }
+  if (options.apply && platform === "win32") {
+    throw new Error("--apply needs ps and lsof to see running processes; use macOS or Linux.");
   }
   options.root = NodePath.resolve(options.root);
   return options;

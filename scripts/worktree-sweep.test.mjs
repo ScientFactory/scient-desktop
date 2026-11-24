@@ -86,6 +86,7 @@ describe("parseArgs", () => {
     assert.equal(options.root, "/x");
     assert.equal(options.stateDb, NodePath.join("/h", "userdata", "statev2.sqlite"));
     assert.isTrue(options.apply);
+    assert.throws(() => parseArgs(["--root", "/x", "--apply"], {}, "win32"), /lsof/u);
   });
 });
 
