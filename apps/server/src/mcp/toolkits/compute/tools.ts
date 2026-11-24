@@ -13,6 +13,7 @@ import {
   DataTableColumn,
   DataViewFilter,
   DataViewRevision,
+  DataViewSaveInput,
   DataTableRow,
   ComputeResultRevisionId,
   ResultHandoffChoices,
@@ -799,7 +800,7 @@ const ScientDataProfileTool = Tool.make("scient_data_profile", {
 
 const ScientDataPreviewViewTool = Tool.make("scient_data_preview_view", {
   description:
-    "Preview up to 50 rows of a saved DuckDB SELECT, with optional search, minimum and sort, and return the view revision. Create a view by writing a .sql file with quoted project-relative data paths.",
+    "Preview up to 50 rows of a saved DuckDB SELECT, with optional search, minimum and sort, and return the view revision. Use scient_data_save_view to save a dataset selection as a view.",
   parameters: Schema.Struct({
     path: ResultPath,
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
@@ -822,6 +823,26 @@ const ScientDataPreviewViewTool = Tool.make("scient_data_preview_view", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, operation("compute.data.previewView"));
+
+const ScientDataSaveViewTool = Tool.make("scient_data_save_view", {
+  description:
+    "Save a CSV, TSV or Parquet grid selection as a new DuckDB .sql view. Supply project-relative source and destination paths, zero-based column indices, search, optional numeric minimum, and a sort or null. Use an empty search string for no search. A search that cannot be preserved is refused. Refuses an existing destination.",
+  parameters: Schema.Struct({
+    path: ResultPath,
+    destination: ResultPath,
+    columns: DataViewSaveInput.fields.columns,
+    ...DataViewFilter.fields,
+  }),
+  success: Schema.Struct({ path: ResultPath }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Save a dataset selection as a SQL view")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.data.saveView"));
 
 const ScientDataMaterializeViewTool = Tool.make("scient_data_materialize_view", {
   description:
@@ -902,6 +923,7 @@ export const ScientComputeToolkit = Toolkit.make(
   ScientResultsCheckTool,
   ScientDataProfileTool,
   ScientDataPreviewViewTool,
+  ScientDataSaveViewTool,
   ScientDataMaterializeViewTool,
   ScientResultsExportTool,
   ScientResultsVerifyTool,

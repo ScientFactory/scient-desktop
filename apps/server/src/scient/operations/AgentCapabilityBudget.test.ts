@@ -166,7 +166,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(93);
+      expect(scientTools).toHaveLength(94);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_network",
         "scient_account_add",
@@ -200,6 +200,7 @@ it.live(
         "scient_data_materialize_view",
         "scient_data_preview_view",
         "scient_data_profile",
+        "scient_data_save_view",
         "scient_document_export",
         "scient_handoff_summary_read",
         "scient_latex_build",

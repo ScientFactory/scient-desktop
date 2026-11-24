@@ -60,6 +60,7 @@ it.effect("registers the Compute tools with object input schemas", () =>
       "scient_data_materialize_view",
       "scient_data_preview_view",
       "scient_data_profile",
+      "scient_data_save_view",
     ]);
     for (const { tool } of compute) expect(tool.inputSchema.type).toBe("object");
     const exportTool = server.tools.find(({ tool }) => tool.name === "scient_results_export")?.tool;

@@ -42,6 +42,7 @@ import { inventorySummary } from "./inventorySummary.ts";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import {
   materializeScientDataView,
+  saveScientDataView,
   previewScientDataView,
   profileScientData,
 } from "./dataHandlers.ts";
@@ -837,6 +838,7 @@ const handlers = {
   scient_results_run: runScientResults,
   scient_data_profile: profileScientData,
   scient_data_preview_view: previewScientDataView,
+  scient_data_save_view: saveScientDataView,
   scient_data_materialize_view: materializeScientDataView,
   scient_results_list: listScientResults,
   scient_results_compare: compareScientResults,

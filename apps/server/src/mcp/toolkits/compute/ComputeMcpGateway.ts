@@ -52,6 +52,7 @@ export interface ComputeMcpGatewayShape extends ComputeRpcGateway {
   readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
   readonly profileDataset: DataViews["Service"]["profileDataset"];
   readonly previewDataView: DataViews["Service"]["readView"];
+  readonly saveDataView: DataViews["Service"]["saveView"];
   readonly materializeDataView: DataViews["Service"]["materializeView"];
   /** Linked results: what fresh script runs published, for agents to cite and check. */
   readonly resultHandoffChoices: ResultHandoff["choices"];
@@ -130,6 +131,7 @@ export const ComputeMcpGatewayLive = Layer.effect(
       readFile: workspaceFiles.readFile,
       profileDataset: dataViews.profileDataset,
       previewDataView: dataViews.readView,
+      saveDataView: dataViews.saveView,
       materializeDataView: dataViews.materializeView,
       resolveResults: resultOperations.resolve,
       listResults: resultOperations.list,

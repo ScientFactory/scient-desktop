@@ -1,4 +1,4 @@
-import type { DataViewMaterializeInput } from "@t3tools/contracts";
+import type { DataViewMaterializeInput, DataViewSaveInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { agentScope, computeFailed, toolError } from "./agentComputeScope.ts";
@@ -61,6 +61,13 @@ export const previewScientDataView = Effect.fn("ScientDataTools.previewView")(fu
     revision: page.revision,
     cappedColumns: columns.length < page.columnCount,
   };
+});
+
+export const saveScientDataView = Effect.fn("ScientDataTools.saveView")(function* (
+  input: Omit<DataViewSaveInput, "cwd">,
+) {
+  const { gateway, cwd } = yield* agentScope();
+  return yield* gateway.saveDataView({ cwd, ...input }).pipe(Effect.mapError(computeFailed));
 });
 
 export const materializeScientDataView = Effect.fn("ScientDataTools.materializeView")(function* (

@@ -121,6 +121,7 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               readFile: workspaceFileSystem.readFile,
               profileDataset: () => Effect.die("not used"),
               previewDataView: () => Effect.die("not used"),
+              saveDataView: () => Effect.die("not used"),
               materializeDataView: () => Effect.die("not used"),
               readOutput: (ref, kind) =>
                 Effect.gen(function* () {
