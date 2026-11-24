@@ -64,6 +64,7 @@ import {
   describePullRequestChecks,
   groupPullRequestChecks,
   readableFailure,
+  seenPullRequestHead,
 } from "./pullRequestDetail.logic";
 import {
   pullRequestCheckStatusLabel,
@@ -2151,6 +2152,19 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+describe("seenPullRequestHead", () => {
+  it("takes the first settled head and keeps it until another pull request is shown", () => {
+    // A stored answer paints before the read settles, and is not what the reader ends up seeing.
+    const loading = seenPullRequestHead(null, "pr-1", undefined);
+    expect(loading).toEqual({ key: "pr-1", sha: undefined });
+    const seen = seenPullRequestHead(loading, "pr-1", "a");
+    expect(seen).toEqual({ key: "pr-1", sha: "a" });
+    expect(seenPullRequestHead(seen, "pr-1", "b")).toBe(seen);
+    expect(seenPullRequestHead(seen, "pr-1", undefined)).toBe(seen);
+    expect(seenPullRequestHead(seen, "pr-2", "c")).toEqual({ key: "pr-2", sha: "c" });
+  });
 });
 
 describe("readableFailure", () => {

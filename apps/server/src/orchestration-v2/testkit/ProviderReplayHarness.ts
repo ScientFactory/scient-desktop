@@ -90,6 +90,7 @@ import {
   ScientForkCheckpointBaselineLive,
   type ScientForkCheckpointBaselineShape,
 } from "../scient-fork/ForkCheckpointBaseline.ts";
+import { ThreadWorktreeRestore } from "../../workspace/restoreMissingWorktree.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -647,6 +648,7 @@ export function layerWithRegistry<Error>(
         }),
         layerRunExecutionServiceProvided,
         layerRuntime,
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
       ),
     ),
   );

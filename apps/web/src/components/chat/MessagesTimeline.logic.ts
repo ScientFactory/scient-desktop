@@ -683,11 +683,9 @@ type MessagesTimelineRowContent =
       suppressEmptyResponse?: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
-      assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
-      // SCIENT-FORK:START — files the message's turn changed, for every assistant message of
-      // that turn (not only the one the changed-files card attaches to); Scient fork V2; and
-      // content direction.
+      // SCIENT-FORK:START — files the message's turn changed (for its file links), on every
+      // assistant message of that turn; Scient fork V2; and content direction.
       assistantTurnChangedFiles?: TurnDiffSummary["files"] | undefined;
       canForkConversation?: boolean | undefined;
       assistantDirectionHint?: FixedContentDirection | null | undefined;
@@ -1776,18 +1774,12 @@ export function deriveMessagesTimelineRows(
       input.pendingApprovalRequestIds?.has(item.requestId) === true
     );
   };
-  const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
-  // SCIENT-FORK:START — files-changed chips on every assistant message of a turn.
+  // SCIENT-FORK:START — each assistant message's turn files, for its file links.
   const turnDiffSummaryByRunId = new Map<RunId, TurnDiffSummary>();
-  // SCIENT-FORK:END
   for (const summary of input.turnDiffSummaries) {
-    if (summary.assistantMessageId) {
-      turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
-    }
-    // SCIENT-FORK:START
     turnDiffSummaryByRunId.set(summary.runId, summary);
-    // SCIENT-FORK:END
   }
+  // SCIENT-FORK:END
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
@@ -2526,10 +2518,6 @@ export function deriveMessagesTimelineRows(
         embeddedResultRunIds.has(timelineEntry.message.runId),
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
-      assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
-          ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
-          : undefined,
       // SCIENT-FORK:START
       assistantTurnChangedFiles:
         timelineEntry.message.role === "assistant" && timelineEntry.message.runId !== null
@@ -3169,7 +3157,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.suppressEmptyResponse === bm.suppressEmptyResponse &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
-        a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         // SCIENT-FORK:START
         a.assistantTurnChangedFiles === bm.assistantTurnChangedFiles &&
         a.canForkConversation === bm.canForkConversation &&

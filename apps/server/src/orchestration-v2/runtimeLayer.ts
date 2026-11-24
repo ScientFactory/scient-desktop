@@ -230,6 +230,8 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       Layer.effect(ServerConfig, ServerConfig),
       Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
       TurnItemPositionStore.layer,
+      // The same instance as thread management's, which hands over send-time recreations.
+      layerThreadWorktreeRestore,
     ),
   ),
 );

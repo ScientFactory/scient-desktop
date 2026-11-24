@@ -220,6 +220,7 @@ function makeRegistry(
       reloadInstance: () => Ref.get(providersRef),
       reloadInstanceStrict: () => Ref.get(providersRef),
       reloadSecretsAndRefresh: () => Ref.get(providersRef),
+      rebuildMissingAndRefresh: Ref.get(providersRef),
       applySecretAndRefresh: () => Ref.get(providersRef),
       refreshAfterUpdate: () => {
         const version = options?.installedVersionAfterUpdate;

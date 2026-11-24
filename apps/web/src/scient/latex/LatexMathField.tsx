@@ -684,7 +684,7 @@ export const LatexMathField = forwardRef<
         const menu =
           window.desktopBridge && api
             ? api.contextMenu.show(items, position)
-            : showContextMenuFallback(items, position, root.id);
+            : showContextMenuFallback(items, position, undefined, root.id);
         void menu
           .then(async (action) => {
             releaseSelection?.();

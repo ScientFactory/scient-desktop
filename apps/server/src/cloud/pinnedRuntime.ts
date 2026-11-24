@@ -18,6 +18,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsPowerShellPath } from "@t3tools/shared/windowsSystem";
 import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
 
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -677,7 +678,7 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
     .run({
       ...(platform === "win32"
         ? {
-            command: "powershell.exe",
+            command: windowsPowerShellPath(yield* HostProcess.Environment),
             args: [
               "-NoProfile",
               "-NonInteractive",
