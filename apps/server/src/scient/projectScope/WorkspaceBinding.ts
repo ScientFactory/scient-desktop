@@ -34,8 +34,32 @@ export const WorkspaceRepositoryEvidence = Schema.Struct({
   canonicalKey: Schema.NonEmptyString,
   source: Schema.Literal("git-remote"),
   remoteName: Schema.NonEmptyString,
+  /** Key of Git's `insteadOf`-rewritten fetch URL, present only when it differs. */
+  transportCanonicalKey: Schema.optional(Schema.NonEmptyString),
 });
 export type WorkspaceRepositoryEvidence = typeof WorkspaceRepositoryEvidence.Type;
+
+const repositoryEvidenceKeys = (evidence: WorkspaceRepositoryEvidence): ReadonlyArray<string> =>
+  evidence.transportCanonicalKey === undefined
+    ? [evidence.canonicalKey]
+    : [evidence.canonicalKey, evidence.transportCanonicalKey];
+
+// Bindings recorded before evidence preferred the configured URL hold the rewritten key.
+export const repositoryEvidenceOverlaps = (
+  left: WorkspaceRepositoryEvidence,
+  right: WorkspaceRepositoryEvidence,
+): boolean => {
+  const rightKeys = repositoryEvidenceKeys(right);
+  return repositoryEvidenceKeys(left).some((key) => rightKeys.includes(key));
+};
+
+export const sameRepositoryEvidence = (
+  left: WorkspaceRepositoryEvidence | null,
+  right: WorkspaceRepositoryEvidence | null,
+): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.source === right.source && repositoryEvidenceOverlaps(left, right);
 
 /**
  * Exact checkout evidence retained from T3's VCS detection.

@@ -17,6 +17,7 @@ import {
 import {
   type ObservedWorkspaceEvidence,
   WorkspaceAuthorityGeneration,
+  type WorkspaceBindingId,
 } from "./WorkspaceBinding.ts";
 import { WorkspaceBindingStore, layer } from "./WorkspaceBindingStore.ts";
 
@@ -238,6 +239,56 @@ describe("WorkspaceBindingStore", () => {
       });
       expect(changedRepository.binding.bindingId).toBe(first.binding.bindingId);
       expect(changedRepository.binding.authorityGeneration).toBe(2);
+    }).pipe(Effect.provide(storeLayer)),
+  );
+
+  it.effect("keeps a binding stored under a mirror-rewritten key current", () =>
+    Effect.gen(function* () {
+      const store = yield* WorkspaceBindingStore;
+      const configuredKey = "github.com/scientfactory/example";
+      const mirrorKey = "mirror.example.com/scientfactory/example";
+      const repository = (canonicalKey: string, transportCanonicalKey?: string) => ({
+        canonicalKey,
+        source: "git-remote" as const,
+        remoteName: "origin",
+        ...(transportCanonicalKey ? { transportCanonicalKey } : {}),
+      });
+      const verify = (
+        root: string,
+        repositoryIdentity: ReturnType<typeof repository>,
+        lineageBindingId?: WorkspaceBindingId,
+      ) =>
+        store.verifyObserved({
+          environmentId: ENVIRONMENT_ONE,
+          hostProjectId: PROJECT_ONE,
+          evidence: observed(root, { repositoryIdentity }),
+          ...(lineageBindingId ? { lineageBindingId } : {}),
+        });
+
+      // Evidence used to key the rewritten transport URL alone.
+      const legacy = yield* verify("/worktrees/mirror", repository(mirrorKey));
+      const child = yield* verify(
+        "/worktrees/mirror-child",
+        repository(configuredKey, mirrorKey),
+        legacy.binding.bindingId,
+      );
+      expect(child.relation).toBe("trusted-lineage");
+      const configured = yield* verify("/worktrees/mirror", repository(configuredKey, mirrorKey));
+      expect(configured.binding.bindingId).toBe(legacy.binding.bindingId);
+      expect(configured.binding.authorityGeneration).toBe(legacy.binding.authorityGeneration);
+      expect((yield* store.getById(legacy.binding.bindingId))?.repositoryIdentity).toEqual(
+        repository(configuredKey, mirrorKey),
+      );
+
+      const withoutRewrite = yield* verify("/worktrees/mirror", repository(configuredKey));
+      expect(withoutRewrite.binding.authorityGeneration).toBe(legacy.binding.authorityGeneration);
+      expect(yield* store.assertCurrent(legacy.binding)).toEqual(withoutRewrite.binding);
+
+      const other = yield* verify(
+        "/worktrees/mirror",
+        repository("github.com/scientfactory/other", mirrorKey.replace("example", "other")),
+      );
+      expect(other.binding.authorityGeneration).toBe(legacy.binding.authorityGeneration + 1);
     }).pipe(Effect.provide(storeLayer)),
   );
 
