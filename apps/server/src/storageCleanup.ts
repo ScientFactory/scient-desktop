@@ -1295,7 +1295,11 @@ const make = Effect.gen(function* () {
     // Pruning by hand frees the name, and a worktree recreated since may have taken it.
     const gitFile = yield* fs.readFileString(path.join(adminDir, "gitdir")).pipe(
       Effect.map((gitdir) => path.resolve(adminDir, gitdir.trim())),
-      Effect.option,
+      // SCIENT-FORK:START — only a missing back-pointer frees the metadata. One that cannot be
+      // read may name a recreated worktree, so the leftover is kept, reported and retried.
+      Effect.asSome,
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+      // SCIENT-FORK:END
     );
     if (Option.isSome(gitFile) && (yield* fs.exists(gitFile.value))) {
       const current = yield* worktreeAdminDir(path.dirname(gitFile.value));

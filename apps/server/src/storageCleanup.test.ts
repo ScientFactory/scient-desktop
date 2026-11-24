@@ -3482,6 +3482,43 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  // SCIENT-FORK:START — leftover git metadata whose back-pointer cannot be read is kept.
+  it.live("keeps leftover git metadata whose back-pointer cannot be read", (context) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        if ((yield* HostProcess.isWindows) || (yield* HostProcess.UserId) === 0)
+          return context.skip();
+        const fixture = yield* cleanupFixture();
+        const adminDir = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        const stuck = `${adminDir}/scratch`;
+        yield* fixture.fs.makeDirectory(stuck);
+        yield* fixture.fs.writeFileString(`${stuck}/f`, "x\n");
+        yield* fixture.fs.chmod(stuck, 0o555);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+        yield* fixture.service.runNow;
+        // The metadata could be deleted now, but nothing shows which checkout owns it.
+        yield* fixture.fs.chmod(stuck, 0o755);
+        const gitdir = `${adminDir}/gitdir`;
+        yield* fixture.fs.writeFileString(gitdir, `${fixture.worktree}/.git\n`);
+        yield* fixture.fs.chmod(gitdir, 0o000);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(gitdir, 0o644).pipe(Effect.ignore));
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "failed" }),
+        ]);
+        expect(yield* fixture.fs.exists(`${stuck}/f`)).toBe(true);
+        // Readable again, it names a checkout that is gone, so the next sweep deletes it.
+        yield* fixture.fs.chmod(gitdir, 0o644);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(adminDir)).toBe(false);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
   it.live("leaves git metadata that a recreated worktree took over from a failed removal", () =>
     runCleanupTest(
       Effect.gen(function* () {
