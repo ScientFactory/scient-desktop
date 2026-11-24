@@ -16,6 +16,8 @@ on:
       - "apps/server/src/mcp/toolkits/documents/projectDocumentBuild.ts"
       - "apps/server/src/mcp/McpHttpServer.ts"
       - "apps/server/src/scient/documentExport/**"
+      - "apps/server/src/scient/documentArtifacts/**"
+      - "apps/server/src/scient/workspace/WorkspaceFileMutations.ts"
       - "apps/server/src/workspace/WorkspaceFileSystem.ts"
       - "scripts/document-lab-office.mjs"
       - "pnpm-lock.yaml"

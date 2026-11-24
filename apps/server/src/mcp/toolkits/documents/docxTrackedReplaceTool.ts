@@ -39,7 +39,8 @@ export const ScientDocxTrackedReplaceInput = Schema.Struct({
     description: "A .pdf path in the project for the copy's PDF.",
   }),
   find: WordText(256).check(Schema.isPattern(/\S/u)).annotate({
-    description: "Exact text that occurs once in the document, inside one run of one paragraph.",
+    description:
+      "Exact text within one main-document run that also appears once in the source PDF.",
   }),
   replace: WordText(256).check(Schema.isPattern(/\S/u)).annotate({
     description: "Text that replaces it, as a tracked insertion.",

@@ -76,6 +76,14 @@ describe("PDF placement of a tracked replacement", () => {
     expect(checkPdfPlacement(source, source, "QC-1", " ").passed).toBe(false);
   });
 
+  it("flags search text that also appears in a running header", () => {
+    const repeated = layout([[...source.pages[1]!, item("QC-1", 60, 790)]]);
+    expect(checkPdfPlacement(repeated, repeated, "QC-1", "QC-2")).toMatchObject({
+      passed: false,
+      ambiguousSourceText: true,
+    });
+  });
+
   it("names each way the render can disagree with the source", () => {
     const edited = [
       item("before", 300, 600),

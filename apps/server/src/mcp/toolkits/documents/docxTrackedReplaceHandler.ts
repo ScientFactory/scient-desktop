@@ -25,6 +25,7 @@ import {
   runDocxTrackedReplacement,
   type DocxJobError,
 } from "../../../scient/documents/docxJob/DocxTrackedReplacementJob.ts";
+import { MAX_DOCX_JOB_PDF_PAGES } from "../../../scient/documents/docxJob/pdfLayout.ts";
 import type { WorkspaceMutationError } from "../../../scient/workspace/WorkspaceFileMutations.ts";
 import { bytesRevision } from "../../../scient/workspace/RetainedFileMutation.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
@@ -95,6 +96,12 @@ const REFUSALS: Readonly<Record<string, string>> = {
     "The text is inside a field, an existing revision, or a run with other content; it is not supported.",
 };
 
+const PDF_CHECK_FAILURES: Readonly<Record<string, string>> = {
+  "pdf-source-text-ambiguous":
+    "The search text appears more than once in the source PDF. Choose a longer passage from one Word run.",
+  "pdf-too-many-pages": `The Word tool checks PDFs up to ${MAX_DOCX_JOB_PDF_PAGES} pages. Use a shorter document.`,
+};
+
 const jobToolError = (cause: DocxJobError) => {
   switch (cause.code) {
     case "unsupported-input":
@@ -113,7 +120,8 @@ const jobToolError = (cause: DocxJobError) => {
     case "integrity-failed":
       return toolError(
         "integrity-failed",
-        "A check of the edited copy or its PDF failed, so nothing was saved. The checks list says which.",
+        PDF_CHECK_FAILURES[cause.reason] ??
+          "A check of the edited copy or its PDF failed, so nothing was saved. The checks list says which.",
         { reason: cause.reason, checks: cause.checks },
       );
   }

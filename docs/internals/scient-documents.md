@@ -194,9 +194,10 @@ are unchanged.
   publication fence. The Word copy is published only to a new path.
 - **Accepted inputs and edits.** Plain `.docx` only. The job refuses macros,
   external relationships other than hyperlinks, fields that include or link
-  outside content, and `altChunk`/`subDoc`. The text must occur exactly once and
-  sit inside one plain run of one paragraph, not inside a field or an existing
-  revision. Text that spans runs is refused rather than merged.
+  outside content, and `altChunk`/`subDoc`. The text must occur exactly once in
+  the main document and in the source PDF. Choose text within one plain run in
+  a paragraph outside fields and existing revisions. PDF verification supports
+  up to 200 pages. The exported PDF shows both the tracked deletion and insertion.
 - **Worker boundary.** LibreOffice converts only the staged source and candidate
   copies. It runs in a private job folder under the server state, with a
   throwaway profile, an environment built from nothing (no `LD_*`/`DYLD_*`, dead

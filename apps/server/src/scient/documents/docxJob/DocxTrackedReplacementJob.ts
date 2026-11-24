@@ -118,11 +118,15 @@ export const runDocxTrackedReplacement = Effect.fn("DocxTrackedReplacement.run")
   const [sourceLayout, candidateLayout] = yield* Effect.all([
     readPdfLayout(sourcePdf),
     readPdfLayout(candidatePdf),
-  ]).pipe(Effect.mapError(() => jobError("integrity-failed", "pdf-unreadable", docx.checks)));
+  ]).pipe(Effect.mapError((cause) => jobError("integrity-failed", cause.reason, docx.checks)));
   const placement = checkPdfPlacement(sourceLayout, candidateLayout, request.find, request.replace);
   const checks = [...docx.checks, ...placement.checks].map(({ id, passed }) => ({ id, passed }));
   if (!placement.passed || placement.editPage === null)
-    return yield* jobError("integrity-failed", "pdf-checks", checks);
+    return yield* jobError(
+      "integrity-failed",
+      placement.ambiguousSourceText ? "pdf-source-text-ambiguous" : "pdf-checks",
+      checks,
+    );
   return {
     candidateDocx,
     candidatePdf,

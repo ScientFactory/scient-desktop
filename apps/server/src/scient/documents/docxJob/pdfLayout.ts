@@ -17,6 +17,7 @@ export interface PdfLayout {
 }
 
 export class PdfLayoutError extends Schema.TaggedError<PdfLayoutError>()("PdfLayoutError", {
+  reason: Schema.Literals(["pdf-unreadable", "pdf-too-many-pages"]),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -24,7 +25,8 @@ export class PdfLayoutError extends Schema.TaggedError<PdfLayoutError>()("PdfLay
   }
 }
 
-const MAX_PAGES = 200;
+export const MAX_DOCX_JOB_PDF_PAGES = 200;
+const isPdfLayoutError = Schema.is(PdfLayoutError);
 
 interface FontObject {
   readonly name?: unknown;
@@ -45,7 +47,8 @@ export const readPdfLayout = Effect.fn("DocxJob.readPdfLayout")(function* (bytes
       });
       try {
         const document = await task.promise;
-        if (document.numPages > MAX_PAGES) throw new Error("Too many pages for layout checks.");
+        if (document.numPages > MAX_DOCX_JOB_PDF_PAGES)
+          throw new PdfLayoutError({ reason: "pdf-too-many-pages", cause: undefined });
         const metadata = await document.getMetadata().catch(() => undefined);
         const info = metadata?.info as { readonly Producer?: unknown } | undefined;
         const fonts = new Set<string>();
@@ -81,7 +84,8 @@ export const readPdfLayout = Effect.fn("DocxJob.readPdfLayout")(function* (bytes
         await task.destroy();
       }
     },
-    catch: (cause) => new PdfLayoutError({ cause }),
+    catch: (cause) =>
+      isPdfLayoutError(cause) ? cause : new PdfLayoutError({ reason: "pdf-unreadable", cause }),
   });
 });
 
@@ -167,6 +171,7 @@ const pageSignature = (items: ReadonlyArray<PdfTextItem>) =>
 export interface PdfPlacement {
   readonly checks: ReadonlyArray<PdfCheck>;
   readonly passed: boolean;
+  readonly ambiguousSourceText: boolean;
   readonly pageCount: number;
   /** 1-based page of the edit, when it was found. */
   readonly editPage: number | null;
@@ -244,6 +249,7 @@ export function checkPdfPlacement(
   return {
     checks,
     passed: checks.every((check) => check.passed),
+    ambiguousSourceText: original.length > 1,
     pageCount: candidate.pages.length,
     editPage: at === undefined ? null : at.page + 1,
   };
