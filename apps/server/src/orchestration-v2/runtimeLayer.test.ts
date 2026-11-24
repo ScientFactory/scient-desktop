@@ -56,8 +56,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-
-import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as Path from "effect/Path";
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as PubSub from "effect/PubSub";
@@ -78,8 +76,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -117,6 +113,8 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+// SCIENT-FORK: services Scient's runtime also needs.
+import * as ScientHarnessLayers from "./testkit/ScientHarnessLayers.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -125,26 +123,16 @@ if (!dispatchRpc) throw new Error("Missing registered dispatch RPC");
 const encodeDispatchRpcError = Schema.encodeEffect(dispatchRpc.errorSchema);
 const decodeDispatchRpcError = Schema.decodeEffect(dispatchRpc.errorSchema);
 
-const ProviderRegistryTestLayer = Layer.succeed(ProviderRegistry.ProviderRegistry, {
-  ...makeProviderRegistryMock(),
-  setProviderAuthenticationFailure: () =>
-    Effect.die("Unexpected authentication mutation in runtime-layer fixtures"),
-});
-
-const PlatformTestLayer = Layer.mergeAll(
-  ThreadCommandExecutor.layer,
+const layerPlatformTest = Layer.mergeAll(
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
     runForThread: () => Effect.succeed({ status: "no-script" }),
   }),
-  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
-    get: () => Effect.succeed(null),
-    discard: () => Effect.void,
-  }),
-  NodeServices.layer,
-  NodeCrypto.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
+  // SCIENT-FORK: services Scient's runtime also needs.
+  ScientHarnessLayers.layerRuntimeHarness,
 );
 
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
@@ -160,7 +148,7 @@ const alternateInstanceId = ProviderInstanceId.make("codex_alternate");
 const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(layerServerConfig),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerPlatformTest),
 );
 
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
@@ -267,7 +255,6 @@ const layerTestProviderInstanceRegistry = Layer.merge(
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
-    rebuildInstance: () => Effect.die("Unexpected provider rebuild"),
   }),
 );
 
@@ -400,10 +387,9 @@ const layerTest = Layer.mergeAll(
   // SCIENT-FORK: exposed so a case can enable continuing after a server update for its project.
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
-  Layer.provideMerge(PlatformTestLayer),
+  Layer.provideMerge(layerPlatformTest),
 );
 
 // SCIENT-FORK: exercise live attachment unlink in an isolated, idle lifecycle fixture.
@@ -422,7 +408,7 @@ const AttachmentDeletionTestLayer = layerTest.pipe(
         ),
       ),
       Layer.provide(layerServerConfig),
-      Layer.provide(PlatformTestLayer),
+      Layer.provide(layerPlatformTest),
     ),
   ),
 );
@@ -435,10 +421,9 @@ const layerLegacyImportTest = Layer.merge(RuntimeLayer.layer, layerProjectionRep
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerPlatformTest),
 );
 
 const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
@@ -564,9 +549,8 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provideMerge(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(layerGitWorkflowTest),
-  Layer.provideMerge(PlatformTestLayer),
+  Layer.provideMerge(layerPlatformTest),
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
@@ -1266,9 +1250,8 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(layerGitWorkflowTest),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerPlatformTest),
 );
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
@@ -15100,8 +15083,7 @@ const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
-  Layer.provide(ProviderRegistryTestLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerPlatformTest),
 );
 
 it.layer(layerQueueResumeDisabledInstanceTest)(
