@@ -3,6 +3,7 @@
   "owner": "ScientFactory",
   "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
   "ownedFiles": [
+    "apps/server/src/scient/skills/BuiltInDocumentLabSkillSources.ts",
     "apps/web/src/scient/skills/skillCategoryCopy.ts",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "apps/server/src/mcp/McpSessionRegistry.scient.test.ts",
