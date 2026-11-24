@@ -159,6 +159,41 @@ it("offers a jump to a failed defining cell when live notebook evidence identifi
   expect(markup).toContain('<summary class="cursor-pointer">Details</summary>');
 });
 
+it("offers no setup replay when no earlier cell defines the missing name", () => {
+  const markup = renderToStaticMarkup(
+    <ComputeOutputView
+      cwd="/synthetic"
+      environmentId={EnvironmentId.make("synthetic")}
+      executionId={ComputeExecutionId.make("failed-execution")}
+      session={
+        { languageId: ComputeLanguageId.make("python"), runtime: null } as ComputeSessionRecord
+      }
+      outputs={[
+        {
+          _tag: "diagnostic",
+          sequence: 1,
+          observedAt: "2026-11-23T00:00:00Z",
+          diagnostic: {
+            errorName: "NameError",
+            message: "name 'divisor' is not defined",
+            traceback: ["line 1 in cell"],
+            frames: [],
+          },
+        },
+      ]}
+      threadRef={{} as ScopedThreadRef}
+      notebook={{
+        path: "analysis.ipynb",
+        onReplay: () => undefined,
+        onJumpToCell: () => undefined,
+        definingCell: () => null,
+      }}
+    />,
+  );
+  expect(markup).toContain("NameError: name &#x27;divisor&#x27; is not defined");
+  expect(markup).not.toContain("Run from top through this cell");
+});
+
 describe("figure result projection", () => {
   it.each([true, false])(
     "renders the shared figure controls with or without a retained FIG: %s",

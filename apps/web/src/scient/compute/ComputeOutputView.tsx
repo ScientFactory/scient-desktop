@@ -190,18 +190,15 @@ export function NotebookSetupRecovery(props: {
       </div>
     );
   }
-  if (props.onReplay === undefined) return null;
+  // Replay only helps when an earlier cell defines the name and has not run in this session.
+  if (props.onReplay === undefined || defining?.status !== "not-run") return null;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
       <p>
-        {defining?.status === "not-run" ? (
-          gt("Cell {cell} defines {name} and has not run in this session.", {
-            cell: defining.cellNumber,
-            name: missingName,
-          })
-        ) : (
-          <T>An earlier cell may need to run.</T>
-        )}
+        {gt("Cell {cell} defines {name} and has not run in this session.", {
+          cell: defining.cellNumber,
+          name: missingName,
+        })}
       </p>
       <Button size="xs" variant="outline" focus="edge" onClick={props.onReplay}>
         <T>Run from top through this cell</T>

@@ -14502,7 +14502,6 @@
   "92897e1a097a2691": "Jump to cell {cell}",
   "ea442f6e074fe4ea": "Cell {cell} defines {name} and has not run in this session.",
   "f136a02e4157d036": "{event} · {detail}",
-  "c9c149d82aad6a4a": "Il peut être nécessaire d’exécuter une cellule précédente.",
   "2e31b305cc6c61d2": "Exécuter depuis le début jusqu’à cette cellule incluse",
   "2c9236f0d786e98c": "Paramètres Python",
   "1acaf84a810cbe13": "Sortie précédente masquée",

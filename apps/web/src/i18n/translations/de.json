@@ -14504,7 +14504,6 @@
   "92897e1a097a2691": "Jump to cell {cell}",
   "ea442f6e074fe4ea": "Cell {cell} defines {name} and has not run in this session.",
   "f136a02e4157d036": "{event} · {detail}",
-  "c9c149d82aad6a4a": "Möglicherweise muss zuerst eine frühere Zelle ausgeführt werden.",
   "2e31b305cc6c61d2": "Von oben bis einschließlich dieser Zelle ausführen",
   "2c9236f0d786e98c": "Python-Einstellungen",
   "1acaf84a810cbe13": "Frühere Ausgabe ausgeblendet",

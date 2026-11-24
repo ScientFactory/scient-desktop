@@ -620,9 +620,9 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   Text cell to edit its Markdown.
 - If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
   from the Run menu. When the selected cell reads a name that only an earlier, unrun cell defines,
-  that action moves up to sit right after **Run all**. A Python error for an undefined name can also offer replay or a jump to the
-  defining cell when live evidence shows it failed. Full tracebacks stay collapsed under
-  **Details**.
+  that action moves up to sit right after **Run all**. When a Python error names an undefined
+  name that an earlier cell defines, the error offers that replay if the cell has not run in this
+  session, or a jump to the cell if it failed. Full tracebacks stay collapsed under **Details**.
 - Text, figures, observed written file links and errors appear below the cell that produced them.
   Silent cells show a compact **No output** line, and outputs from an earlier session show when
   they ran and that they have not run in the current session. Choose **Show outputs** if a cell's
