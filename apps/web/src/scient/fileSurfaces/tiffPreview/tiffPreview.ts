@@ -430,7 +430,12 @@ export async function readTiffPlane(
       : format === "float"
         ? ![16, 32, 64].includes(bits)
         : bits > 24 && bits !== 32;
-  if (unsupportedWidth || allBits.some((sampleBits) => sampleBits !== bits))
+  // Every sample needs its own stored width: a shorter list leaves a sample the budget never counted.
+  if (
+    unsupportedWidth ||
+    allBits.length !== image.getSamplesPerPixel() ||
+    allBits.some((sampleBits) => sampleBits !== bits)
+  )
     throw tiffPreviewError("This TIFF's sample width isn't supported for preview.");
   // Bits stored lowest first (FillOrder 2) are a fax convention geotiff does not reverse.
   if (Number((await directory.loadValue("FillOrder")) ?? 1) === 2)
