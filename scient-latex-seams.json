@@ -223,6 +223,11 @@
       "path": "apps/server/src/telemetry/FailureAttribution.ts",
       "anchor": "ScientLatexBuildFailureClass",
       "purpose": "Map each bounded LaTeX failure class to who owns the failure (document, environment or Scient) without reading compiler output."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.scient.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
     }
   ]
 }
