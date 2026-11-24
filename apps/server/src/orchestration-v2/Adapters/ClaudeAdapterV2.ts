@@ -170,6 +170,8 @@ import {
   type ThreadId,
   resolveIdleCompaction,
   isDelegatedAppThread,
+  // SCIENT-FORK: a requested sign-in row is told apart from T3's startup notice.
+  MCP_SIGN_IN_REQUEST_NATIVE_PREFIX,
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -9711,6 +9713,89 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ? Effect.void
             : threadMcpStatus.value.detach(liveQuery.mcpStatusAttachment);
 
+        // SCIENT-FORK:START — the agent asks for a server's sign-in when it needs it.
+        /** A Sign in row the agent asked for, with its own time; startup notices are T3's below. */
+        const emitMcpSignInRequest = Effect.fn("ClaudeAdapterV2.emitMcpSignInRequest")(function* (
+          context: ActiveClaudeTurnContext,
+          server: string,
+        ) {
+          const nativeItemId = `${MCP_SIGN_IN_REQUEST_NATIVE_PREFIX}${context.providerTurnId}:${server}`;
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: nativeItemId,
+                strength: "weak",
+              },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: `Sign in to ${server}`,
+              message: `Claude needs ${server} for this request. Sign in, then ask again.`,
+              mcpSignIn: { server },
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+
+        // Keyed by provider turn and server: a repeated request in a turn keeps its first row.
+        const requestedMcpSignIns = new Set<string>();
+        /**
+         * The agent asked for a server's sign-in, through the query that reported it: once Claude
+         * confirms it still needs one, a Sign in row in that query's running turn.
+         */
+        const showMcpSignIn = Effect.fn("ClaudeAdapterV2.showMcpSignIn")(function* (
+          liveQuery: ClaudeLiveQueryContext,
+          server: string,
+        ) {
+          // The turn the request came in; Stop or a later turn ends its right to a row.
+          const turn = yield* Ref.get(activeTurn);
+          const owns = Effect.map(
+            Effect.all([Ref.get(queryContext), Ref.get(activeTurn), Ref.get(interruptedTurns)]),
+            ([query, current, interrupted]) =>
+              query === liveQuery &&
+              !liveQuery.stopping &&
+              turn !== null &&
+              current === turn &&
+              !interrupted.has(turn.providerTurnId),
+          );
+          if (turn === null || !(yield* owns)) return "unavailable" as const;
+          const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
+            Effect.timeout("2 seconds"),
+            Effect.option,
+          );
+          if (Option.isNone(statuses)) return "unavailable" as const;
+          yield* publishClaudeNativeMcpStatus(liveQuery, statuses.value);
+          const status = statuses.value.find((candidate) => candidate.name === server)?.status;
+          if (status === "connected") return "signed-in" as const;
+          if (status === "pending") return "checking" as const;
+          if (status !== "needs-auth") return "not-available" as const;
+          // Stop or a new turn may have come while Claude answered.
+          if (!(yield* owns)) return "unavailable" as const;
+          const key = `${turn.providerTurnId}\u0000${server}`;
+          if (!requestedMcpSignIns.has(key)) {
+            requestedMcpSignIns.add(key);
+            yield* emitMcpSignInRequest(turn, server);
+          }
+          return "shown" as const;
+        });
+        // SCIENT-FORK:END
+
         // Keyed by native thread and server: one notice per server for as long as the session runs.
         const announcedMcpSignIns = new Set<string>();
         /** Claude reports a server that needs a sign-in only in its status, which settles after start. */
@@ -14812,6 +14897,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     providerInstanceId: adapterOptions.instanceId,
                     providerThreadId: turnInput.providerThread.id,
                     providerSessionId: input.providerSessionId,
+                    // SCIENT-FORK: the agent's sign-in requests go to the query that reported.
+                    showSignIn: (server) => showMcpSignIn(context, server),
                   })
                   .pipe(
                     Effect.tap((attachment) => {

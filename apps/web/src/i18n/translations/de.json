@@ -15511,9 +15511,8 @@
   "60595a8acf9f6a18": "An diese Sitzung übergeben",
   "a87212dee280b4c9": "Keine",
   "eefabf57c07b099f": "MCP-Server des Agenten",
-  "cbf2f207ca8b952b": [
-    "Optionale Plugin- oder Kontoserver ohne Anmeldung:",
-    " ",
+  "cbb852130e4dd992": [
+    "Optionale Server ohne Anmeldung: ",
     {
       "i": 1,
       "k": "_gt_value_1",

@@ -14,12 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
+import { ThreadMcpStatusRegistry } from "../../../mcpApps/ThreadMcpStatusRegistry.ts";
 import { PreviewManager } from "../../../preview/Manager.ts";
 import {
   type AddAsks,
   addConnector as addFor,
   changeReport,
   controlConnector as controlFor,
+  isScientConnector,
   listConnectors as listFor,
   testConnector,
 } from "../../extensions/ConnectorAgentControl.ts";
@@ -231,9 +233,71 @@ export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url
     );
 });
 
+/**
+ * A sign-in for one of the agent's own MCP servers (not a Scient connector) that this chat
+ * reports needs one: the session that reported it puts a Sign in row in the chat.
+ */
+export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(function* (
+  name: string,
+) {
+  const registry = yield* Effect.serviceOption(ThreadMcpStatusRegistry);
+  if (Option.isNone(registry)) return undefined;
+  const invocation = yield* AgentInvocationContext;
+  const outcome = yield* registry.value.requestSignIn({
+    threadId: invocation.threadId,
+    server: name,
+  });
+  if (outcome._tag === "none") return undefined;
+  const server = outcome.displayName;
+  const reply = (status: "ready" | "needs-sign-in" | "error", message: string) => ({
+    connector: server,
+    status,
+    message,
+  });
+  switch (outcome._tag) {
+    case "shown":
+      return reply(
+        "needs-sign-in",
+        `The chat now shows the user a Sign in row for ${server}. Tell them in one short sentence, carry on with whatever does not need it, and do not ask again until they send another message. Its tools come once they finish.`,
+      );
+    case "signed-in":
+      return reply("ready", `${server} is connected now: call its tools.`);
+    case "checking":
+      return reply(
+        "needs-sign-in",
+        `${server} is still connecting. Carry on with whatever does not need it and ask again later in this turn if you still need it.`,
+      );
+    case "not-available":
+      return reply(
+        "error",
+        `${server} is turned off or failed to start, so a sign-in would not help. Tell the user in one short sentence that it is unavailable, and carry on with whatever does not need it.`,
+      );
+    case "claudeai":
+      return reply(
+        "needs-sign-in",
+        `${server} is a claude.ai connector: the user signs in to it in their claude.ai connector settings. Tell them in one short sentence and carry on with whatever does not need it.`,
+      );
+    case "inactive":
+      return reply(
+        "needs-sign-in",
+        `${server}'s last status came from an agent session that has ended, so no sign-in can be shown now. Tell the user in one short sentence that, if it still needs one, they can sign in from the plug button above this chat after their next message, and carry on with whatever does not need it.`,
+      );
+    case "card":
+      return reply(
+        "needs-sign-in",
+        `${server} needs the user's sign-in, which they start from the plug button above this chat, under "Optional servers not signed in". Tell them in one short sentence and carry on with whatever does not need it.`,
+      );
+  }
+});
+
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
+  // A Scient connector of the same name keeps its own sign-in.
+  if (input.action === "sign-in" && !(yield* isScientConnector(input.connector))) {
+    const agentServer = yield* agentServerSignIn(input.connector);
+    if (agentServer !== undefined) return agentServer;
+  }
   const context = yield* Effect.context<AgentInvocationContext>();
   return yield* controlFor(
     input,

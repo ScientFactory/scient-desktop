@@ -15508,9 +15508,8 @@
   "60595a8acf9f6a18": "Fourni à cette session",
   "a87212dee280b4c9": "Aucun",
   "eefabf57c07b099f": "Serveurs MCP de l’agent",
-  "cbf2f207ca8b952b": [
-    "Serveurs facultatifs de plugins ou de comptes non connectés :",
-    " ",
+  "cbb852130e4dd992": [
+    "Serveurs facultatifs non connectés : ",
     {
       "i": 1,
       "k": "_gt_value_1",

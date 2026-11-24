@@ -15503,9 +15503,8 @@
   "60595a8acf9f6a18": "Entregado a esta sesión",
   "a87212dee280b4c9": "Ninguno",
   "eefabf57c07b099f": "Servidores MCP del agente",
-  "cbf2f207ca8b952b": [
-    "Servidores opcionales de plugins o cuentas sin sesión iniciada:",
-    " ",
+  "cbb852130e4dd992": [
+    "Servidores opcionales sin sesión iniciada: ",
     {
       "i": 1,
       "k": "_gt_value_1",

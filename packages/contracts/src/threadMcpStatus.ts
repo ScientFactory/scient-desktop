@@ -78,20 +78,56 @@ export const isActionableThreadMcpStatus = (status: ThreadMcpServerStatusKind): 
   status === "unreachable" ||
   status === "unavailable";
 
-/** User-configured native and host-managed servers earn badge prominence; ambient plugins/claude.ai stay inspectable. */
+/**
+ * Host-managed servers, and user-configured native ones that broke, earn badge prominence. A
+ * missing sign-in stays quiet until the agent asks for it in the chat; plugins and claude.ai stay
+ * inspectable.
+ */
 export const isProminentThreadMcpIssue = (server: ThreadMcpServerObservation): boolean =>
   isActionableThreadMcpStatus(server.status) &&
-  (server.source === "managed" || server.source === "native");
+  (server.source === "managed" ||
+    (server.source === "native" && server.status !== "needs-sign-in"));
 
 const LEGACY_MCP_STARTUP_NATIVE_PREFIXES = ["mcp-startup-failed:", "mcp-sign-in:"] as const;
+
+/** A Sign in row the agent asked for when it needed the server; it stays in the chat. */
+export const MCP_SIGN_IN_REQUEST_NATIVE_PREFIX = "mcp-sign-in-request:";
+
+/** A Sign in row the agent asked for, as opposed to a startup notice. */
+export const isMcpSignInRequestNotice = (item: {
+  readonly mcpSignIn?: unknown;
+  readonly nativeItemRef?: { readonly nativeId: string | null } | null | undefined;
+}): boolean =>
+  item.mcpSignIn !== undefined &&
+  item.nativeItemRef?.nativeId?.startsWith(MCP_SIGN_IN_REQUEST_NATIVE_PREFIX) === true;
+
+/**
+ * Whether a requested sign-in still has something to do: its live session still reports the
+ * server needs one. Completion is otherwise only known to the client that signed in.
+ */
+export const requestedMcpSignInIsOpen = (
+  snapshot: Pick<ThreadMcpStatusSnapshot, "servers"> | null | undefined,
+  request: { readonly server: string; readonly providerThreadId: string | null },
+): boolean =>
+  snapshot?.servers.some(
+    (server) =>
+      server.source !== "managed" &&
+      server.name === request.server &&
+      // "checking" too: a sign-in in progress survives a brief recheck.
+      (server.status === "needs-sign-in" || server.status === "checking") &&
+      server.sessionActive &&
+      server.providerThreadId === request.providerThreadId,
+  ) === true;
 
 /** Startup and sign-in notices older adapters wrote into the transcript; clients no longer show them. */
 export const isLegacyMcpStartupNotice = (item: {
   readonly mcpSignIn?: unknown;
   readonly nativeItemRef?: { readonly nativeId: string | null } | null | undefined;
 }): boolean => {
-  if (item.mcpSignIn !== undefined) return true;
   const nativeId = item.nativeItemRef?.nativeId;
+  if (typeof nativeId === "string" && nativeId.startsWith(MCP_SIGN_IN_REQUEST_NATIVE_PREFIX))
+    return false;
+  if (item.mcpSignIn !== undefined) return true;
   return (
     typeof nativeId === "string" &&
     LEGACY_MCP_STARTUP_NATIVE_PREFIXES.some((prefix) => nativeId.startsWith(prefix))

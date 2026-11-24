@@ -15521,9 +15521,8 @@
   "60595a8acf9f6a18": "Delivered to this session",
   "a87212dee280b4c9": "None",
   "eefabf57c07b099f": "Agent MCP servers",
-  "cbf2f207ca8b952b": [
-    "Optional plugin or account servers not signed in:",
-    " ",
+  "cbb852130e4dd992": [
+    "Optional servers not signed in: ",
     {
       "i": 1,
       "k": "_gt_value_1",

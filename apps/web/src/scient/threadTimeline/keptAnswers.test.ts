@@ -29,8 +29,26 @@ function assistant(id: string, text: string, streaming = false) {
   };
 }
 
+function work(id: string, label: string, structuredPayload?: unknown) {
+  second += 2;
+  const at = `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
+  return {
+    id: `${id}-entry`,
+    kind: "work" as const,
+    createdAt: at,
+    entry: {
+      id,
+      createdAt: at,
+      runId: "turn-1" as never,
+      label,
+      tone: "info" as const,
+      ...(structuredPayload === undefined ? {} : { structuredPayload: structuredPayload as never }),
+    },
+  };
+}
+
 function rowsFor(
-  timelineEntries: ReturnType<typeof assistant>[],
+  timelineEntries: Array<ReturnType<typeof assistant> | ReturnType<typeof work>>,
   running = false,
 ): MessagesTimelineRow[] {
   return deriveMessagesTimelineRows({
@@ -104,5 +122,23 @@ describe("kept answers", () => {
     expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     expect(messageRow(rows, "answer-entry").keptAnswer).toBeUndefined();
     expect(messageRow(rows, "answer-entry").showAssistantCopyButton).toBe(false);
+  });
+
+  it("keeps a Sign in row the agent asked for in view when the turn folds", () => {
+    second = 0;
+    const rows = rowsFor([
+      assistant("note", "Checking."),
+      work("search", "Ran command"),
+      work("sign-in", "Claude needs guru for this request. Sign in, then ask again.", {
+        type: "system_notice",
+        mcpSignIn: { server: "guru" },
+      }),
+      assistant("final", "Sign in to guru, then ask again."),
+    ]);
+    expect(rows.map((row) => row.id)).toEqual([
+      "turn-fold:turn-1",
+      "work-toggle:sign-in-entry",
+      "final-entry",
+    ]);
   });
 });

@@ -329,8 +329,7 @@ export function ExtensionsReceiptIndicator({
             <Collapsible data-ambient-mcp-issues={ambientIssues.length}>
               <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-muted-foreground">
                 <T>
-                  Optional plugin or account servers not signed in:{" "}
-                  <Var>{ambientIssues.length}</Var>
+                  Optional servers not signed in: <Var>{ambientIssues.length}</Var>
                 </T>
                 <ChevronRightIcon
                   aria-hidden

@@ -15517,9 +15517,8 @@
   "60595a8acf9f6a18": "Levererad till den här sessionen",
   "a87212dee280b4c9": "Inga",
   "eefabf57c07b099f": "Agentens MCP-servrar",
-  "cbf2f207ca8b952b": [
-    "Valfria plugin- eller kontoservrar som inte är inloggade:",
-    " ",
+  "cbb852130e4dd992": [
+    "Valfria servrar som inte är inloggade: ",
     {
       "i": 1,
       "k": "_gt_value_1",

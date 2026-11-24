@@ -184,10 +184,27 @@ describe("Scient work-log entries", () => {
         message: "The guru MCP server needs a sign-in before Claude can use it.",
         mcpSignIn: { server: "guru" },
       },
+      {
+        ...base,
+        id: TurnItemId.make("sign-in-request"),
+        type: "system_notice" as const,
+        title: "Sign in to guru",
+        message: "Claude needs guru for this request. Sign in, then ask again.",
+        mcpSignIn: { server: "guru" },
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          nativeId: "mcp-sign-in-request:turn-1:guru",
+          strength: "weak" as const,
+        },
+      },
     );
+    // The row the agent asked for when it needed the server stays.
     expect(
       entries.map((entry) => (entry?.kind === "work" ? entry.entry.label : entry?.kind)),
-    ).toEqual(["Your steer could not be confirmed before the turn ended."]);
+    ).toEqual([
+      "Your steer could not be confirmed before the turn ended.",
+      "Claude needs guru for this request. Sign in, then ask again.",
+    ]);
   });
 
   // regression: 5b6c34265c fix(fork): keep inherited readers and windows consistent
