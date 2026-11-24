@@ -47,7 +47,7 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
   const available = scientOperationCatalog
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
-  // The three document builds, runtime discovery, eight Overleaf tools, Sources,
+  // The three document builds, runtime discovery, the Word job, eight Overleaf tools, Sources,
   // reference checks, systematic reviews, annotations and the Compute inventory.
   const sources = [
     ...Object.values(ScientSourcesToolkit.tools),
@@ -55,8 +55,9 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
     ...Object.values(ScientSystematicReviewsToolkit.tools),
     ...Object.values(ScientAnnotationsToolkit.tools),
   ];
-  expect(available).toHaveLength(3 + 1 + 8 + sources.length + 1);
+  expect(available).toHaveLength(3 + 1 + 1 + 8 + sources.length + 1);
   expect(available).toContain(scientOperationCatalog.get("documents.runtime"));
+  expect(available).toContain(scientOperationCatalog.get("documents.docx.trackedReplace"));
   for (const tool of sources) {
     const operation = scientOperationCatalog.forTool(tool.name)!;
     expect(available).toContain(operation);

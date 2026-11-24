@@ -163,6 +163,9 @@ import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import * as DocumentLabRuntime from "../scient/documents/DocumentLabRuntime.ts";
+import * as DocumentOfficeToolchain from "../scient/documents/docxJob/DocumentOfficeToolchain.ts";
+import { ScientDocumentJobsToolkitHandlersLive } from "./toolkits/documents/docxTrackedReplaceHandler.ts";
+import { ScientDocumentJobsToolkit } from "./toolkits/documents/docxTrackedReplaceTool.ts";
 // SCIENT-FORK:START — Overleaf agent tools.
 import { ScientOverleafToolkitHandlersLive } from "./toolkits/overleaf/handlers.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
@@ -1798,6 +1801,19 @@ const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(ScientDocum
   Layer.provide(DocumentLabRuntime.layer),
 );
 
+// Advertised only where the pinned engine is set up and answers with its exact version.
+const ScientDocumentJobsToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const status = yield* (yield* DocumentOfficeToolchain.DocumentOfficeToolchain).status;
+    return status.status === "ready"
+      ? registerScientToolkit(ScientDocumentJobsToolkit).pipe(
+          Layer.provide(ScientDocumentJobsToolkitHandlersLive),
+          Layer.provide(DocumentOfficeToolchain.rendererLayer),
+        )
+      : Layer.empty;
+  }),
+).pipe(Layer.provide(DocumentOfficeToolchain.layer));
+
 // SCIENT-FORK:START — Overleaf agent tools.
 export const ScientOverleafToolkitRegistrationLive = registerScientToolkit(
   ScientOverleafToolkit,
@@ -2007,6 +2023,7 @@ export const layerTools = Layer.mergeAll(
   // SCIENT-FORK:END
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
+  ScientDocumentJobsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.
   ScientOverleafToolkitRegistrationLive,
   // SCIENT-FORK:END

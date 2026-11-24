@@ -8,6 +8,7 @@ import { operationDefinitionForTool } from "./ScientOperationTool.ts";
 import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
 import { ScientBrowserNetworkToolkit } from "./toolkits/browserNetwork/tools.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
+import { ScientDocumentJobsToolkit } from "./toolkits/documents/docxTrackedReplaceTool.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
@@ -48,6 +49,7 @@ export const scientTools = [
   ...Object.values(ScientAnnotationsToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
+  ...Object.values(ScientDocumentJobsToolkit.tools),
   ...Object.values(ScientOverleafToolkit.tools),
   ...Object.values(ScientComputeToolkit.tools),
   ...Object.values(ScientThreadsToolkit.tools),

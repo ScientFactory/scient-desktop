@@ -168,6 +168,10 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Find", "Finding", "Found", "the Document Lab runtime"],
     "scient-documents",
   ),
+  t3_docx_tracked_replace: tool(
+    ["Edit", "Editing", "Edited", "a Word copy with a tracked change"],
+    "scient-documents",
+  ),
   t3_overleaf_status: tool(["Check", "Checking", "Checked", "Overleaf links"], "scient-overleaf"),
   t3_overleaf_preview: tool(
     ["Preview", "Previewing", "Previewed", "an Overleaf sync"],
