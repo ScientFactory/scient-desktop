@@ -4,14 +4,19 @@ import { AsyncResult } from "effect/reactivity";
 import { StrictMode, useSyncExternalStore, type ReactNode } from "react"; // SCIENT-FORK: useDraft
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cdp, userEvent } from "vite-plus/test/browser";
-import { act, render } from "../../../test/render"; // SCIENT-FORK: no task-save case
+import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
 import {
   createWorkspaceFocusController,
+  requestWorkspaceFocus, // SCIENT-FORK: Scient's panel focus cases
   startWorkspaceFocus,
   workspaceAreaProps,
 } from "~/lib/workspaceFocus";
+// SCIENT-FORK:START — Scient's panel focus cases open Compute files in Results.
+import { computeFileContextId } from "~/scient/compute/computeContextStore";
+import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — Scient's read result has a revision and its URL state a refresh, which T3's
 // fixtures leave out; the mocks hand them on as the real types.
@@ -639,8 +644,8 @@ describe("rendered Markdown task saves", () => {
     expect(state.writeFile).not.toHaveBeenCalled();
   });
 
-  // SCIENT-FORK: a writable .md opens in Scient's Markdown editor, whose task toggles are tested in
-  // scient/markdownEditor/prosemirror/view.browser.test.ts ("renders task, wiki, and raw-source nodes").
+  // SCIENT-FORK: a writable .md opens in Scient's Markdown editor, whose task saves are tested in
+  // scient/markdownEditor/ScientMarkdownWorkspaceSurface.browser.test.tsx.
 });
 
 describe("workspace document previews", () => {
@@ -716,7 +721,7 @@ describe("open file in preview browser", () => {
 });
 
 // SCIENT-FORK: a writable .md opens in Scient's Markdown editor, where Mod+A selects the document;
-// tested in scient/markdownEditor/prosemirror/view.browser.test.ts.
+// tested in scient/markdownEditor/ScientMarkdownWorkspaceSurface.browser.test.tsx.
 
 describe("rendered Markdown relative images", () => {
   it.each([
@@ -734,3 +739,123 @@ describe("rendered Markdown relative images", () => {
     );
   });
 });
+
+// SCIENT-FORK:START — panel focus asked while a file opens ends on its editor, else on the panel.
+describe("panel focus while a file opens", () => {
+  const panel = (relativePath: string) => (
+    <div {...workspaceAreaProps("panel", 1, "Workspace panel")}>
+      <div data-right-panel-surface-content>{filePreview(relativePath)}</div>
+    </div>
+  );
+  async function openWithPanelFocus(relativePath: string) {
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    const stopFocus = startWorkspaceFocus({ subscribe: () => () => {} } as never);
+    const screen = await render(panel(relativePath));
+    requestWorkspaceFocus({ area: "panel", selector: "[data-file-content-focus]" });
+    await vi.waitFor(() =>
+      expect(document.activeElement?.matches("[data-file-content-focus]")).toBe(true),
+    );
+    const unmount = screen[Symbol.asyncDispose].bind(screen);
+    return Object.assign(screen, {
+      [Symbol.asyncDispose]: async () => {
+        await unmount();
+        stopFocus();
+        style.remove();
+      },
+    });
+  }
+  const contents = (relativePath: string, text: string, readOnly = false) => ({
+    relativePath,
+    contents: text,
+    byteLength: text.length,
+    truncated: false,
+    ...(readOnly ? { readOnly } : {}),
+  });
+
+  it("reaches a Markdown source editor that opens after its document session", async () => {
+    using _settings = setup();
+    localStorage.setItem("t3code.renderMarkdown", "false");
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["markdown"] });
+    // The session's first read goes through the mocked command; it answers once released.
+    const { promise: sessionRead, resolve: admit } = Promise.withResolvers<void>();
+    state.writeFile.mockImplementation(async (request: { input: { contents?: string } }) => {
+      if (request.input.contents !== undefined) return AsyncResult.success({ revision: "saved" });
+      await sessionRead;
+      const bytes = new TextEncoder().encode(state.file!.contents);
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      const revision = `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+      return AsyncResult.success({ ...state.file, revision });
+    });
+    await using screen = await openWithPanelFocus("notes.md");
+    {
+      using _frames = fakeTimers();
+      state.file = contents("notes.md", "# Notes\n");
+      await screen.rerender(panel("notes.md"));
+      await expect.element(screen.getByLabelText("Opening editor")).toBeInTheDocument();
+      // Focus lost here would be recovered to the panel at the next frame.
+      await act(() => vi.advanceTimersToNextFrame());
+      expect(document.activeElement?.matches("[data-file-content-focus]")).toBe(true);
+    }
+    admit();
+
+    await vi.waitFor(() => expect(deepActiveElement()?.matches("[data-content]")).toBe(true));
+    await userEvent.keyboard("x");
+    await vi.waitFor(() => expect(deepActiveElement()?.textContent).toContain("x# Notes"));
+  });
+
+  it("moves to the panel when the file opens read-only", async () => {
+    using _settings = setup();
+    await using screen = await openWithPanelFocus("server.ts");
+
+    state.file = contents("server.ts", "const server = 1;\n", true);
+    await screen.rerender(panel("server.ts"));
+
+    await vi.waitFor(() => {
+      const active = document.activeElement;
+      expect(active).not.toBe(document.body);
+      expect(screen.container.contains(active)).toBe(true);
+      expect(active?.matches("[data-file-content-focus]")).toBe(false);
+    });
+  });
+
+  it("leaves focus the user moved elsewhere while the file opened", async () => {
+    using _settings = setup();
+    await using screen = await openWithPanelFocus("server.ts");
+    const composer = document.createElement("textarea");
+    document.body.append(composer);
+    using _composer = { [Symbol.dispose]: () => composer.remove() };
+    composer.focus();
+    using _frames = fakeTimers();
+
+    state.file = contents("server.ts", "const server = 1;\n", true);
+    await screen.rerender(panel("server.ts"));
+    expect(screen.container.querySelector("[data-file-content-focus]")).toBeNull();
+    // Focus recovery would move it at the next frame.
+    await act(() => vi.advanceTimersToNextFrame());
+
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it("offers no editor target while a Compute file shows only its results", async () => {
+    using _settings = setup();
+    const contextId = computeFileContextId({
+      environmentId,
+      threadId: threadRef.threadId,
+      cwd: "/workspace",
+      relativePath: "analysis.py",
+    });
+    const presentation = useComputeFilePresentationStore.getState();
+    presentation.setFileView(contextId, "results");
+    using _view = { [Symbol.dispose]: () => presentation.remove(contextId) };
+    state.file = contents("analysis.py", "print(1)\n");
+    await using screen = await render(panel("analysis.py"));
+    await expect.element(screen.getByRole("button", { name: "Results" })).toBeInTheDocument();
+    expect(screen.container.querySelector("[data-file-content-focus]")).toBeNull();
+
+    await act(async () => presentation.setFileView(contextId, "code"));
+    expect(screen.container.querySelector("[data-file-content-focus]")).not.toBeNull();
+  });
+});
+// SCIENT-FORK:END

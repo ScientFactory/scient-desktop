@@ -107,7 +107,6 @@ import {
 } from "~/scient/documentExport/DocumentDownloadMenu";
 import * as Schema from "effect/Schema";
 import {
-  Fragment,
   lazy,
   Suspense,
   useEffect,
@@ -180,6 +179,7 @@ import { TabHistoryButtons } from "~/scient/rightPanel/tabHistory";
 import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
+import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { FileRenameButton } from "./FileRenameButton";
 import { useNewDocument } from "~/scient/documents/useNewDocument";
 import { normalizeMarkdownCreatePath } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
@@ -2134,10 +2134,10 @@ export default function FilePreviewPanel({
     focusEditorFromContent();
   };
   const handleEditorChangeStable = useStableCallback(handleEditorChange);
-  // SCIENT-FORK:START — rendered only beside the source editor, which Scient's surface chain picks.
-  // Panel focus lands here and passes to the editor once it attaches. sr-only keeps the
-  // 1px box workspace focus needs, and clips it so clicks in the file never reach it.
-  // The hand-off waits a microtask: workspace focus checks that focus stayed here.
+  // SCIENT-FORK:START — rendered beside a source editor, or a loading view that may become one,
+  // which Scient's surface chain picks. Panel focus lands here and passes to the editor once it
+  // attaches. sr-only keeps the 1px box workspace focus needs, and clips it so clicks in the file
+  // never reach it. The hand-off waits a microtask: workspace focus checks that focus stayed here.
   const contentFocus = (
     <div
       ref={contentFocusRef}
@@ -2149,16 +2149,20 @@ export default function FilePreviewPanel({
       onFocus={() => queueMicrotask(focusEditorFromContent)}
     />
   );
-  // One keyed fragment in every branch keeps the target mounted from loading to editor, so panel
-  // focus asked while the file loads reaches the editor.
-  const withContentFocus = (surface: ReactNode) => (
-    <Fragment key="file-content-focus">
-      {contentFocus}
+  // Each branch is this fragment, so the target stays mounted from loading to editor; its slot
+  // stays when it is left out, so the surface beside it is not remounted.
+  const withContentFocus = (surface: ReactNode, mayOpenEditor = true) => (
+    <>
+      {mayOpenEditor ? contentFocus : null}
       {surface}
-    </Fragment>
+    </>
   );
   const loadingMayOpenEditor =
     !isHostFile && canWriteFiles && !rendered && !(tableDelimiter && renderTable);
+  const computeShowsEditor = useComputeFilePresentationStore(
+    (state) =>
+      computeContextId === null || state.presentations[computeContextId]?.view !== "results",
+  );
   // SCIENT-FORK:END
   const focusEditorOnTreeRowClickOrEnter = (event: {
     nativeEvent: Event;
@@ -2988,10 +2992,13 @@ export default function FilePreviewPanel({
             relativePath && isLatexPreviewFile(relativePath) ? (
               <LatexDocumentPreparation />
             ) : (
-              <div
-                className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
-                aria-label={gt("Opening editor")}
-              />
+              withContentFocus(
+                <div
+                  className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
+                  aria-label={gt("Opening editor")}
+                />,
+                loadingMayOpenEditor,
+              )
             )
           ) : // SCIENT-FORK:START — data files open in the paged grid; CSV and TSV keep their text view
           relativePath &&
@@ -3078,16 +3085,13 @@ export default function FilePreviewPanel({
           ) : relativePath && file.data === null ? (
             isLatexPreviewFile(relativePath) ? (
               <LatexDocumentPreparation />
-            ) : loadingMayOpenEditor ? (
+            ) : (
               withContentFocus(
                 <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
                   <Spinner size="lg" />
                 </div>,
+                loadingMayOpenEditor,
               )
-            ) : (
-              <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                <Spinner size="lg" />
-              </div>
             )
           ) : relativePath && file.data ? (
             renderMermaid ? (
@@ -3207,6 +3211,7 @@ export default function FilePreviewPanel({
                     saveResolution={saveResolution}
                   />
                 </ScientSurfaceSuspense>,
+                computeShowsEditor,
               )
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
