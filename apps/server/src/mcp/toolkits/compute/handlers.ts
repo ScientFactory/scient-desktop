@@ -778,11 +778,36 @@ const setupSummary = (status: ComputeManagedRuntimeStatus) => ({
   failure: status.failureMessage,
 });
 
+/** Adds a package beside the Python a session runs, which its next run finds. */
+const addPythonPackage = Effect.fn("ScientComputeToolkit.addPythonPackage")(function* (
+  scope: AgentScope,
+  distribution: string,
+  sessionId: string | undefined,
+) {
+  const session =
+    sessionId === undefined
+      ? yield* agentSession(scope, "python")
+      : yield* requireSession(scope, sessionId);
+  if (session.languageId !== PYTHON)
+    return yield* toolError("compute-failed", `Session '${session.sessionId}' is not Python.`);
+  yield* scope.gateway
+    .addPythonLibrary({ cwd: scope.cwd, sessionId: session.sessionId, distribution })
+    .pipe(Effect.mapError(computeFailed));
+  return { package: distribution, session: session.sessionId };
+});
+
 const setupScientCompute = Effect.fn("ScientComputeToolkit.setup")(function* (input: {
+  readonly package?: string | undefined;
+  readonly session?: string | undefined;
   readonly toolkits?: ReadonlyArray<string> | undefined;
   readonly waitSeconds?: number | undefined;
 }) {
   const scope = yield* agentScope();
+  if (input.package !== undefined) {
+    const added = yield* addPythonPackage(scope, input.package, input.session);
+    const status = yield* scope.gateway.managedRuntimeStatus({ languageId: PYTHON });
+    return { added, ...setupSummary(status) };
+  }
   const requested = (input.toolkits ?? []).map((id) => ComputeToolkitId.make(id));
   let status = yield* scope.gateway.managedRuntimeStatus({ languageId: PYTHON });
   if (status.operation === null && !status.installed) {

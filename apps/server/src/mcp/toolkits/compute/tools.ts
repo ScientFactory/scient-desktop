@@ -311,8 +311,18 @@ const ScientComputeControlTool = Tool.make("scient_compute_control", {
 
 const ScientComputeSetupTool = Tool.make("scient_compute_setup", {
   description:
-    "Install Scient-managed scientific Python (NumPy, pandas, SciPy, Matplotlib, scikit-learn and more), or add Toolkits to it. Use it when a package is missing instead of installing into the user's own Python. The first install takes a few minutes; call again to check progress.",
+    "Add a missing Python package, or install Scient-managed scientific Python (NumPy, pandas, SciPy, Matplotlib, scikit-learn and more) and its Toolkits. When code fails with ModuleNotFoundError, pass `package` (the name pip installs, e.g. scikit-learn for sklearn) and the `session` that failed: Scient adds just that package beside the session's Python, never into it, and the session's next run finds it without a restart. Never pip install into the user's own Python. The first managed install takes a few minutes; call again to check progress.",
   parameters: Schema.Struct({
+    package: Schema.optional(
+      Schema.String.check(
+        Schema.isPattern(/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/u),
+      ).annotate({ description: "A package name as pip installs it, without a version." }),
+    ),
+    session: Schema.optional(
+      SessionId.annotate({
+        description: "The Python session the package is for; default your own Python session.",
+      }),
+    ),
     toolkits: Schema.optional(
       Schema.Array(Schema.String.check(Schema.isMaxLength(64)))
         .check(Schema.isMaxLength(16))
@@ -324,6 +334,8 @@ const ScientComputeSetupTool = Tool.make("scient_compute_setup", {
     waitSeconds: Schema.optional(SetupWaitSeconds),
   }),
   success: Schema.Struct({
+    /** The package added for `session`, whose next run finds it. */
+    added: Schema.optional(Schema.Struct({ package: Schema.String, session: Schema.String })),
     installed: Schema.Boolean,
     busy: Schema.Boolean,
     runtime: Schema.NullOr(Schema.String),
@@ -333,7 +345,7 @@ const ScientComputeSetupTool = Tool.make("scient_compute_setup", {
   failure: ScientComputeToolError,
   dependencies,
 })
-  .annotate(Tool.Title, "Set up Scient-managed Python")
+  .annotate(Tool.Title, "Set up Python packages")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
