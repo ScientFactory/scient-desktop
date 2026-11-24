@@ -5,9 +5,12 @@
  * produces a PDF and subdirectory roots resolve input/include paths; absent engines must skip.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,6 +27,7 @@ import {
   popplerHas,
   rebuildsEditedSource,
 } from "./latexRealEngine.testkit.ts";
+import { syncTexRuntimePlatformKey } from "./SyncTexRuntime.ts";
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
 const resolvesOnPath = (command: string): boolean => {
@@ -41,11 +45,29 @@ const ENGINE_ON_PATH = resolvesOnPath("latexmk -v") || resolvesOnPath("tectonic 
 const COMPILE_TIMEOUT_MS = 25_000;
 // The Linux TinyTeX smoke runs the nested-root and edit/rebuild scenarios against its verified
 // payload (TinyTexAssetSmoke.test.ts). Here they run against an engine already on PATH; the
-// round trip also needs Poppler's pdftotext, and SyncTeX finds the helper set below or the
-// bundled lookup.
+// round trip also needs Poppler's pdftotext and a SyncTeX helper: the one set below or the
+// staged one.
 const SYNCTEX_NAVIGATOR_PATH = process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH;
 const engine =
   SYNCTEX_NAVIGATOR_PATH === undefined ? {} : { syncTexNavigatorPath: SYNCTEX_NAVIGATOR_PATH };
+// The repository's staged helper (`pnpm build:synctex-runtime`), one of SyncTexRuntime's bundled
+// candidates. A plain checkout has none, so the round trip skips instead of failing.
+const hostPlatform = HostProcess.Platform.defaultValue();
+const stagedSyncTexKey = syncTexRuntimePlatformKey(
+  hostPlatform,
+  HostProcess.Architecture.defaultValue(),
+);
+const SYNCTEX_HELPER_PRESENT =
+  SYNCTEX_NAVIGATOR_PATH !== undefined ||
+  (stagedSyncTexKey !== null &&
+    NodeFS.existsSync(
+      NodePath.resolve(
+        import.meta.dirname,
+        "../../../../../native/synctex-runtime",
+        stagedSyncTexKey,
+        hostPlatform === "win32" ? "synctex.exe" : "synctex",
+      ),
+    ));
 
 describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine", () => {
   it.live(
@@ -94,7 +116,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
   );
 });
 
-describe.skipIf(!ENGINE_ON_PATH || !popplerHas("pdftotext"))(
+describe.skipIf(!ENGINE_ON_PATH || !popplerHas("pdftotext") || !SYNCTEX_HELPER_PRESENT)(
   "edited-source real-engine round trip",
   () => {
     it.live("rebuilds edited prose, preserves math and recovers from a failed compile", () =>
