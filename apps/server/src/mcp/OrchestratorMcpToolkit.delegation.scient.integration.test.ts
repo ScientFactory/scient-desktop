@@ -637,6 +637,8 @@ describe("orchestrator MCP delegation", () => {
     fx: ToolkitFixture,
     target: { readonly providerInstanceId: ProviderInstanceId; readonly model: string },
     name: string,
+    // Without it the send can reach the child before the parent records the task's result.
+    awaitParentResult = true,
   ) =>
     Effect.gen(function* () {
       yield* fx.startParent;
@@ -649,11 +651,13 @@ describe("orchestrator MCP delegation", () => {
       });
       expect(child.status).toBe("completed");
       // The wait reads the child; the parent's task row settles from the child's events after it.
-      yield* fx.waitFor(parentThreadId, (projection) =>
-        projection.subagents.some(
-          (task) => task.id === child.taskId && task.status === "completed" && task.result !== null,
-        ),
-      );
+      if (awaitParentResult)
+        yield* fx.waitFor(parentThreadId, (projection) =>
+          projection.subagents.some(
+            (task) =>
+              task.id === child.taskId && task.status === "completed" && task.result !== null,
+          ),
+        );
       const messageId = MessageId.make(`message:mcp-child:${name}`);
       yield* fx.orchestrator.dispatch({
         type: "message.dispatch",
@@ -752,6 +756,30 @@ describe("orchestrator MCP delegation", () => {
           (yield* fx.projection(child.childThreadId)).runs.find((run) => run.id === sent.runId)
             ?.delegatedTaskId,
         ).toBe(restartedTaskId);
+      }),
+    ),
+  );
+
+  it.live("a send right after the wait returns leaves the finished task its own result", () =>
+    withToolkit((fx) =>
+      Effect.gen(function* () {
+        const { child, sent } = yield* steerIntoUntaskedChildRun(
+          fx,
+          { providerInstanceId: codexInstanceId, model: codexModel },
+          "immediate-restart-untasked-run",
+          false,
+        );
+        expect(sent.taskId).toBeDefined();
+        yield* waitForChildRun(fx, child.childThreadId, sent.runId, "completed");
+        const parent = yield* fx.waitFor(parentThreadId, (projection) =>
+          projection.subagents.some(
+            (task) => task.id === sent.taskId && task.status === "completed",
+          ),
+        );
+        expect(parent.subagents.find((task) => task.id === child.taskId)).toMatchObject({
+          status: "completed",
+          result: child.summary,
+        });
       }),
     ),
   );

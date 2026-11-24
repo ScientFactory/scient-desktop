@@ -1004,6 +1004,20 @@ function mayStartSubagentFollowup(
   );
 }
 
+// SCIENT-FORK:START — new work on a delegated child takes over a task its parent has not yet
+// recorded the result of. Continuations and requeued steers resume work; monitor updates report it.
+function mayTakeOverChildTask(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+): boolean {
+  return (
+    command.restartContinuationOfRunId === undefined &&
+    command.usageLimitContinuationOfRunId === undefined &&
+    command.steerFollowUpOfRunId === undefined &&
+    !(command.notification?.source.kind === "monitor" && command.notification.outcome === "updated")
+  );
+}
+// SCIENT-FORK:END
+
 /** Waiting runs only drain post-terminal output; their agent turn is over and still needs a wake. */
 function isLiveRun(run: OrchestrationV2Run): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
@@ -16841,6 +16855,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       options: {
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
+        // SCIENT-FORK: the caller holds the child's lock, which the session release takes.
+        readonly childLocked?: boolean;
         readonly task: OrchestrationV2Subagent;
         readonly resultRun?: OrchestrationV2Run;
       },
@@ -17170,7 +17186,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ];
       yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
-      yield* releaseFinishedDelegateSessions(childThreadId, childRun.id, task.id);
+      // SCIENT-FORK: a child-locked settlement precedes the child's next run, which keeps its session.
+      if (options.childLocked !== true)
+        yield* releaseFinishedDelegateSessions(childThreadId, childRun.id, task.id);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -17189,7 +17207,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const finalizeAppOwnedSubagent = Effect.fn("Orchestrator.finalizeAppOwnedSubagent")(function* (
     childThreadId: ThreadId,
-    options?: { readonly settledContinuationOf?: RunId; readonly syncRunId?: RunId },
+    options?: {
+      readonly settledContinuationOf?: RunId;
+      readonly syncRunId?: RunId;
+      // SCIENT-FORK: settles tasks only; the question dismissal below takes the child's lock.
+      readonly childLocked?: boolean;
+    },
   ) {
     const child = yield* projectionStore.getThreadRecords(childThreadId, ["contextTransfers"]);
     const parentThreadId = child.thread.lineage.parentThreadId;
@@ -17236,6 +17259,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    if (options?.childLocked === true) return;
     // Only the run a cancelled task settled from ends with it. The row read above has no
     // such run yet when this call settled the task, from the same result run.
     const { resultRun } = progress;
@@ -18189,6 +18213,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
+    // SCIENT-FORK:START — a send that beats the child-settlement reaction first records the task
+    // its child finished, under the parent lock its dispatch took, so its run cannot take it over.
+    if (command.type === "message.dispatch" && mayTakeOverChildTask(command)) {
+      const lockedParentThreadId = yield* SubagentParentLockHeld;
+      if (
+        lockedParentThreadId !== undefined &&
+        lockedParentThreadId ===
+          (yield* appOwnedSubagentParentThreadId(command.threadId).pipe(mapDispatchError(command)))
+      )
+        yield* finalizeAppOwnedSubagent(command.threadId, { childLocked: true }).pipe(
+          mapDispatchError(command),
+        );
+    }
+    // SCIENT-FORK:END
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
       Effect.tap((planned) => refuseAboveRuntimeModeCeiling(command, planned.events)),
@@ -18472,9 +18510,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap(([parentThreadId, held]) =>
         parentThreadId === undefined || parentThreadId === held
           ? dispatch
-          : threadDispatch.withLock(parentThreadId, dispatch),
+          : threadDispatch.withLock(
+              parentThreadId,
+              dispatch.pipe(Effect.provideService(SubagentParentLockHeld, parentThreadId)),
+            ),
       ),
     );
+  // SCIENT-FORK:START — other new work takes the parent's lock only while the child's
+  // original task is open, so a server send to a settled child stays off its parent's lock.
+  const childOriginalTaskOpen = Effect.fn("Orchestrator.childOriginalTaskOpen")(function* (
+    threadId: ThreadId,
+  ) {
+    const child = yield* projectionStore.findThread(threadId);
+    const parentThreadId = child?.lineage.parentThreadId;
+    const originalTaskId = child?.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : null;
+    if (
+      child?.lineage.relationshipToParent !== "subagent" ||
+      parentThreadId == null ||
+      originalTaskId === null
+    )
+      return false;
+    const { subagents } = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+      subagentIds: [originalTaskId],
+    });
+    return subagents.some(
+      (task) => task.id === originalTaskId && task.origin === "app_owned" && task.result === null,
+    );
+  });
+  const withOpenTaskParentLock = <A, E, R>(threadId: ThreadId, dispatch: Effect.Effect<A, E, R>) =>
+    childOriginalTaskOpen(threadId).pipe(
+      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      Effect.flatMap((open) => (open ? withSubagentParentLock(threadId, dispatch) : dispatch)),
+    );
+  // SCIENT-FORK:END
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (
@@ -18556,7 +18624,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         message.threadId,
         mayStartSubagentFollowup(message)
           ? withSubagentParentLock(message.threadId, dispatch)
-          : dispatch,
+          : // SCIENT-FORK: other new work may still find its child's task unrecorded.
+            mayTakeOverChildTask(message)
+            ? withOpenTaskParentLock(message.threadId, dispatch)
+            : dispatch,
       );
     // SCIENT-FORK: settle a stopped child's row before returning, after releasing its lock.
     if (command.type === "thread.stop") {
