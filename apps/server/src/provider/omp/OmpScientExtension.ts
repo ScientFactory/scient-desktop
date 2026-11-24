@@ -32,7 +32,7 @@ const OMP_SCIENT_TOOL_CALL_TIMEOUT_MS = 65 * 60 * 1_000;
 
 /**
  * Older runtimes need essential tools. Supported runtimes mount optional Scient and connector
- * tools under xd://, keeping a small Scient core direct. Share connections across subagent reruns.
+ * tools on demand, keeping a small Scient core direct. Share connections across subagent reruns.
  * before_agent_start replaces the string-array prompt. Connector aliases preserve call names;
  * one failed connector must not remove others' tools.
  */
@@ -249,22 +249,26 @@ const scientToolResult = (output, label) => {
 };
 
 export default async function scientOmpExtension(pi) {
-  const shared = scientOnce((bootstrap) => ({
-    awareness: typeof bootstrap.awareness === "string" ? bootstrap.awareness : "",
-    connectorLoadMode:
-      process.env[${JSON.stringify(SCIENT_CONNECTOR_LOAD_MODE_ENV)}] === "discoverable" ? "discoverable" : "essential",
-    connection: scientConnect(bootstrap.endpoint, bootstrap.authorization, "Scient"),
-    connectors: scientConnectors(bootstrap.connectors).map((connector) => {
-      const label = "Connector " + JSON.stringify(connector.displayName);
-      return scientConnect(connector.url, bootstrap.authorization, label, AbortSignal.timeout(30_000)).then(
-        ({ tools, request, description }) => ({ ...connector, label, connected: true, tools, request, description }),
-        () => ({ ...connector, label, connected: false, tools: [], request: undefined }),
-      );
-    }),
-  }));
-  const awareness = shared.awareness + (shared.connectorLoadMode === "discoverable"
-    ? "\\nAdditional Scient and connector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write JSON arguments to xd://<name> to call them. Tools named in these instructions may be devices rather than top-level tools."
-    : "");
+  const shared = scientOnce((bootstrap) => {
+    const mode = process.env[${JSON.stringify(SCIENT_CONNECTOR_LOAD_MODE_ENV)}];
+    const discoveryHint = mode === "commands"
+      ? "\\nFind optional Scient and connector tools in the session's command catalog. If a service has a link, read it for the exact commands. In bash, run <command> --help for usage, then <command> <args> or <command> -j '<json>'. Call top-level tools directly."
+      : mode === "discoverable"
+        ? "\\nAdditional Scient and connector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write JSON arguments to xd://<name> to call them. Tools named in these instructions may be devices rather than top-level tools."
+        : "";
+    return {
+      awareness: (typeof bootstrap.awareness === "string" ? bootstrap.awareness : "") + discoveryHint,
+      connectorLoadMode: mode === "commands" || mode === "discoverable" ? "discoverable" : "essential",
+      connection: scientConnect(bootstrap.endpoint, bootstrap.authorization, "Scient"),
+      connectors: scientConnectors(bootstrap.connectors).map((connector) => {
+        const label = "Connector " + JSON.stringify(connector.displayName);
+        return scientConnect(connector.url, bootstrap.authorization, label, AbortSignal.timeout(30_000)).then(
+          ({ tools, request, description }) => ({ ...connector, label, connected: true, tools, request, description }),
+          () => ({ ...connector, label, connected: false, tools: [], request: undefined }),
+        );
+      }),
+    };
+  });
   const [{ tools, request, description }, connectors] = await Promise.all([
     shared.connection,
     Promise.all(shared.connectors),
@@ -317,7 +321,7 @@ export default async function scientOmpExtension(pi) {
     return undefined;
   });
   pi.on("before_agent_start", (event) => {
-    const prompt = [awareness, scientWorkspace()].filter(Boolean).join("\\n\\n");
+    const prompt = [shared.awareness, scientWorkspace()].filter(Boolean).join("\\n\\n");
     return { systemPrompt: prompt ? [...event.systemPrompt, prompt] : undefined };
   });
   const status =

@@ -11,6 +11,9 @@ import {
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+// SCIENT-FORK:START — recover MCP tool commands from OMP bash results.
+import { scientOmpCommandIdentity } from "./scientOmpCommandIdentity.ts";
+// SCIENT-FORK:END
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -1088,6 +1091,9 @@ export interface AcpMcpToolCallIdentity {
   readonly server: string;
   readonly tool: string;
   readonly input?: Record<string, unknown>;
+  // SCIENT-FORK:START — a wrapped command carries its own MCP response.
+  readonly output?: unknown;
+  // SCIENT-FORK:END
 }
 
 const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
@@ -1207,6 +1213,22 @@ export function extractMcpToolCallIdentity(
     const tool = prefix === undefined ? metaToolName : metaToolName.slice(prefix.length);
     return tool ? { server: metaServerId, tool } : undefined;
   }
+  // SCIENT-FORK:START — OMP 19.1 reports ordered dispatches on the outer bash result.
+  const rawOutput = toolCall.data.rawOutput;
+  if (
+    toolCall.data.name === "bash" &&
+    isRecord(rawOutput) &&
+    isRecord(rawOutput.details) &&
+    Array.isArray(rawOutput.details.toolCommands)
+  ) {
+    return scientOmpCommandIdentity(
+      toolCall.status,
+      rawOutput.details.toolCommands,
+      rawOutput,
+      isT3McpServer,
+    );
+  }
+  // SCIENT-FORK:END
   // OMP mounts MCP tools as xd://mcp__<server>_<tool> devices and calls them by writing JSON
   // args; a read of the same path only fetches the tool's docs.
   const devicePath = typeof rawInput?.path === "string" ? rawInput.path : "";

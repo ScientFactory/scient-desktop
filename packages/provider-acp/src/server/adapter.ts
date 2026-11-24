@@ -4093,8 +4093,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 mcpIdentity === undefined
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-              input: merged.data.rawInput ?? null,
-              output: merged.data.rawOutput ?? merged.data.content ?? null,
+              // SCIENT-FORK:START — a tool command has its own arguments and result inside bash.
+              input:
+                (mcpIdentity?.output === undefined ? merged.data.rawInput : mcpIdentity.input) ??
+                null,
+              output: mcpIdentity?.output ?? merged.data.rawOutput ?? merged.data.content ?? null,
+              // SCIENT-FORK:END
             },
           });
         });
@@ -5305,7 +5309,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
-            let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            // SCIENT-FORK:START — keep OMP's wrapped MCP response, including images and errors.
+            let output =
+              mcpIdentity.output ??
+              (rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput));
+            // SCIENT-FORK:END
             const resolvedT3Tool = resolveT3McpToolId(toolName);
             const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
             const isError =
