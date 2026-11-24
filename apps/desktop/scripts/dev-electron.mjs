@@ -473,24 +473,31 @@ async function stopApp() {
   }).finally(() => cleanupLaunchFiles(app));
 }
 
+// SCIENT-FORK:START — restart only for real rewrites; see createWatchedFileStamps.
+const watchedFileStamps = createWatchedFileStamps(
+  watchedDirectories.flatMap(({ directory, files }) =>
+    [...files].map((file) => NodePath.join(desktopDir, directory, file)),
+  ),
+);
+// SCIENT-FORK:END
+
 const restartScheduler = createCoalescedRestartScheduler({
   debounceMs: restartDebounceMs,
   restart: async () => {
+    // SCIENT-FORK:START — a running app restarts only when a bundle's bytes changed.
+    if (currentApp && !watchedFileStamps.contentChanged()) return;
+    // SCIENT-FORK:END
     await stopApp();
     if (!shuttingDown) {
+      // SCIENT-FORK:START
+      watchedFileStamps.markLaunched();
+      // SCIENT-FORK:END
       await startApp();
     }
   },
 });
 
 function startWatchers() {
-  // SCIENT-FORK:START — restart only for real rewrites; see createWatchedFileStamps.
-  const watchedFileStamps = createWatchedFileStamps(
-    watchedDirectories.flatMap(({ directory, files }) =>
-      [...files].map((file) => NodePath.join(desktopDir, directory, file)),
-    ),
-  );
-  // SCIENT-FORK:END
   for (const { directory, files } of watchedDirectories) {
     const watcher = NodeFS.watch(
       NodePath.join(desktopDir, directory),

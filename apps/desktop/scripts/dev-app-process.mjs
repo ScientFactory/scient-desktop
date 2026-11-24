@@ -271,8 +271,8 @@ export function createCoalescedRestartScheduler({
 }
 
 // fs.watch also reports reads (Windows) and identical rewrites (bundler config
-// reloads), which restarted the app. A file changes only when its size or mtime
-// differs and its bytes differ too.
+// reloads). `changed` filters events by size and mtime; after the debounce,
+// `contentChanged` compares bytes with the last launch. Unreadable means changed.
 export function createWatchedFileStamps(
   filePaths,
   { stat = NodeFS.statSync, readFile = NodeFS.readFileSync } = {},
@@ -282,29 +282,35 @@ export function createWatchedFileStamps(
       const stats = stat(filePath);
       return `${String(stats.size)}:${String(stats.mtimeMs)}`;
     } catch (error) {
-      if (error?.code === "ENOENT") return "missing";
-      throw error;
+      return error?.code === "ENOENT" ? "missing" : `unreadable:${String(error?.code)}`;
     }
   };
   const digestOf = (filePath) => {
     try {
       return NodeCrypto.createHash("sha256").update(readFile(filePath)).digest("hex");
     } catch (error) {
-      if (error?.code === "ENOENT") return "missing";
-      throw error;
+      return error?.code === "ENOENT" ? "missing" : null;
     }
   };
+  const digestAll = () => new Map(filePaths.map((filePath) => [filePath, digestOf(filePath)]));
   const stamps = new Map(filePaths.map((filePath) => [filePath, stampOf(filePath)]));
-  const digests = new Map(filePaths.map((filePath) => [filePath, digestOf(filePath)]));
+  let launched = digestAll();
   return {
     changed(filePath) {
       const next = stampOf(filePath);
       if (stamps.get(filePath) === next) return false;
       stamps.set(filePath, next);
-      const nextDigest = next === "missing" ? "missing" : digestOf(filePath);
-      if (digests.get(filePath) === nextDigest) return false;
-      digests.set(filePath, nextDigest);
       return true;
+    },
+    contentChanged() {
+      const current = digestAll();
+      return filePaths.some(
+        (filePath) =>
+          current.get(filePath) === null || current.get(filePath) !== launched.get(filePath),
+      );
+    },
+    markLaunched() {
+      launched = digestAll();
     },
   };
 }
