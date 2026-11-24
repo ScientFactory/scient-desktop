@@ -156,9 +156,8 @@ NodeTest.test(
       };
       begin("kernels", ["--save-python", "bare"], env, system);
       const temp = roleTemp(env, "kernels");
-      NodeAssert.match(
-        NodeFS.readFileSync(env.GITHUB_ENV, "utf8"),
-        new RegExp(`^TMPDIR=${temp}$`, "m"),
+      NodeAssert.ok(
+        NodeFS.readFileSync(env.GITHUB_ENV, "utf8").split("\n").includes(`TMPDIR=${temp}`),
       );
       NodeFS.writeFileSync(NodePath.join(temp, "kernel.json"), "{}");
       NodeFS.mkdirSync(NodePath.join(home, ".julia", "logs"), { recursive: true });

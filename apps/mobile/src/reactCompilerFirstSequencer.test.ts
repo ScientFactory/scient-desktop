@@ -18,7 +18,7 @@ const context = (count = 1, index = 1) =>
   }) as unknown as ConstructorParameters<typeof ReactCompilerFirstSequencer>[0];
 const sequencer = (count = 1, index = 1) => new ReactCompilerFirstSequencer(context(count, index));
 const paths = (files: TestSpecification[]) =>
-  files.map((file) => NodePath.relative(root, file.moduleId));
+  files.map((file) => NodePath.relative(root, file.moduleId).replaceAll("\\", "/"));
 
 describe("mobile test order", () => {
   it("starts the React Compiler sweep first and keeps every other file in Vitest's order", async () => {
