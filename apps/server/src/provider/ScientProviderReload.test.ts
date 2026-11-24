@@ -60,13 +60,12 @@ it.effect("strict reload fails instead of refreshing the instance its rebuild re
   }),
 );
 
-it.effect(
-  "reload rebuilds configured instances, unavailable ones too, and never an unknown id",
-  () =>
-    Effect.gen(function* () {
-      const { reload, rebuilt } = yield* makeReload();
-      yield* reload.reloadInstance(parked);
-      yield* reload.reloadInstance(unknown);
-      assert.deepEqual(rebuilt, [parked]);
-    }),
+it.effect("reload hands every id to the registry's own rebuild, unavailable and unknown too", () =>
+  Effect.gen(function* () {
+    const { reload, rebuilt } = yield* makeReload();
+    // No check of its own outside the registry's lock, where a replacement could hide the id.
+    yield* reload.reloadInstance(parked);
+    yield* reload.reloadInstance(unknown);
+    assert.deepEqual(rebuilt, [parked, unknown]);
+  }),
 );

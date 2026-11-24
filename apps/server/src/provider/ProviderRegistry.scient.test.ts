@@ -950,8 +950,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 .pipe(Effect.flip);
               assert.strictEqual(missingReloadError.operation, "reload");
               assert.strictEqual(missingReloadError.instanceId, missingInstanceId);
-              // Both reloads rebuilt the configured instance; the unknown one rebuilt nothing.
-              assert.deepStrictEqual(rebuilt, [codexInstanceId, codexInstanceId]);
+              // Every reload goes through the registry's own rebuild, the unknown id too; it
+              // still reports the reload failed.
+              assert.deepStrictEqual(rebuilt, [
+                codexInstanceId,
+                codexInstanceId,
+                missingInstanceId,
+              ]);
             }).pipe(Effect.provide(runtimeServices));
           }),
       );

@@ -44,22 +44,14 @@ export function makeScientProviderReload(deps: {
     authenticationFailuresRef,
   } = deps;
 
-  // Every configured id is live or unavailable; the mutator would reconcile all for any other id.
-  const rebuildConfigured = Effect.fn("ProviderRegistry.rebuildConfigured")(function* (
-    instanceId: ProviderInstanceId,
-  ) {
-    const configured =
-      (yield* instanceRegistry.getInstance(instanceId)) !== undefined ||
-      (yield* instanceRegistry.listUnavailable).some(
-        (provider) => provider.instanceId === instanceId,
-      );
-    if (configured) yield* rebuild([instanceId]);
-  });
+  // T3's mutator reads the configured instances under the registry's own lock, so an instance
+  // mid-replacement is still rebuilt; an id no longer configured gets an ordinary reconcile.
+  const rebuildOne = (instanceId: ProviderInstanceId) => rebuild([instanceId]);
 
   const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
     instanceId: ProviderInstanceId,
   ) {
-    yield* rebuildConfigured(instanceId);
+    yield* rebuildOne(instanceId);
     // Do not race the registry-change subscriber: attach the replacement
     // source synchronously before asking it to probe the newly active path.
     yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
@@ -152,7 +144,7 @@ export function makeScientProviderReload(deps: {
     instanceId: ProviderInstanceId,
   ) {
     return yield* Effect.gen(function* () {
-      yield* rebuildConfigured(instanceId);
+      yield* rebuildOne(instanceId);
       yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
       const instance = (yield* getLiveInstances).get(instanceId);
       if (!instance) {
