@@ -52,6 +52,7 @@ const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
 const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError, R>) =>
   effect.pipe(
     Effect.catchTags({
+      SpeechUnsupportedLanguageError: () => failEnvironmentInvalidRequest("invalid_command"),
       SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
       SpeechUnsupportedPlatformError: () => failEnvironmentInvalidRequest("speech_unavailable"),
       SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),

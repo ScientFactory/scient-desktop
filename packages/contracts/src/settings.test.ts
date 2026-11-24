@@ -15,7 +15,6 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
-  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -554,8 +553,6 @@ describe("voice settings", () => {
   it("keeps the correction cue personal and project vocabulary on the environment", () => {
     expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
     expect(() => decodeClientSettingsPatch({ speechCorrectionWord: "x".repeat(51) })).toThrow();
-    expect(DEFAULT_SERVER_SETTINGS.speechProjectCustomWords).toEqual([]);
-    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
   });
 });
 

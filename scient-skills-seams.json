@@ -371,6 +371,11 @@
       "path": "apps/server/src/provider/scient/ScientAgentToolLoading.ts",
       "anchor": "scient_skill_load",
       "purpose": "Keep skill discovery and loading in the Scient tool core that capable OMP runtimes load directly."
+    },
+    {
+      "path": "apps/server/src/transcription/RecordingNotes.ts",
+      "anchor": "selectedScientSkillNames: [\"transcripts\"]",
+      "purpose": "Recording notes threads start with the Transcripts skill selected."
     }
   ]
 }

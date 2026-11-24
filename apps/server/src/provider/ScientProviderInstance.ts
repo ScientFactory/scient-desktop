@@ -26,6 +26,8 @@ import type {
   ProviderVoiceTranscriptCorrection,
 } from "./ScientProviderInstanceSeams.ts";
 
+import type { openCodexAppServerConnection } from "./CodexProvider.ts";
+
 export interface ScientProviderInstance extends ProviderInstance {
   readonly connectionActions?: ProviderConnectionActions | undefined;
   readonly managedRuntimeActions?: ProviderManagedRuntimeActions | undefined;
@@ -35,6 +37,13 @@ export interface ScientProviderInstance extends ProviderInstance {
   readonly nativeInventoryChanges?: Stream.Stream<ProviderNativeInventory> | undefined;
   readonly workspaceInventory?: ProviderWorkspaceInventory | undefined;
   readonly voiceTranscriptCorrection?: ProviderVoiceTranscriptCorrection | undefined;
+  readonly openCodexConnection?: (
+    cwd: string,
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof openCodexAppServerConnection>>,
+    Effect.Error<ReturnType<typeof openCodexAppServerConnection>>,
+    Scope.Scope
+  >;
   readonly voiceDictation?: ProviderVoiceDictation | undefined;
   readonly liveVoiceHost?: ProviderLiveVoiceHost | undefined;
 }

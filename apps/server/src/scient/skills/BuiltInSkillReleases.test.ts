@@ -44,6 +44,7 @@ describe("Scient built-in skill releases", () => {
       "scient.grill-me": true,
       "scient.to-questionnaire": true,
       "scient.teach": true,
+      "scient.transcripts": true,
     });
   });
 

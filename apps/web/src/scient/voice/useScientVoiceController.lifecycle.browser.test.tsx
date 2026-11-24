@@ -1,15 +1,11 @@
+import type { VoiceSetupSnapshot } from "./voiceClient";
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
-import {
-  EnvironmentId,
-  type DesktopVoiceBridge,
-  type VoiceDictationEngine,
-  type VoiceModelsSnapshot,
-  type VoiceTranscript,
-} from "@t3tools/contracts";
+import { EnvironmentId, type VoiceDictationEngine, type VoiceTranscript } from "@t3tools/contracts";
 import { useLayoutEffect } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UseVoiceRecorderOptions } from "./useVoiceRecorder.ts";
+import type { VoiceSetupClient } from "./voiceClient";
 import type { VoiceJobTranscriber } from "./voiceProcessing.ts";
 import type { VoiceTranscriptCorrectionClient } from "./voiceTranscriptCorrectionClient.ts";
 
@@ -49,22 +45,25 @@ import {
 
 const snapshot = {
   runtimeAvailable: true,
-  selectedModelId: "whisper-small-multilingual-q5_1",
+  selectedModelId: "catalog/example-small",
   recommendation: null,
-  activeDownloadModelId: null,
   models: [
     {
-      id: "whisper-small-multilingual-q5_1",
+      id: "catalog/example-small",
       displayName: "Small",
       description: "Test",
       byteSize: 1,
-      state: { state: "ready", byteSize: 1 },
+      state: { state: "ready" },
     },
   ],
-} satisfies VoiceModelsSnapshot;
+} satisfies VoiceSetupSnapshot;
 
 describe("voice operation ownership", () => {
-  let client: DesktopVoiceBridge;
+  let client: { -readonly [Key in keyof VoiceSetupClient]: VoiceSetupClient[Key] } & {
+    cancelTranscription: () => Promise<void>;
+  };
+  let disconnected: boolean;
+  let cloud: VoiceJobTranscriber | undefined;
   let pending: ReturnType<typeof deferred<VoiceTranscript>>;
 
   let delivered = vi.fn<(owner: string, text: string) => void>();
@@ -77,12 +76,13 @@ describe("voice operation ownership", () => {
   let now: number;
   function Probe({ _fixture, owner }: { owner: string } & { _fixture: _Fixture }) {
     const control = useScientVoiceController({
-      client,
+      client: disconnected ? null : client,
       onTranscript: (text) => delivered(owner, text),
       environmentId: EnvironmentId.make("test"),
       correctionEnabled: !!correctionClient,
       ...(correctionClient ? { correctionClient } : {}),
       ...(chatGpt !== undefined ? { chatGpt } : {}),
+      ...(cloud !== undefined ? { cloud } : {}),
       engine: engine ?? (chatGpt !== undefined ? "chatgpt" : "local"),
       onEngineChosen: chosen,
     });
@@ -99,6 +99,8 @@ describe("voice operation ownership", () => {
     });
     correctionClient = undefined;
     chatGpt = undefined;
+    cloud = undefined;
+    disconnected = false;
     engine = undefined;
     chosen = vi.fn();
     now = 0;
@@ -111,7 +113,6 @@ describe("voice operation ownership", () => {
       downloadModel: async () => snapshot,
       cancelModelDownload: vi.fn(),
       selectModel: async () => snapshot,
-      removeModel: async () => snapshot,
       transcribe: vi.fn(() => pending.promise),
       cancelTranscription: vi.fn(async () => {}),
       cancelTranscriptionRequest: vi.fn(async () => {}),
@@ -224,6 +225,62 @@ describe("voice operation ownership", () => {
     expect(delivered).toHaveBeenCalledWith("owner", "from ChatGPT");
   });
 
+  it.each(["cloud", "local"] as const)(
+    "routes %s dictation to the selected transcriber",
+    async (kind) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      const transcribe = vi.fn(async () => ({ text: "Selected engine transcript" }));
+      const forModel = vi.fn(() => ({ transcribe }));
+      client.getModelsState = vi.fn(async () => snapshot);
+      client = { ...client, forModel };
+      engine = kind;
+      if (kind === "cloud") cloud = { transcribe };
+
+      await act(async () => _fixture.root0.rerender(<Probe _fixture={_fixture} owner="owner" />));
+      await start(_fixture);
+      const { completion } = await stop(_fixture);
+      await act(async () => await completion);
+      expect(client.transcribe).not.toHaveBeenCalled();
+      expect(transcribe).toHaveBeenCalledOnce();
+      expect(delivered).toHaveBeenCalledWith("owner", "Selected engine transcript");
+      if (kind === "cloud") {
+        expect(client.getModelsState).not.toHaveBeenCalled();
+        expect(forModel).not.toHaveBeenCalled();
+      } else {
+        expect(forModel).toHaveBeenCalledExactlyOnceWith(snapshot.selectedModelId);
+      }
+    },
+  );
+
+  it.each(["chatgpt", "cloud", "local"] as const)(
+    "handles %s with no prepared local connection",
+    async (kind) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      disconnected = true;
+      engine = kind;
+      const transcribe = vi.fn(async () => ({ text: "Remote transcript" }));
+      chatGpt = { transcribe };
+      cloud = { transcribe };
+      await act(async () => _fixture.root0.rerender(<Probe _fixture={_fixture} owner="owner" />));
+      await start(_fixture);
+      if (kind === "local") {
+        expect(recorder.start).not.toHaveBeenCalled();
+        expect(control(_fixture).errorMessage).toBe(
+          "The local speech engine is unavailable on this computer.",
+        );
+        return;
+      }
+      const { completion } = await stop(_fixture);
+      await act(async () => await completion);
+      expect(transcribe).toHaveBeenCalledOnce();
+      expect(delivered).toHaveBeenCalledWith("owner", "Remote transcript");
+    },
+  );
+
   it("asks for a ChatGPT sign-in instead of recording without one", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -242,7 +299,7 @@ describe("voice operation ownership", () => {
 
   describe("before an engine is chosen", () => {
     const model = snapshot.models[0]!;
-    const notSetUp: VoiceModelsSnapshot = {
+    const notSetUp: VoiceSetupSnapshot = {
       ...snapshot,
       models: [{ ...model, state: { state: "missing" } }],
     };

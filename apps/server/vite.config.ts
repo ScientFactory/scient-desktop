@@ -125,6 +125,7 @@ export default mergeConfig(
               "src/bin.ts",
               // SCIENT-FORK:START — execute the real bundled engine from installed qualification.
               "src/overleaf-packaging-probe.ts",
+              "src/speech-packaging-probe.ts",
               // SCIENT-FORK:END
               "src/analytics-worker.ts",
               "src/claude-history-worker.ts",

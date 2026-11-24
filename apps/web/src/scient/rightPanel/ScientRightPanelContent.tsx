@@ -10,6 +10,10 @@ import type { OpenFileOptions } from "~/rightPanelStore";
 
 import type { ScientRightPanelSurface } from "./surfaces";
 
+const RecordingPanel = lazy(() => import("../recordings/RecordingPanel"));
+const RecordingsPage = lazy(() =>
+  import("../recordings/RecordingsPage").then((module) => ({ default: module.RecordingsPage })),
+);
 const ScientSourcesPanel = lazy(() =>
   import("../sources/ScientSourcesPanel").then((module) => ({
     default: module.ScientSourcesPanel,
@@ -48,6 +52,7 @@ const ComputePanel = lazy(() =>
 );
 
 export interface ScientRightPanelContentProps {
+  readonly onRevealRecordingComposer: () => void;
   readonly surface: ScientRightPanelSurface;
   readonly activeThreadRef: ScopedThreadRef;
   readonly activeThread: { readonly environmentId: EnvironmentId } | null | undefined;
@@ -80,6 +85,30 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     closeRightPanelSurface,
     openScientSourcePdf,
   } = input;
+  if (renderedRightPanelSurface.module === "recording") {
+    return (
+      <Suspense fallback={null}>
+        <RecordingPanel
+          key={renderedRightPanelSurface.id}
+          surface={renderedRightPanelSurface}
+          threadRef={activeThreadRef}
+          onRevealComposer={input.onRevealRecordingComposer}
+          onClose={() => closeRightPanelSurface(renderedRightPanelSurface)}
+        />
+      </Suspense>
+    );
+  }
+  if (renderedRightPanelSurface.module === "recordings") {
+    return (
+      <Suspense fallback={null}>
+        <RecordingsPage
+          key={renderedRightPanelSurface.projectId}
+          lockedProject={renderedRightPanelSurface.projectId}
+        />
+      </Suspense>
+    );
+  }
+
   if (
     renderedRightPanelSurface?.kind === "scient" &&
     renderedRightPanelSurface.module === "overleaf-review"

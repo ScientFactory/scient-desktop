@@ -59,6 +59,11 @@ Descriptions may contain blank lines to separate paragraphs within a highlight.
 The app renders each paragraph separately, and release preflight indents the
 continuation paragraphs within the same Markdown bullet.
 
+For the Words transition release, explain that words and aliases added on
+older clients carry over. To edit or delete a saved Word, including one
+with a language, use the Words editor in the updated app. Deleting an
+entry in the old dictionary removes it from the old dictionary view.
+
 Published notes from before this format retain their original kicker and
 summary so release history remains unchanged.
 

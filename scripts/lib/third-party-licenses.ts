@@ -138,10 +138,13 @@ function isFirstPartyPackage(name: string): boolean {
 }
 // SCIENT-FORK:END
 
-function isNoticeTextFile(fileName: string): boolean {
+function isNoticeTextFile(fileName: string, packageName: unknown): boolean {
   return (
-    NOTICE_FILE_PATTERN.test(fileName) &&
-    NOTICE_TEXT_EXTENSIONS.has(NodePath.extname(fileName).toLowerCase())
+    (typeof packageName === "string" &&
+      packageName.startsWith("@transcribe-cpp/") &&
+      /^LICENSE\..+/i.test(fileName)) ||
+    (NOTICE_FILE_PATTERN.test(fileName) &&
+      NOTICE_TEXT_EXTENSIONS.has(NodePath.extname(fileName).toLowerCase()))
   );
 }
 
@@ -732,12 +735,15 @@ function packageSourceUrl(packageJson: PackageJson): string | null {
   return normalizeRepositoryUrl(packageJson.repository);
 }
 
-async function readPackageNoticeText(packageRoot: string): Promise<string | null> {
+async function readPackageNoticeText(
+  packageRoot: string,
+  packageName: unknown,
+): Promise<string | null> {
   const noticeFiles: string[] = [];
   const rootEntries = await NodeFSP.readdir(packageRoot, { withFileTypes: true });
   noticeFiles.push(
     ...rootEntries
-      .filter((entry) => entry.isFile() && isNoticeTextFile(entry.name))
+      .filter((entry) => entry.isFile() && isNoticeTextFile(entry.name, packageName))
       .map((entry) => entry.name),
   );
 
@@ -748,7 +754,7 @@ async function readPackageNoticeText(packageRoot: string): Promise<string | null
     await Promise.all(
       directoryEntries.map(async (entry) => {
         const relativePath = NodePath.join(directory, entry.name);
-        if (entry.isFile() && isNoticeTextFile(entry.name)) {
+        if (entry.isFile() && isNoticeTextFile(entry.name, packageName)) {
           noticeFiles.push(relativePath);
           return;
         }
@@ -798,7 +804,11 @@ async function collectRepositoryNotices(
       if (!license) return null;
       const key = repositoryNoticeKey(collected.packageJson, license);
       if (!key) return null;
-      const noticeText = await packageNoticeText(collected.packageRoot, packageNotices);
+      const noticeText = await packageNoticeText(
+        collected.packageRoot,
+        collected.packageJson.name,
+        packageNotices,
+      );
       return noticeText ? { key, noticeText } : null;
     }),
   );
@@ -810,11 +820,12 @@ async function collectRepositoryNotices(
 
 function packageNoticeText(
   packageRoot: string,
+  packageName: unknown,
   cache: Map<string, Promise<string | null>>,
 ): Promise<string | null> {
   const existing = cache.get(packageRoot);
   if (existing) return existing;
-  const notice = readPackageNoticeText(packageRoot);
+  const notice = readPackageNoticeText(packageRoot, packageName);
   cache.set(packageRoot, notice);
   return notice;
 }
@@ -871,8 +882,11 @@ async function packageEntry(
       ? (
           await NodeFSP.readFile(NodePath.resolve(configDirectory, override.noticeFile), "utf8")
         ).trim()
-      : ((await packageNoticeText(collected.packageRoot, packageNotices)) ??
-        (repositoryKey ? repositoryNotices.get(repositoryKey) : undefined));
+      : ((await packageNoticeText(
+          collected.packageRoot,
+          collected.packageJson.name,
+          packageNotices,
+        )) ?? (repositoryKey ? repositoryNotices.get(repositoryKey) : undefined));
   if (!noticeText) {
     throw new Error(
       `${name}@${version} does not include a license or notice file. Add a package override with "noticeFile" or "generatedNotice" in the third-party license config.`,

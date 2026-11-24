@@ -158,7 +158,7 @@ export function PreviewAnnotationSpeech({
               break;
             case "settings":
               value.cancel();
-              void navigate({ to: "/settings/voice" });
+              void navigate({ to: "/settings/transcription" });
               break;
             case "skip":
               value.skipPostProcessing();

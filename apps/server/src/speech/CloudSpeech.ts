@@ -1,3 +1,5 @@
+import { legacyUploadVocabulary } from "./legacyUploadVocabulary.ts";
+import { LegacySpeechKeys, type LegacySpeechSource } from "./LegacySpeechKeys.ts";
 import {
   CloudSpeechApiKey,
   CloudSpeechError,
@@ -23,7 +25,6 @@ import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
-import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 
@@ -41,7 +42,7 @@ const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
 
-function wave(samples: Float32Array) {
+export function wave(samples: Float32Array) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
   const tag = (at: number, value: string) =>
@@ -71,14 +72,12 @@ function audioBody(
   audio: ArrayBuffer,
   language: string,
   options: SpeechTranscriptionOptions,
+  hints: readonly string[],
 ) {
   const form = new FormData();
   form.set("model", endpoints[provider].model);
   if (language !== "auto") form.set(provider === "openai" ? "languages[]" : "language", language);
-  for (const term of speechRecognitionWords(
-    options.speechHints,
-    options.speechCustomWords.map(({ term }) => term),
-  )) {
+  for (const term of hints) {
     if (provider === "openai" && /[<>\r\n]/.test(term)) continue;
     form.append(provider === "openai" ? "keywords[]" : "keyterm", term);
   }
@@ -95,12 +94,20 @@ function audioBody(
   return HttpClientRequest.bodyFormData(form);
 }
 
-function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
+function openRouterBody(
+  model: string,
+  audio: ArrayBuffer,
+  language: string,
+  hints: readonly string[],
+) {
   return HttpClientRequest.bodyJsonUnsafe({
     model,
     input_audio: { data: Buffer.from(audio).toString("base64"), format: "wav" },
     ...(language !== "auto" ? { language } : {}),
-    provider: { zdr: true },
+    provider: {
+      zdr: true,
+      ...(hints.length ? { options: { groq: { prompt: hints.join(", ") } } } : {}),
+    },
   });
 }
 
@@ -113,7 +120,7 @@ export class CloudSpeech extends Context.Service<
     readonly setKey: (
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
-    ) => Effect.Effect<void, ServerSettingsError>;
+    ) => Effect.Effect<void, ServerSettingsError | CloudSpeechError>;
     readonly transcribe: (
       provider: CloudSpeechProvider,
       pcm: Uint8Array,
@@ -132,13 +139,25 @@ export const layer = Layer.effect(
     const credentials = settings.getSettings.pipe(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
-    const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
-        openai: Boolean(openai),
-        xai: Boolean(xai),
-        openrouter: Boolean(openrouter),
-      })),
-    );
+    const legacy = yield* Effect.serviceOption(LegacySpeechKeys);
+    const sourceFor = (
+      provider: CloudSpeechProvider,
+    ): Effect.Effect<LegacySpeechSource, ServerSettingsError | CloudSpeechError> =>
+      legacy._tag === "Some"
+        ? legacy.value.get(provider)
+        : credentials.pipe(Effect.map((slots) => slots[provider]));
+    const hasKey = (provider: CloudSpeechProvider) => {
+      const present: Effect.Effect<boolean, ServerSettingsError | CloudSpeechError> =
+        legacy._tag === "Some"
+          ? legacy.value.hasKey(provider)
+          : credentials.pipe(Effect.map((slots) => Boolean(slots[provider])));
+      return present.pipe(Effect.orElseSucceed(() => false));
+    };
+    const configured = Effect.all({
+      openai: hasKey("openai"),
+      xai: hasKey("xai"),
+      openrouter: hasKey("openrouter"),
+    });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       http
         .execute(request)
@@ -175,6 +194,7 @@ export const layer = Layer.effect(
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
     ) {
+      if (legacy._tag === "Some") return yield* legacy.value.set(provider, key);
       yield* settings.updateSettings({
         cloudSpeechCredentials: {
           [provider]: Redacted.isRedacted(key) ? Redacted.value(key) : (key ?? ""),
@@ -188,7 +208,7 @@ export const layer = Layer.effect(
         options: SpeechTranscriptionOptions,
         model?: string,
       ) {
-        const source = (yield* credentials)[provider];
+        const source = yield* sourceFor(provider);
         if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
         if (provider === "openrouter" && (!model || !isModelId(model)))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
@@ -201,26 +221,43 @@ export const layer = Layer.effect(
             }),
         });
         const language = effectiveSpeechLanguage(cloudSpeechLanguages, options.speechLanguage);
-        if (provider === "openrouter" && !(yield* models).some((entry) => entry.id === model))
-          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         // A vault that locked since the last recording must not authorize a new upload.
         if (isSecretReference(source)) yield* resolver.invalidate([source]);
         const unreadable = () => new CloudSpeechError({ provider, reason: "unreadable-key" });
-        const key = yield* requireSettingsSecret(resolver, source).pipe(
-          Effect.mapError(unreadable),
-        );
+        const resolveSource = (value: LegacySpeechSource) =>
+          typeof value === "object" && "accountId" in value
+            ? legacy._tag === "Some"
+              ? legacy.value.key(provider, value.accountId).pipe(Effect.map(Redacted.value))
+              : Effect.fail(unreadable())
+            : requireSettingsSecret(resolver, value).pipe(Effect.mapError(unreadable));
+        const key = yield* resolveSource(source);
         if (!isApiKey(key)) return yield* unreadable();
+        if (provider === "openrouter" && !(yield* models).some((entry) => entry.id === model))
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const audio = wave(samples);
+        const { hints, spell } = legacyUploadVocabulary(
+          options,
+          (yield* settings.getSettings).transcriptionWords,
+          language,
+        );
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
-            ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            ? openRouterBody(model!, audio, language, hints)
+            : audioBody(provider, audio, language, options, hints),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
-        const current = (yield* credentials)[provider];
-        if (!current || !sameCredential(source, current))
+        const current = yield* sourceFor(provider);
+        const accountSource = typeof source === "object" && "accountId" in source;
+        const same = accountSource
+          ? typeof current === "object" &&
+            "accountId" in current &&
+            source.accountId === current.accountId &&
+            (yield* resolveSource(current)) === key
+          : !(typeof current === "object" && "accountId" in current) &&
+            sameCredential(source, current);
+        if (!current || !same)
           return yield* new CloudSpeechError({
             provider,
             reason: current ? "key-changed" : "missing-key",
@@ -241,11 +278,11 @@ export const layer = Layer.effect(
         const { text } = yield* HttpClientResponse.schemaBodyJson(
           EnvironmentSpeechTranscriptionResult,
         )(response).pipe(Effect.mapError(unavailable));
-        const corrected = applySpeechAliases(text, options.speechCustomWords);
+        const spelled = spell(text);
         return (
           options.speechRemoveFillerWords
-            ? removeSpeechFillerWords(corrected, language, options.speechCorrectionWord)
-            : corrected
+            ? removeSpeechFillerWords(spelled, language, options.speechCorrectionWord)
+            : spelled
         ).trim();
       },
       (effect, provider) =>

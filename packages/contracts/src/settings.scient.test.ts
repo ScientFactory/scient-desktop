@@ -13,6 +13,7 @@ import {
   ClaudeSettings,
   ClientSettingsPatch,
   ClientSettingsSchema,
+  ClientServerSettingsPatch,
   CodexSettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
@@ -31,6 +32,7 @@ import {
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const decodeClientServerSettingsPatch = Schema.decodeUnknownSync(ClientServerSettingsPatch);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeDroidSettings = Schema.decodeUnknownSync(DroidSettings);
@@ -414,4 +416,16 @@ it("keeps per-instance initialization snapshots on visibility and order wire com
     setProviderModelOrder: { provider: "scient-personal", modelOrder: [], initialPreferences },
   };
   expect(decodeServerSettingsPatch(patch)).toEqual(patch);
+});
+
+it("defaults agent transcription uploads on and accepts an explicit opt-out", () => {
+  expect(decodeServerSettings({}).transcription.agentsMayUseCloudEngines).toBe(true);
+  expect(decodeServerSettings({ transcription: {} }).transcription.agentsMayUseCloudEngines).toBe(
+    true,
+  );
+  expect(
+    decodeClientServerSettingsPatch({
+      transcription: { agentsMayUseCloudEngines: false },
+    }).transcription?.agentsMayUseCloudEngines,
+  ).toBe(false);
 });

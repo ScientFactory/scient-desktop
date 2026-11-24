@@ -148,13 +148,9 @@ export const PORT_FORWARD_SHARES_LOOPBACK_CHANNEL = "desktop:port-forward-shares
 
 // Scient local voice transcription (desktop-only).
 export const VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL = "desktop:voice-request-microphone-access";
-export const VOICE_GET_MODELS_STATE_CHANNEL = "desktop:voice-get-models-state";
-export const VOICE_DOWNLOAD_MODEL_CHANNEL = "desktop:voice-download-model";
-export const VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL = "desktop:voice-cancel-model-download";
-export const VOICE_SELECT_MODEL_CHANNEL = "desktop:voice-select-model";
-export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
-export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
-export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
+export const VOICE_HAD_LEGACY_SELECTION_CHANNEL = "desktop:voice-had-legacy-selection";
+export const VOICE_HAS_LEGACY_MODELS_CHANNEL = "desktop:voice-has-legacy-models";
+export const VOICE_REMOVE_LEGACY_MODELS_CHANNEL = "desktop:voice-remove-legacy-models";
 
 // SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
 export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";

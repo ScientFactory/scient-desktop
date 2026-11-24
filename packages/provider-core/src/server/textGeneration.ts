@@ -109,6 +109,7 @@ export type ReviewGuideGenerationResult = Omit<
 >;
 
 export interface TranscriptionPostProcessingInput {
+  structuredCorrection?: "initial" | "repair";
   cwd: string;
   prompt: string;
   modelSelection: ModelSelection;

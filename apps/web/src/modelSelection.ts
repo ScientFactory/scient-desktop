@@ -15,6 +15,7 @@ import {
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveAutomaticModel,
+  resolveChatModelFromOptions,
   resolveProviderModelPreferences,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -333,7 +334,9 @@ export function resolveAppModelSelectionForInstance(
       return unavailableSelection;
     }
   }
-  return options.length > 0 ? (resolveAutomaticModel(entry.driverKind, options) ?? null) : null;
+  return options.length > 0
+    ? resolveChatModelFromOptions(entry.driverKind, selectedModel, options)
+    : null;
 }
 
 // New drafts carry the stored selection; capabilities resolve its raw options later.

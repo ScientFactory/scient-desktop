@@ -23,11 +23,15 @@ export function CustomModelConnectionDialog({
   onDelete,
   onClose,
   keyMissing = false,
+  onManageKey,
+  dedicatedKey = false,
 }: {
   connection: CustomModelConnection;
   revision: number;
   /** An agent reported the saved key missing or unusable. */
   keyMissing?: boolean;
+  onManageKey?: () => void;
+  dedicatedKey?: boolean;
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onDelete: () => void;
   onClose: () => void;
@@ -52,8 +56,9 @@ export function CustomModelConnectionDialog({
   const protocolName =
     CUSTOM_MODEL_PROTOCOLS.find((p) => p.id === connection.protocol)?.name ?? connection.protocol;
   // A missing key's last four describe nothing that can still be used.
-  const missing = Boolean(connection.credentialId) && keyMissing;
-  const keyStatus = !connection.credentialId
+  const hasKey = Boolean(connection.accountId || connection.credentialId);
+  const missing = hasKey && keyMissing;
+  const keyStatus = !hasKey
     ? gt("No API key")
     : missing
       ? messages(MISSING_KEY_STATUS)
@@ -75,7 +80,9 @@ export function CustomModelConnectionDialog({
             baseUrl: connection.baseUrl,
             models: connection.models,
           },
-          ...(apiKey ? { apiKey: Redacted.make(apiKey) } : {}),
+          ...(apiKey
+            ? { apiKey: Redacted.make(apiKey), ...(dedicatedKey ? { useDedicatedKey: true } : {}) }
+            : {}),
           ...(removeKey ? { removeKey: true } : {}),
         });
         setApiKey("");
@@ -151,28 +158,48 @@ export function CustomModelConnectionDialog({
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
-              <label className="flex min-w-0 flex-col gap-1.5">
-                <span className="text-sm/4 font-medium text-foreground">
-                  {connection.credentialId && !missing ? gt("Replace API key") : gt("API key")}
-                </span>
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  maxLength={16384}
-                  disabled={removeKey}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={
-                    missing
-                      ? gt("Enter the API key again")
-                      : connection.credentialId
-                        ? gt("Leave blank to keep")
-                        : gt("Optional")
-                  }
-                />
-              </label>
-              {connection.credentialId ? (
+              {dedicatedKey ? (
+                <p className="text-sm text-muted-foreground">
+                  <T>
+                    Pi and OMP need a key kept just for this Anthropic connection. A redirect can
+                    send even a dedicated key to another server.
+                  </T>
+                </p>
+              ) : null}
+              {connection.accountId && !dedicatedKey ? (
+                onManageKey ? (
+                  <Button variant="outline" type="button" onClick={onManageKey}>
+                    <T>Replace key…</T>
+                  </Button>
+                ) : null
+              ) : (
+                <label className="flex min-w-0 flex-col gap-1.5">
+                  <span className="text-sm/4 font-medium text-foreground">
+                    {dedicatedKey
+                      ? gt("Key for this connection")
+                      : hasKey && !missing
+                        ? gt("Replace API key")
+                        : gt("API key")}
+                  </span>
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={16384}
+                    disabled={removeKey}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={
+                      missing
+                        ? gt("Enter the API key again")
+                        : hasKey
+                          ? gt("Leave blank to keep")
+                          : gt("Optional")
+                    }
+                  />
+                </label>
+              )}
+              {hasKey ? (
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={removeKey}
@@ -181,7 +208,7 @@ export function CustomModelConnectionDialog({
                       setApiKey("");
                     }}
                   />
-                  <T>Remove saved key</T>
+                  {connection.accountId ? gt("Detach saved key") : gt("Remove saved key")}
                 </label>
               ) : null}
             </fieldset>

@@ -3,12 +3,15 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CustomModelError,
+  acceptsCustomModelKey,
+  requiresDedicatedCustomModelKey,
   customModelAttachmentKey,
   PROVIDER_DISPLAY_NAMES,
   resolveProviderInstanceEnabled,
   supportsModelConnections,
   ProviderDriverKind,
   ProviderInstanceId,
+  type AccountSummary,
   type CustomModel,
   type CustomModelConnection,
   type CustomModelSaveInput,
@@ -49,6 +52,9 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { AccountDialog } from "~/scient/accounts/AccountDialog";
+import { useAccounts } from "~/scient/accounts/useAccounts";
+import { CustomModelSavedKeyPicker } from "./CustomModelSavedKeyPicker";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironments, useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
@@ -158,11 +164,19 @@ function RemoteCustomModelsContent(props: ContentProps) {
   );
 }
 
-function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: ContentProps) {
+export function EditableCustomModelsContent({
+  environmentId,
+  instanceId,
+  addRequest,
+}: ContentProps) {
   const gt = useGT();
   const messages = useMessages();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
+  const accounts = useAccounts(environmentId);
+  const [choosingKey, setChoosingKey] = useState<string | null>(null);
+  const [confirmingKey, setConfirmingKey] = useState<AccountSummary | null>(null);
+  const [editingKey, setEditingKey] = useState<AccountSummary | null>(null);
   const [editor, setEditor] = useState<{
     target: EditorTarget;
     settings: CustomModelsSettings;
@@ -255,8 +269,26 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     isEnabled: isAgentEnabled,
     openedFrom: instanceId,
   });
-  const keyMissing = (connection: CustomModelConnection) =>
-    connectionKeyMissing(providers, connection.id);
+  const accountFor = (connection: CustomModelConnection) =>
+    accounts.data?.accounts.find(({ accountId }) => accountId === connection.accountId);
+  const dedicated = (connection: CustomModelConnection) =>
+    requiresDedicatedCustomModelKey(connection, settings.providerInstances);
+  const keyMissing = (connection: CustomModelConnection) => {
+    if (
+      connectionKeyMissing(providers, connection.id) ||
+      (connection.accountId && dedicated(connection))
+    )
+      return true;
+    if (!connection.accountId || !accounts.data) return false;
+    const account = accountFor(connection);
+    const origin = URL.canParse(connection.baseUrl) ? new URL(connection.baseUrl).origin : "";
+    return (
+      !account ||
+      !acceptsCustomModelKey(account, origin, connection.protocol) ||
+      Boolean(accounts.data.unavailableCustomModelKeyIds?.includes(connection.id))
+    );
+  };
+  const keyConnection = catalog.connections.find(({ id }) => id === choosingKey);
   const onSave = async (input: CustomModelSaveInput) => {
     resultValue(await save({ environmentId, input }));
     setNotice(null);
@@ -366,7 +398,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         </Empty>
       ) : null}
       {catalog.connections.map((connection) => (
-        <section key={connection.id} className="space-y-1.5">
+        <section key={connection.id} aria-label={connection.name} className="space-y-1.5">
           <div className="flex min-h-7 items-center justify-between gap-2 px-1">
             <h3 className="flex min-w-0 items-center gap-2 text-sm font-medium tracking-[-0.005em] text-foreground">
               <CustomModelConnectionIcon connection={connection} />
@@ -393,6 +425,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
               </Button>
             </div>
           </div>
+          <p className="break-all px-1 text-xs text-muted-foreground">{connection.baseUrl}</p>
           <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
             {connection.models.length === 0 ? (
               <p className="px-4 py-3 text-sm text-muted-foreground">
@@ -506,11 +539,9 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                     busy={busy}
                     testing={testing === rowKey}
                     statuses={attachments.map((entry) => entry.kind)}
-                    keyMissing={keyMissing(connection)}
                     testAgents={testAgents}
                     notice={rowNotice}
                     onCheckAgain={() => void checkAgain(connection, model)}
-                    onReenterKey={() => setManaging({ connection, revision: catalog.revision })}
                     onTest={(agent) => void runTest(connection, model, agent)}
                   />
                   <Button
@@ -538,11 +569,56 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
               );
             })}
           </div>
+          <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
+            <span className="mr-auto">
+              {keyMissing(connection)
+                ? gt("Reconnect")
+                : accountFor(connection)
+                  ? gt("API key · {label}", { label: accountFor(connection)!.name })
+                  : connection.accountId
+                    ? gt("Checking saved key…")
+                    : connection.credentialId
+                      ? gt("API key saved")
+                      : gt("No key needed")}
+            </span>
+            {dedicated(connection) ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setManaging({ connection, revision: catalog.revision })}
+              >
+                <T>Keep a key just for this connection…</T>
+              </Button>
+            ) : accounts.data ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={busy || !accounts.canWrite}
+                onClick={() => setChoosingKey(connection.id)}
+              >
+                <T>Choose a saved key…</T>
+              </Button>
+            ) : null}
+            {accountFor(connection) && !keyMissing(connection) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!accounts.canWrite}
+                onClick={() => setConfirmingKey(accountFor(connection)!)}
+              >
+                <T>Manage key…</T>
+              </Button>
+            ) : null}
+          </div>
         </section>
       ))}
       {editor ? (
         <ModelConnectionEditor
           settings={editor.settings}
+          {...(accounts.data && accounts.canWrite
+            ? { keyAccounts: { environmentId, snapshot: accounts.data } }
+            : {})}
           target={editor.target}
           agents={agents}
           defaultInstanceIds={newModelAgents}
@@ -550,11 +626,84 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
           onClose={() => setEditor(null)}
         />
       ) : null}
+      {keyConnection && accounts.data ? (
+        <CustomModelSavedKeyPicker
+          environmentId={environmentId}
+          snapshot={accounts.data}
+          name={keyConnection.name}
+          {...(keyConnection.accountId ? { currentAccountId: keyConnection.accountId } : {})}
+          baseUrl={keyConnection.baseUrl}
+          protocol={keyConnection.protocol}
+          onChoose={(accountId) =>
+            onSave({ revision: catalog.revision, connection: keyConnection, accountId })
+          }
+          onClose={() => setChoosingKey(null)}
+        />
+      ) : null}
+      {confirmingKey ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setConfirmingKey(null);
+          }}
+        >
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>{gt("Replace {name}?", { name: confirmingKey.name })}</DialogTitle>
+              <DialogDescription>
+                <T>These connections will use the replacement key.</T>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <ul className="list-disc pl-5 text-sm text-muted-foreground">
+                {(accounts.data?.keyConsumers ?? [])
+                  .filter(({ accountId }) => accountId === confirmingKey.accountId)
+                  .map(({ kind, id, name }) => (
+                    <li key={kind + ":" + id}>
+                      {kind === "custom-model" ? gt("Custom models") : gt("Transcription")} · {name}
+                    </li>
+                  ))}
+              </ul>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setConfirmingKey(null)}>
+                  <T>Cancel</T>
+                </Button>
+                <Button
+                  onClick={() => {
+                    setEditingKey(confirmingKey);
+                    setConfirmingKey(null);
+                  }}
+                >
+                  <T>Continue</T>
+                </Button>
+              </div>
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
+      {editingKey && accounts.data ? (
+        <AccountDialog
+          environmentId={environmentId}
+          snapshot={accounts.data}
+          account={editingKey}
+          canWrite={accounts.canWrite}
+          onClose={() => setEditingKey(null)}
+        />
+      ) : null}
       {managing ? (
         <CustomModelConnectionDialog
           connection={managing.connection}
           revision={managing.revision}
           keyMissing={keyMissing(managing.connection)}
+          dedicatedKey={dedicated(managing.connection)}
+          {...(accounts.canWrite && accountFor(managing.connection)
+            ? {
+                onManageKey: () => {
+                  setConfirmingKey(accountFor(managing.connection)!);
+                  setManaging(null);
+                },
+              }
+            : {})}
           onSave={onSave}
           onDelete={() => {
             setRemoveError(null);

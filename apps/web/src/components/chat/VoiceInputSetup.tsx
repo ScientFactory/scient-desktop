@@ -25,7 +25,7 @@ import {
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
-import { languageLabel } from "../settings/SpeechLanguageSelect";
+import { languageLabel } from "../../lib/languageLabel";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -95,7 +95,7 @@ export function VoiceInputSetup(props: {
     model?.downloaded === undefined ? null : Math.round((model.downloaded / model.size) * 100);
   const openSettings = (hash: string) => {
     props.onOpenChange(false);
-    void navigate({ to: "/settings/voice", hash });
+    void navigate({ to: "/settings/transcription", hash });
   };
 
   return (

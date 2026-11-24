@@ -516,6 +516,7 @@ describe("pickProjectFavicon", () => {
 describe("syncHtmlFullscreen", () => {
   const fullscreenWindow = (fullscreen: boolean, { animatedExit = false } = {}) => {
     let current = fullscreen;
+    let background = "#ffffff";
     let exiting = false;
     const queued: boolean[] = [];
     const leaveListeners: Array<() => void> = [];
@@ -540,6 +541,10 @@ describe("syncHtmlFullscreen", () => {
       webContents: { id: 1 },
       isDestroyed: () => false,
       isFullScreen: () => current,
+      getBackgroundColor: () => background,
+      setBackgroundColor: (color: string) => {
+        background = color;
+      },
       setFullScreen,
       on: (event: string, listener: () => void) => {
         if (event === "leave-full-screen") leaveListeners.push(listener);
@@ -560,6 +565,21 @@ describe("syncHtmlFullscreen", () => {
       assert.isFalse(window.isFullScreen());
     }).pipe(Effect.provide(layer));
   });
+
+  // SCIENT-FORK:START — Uses the simulated native window and its exit fixture.
+  it.effect("keeps the recording backing black through the native exit animation", () => {
+    const { window, finishExit, layer } = fullscreenWindow(false, { animatedExit: true });
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler("recording", fromMainRenderer);
+      assert.strictEqual(window.getBackgroundColor(), "#000000");
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      assert.strictEqual(window.getBackgroundColor(), "#000000");
+      finishExit();
+      assert.strictEqual(window.getBackgroundColor(), "#ffffff");
+    }).pipe(Effect.provide(layer));
+  });
+  // SCIENT-FORK:END
 
   it.effect("keeps a window the user had already made fullscreen", () => {
     const { window, setFullScreen, layer } = fullscreenWindow(true);

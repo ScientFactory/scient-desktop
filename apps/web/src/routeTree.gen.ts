@@ -22,6 +22,7 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ChatWorkflowsRouteImport } from './routes/_chat.workflows'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
+import { Route as ChatRecordingsRouteImport } from './routes/_chat.recordings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
@@ -30,6 +31,7 @@ import { Route as ChatCloudIndexRouteImport } from './routes/_chat.cloud.index'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
+import { Route as ChatSettingsTranscriptionRouteImport } from './routes/_chat.settings.transcription'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
 import { Route as ChatSettingsSyncedFoldersRouteImport } from './routes/_chat.settings.synced-folders'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
@@ -145,6 +147,11 @@ const ChatSettingsRoute = ChatSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatRecordingsRoute = ChatRecordingsRouteImport.update({
+  id: '/recordings',
+  path: '/recordings',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -186,6 +193,12 @@ const ChatSettingsVoiceRoute = ChatSettingsVoiceRouteImport.update({
   path: '/voice',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsTranscriptionRoute =
+  ChatSettingsTranscriptionRouteImport.update({
+    id: '/transcription',
+    path: '/transcription',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsThreadsRoute = ChatSettingsThreadsRouteImport.update({
   id: '/threads',
   path: '/threads',
@@ -477,6 +490,7 @@ export interface FileRoutesByFullPath {
   '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/recordings': typeof ChatRecordingsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/workflows': typeof ChatWorkflowsRoute
@@ -516,6 +530,7 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/synced-folders': typeof ChatSettingsSyncedFoldersRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
+  '/settings/transcription': typeof ChatSettingsTranscriptionRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
@@ -548,6 +563,7 @@ export interface FileRoutesByTo {
   '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/recordings': typeof ChatRecordingsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/workflows': typeof ChatWorkflowsRoute
@@ -588,6 +604,7 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/synced-folders': typeof ChatSettingsSyncedFoldersRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
+  '/settings/transcription': typeof ChatSettingsTranscriptionRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
@@ -622,6 +639,7 @@ export interface FileRoutesById {
   '/_chat/issues': typeof ChatIssuesRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/_chat/recordings': typeof ChatRecordingsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
   '/_chat/workflows': typeof ChatWorkflowsRoute
@@ -662,6 +680,7 @@ export interface FileRoutesById {
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/synced-folders': typeof ChatSettingsSyncedFoldersRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
+  '/_chat/settings/transcription': typeof ChatSettingsTranscriptionRoute
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
@@ -697,6 +716,7 @@ export interface FileRouteTypes {
     | '/issues'
     | '/new'
     | '/pull-requests'
+    | '/recordings'
     | '/settings'
     | '/usage'
     | '/workflows'
@@ -736,6 +756,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/synced-folders'
     | '/settings/threads'
+    | '/settings/transcription'
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
@@ -768,6 +789,7 @@ export interface FileRouteTypes {
     | '/issues'
     | '/new'
     | '/pull-requests'
+    | '/recordings'
     | '/settings'
     | '/usage'
     | '/workflows'
@@ -808,6 +830,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/synced-folders'
     | '/settings/threads'
+    | '/settings/transcription'
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
@@ -841,6 +864,7 @@ export interface FileRouteTypes {
     | '/_chat/issues'
     | '/_chat/new'
     | '/_chat/pull-requests'
+    | '/_chat/recordings'
     | '/_chat/settings'
     | '/_chat/usage'
     | '/_chat/workflows'
@@ -881,6 +905,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/storage'
     | '/_chat/settings/synced-folders'
     | '/_chat/settings/threads'
+    | '/_chat/settings/transcription'
     | '/_chat/settings/voice'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
@@ -1009,6 +1034,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/recordings': {
+      id: '/_chat/recordings'
+      path: '/recordings'
+      fullPath: '/recordings'
+      preLoaderRoute: typeof ChatRecordingsRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -1063,6 +1095,13 @@ declare module '@tanstack/react-router' {
       path: '/voice'
       fullPath: '/settings/voice'
       preLoaderRoute: typeof ChatSettingsVoiceRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/transcription': {
+      id: '/_chat/settings/transcription'
+      path: '/transcription'
+      fullPath: '/settings/transcription'
+      preLoaderRoute: typeof ChatSettingsTranscriptionRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/threads': {
@@ -1451,6 +1490,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
   ChatSettingsSyncedFoldersRoute: typeof ChatSettingsSyncedFoldersRoute
   ChatSettingsThreadsRoute: typeof ChatSettingsThreadsRoute
+  ChatSettingsTranscriptionRoute: typeof ChatSettingsTranscriptionRoute
   ChatSettingsVoiceRoute: typeof ChatSettingsVoiceRoute
   ChatSettingsWorktreesRoute: typeof ChatSettingsWorktreesRoute
   ChatSettingsExtensionsAllRoute: typeof ChatSettingsExtensionsAllRoute
@@ -1502,6 +1542,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
   ChatSettingsSyncedFoldersRoute: ChatSettingsSyncedFoldersRoute,
   ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
+  ChatSettingsTranscriptionRoute: ChatSettingsTranscriptionRoute,
   ChatSettingsVoiceRoute: ChatSettingsVoiceRoute,
   ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,
   ChatSettingsExtensionsAllRoute: ChatSettingsExtensionsAllRoute,
@@ -1539,6 +1580,7 @@ interface ChatRouteChildren {
   ChatIssuesRoute: typeof ChatIssuesRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
+  ChatRecordingsRoute: typeof ChatRecordingsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
   ChatUsageRoute: typeof ChatUsageRoute
   ChatWorkflowsRoute: typeof ChatWorkflowsRoute
@@ -1555,6 +1597,7 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIssuesRoute: ChatIssuesRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
+  ChatRecordingsRoute: ChatRecordingsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
   ChatUsageRoute: ChatUsageRoute,
   ChatWorkflowsRoute: ChatWorkflowsRoute,

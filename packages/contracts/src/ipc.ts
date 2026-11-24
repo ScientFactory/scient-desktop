@@ -1,3 +1,4 @@
+import { DictationRecognitionHints } from "./transcriptionWords.ts";
 // SCIENT-FORK:START — Scient desktop bridge members live in a Scient module.
 import type {
   DesktopAssetCopyRequest,
@@ -1191,6 +1192,7 @@ export const DesktopAppleSpeechResultSchema = Schema.Union([
 export type DesktopAppleSpeechResult = typeof DesktopAppleSpeechResultSchema.Type;
 
 export const DesktopAppleSpeechTranscribeInputSchema = Schema.Struct({
+  hints: Schema.optionalKey(DictationRecognitionHints),
   locale: Schema.String.check(Schema.isMaxLength(64)),
   // 16 kHz mono Float32 PCM, at most five minutes.
   pcm: Schema.Uint8Array,
@@ -1352,7 +1354,9 @@ export interface DesktopBridge extends ScientDesktopBridge {
   appleSpeech?: {
     supportedLocales: () => Promise<readonly string[]>;
     prepare: (locale: string) => Promise<DesktopAppleSpeechResult>;
-    transcribe: (input: { locale: string; pcm: Uint8Array }) => Promise<DesktopAppleSpeechResult>;
+    transcribe: (
+      input: typeof DesktopAppleSpeechTranscribeInputSchema.Type,
+    ) => Promise<DesktopAppleSpeechResult>;
   };
 }
 

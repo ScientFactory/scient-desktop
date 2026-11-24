@@ -6,15 +6,25 @@ import {
   BUILT_IN_BROWSER_PROFILES,
   type BrowserProfileId,
   type AccountCustomModelKey,
+  type AccountId,
+  type AccountKeyConsumer,
   type AccountDetails,
+  type CustomModelConnection,
   type AccountValueSource,
   type OnePasswordConnectInput,
 } from "@t3tools/contracts";
-import { Context, Duration, Effect, Layer, Redacted } from "effect";
+import { Context, Duration, Effect, Layer, Option, Redacted } from "effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ServerConfig } from "../../config.ts";
+import { readCloudEngineConfigs } from "../../transcription/CloudEngines.ts";
+import { ScientServerSettings } from "../../scientServerSettings.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AccountsSecretStore } from "./AccountsSecretStore.ts";
-import { resolveCustomModelKey } from "../../customModels.ts";
+import {
+  customModelSecretName,
+  resolveCustomModelKey,
+  type CustomModelAccountResolver,
+} from "../../customModels.ts";
 import {
   parseMacKeychain,
   parseWindowsKeychain,
@@ -63,6 +73,10 @@ export class AccountSources extends Context.Service<
     readonly passwordStores: ReturnType<typeof makeCliPasswordStores>;
     readonly platform: "macos" | "windows" | "linux";
     readonly profiles: Effect.Effect<ReadonlyArray<BrowserProfileId>, AccountsError>;
+    readonly transcriptionKeyConsumers?: Effect.Effect<
+      readonly AccountKeyConsumer[],
+      AccountsError
+    >;
     readonly customModelKeys: Effect.Effect<ReadonlyArray<AccountCustomModelKey>, AccountsError>;
     readonly keychain: (
       source: Extract<AccountValueSource, { type: "keychain" }>,
@@ -71,6 +85,25 @@ export class AccountSources extends Context.Service<
       source: Extract<AccountValueSource, { type: "keychain" }>,
       value: Redacted.Redacted<string>,
     ) => Effect.Effect<void, AccountsError>;
+    readonly modelCatalog?: {
+      readonly connections: Effect.Effect<readonly CustomModelConnection[], AccountsError>;
+      readonly requiresDedicated?: (
+        connection: CustomModelConnection,
+      ) => Effect.Effect<boolean, AccountsError>;
+      readonly readLegacy: (
+        connection: CustomModelConnection,
+      ) => Effect.Effect<Redacted.Redacted<string> | undefined, AccountsError>;
+      readonly removeLegacy: (id: string) => Effect.Effect<void, AccountsError>;
+      readonly setBinding: (
+        expected: CustomModelConnection,
+        binding: Pick<CustomModelConnection, "accountId" | "credentialId">,
+      ) => Effect.Effect<boolean, AccountsError>;
+      readonly invalidate?: (ids: ReadonlySet<AccountId>, version: string) => Effect.Effect<void>;
+      readonly installResolver: (
+        resolve: CustomModelAccountResolver,
+        migrate: Effect.Effect<void>,
+      ) => Effect.Effect<void>;
+    };
     readonly customModel: (
       connectionId: string,
     ) => Effect.Effect<Redacted.Redacted<string>, AccountsError>;
@@ -91,10 +124,13 @@ export const layer = Layer.effect(
   AccountSources,
   Effect.gen(function* () {
     const settings = yield* ServerSettingsService;
+    const scient = yield* ScientServerSettings;
     const secrets = yield* AccountsSecretStore;
-    const current = settings.getSettings.pipe(
-      Effect.mapError(() => unavailable("Accounts settings could not be read.")),
-    );
+    const { stateDir } = yield* ServerConfig;
+    const catalog = (
+      scient.customModelAccounts?.read ??
+      settings.getSettings.pipe(Effect.map(({ customModels }) => customModels))
+    ).pipe(Effect.mapError(() => unavailable("Custom models settings could not be read.")));
     const hostPlatform = yield* HostProcess.Platform;
     const platform =
       hostPlatform === "darwin" ? "macos" : hostPlatform === "win32" ? "windows" : "linux";
@@ -107,15 +143,40 @@ export const layer = Layer.effect(
       passwordStores,
       platform,
       profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
-      customModelKeys: current.pipe(
-        Effect.map((value) =>
-          value.customModels.connections
-            .filter((connection) => connection.credentialId)
-            .map((connection) => ({
-              connectionId: connection.id,
-              name: connection.name,
-              origin: new URL(connection.baseUrl).origin,
-            })),
+      transcriptionKeyConsumers: readCloudEngineConfigs(stateDir).pipe(
+        Effect.map((engines) => {
+          const connections = scient.committedCustomModels().connections;
+          return engines.flatMap(({ accountId, customModelConnectionId, id, model }) => {
+            const linked =
+              accountId ?? connections.find(({ id }) => id === customModelConnectionId)?.accountId;
+            return linked
+              ? [{ accountId: linked, id, name: model, kind: "transcription" as const }]
+              : [];
+          });
+        }),
+        Effect.mapError(() => unavailable("Transcription key dependencies could not be read.")),
+      ),
+      customModelKeys: catalog.pipe(
+        Effect.flatMap((value) =>
+          Effect.filter(
+            value.connections.filter(
+              (connection) => connection.credentialId && !connection.accountId,
+            ),
+            (connection) =>
+              (
+                scient.customModelAccounts?.requiresDedicated(connection) ?? Effect.succeed(false)
+              ).pipe(
+                Effect.map((dedicated) => !dedicated),
+                Effect.mapError(() => unavailable("Could not check the configured model agents.")),
+              ),
+          ),
+        ),
+        Effect.map((connections) =>
+          connections.map((connection) => ({
+            connectionId: connection.id,
+            name: connection.name,
+            origin: new URL(connection.baseUrl).origin,
+          })),
         ),
       ),
       keychain: Effect.fn("AccountSources.keychain")((source) =>
@@ -153,11 +214,60 @@ export const layer = Layer.effect(
           catch: () => unavailable("System keychain copy could not be written."),
         }),
       ),
+      ...(scient.customModelAccounts
+        ? {
+            modelCatalog: {
+              connections: catalog.pipe(Effect.map((value) => value.connections)),
+              requiresDedicated: (connection) =>
+                scient
+                  .customModelAccounts!.requiresDedicated(connection)
+                  .pipe(
+                    Effect.mapError(() =>
+                      unavailable("Could not check the configured model agents."),
+                    ),
+                  ),
+              readLegacy: Effect.fn("AccountSources.readLegacyModelKey")(function* (connection) {
+                if (!connection.credentialId) return undefined;
+                const stored = yield* secrets
+                  .get(customModelSecretName(connection.credentialId))
+                  .pipe(
+                    Effect.mapError(() => unavailable("Could not read the old Custom models key.")),
+                  );
+                const key = Option.isSome(stored)
+                  ? new TextDecoder().decode(stored.value).trim()
+                  : "";
+                return key ? Redacted.make(key) : undefined;
+              }),
+              removeLegacy: (id) =>
+                secrets
+                  .remove(customModelSecretName(id))
+                  .pipe(
+                    Effect.mapError(() =>
+                      unavailable("Could not retire the old Custom models key."),
+                    ),
+                  ),
+              setBinding: (expected, binding) =>
+                scient
+                  .customModelAccounts!.setBinding(expected, binding)
+                  .pipe(
+                    Effect.mapError(() =>
+                      unavailable("Could not update the Custom models connection."),
+                    ),
+                  ),
+              invalidate: scient.customModelAccounts.invalidate,
+              installResolver: scient.customModelAccounts.install,
+            },
+          }
+        : {}),
       customModel: Effect.fn("AccountSources.customModel")(function* (connectionId) {
-        const connection = (yield* current).customModels.connections.find(
-          (entry) => entry.id === connectionId,
-        );
+        const connection = (yield* catalog).connections.find((entry) => entry.id === connectionId);
         if (!connection) return yield* unavailable("Custom models connection not found.");
+        if (connection.accountId)
+          return yield* unavailable("Use the saved API key directly in Accounts.");
+        const dedicated = yield* (
+          scient.customModelAccounts?.requiresDedicated(connection) ?? Effect.succeed(false)
+        ).pipe(Effect.mapError(() => unavailable("Could not check the configured model agents.")));
+        if (dedicated) return yield* unavailable("This key is kept for its model connection.");
         const resolved = yield* resolveCustomModelKey(connection, secrets);
         if (!resolved.apiKey) return yield* unavailable("Custom models key is unavailable.");
         return resolved.apiKey;

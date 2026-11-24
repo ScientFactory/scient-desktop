@@ -1,8 +1,14 @@
+import type * as Redacted from "effect/Redacted";
+import { LEGACY_WORDS_TRANSITION_ENABLED } from "@t3tools/contracts";
+import { mergeLegacySpeechWords } from "@t3tools/shared/serverSettings";
 /** External settings edits require scoped directory watches and serialized persistence.
  * @module ServerSettings
  */
 import {
   DEFAULT_SERVER_SETTINGS,
+  type AccountId,
+  type CloudSpeechProvider,
+  SettingsSecretValue,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -87,7 +93,7 @@ import {
 // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
 import { type RemovedAgentKeeper, removedAgentIds } from "./scient/accounts/removedAgentKeys.ts";
 // SCIENT-FORK:END
-import { withCustomModelKeyHints } from "./customModels.ts";
+import { resolveCustomModelKey } from "./customModels.ts";
 // SCIENT-FORK:START — custom-model methods and text-generation fallback
 import {
   customModelsTestMethods,
@@ -194,7 +200,22 @@ export function redactServerSettingsForClient(
     : mapSettingsSecretValues(redacted, (value) =>
         isSecretReference(value) ? SECRET_REDACTED : value,
       );
-  return { ...shaped, secretProviders: withoutUnknownSecretProviderConfigs(shaped) };
+  return {
+    ...shaped,
+    legacyProjectSpeechWordWrites: {},
+    ...(LEGACY_WORDS_TRANSITION_ENABLED
+      ? {}
+      : {
+          speechProjectCustomWords: [],
+          legacySpeechWordsReceipts: [],
+          projectSettingsOverrides: Object.fromEntries(
+            Object.entries(shaped.projectSettingsOverrides).map(
+              ([id, { speechProjectCustomWords: _legacy, ...entry }]) => [id, entry],
+            ),
+          ),
+        }),
+    secretProviders: withoutUnknownSecretProviderConfigs(shaped),
+  };
 }
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
@@ -312,6 +333,22 @@ export class ServerSettingsService extends Context.Service<
     /** The administrator's policy as clients see it; absent when unmanaged. */
     readonly managedPolicy?: ManagedPolicySummary | undefined;
 
+    readonly replaceLegacySpeechReference?: (
+      provider: CloudSpeechProvider,
+      next: SettingsSecretValue,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly commitLegacySpeechTransfer?: (
+      provider: CloudSpeechProvider,
+      expected: SettingsSecretValue,
+      accountId: AccountId,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly resolveSpeechCustomModelKey?: (
+      connectionId: string,
+      origin: string,
+    ) => Effect.Effect<
+      { name: string; token: Redacted.Redacted<string> } | undefined,
+      ServerSettingsError
+    >;
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateSettings: (
@@ -345,6 +382,42 @@ export class ServerSettingsService extends Context.Service<
     managedPolicy?: ManagedPolicySummary,
   ) => layerTest(overrides, managedPolicy);
 }
+
+const replaceLegacySpeechReference = (
+  current: ServerSettings,
+  provider: CloudSpeechProvider,
+  next: SettingsSecretValue,
+): ServerSettings => {
+  const legacySpeechAccountIds = { ...current.legacySpeechAccountIds };
+  delete legacySpeechAccountIds[provider];
+  return {
+    ...current,
+    legacySpeechAccountIds,
+    cloudSpeechCredentials: { ...current.cloudSpeechCredentials, [provider]: next },
+  };
+};
+
+const transferLegacySpeechSettings = (
+  settingsPath: string,
+  stored: ServerSettings,
+  effective: ServerSettings,
+  provider: CloudSpeechProvider,
+  expected: SettingsSecretValue,
+  accountId: AccountId,
+): Effect.Effect<ServerSettings, ServerSettingsError> =>
+  Schema.toEquivalence(SettingsSecretValue)(effective.cloudSpeechCredentials[provider], expected)
+    ? Effect.succeed({
+        ...stored,
+        legacySpeechAccountIds: { ...stored.legacySpeechAccountIds, [provider]: accountId },
+        cloudSpeechCredentials: { ...stored.cloudSpeechCredentials, [provider]: "" },
+      })
+    : Effect.fail(
+        new ServerSettingsError({
+          settingsPath,
+          operation: "normalize",
+          cause: new Error("The legacy speech key changed during transfer."),
+        }),
+      );
 
 const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   overrides: DeepPartial<ServerSettings> = {},
@@ -400,6 +473,21 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     managedPolicy,
     start: Effect.void,
     ready: Effect.void,
+    replaceLegacySpeechReference: (provider, next) =>
+      updateTestSettings((current) =>
+        Effect.succeed(replaceLegacySpeechReference(current, provider, next)),
+      ),
+    commitLegacySpeechTransfer: (provider, expected, accountId) =>
+      updateTestSettings((current) =>
+        transferLegacySpeechSettings(
+          "test settings",
+          current,
+          current,
+          provider,
+          expected,
+          accountId,
+        ),
+      ),
     getSettings,
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
@@ -1167,7 +1255,6 @@ const make = Effect.gen(function* () {
     // SCIENT-FORK:START — Scient Accounts: derive Custom models hints after decryption or legacy sealing.
     settings = {
       ...settings,
-      customModels: yield* withCustomModelKeyHints(settings.customModels, customModelSecrets),
     };
     // SCIENT-FORK:END
     const legacyProjectRows =
@@ -1246,9 +1333,23 @@ const make = Effect.gen(function* () {
     const sourceControlMigration = hasLegacySourceControl
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
-    const migrated = settingsFileTrusted
+    const migratedSecrets = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
+    const migrated =
+      LEGACY_WORDS_TRANSITION_ENABLED &&
+      settingsFileTrusted &&
+      !settings.legacyEnvironmentSpeechWordsMigrated &&
+      settings.speechProjectCustomWords.length > 0
+        ? {
+            ...migratedSecrets,
+            legacyEnvironmentSpeechWordsMigrated: true,
+            transcriptionWords: mergeLegacySpeechWords(
+              migratedSecrets.transcriptionWords,
+              settings.speechProjectCustomWords,
+            ),
+          }
+        : migratedSecrets;
     if (
       migrated !== loaded ||
       continuation.changed || // SCIENT-FORK
@@ -1334,30 +1435,20 @@ const make = Effect.gen(function* () {
 
   // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
   let removedAgentKeeper: RemovedAgentKeeper | undefined;
-  const keepRemovedAgentKeys = Effect.fn("serverSettings.keepRemovedAgentKeys")(function* (
+  const keepRemovedAgentSemaphore = yield* Semaphore.make(1);
+  const prepareRemovedAgentKeys = Effect.fn("serverSettings.prepareRemovedAgentKeys")(function* (
     current: ServerSettings,
     next: ServerSettings,
   ) {
     const removed = removedAgentIds(current, next);
-    if (removed.length === 0 || removedAgentKeeper === undefined) return;
+    if (removed.length === 0 || removedAgentKeeper === undefined) return [];
     const materialized = yield* materializeSettingsSecrets(current);
-    yield* removedAgentKeeper(
-      removed.flatMap((instanceId) => {
-        const instance = materialized.providerInstances[instanceId as ProviderInstanceId];
-        return instance ? [{ instanceId, instance }] : [];
-      }),
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerSettingsError({
-            settingsPath,
-            operation: "keep-removed-agent-keys",
-            providerInstanceId: removed[0],
-            cause,
-          }),
-      ),
-    );
+    return removed.flatMap((instanceId) => {
+      const instance = materialized.providerInstances[instanceId as ProviderInstanceId];
+      return instance ? [{ instanceId, instance }] : [];
+    });
   });
+
   // SCIENT-FORK:END
 
   // Background sweeps read settings every few seconds; reading secret files each time is wasted.
@@ -1569,98 +1660,122 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateAndPersistSettings = (
+  const updateAndPersistSettings = Effect.fn("serverSettings.updateAndPersistSettings")(function* (
     patch: ServerSettingsPatch,
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    writeSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const { settings: current, parseFailure } = yield* reloadSettings;
-        if (Option.isSome(parseFailure)) {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "read-file",
-            cause: parseFailure.value,
-          });
-        }
-        // An older client echoes a reference as the redacted marker; restore it before vetting so
-        // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSimlockTokens(
-          current,
-          withEchoedSecretReferences(current, yield* update(current)),
-        );
-        // Vet before secrets: a variable the policy hides from clients is not one they removed.
-        const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
-        if (vetted._tag === "Locked") {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "write-managed-setting",
-            managedSetting: vetted.path,
-            managedBy: managedPolicy?.organization,
-          });
-        }
-        const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
-        if (vettedProviders._tag === "Locked") {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "write-managed-setting",
-            managedSetting: vettedProviders.path,
-            managedBy: managedPolicy?.organization,
-          });
-        }
-        if (vettedProviders._tag === "Disallowed") {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "use-disallowed-provider",
-            providerInstanceId: vettedProviders.instanceId,
-            providerLabel: vettedProviders.label,
-            managedBy: managedPolicy?.organization,
-          });
-        }
-        const deferredInstance = newlyRequestedCodexSubscriptionSharing(
-          current,
-          vettedProviders.settings,
-        );
-        if (deferredInstance !== undefined)
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "normalize",
-            providerInstanceId: deferredInstance,
-            cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
-          });
-        // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
-        yield* keepRemovedAgentKeys(current, vettedProviders.settings);
-        // SCIENT-FORK:END
-        // After vetting, which can keep stored variables a policy hides from clients.
-        const persisted = yield* persistSettingsSecrets(
-          current,
-          withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
-        );
-        const next = yield* normalizeServerSettings(persisted.settings);
-        const materializedNext = yield* Effect.uninterruptibleMask(() =>
-          Effect.gen(function* () {
-            yield* invalidateMaterialized;
-            const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
-            const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
-            if (Exit.isFailure(materializedExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(materializedExit.cause);
-            }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
-            if (Exit.isFailure(writeExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(writeExit.cause);
-            }
-            return materializedExit.value;
-          }).pipe(Effect.ensuring(invalidateMaterialized)),
-        );
-        yield* cacheSettings(next);
-        const resolved = toEffective(materializedNext);
-        materialized = { source: next, value: resolved };
-        yield* emitChange(next);
-        return resolved;
-      }),
-    );
+    beforeSecretChanges?: (current: ServerSettings) => Effect.Effect<void, ServerSettingsError>,
+  ): Effect.fn.Return<ServerSettings, ServerSettingsError> {
+    let kept: Effect.Success<ReturnType<typeof prepareRemovedAgentKeys>> = [];
+    for (;;) {
+      const result = yield* writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const { settings: current, parseFailure } = yield* reloadSettings;
+          if (Option.isSome(parseFailure)) {
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "read-file",
+              cause: parseFailure.value,
+            });
+          }
+          // An older client echoes a reference as the redacted marker; restore it before vetting so
+          // a removed provider's reference is cleared below rather than restored by persistence.
+          const updated = withoutRedirectedSimlockTokens(
+            current,
+            withEchoedSecretReferences(current, yield* update(current)),
+          );
+          // Vet before secrets: a variable the policy hides from clients is not one they removed.
+          const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
+          if (vetted._tag === "Locked") {
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "write-managed-setting",
+              managedSetting: vetted.path,
+              managedBy: managedPolicy?.organization,
+            });
+          }
+          const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
+          if (vettedProviders._tag === "Locked") {
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "write-managed-setting",
+              managedSetting: vettedProviders.path,
+              managedBy: managedPolicy?.organization,
+            });
+          }
+          if (vettedProviders._tag === "Disallowed") {
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "use-disallowed-provider",
+              providerInstanceId: vettedProviders.instanceId,
+              providerLabel: vettedProviders.label,
+              managedBy: managedPolicy?.organization,
+            });
+          }
+          const deferredInstance = newlyRequestedCodexSubscriptionSharing(
+            current,
+            vettedProviders.settings,
+          );
+          if (deferredInstance !== undefined)
+            return yield* new ServerSettingsError({
+              settingsPath,
+              operation: "normalize",
+              providerInstanceId: deferredInstance,
+              cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
+            });
+          const removed = yield* prepareRemovedAgentKeys(current, vettedProviders.settings);
+          if (!Equal.equals(kept, removed)) return { removed } as const;
+          // After vetting, which can keep stored variables a policy hides from clients.
+          const persisted = yield* persistSettingsSecrets(
+            current,
+            withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
+          );
+          const next = yield* normalizeServerSettings(persisted.settings);
+          const materializedNext = yield* Effect.uninterruptibleMask(() =>
+            Effect.gen(function* () {
+              if (beforeSecretChanges) yield* beforeSecretChanges(current);
+              yield* invalidateMaterialized;
+              const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
+              const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
+              if (Exit.isFailure(materializedExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(materializedExit.cause);
+              }
+              const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+              if (Exit.isFailure(writeExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(writeExit.cause);
+              }
+              return materializedExit.value;
+            }).pipe(Effect.ensuring(invalidateMaterialized)),
+          );
+          yield* cacheSettings(next);
+          const resolved = toEffective(materializedNext);
+          materialized = { source: next, value: resolved };
+          yield* emitChange(next);
+          return { resolved } as const;
+        }),
+      );
+      if ("resolved" in result) return result.resolved;
+      // Accounts can publish model-key invalidations through settings while keeping a key.
+      // Protect the candidate with a fresh comparison on the next locked pass.
+      if (result.removed.length && removedAgentKeeper) {
+        yield* keepRemovedAgentSemaphore
+          .withPermits(1)(removedAgentKeeper(result.removed))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "keep-removed-agent-keys",
+                  providerInstanceId: result.removed[0]?.instanceId,
+                  cause,
+                }),
+            ),
+          );
+      }
+      kept = result.removed;
+    }
+  });
 
   // SCIENT-FORK:START — unresolved credentials stay redacted; ordinary snapshot readers still fail closed.
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (
@@ -1850,6 +1965,15 @@ const make = Effect.gen(function* () {
       modelReasoning,
       writeSemaphore,
       getSettingsFromCache,
+      readCustomModels: Cache.get(settingsCache, cacheKey).pipe(
+        Effect.flatMap(({ settings, parseFailure }) =>
+          Option.match(parseFailure, {
+            onNone: () => Effect.succeed(settings.customModels),
+            onSome: (cause) =>
+              Effect.fail(new ServerSettingsError({ settingsPath, operation: "read-file", cause })),
+          }),
+        ),
+      ),
       normalizeServerSettings,
       writeSettingsAtomically,
       cacheSettings,
@@ -1870,6 +1994,51 @@ const make = Effect.gen(function* () {
     managedPolicy,
     start,
     ready: Deferred.await(startedDeferred),
+    // SCIENT-FORK:START — Legacy speech keys share the settings writer.
+    replaceLegacySpeechReference: (provider, next) =>
+      updateAndPersistSettings({ cloudSpeechCredentials: { [provider]: next } }, (current) =>
+        Effect.succeed(replaceLegacySpeechReference(current, provider, next)),
+      ),
+    commitLegacySpeechTransfer: (provider, expected, accountId) =>
+      updateAndPersistSettings(
+        { cloudSpeechCredentials: { [provider]: "" } },
+        Effect.fnUntraced(function* (current) {
+          const effective = yield* materializeSettingsSecrets(current);
+          return yield* transferLegacySpeechSettings(
+            settingsPath,
+            current,
+            effective,
+            provider,
+            expected,
+            accountId,
+          );
+        }),
+        Effect.fnUntraced(function* (current) {
+          if (current.legacySpeechAccountIds?.[provider] === accountId) return;
+          // Publish the verified reference before the settings writer removes the old vault slot.
+          const switched = {
+            ...current,
+            legacySpeechAccountIds: { ...current.legacySpeechAccountIds, [provider]: accountId },
+          };
+          yield* writeSettingsAtomically(switched);
+          yield* cacheSettings(switched);
+        }),
+      ),
+    resolveSpeechCustomModelKey: Effect.fn("ServerSettings.resolveSpeechCustomModelKey")(
+      function* (connectionId, origin) {
+        const settings = yield* getSettingsFromCache;
+        const connection = settings.customModels.connections.find(({ id }) => id === connectionId);
+        if (
+          !connection?.credentialId ||
+          !URL.canParse(connection.baseUrl) ||
+          new URL(connection.baseUrl).origin !== origin
+        )
+          return undefined;
+        const { apiKey } = yield* resolveCustomModelKey(connection, customModelSecrets);
+        return apiKey ? { name: connection.name, token: apiKey } : undefined;
+      },
+    ),
+    // SCIENT-FORK:END
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>

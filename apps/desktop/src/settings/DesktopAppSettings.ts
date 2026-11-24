@@ -3,7 +3,6 @@ import {
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
-  type VoiceModelId,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
@@ -24,7 +23,7 @@ import {
   applyMainWindowNearFullSize,
   applyMainWindowSizeIncrease,
   normalizeVoiceSelectedModelId,
-  setVoiceSelectedModelId,
+  type LegacyVoiceModelId,
   stableOnlyUpdateChannel,
   stableOnlyUpdateChannelFields,
 } from "./scientDesktopSettings.ts";
@@ -57,7 +56,7 @@ export interface DesktopSettings {
   readonly updateChannelConfiguredByUser: boolean;
   readonly wslBackendEnabled: boolean;
   readonly wslDistro: string | null;
-  readonly voiceSelectedModelId: VoiceModelId | null;
+  readonly voiceSelectedModelId: LegacyVoiceModelId | null;
   // WSL-only primary mode avoids a second Windows backend; default false preserves parallel setups.
   // Requires restart because the pool chooses its primary spec at layer initialization.
   readonly wslOnly: boolean;
@@ -207,9 +206,6 @@ export class DesktopAppSettings extends Context.Service<
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslDistro: (
       distro: string | null,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setVoiceSelectedModelId: (
-      modelId: VoiceModelId | null,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslOnly: (
       enabled: boolean,
@@ -694,15 +690,6 @@ export const make = Effect.gen(function* () {
 
       return yield* persist((settings) => setWslDistro(settings, distro));
     }),
-    // SCIENT-FORK:START — selected local voice model.
-    setVoiceSelectedModelId: Effect.fn("desktop.settings.setVoiceSelectedModelId")(
-      function* (modelId) {
-        yield* Effect.annotateCurrentSpan({ modelId: modelId ?? null });
-
-        return yield* persist((settings) => setVoiceSelectedModelId(settings, modelId));
-      },
-    ),
-    // SCIENT-FORK:END
     setWslOnly: Effect.fn("desktop.settings.setWslOnly")(function* (enabled) {
       yield* Effect.annotateCurrentSpan({ enabled });
 
@@ -782,13 +769,6 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslDistro: Effect.fn("DesktopAppSettings.setWslDistro")(function (distro) {
           return update((settings) => setWslDistro(settings, distro));
         }),
-        // SCIENT-FORK:START — selected local voice model.
-        setVoiceSelectedModelId: Effect.fn("DesktopAppSettings.setVoiceSelectedModelId")(
-          function (modelId) {
-            return update((settings) => setVoiceSelectedModelId(settings, modelId));
-          },
-        ),
-        // SCIENT-FORK:END
         setWslOnly: Effect.fn("DesktopAppSettings.setWslOnly")(function (enabled) {
           return update((settings) => setWslOnly(settings, enabled));
         }),

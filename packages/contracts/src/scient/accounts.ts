@@ -168,6 +168,24 @@ export const AccountSite = TrimmedNonEmptyString.check(
 );
 export type AccountSite = typeof AccountSite.Type;
 
+const isAccountSite = Schema.is(AccountSite);
+
+export function isCustomModelAccountOrigin(origin: string): boolean {
+  if (!URL.canParse(origin)) return false;
+  const url = new URL(origin);
+  return url.origin === origin && (url.protocol === "http:" || url.protocol === "https:");
+}
+
+export function isSpeechAccountOrigin(origin: string): boolean {
+  if (!URL.canParse(origin)) return false;
+  const url = new URL(origin);
+  return (
+    url.origin === origin &&
+    (url.protocol === "https:" ||
+      (url.protocol === "http:" && ["127.0.0.1", "[::1]"].includes(url.hostname)))
+  );
+}
+
 const HttpsUrl = TrimmedNonEmptyString.check(
   Schema.isMaxLength(2048),
   Schema.isPattern(/^https?:\/\//),
@@ -247,12 +265,28 @@ export const AccountDetails = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("website"), ...WebsiteFields }),
   Schema.Struct({
     kind: Schema.Literal("api-key"),
-    sites: Schema.Array(AccountSite).check(Schema.isMaxLength(16)),
+    sites: Schema.Array(Schema.String.check(Schema.isMaxLength(253))).check(Schema.isMaxLength(16)),
     auth: ApiKeyAuth,
     /** Variable name scripts read the key from, e.g. HF_TOKEN. */
     envName: Schema.optional(EnvironmentVariableName),
     keptFrom: Schema.optional(AccountKeptFrom),
-  }),
+    speechOnly: Schema.optional(Schema.Boolean),
+    purpose: Schema.optional(Schema.Literal("custom-models")),
+  }).check(
+    Schema.makeFilter(
+      ({ speechOnly, purpose, sites }) =>
+        (purpose === "custom-models"
+          ? !speechOnly && sites.length > 0 && sites.every(isCustomModelAccountOrigin)
+          : sites.every(
+              (site) =>
+                isAccountSite(site) ||
+                // Existing speech rows must still load so their sites can be corrected.
+                (speechOnly === true &&
+                  (isSpeechAccountOrigin(site) ||
+                    /^http:\/\/localhost(?::[0-9]{1,5})?$/.test(site))),
+            )) || "Use valid sites for API-key accounts.",
+    ),
+  ),
   Schema.Struct({
     kind: Schema.Literal("database"),
     engine: Schema.Literal("postgres"),
@@ -345,6 +379,25 @@ export const AccountSummary = Schema.Struct({
   lastUsedAt: Schema.optional(IsoDateTime),
 });
 export type AccountSummary = typeof AccountSummary.Type;
+
+/** Metadata eligibility for a server-owned Custom models credential. */
+export function acceptsCustomModelKey(
+  account: Pick<AccountSummary, "details" | "secrets">,
+  origin: string,
+  protocol: "openai-completions" | "openai-responses" | "anthropic-messages",
+): boolean {
+  const { details, secrets } = account;
+  return (
+    details.kind === "api-key" &&
+    !details.speechOnly &&
+    isCustomModelAccountOrigin(origin) &&
+    details.sites.includes(origin) &&
+    secrets.token?.source.type === "scient" &&
+    (protocol === "anthropic-messages"
+      ? details.auth.type === "header" && details.auth.name.toLowerCase() === "x-api-key"
+      : details.auth.type === "bearer")
+  );
+}
 
 /** A small square picture as an inline PNG/JPEG/WebP; clients never load remote images. */
 export const ProfilePictureDataUri = Schema.String.check(
@@ -930,6 +983,21 @@ export const AccountCodeSourcesResult = Schema.Struct({
  */
 export const ACCOUNTS_PROTOCOL = 1;
 
+const AccountSpeechConsumer = Schema.Struct({
+  accountId: AccountId,
+  label: Schema.String,
+  engineId: Schema.optionalKey(Schema.String),
+});
+export type AccountSpeechConsumer = typeof AccountSpeechConsumer.Type;
+
+const AccountKeyConsumer = Schema.Struct({
+  accountId: AccountId,
+  kind: Schema.Literals(["custom-model", "transcription"]),
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type AccountKeyConsumer = typeof AccountKeyConsumer.Type;
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
@@ -938,12 +1006,17 @@ export const AccountsSnapshot = Schema.Struct({
   profileChoices: Schema.optional(BrowserProfileChoices),
   codeSources: Schema.optional(AccountCodeSources),
   keyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
+  speechConsumers: Schema.optional(Schema.Array(AccountSpeechConsumer)),
+  detachedKeyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),
   paperQueues: Schema.optional(Schema.Array(PaperQueueSummary)),
   recentActivity: Schema.Array(AccountActivityEntry),
   customModelKeys: Schema.Array(AccountCustomModelKey),
+  keyConsumers: Schema.optional(Schema.Array(AccountKeyConsumer)),
+  unavailableCustomModelKeyIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  keyConsumersIncomplete: Schema.optional(Schema.Boolean),
   managedElsewhere: Schema.optional(
     Schema.Array(
       Schema.Struct({

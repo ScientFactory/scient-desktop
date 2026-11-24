@@ -45,19 +45,22 @@ vi.mock("../../lib/protectedData", () => ({ whenProtectedDataAvailable: async ()
 vi.mock("../../connection/runtime", async () => ({
   connectionAtomRuntime: Atom.runtime((await import("effect/http")).FetchHttpClient.layer),
 }));
+const environmentState = Atom.family((id: string) =>
+  Atom.make({
+    connection: { phase: id === "offline" ? "offline" : "connected" },
+    serverConfig: {
+      environment: {
+        capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
+      },
+    },
+  }),
+);
 vi.mock("../../state/presentation", () => ({
   environmentPresentations: {
-    presentationAtom: Atom.family((id: string) => {
+    presentationAtom: (id: string) => {
       mocks.probe(id);
-      return Atom.make({
-        connection: { phase: id === "offline" ? "offline" : "connected" },
-        serverConfig: {
-          environment: {
-            capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
-          },
-        },
-      });
-    }),
+      return environmentState(id);
+    },
   },
 }));
 vi.mock("../../state/session", async () => {
@@ -132,6 +135,14 @@ it("keeps local as the default and never reuses consent for an offline or resele
     expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
     expect(mocks.probe).not.toHaveBeenCalled();
     chooseVoiceDestination(EnvironmentId.make("offline"));
+    expect(appAtomRegistry.get(voiceRouteAtom)).toEqual({ transcriber: null });
+    const offline = environmentState("offline");
+    const presentation = appAtomRegistry.get(offline);
+    const grant = appAtomRegistry.get(voiceGrantAtom);
+    appAtomRegistry.set(offline, { ...presentation, connection: { phase: "connected" } });
+    expect(appAtomRegistry.get(voiceRouteAtom)?.transcriber).toBeTruthy();
+    expect(appAtomRegistry.get(voiceGrantAtom)).toBe(grant);
+    appAtomRegistry.set(offline, presentation);
     expect(appAtomRegistry.get(voiceRouteAtom)).toEqual({ transcriber: null });
     const host = EnvironmentId.make("my-server");
     chooseVoiceDestination(host);

@@ -1,3 +1,4 @@
+import { ScientTranscriptionToolkit } from "./toolkits/transcription/tools.ts";
 // SCIENT-FORK:START — Scient Accounts: register account operation definitions.
 import { ScientAccountsToolkit } from "../scient/accounts/agent/tools.ts";
 // SCIENT-FORK:END
@@ -56,6 +57,7 @@ export const scientTools = [
   ...Object.values(ScientDocumentJobsToolkit.tools),
   ...Object.values(ScientOverleafToolkit.tools),
   ...Object.values(ScientComputeToolkit.tools),
+  ...Object.values(ScientTranscriptionToolkit.tools),
   ...Object.values(ScientThreadsToolkit.tools),
   ...Object.values(ScientBrowserNetworkToolkit.tools),
 ];

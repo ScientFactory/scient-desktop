@@ -1052,14 +1052,12 @@ function NestedAgentMenuSetup() {
           busy={false}
           testing={false}
           statuses={[]}
-          keyMissing={false}
           testAgents={Array.from({ length: 40 }, (_, i) => ({
             id: ProviderInstanceId.make(`pi_review_${i}`),
             name: `Synthetic agent ${i}`,
           }))}
           notice={null}
           onCheckAgain={() => {}}
-          onReenterKey={() => {}}
           onTest={testAgent}
         />
       }

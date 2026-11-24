@@ -131,9 +131,9 @@ import {
   resolvePackageManagerUserAgent,
 } from "./build-desktop-artifact.ts";
 import {
-  WINDOWS_VOICE_FILES,
   windowsCursorFiles,
   windowsNativeIgnoreGlobs,
+  windowsTranscribeFiles,
 } from "./lib/windows-payload.ts";
 import {
   ReleasePackageManifestError,
@@ -260,13 +260,21 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
     yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
   }
-  for (const file of [
-    ...WINDOWS_VOICE_FILES.map((name) => `whisper-runtime/${name}`),
-    ...windowsCursorFiles(input.targetArch ?? "x64").map((name) => `node_modules/@cursor/${name}`),
-  ]) {
+  for (const file of windowsCursorFiles(input.targetArch ?? "x64").map(
+    (name) => `node_modules/@cursor/${name}`,
+  )) {
     const target = path.join(resourcesDir, file);
     yield* fs.makeDirectory(path.dirname(target), { recursive: true });
     yield* fs.writeFileString(target, "component fixture");
+  }
+  for (const file of windowsTranscribeFiles(input.targetArch ?? "x64")) {
+    const target = path.join(
+      resourcesDir,
+      "server.asar.unpacked/node_modules/@transcribe-cpp/win32-x64-cpu-vulkan",
+      file,
+    );
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFileString(target, "speech fixture");
   }
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
@@ -1230,8 +1238,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/server/dist/file-exchange/**/*",
       "!apps/desktop/prod-resources/resource-monitor",
       "!apps/desktop/prod-resources/resource-monitor/**/*",
-      "!apps/desktop/prod-resources/whisper-runtime",
-      "!apps/desktop/prod-resources/whisper-runtime/**/*",
       "!apps/desktop/prod-resources/synctex-runtime",
       "!apps/desktop/prod-resources/synctex-runtime/**/*",
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
@@ -1525,14 +1531,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/file-exchange/**/*",
       "!apps/desktop/resources/resource-monitor",
       "!apps/desktop/resources/resource-monitor/**/*",
-      "!apps/desktop/resources/whisper-runtime",
-      "!apps/desktop/resources/whisper-runtime/**/*",
       "!apps/desktop/resources/synctex-runtime",
       "!apps/desktop/resources/synctex-runtime/**/*",
       "!apps/desktop/prod-resources/resource-monitor",
       "!apps/desktop/prod-resources/resource-monitor/**/*",
-      "!apps/desktop/prod-resources/whisper-runtime",
-      "!apps/desktop/prod-resources/whisper-runtime/**/*",
       "!apps/desktop/prod-resources/synctex-runtime",
       "!apps/desktop/prod-resources/synctex-runtime/**/*",
       "!apps/desktop/resources/cursor-sdk",
@@ -1555,13 +1557,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           const resourcesDir = path.join(root, "resources");
           const trees = [
             "resource-monitor",
-            "whisper-runtime",
             "synctex-runtime",
             ...(platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
           ];
           const binaryNames: Record<string, string> = {
             "resource-monitor": "scient-resource-monitor",
-            "whisper-runtime": "whisper-server",
             "synctex-runtime": "synctex",
             "kde-capture": "scient-kde-snap-shot",
             "hyprland-capture": "scient-hyprland-snap-shot",
@@ -1626,7 +1626,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             );
           }
           yield* pack(ignore);
-          const library = path.join(resourcesDir, "whisper-runtime/library.so");
+          const library = path.join(resourcesDir, "synctex-runtime/library.so");
           yield* fs.remove(library);
           assert.include((yield* validate().pipe(Effect.flip)).stderrTail, "library.so");
           yield* fs.writeFileString(library, "");
@@ -2993,7 +2993,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        // Fixture has ten core files, plus the 37 approved component files.
+        // Fixture has ten core files, plus the 35 approved component files.
         for (let index = 0; index < 70; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `padding-${index}.txt`),
@@ -3006,20 +3006,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "x64" as const,
         };
         const valid = yield* validateWindowsPackagedPayload(options);
-        assert.equal(valid.fileCount, 117);
+        assert.equal(valid.fileCount, 115);
         yield* fs.writeFileString(path.join(fixture.packagedAppDir, "spill.txt"), "core");
         const error = yield* validateWindowsPackagedPayload(options).pipe(Effect.flip);
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "file-limit-exceeded");
-        assert.equal(error.fileCount, 118);
-        assert.equal(error.fileLimit, 117);
+        assert.equal(error.fileCount, 116);
+        assert.equal(error.fileLimit, 115);
         assert.include(error.message, "core=81");
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each([
-    { file: "resources/whisper-runtime/whisper-server.exe", remove: true },
     { file: "resources/node_modules/@cursor/sdk-win32-x64/extra.dll", remove: false },
     {
       file: "resources/app.asar.unpacked/node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
@@ -3510,7 +3509,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   it.effect.each(["valid", "digest", "arch", "source", "missing", "inventory", "PE"] as const)(
-    "stages exact-source Windows publication and voice prerequisites: %s",
+    "stages exact-source Windows publication prerequisites: %s",
     (condition) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -4049,7 +4048,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
-        voiceRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -4093,7 +4091,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             wslPrebuild: Option.none(),
             syncTexRuntime: Option.none(),
             wslSyncTexRuntime: Option.none(),
-            voiceRuntime: Option.none(),
           }),
         );
 
@@ -4120,7 +4117,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
-        voiceRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
@@ -4162,7 +4158,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
-        voiceRuntime: Option.none(),
       });
 
       assert.isTrue(resolved.signed);

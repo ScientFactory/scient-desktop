@@ -22,7 +22,6 @@
     "@crowecawcaw/xa11y": "0.15.4",
     "@effect/platform-node": "catalog:",
     "@napi-rs/keyring": "^1.3.0",
-    "@scientfactory/scient-voice": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",

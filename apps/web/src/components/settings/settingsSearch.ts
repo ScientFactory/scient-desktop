@@ -29,7 +29,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/custom-models"
-  | "/settings/voice"
+  | "/settings/transcription"
   | "/settings/skills"
   // SCIENT-FORK:START — Scient Extensions
   | "/settings/extensions"
@@ -146,7 +146,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": msg("Maintenance"),
   "/settings/labs": msg("Labs"),
   "/settings/about": msg("About"),
-  "/settings/voice": msg("Voice"),
+  "/settings/transcription": msg("Transcription"),
   "/settings/archived": msg("Archive"),
 };
 
@@ -175,7 +175,7 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
       "/settings/appearance",
       "/settings/chat",
       // SCIENT-FORK: Voice (desktop only; the sidebar hides it elsewhere).
-      "/settings/voice",
+      "/settings/transcription",
       // SCIENT-FORK:START — Scient Accounts: place Accounts after Voice.
       "/settings/accounts",
       // SCIENT-FORK:END
@@ -798,7 +798,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "voice-transcription-destination",
     title: msg("Transcribe with"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [
       msg(
         "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
@@ -808,71 +808,62 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "voice-microphone",
     title: msg("Microphone"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("mic input audio device order priority preferred")],
   },
   {
     id: "dictation-shortcut-mode",
     title: msg("Dictation shortcut"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("speech voice keyboard hotkey hold toggle auto")],
   },
   {
     id: "speech-language",
     title: msg("Transcription language"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("speech voice translate english auto detect")],
   },
   {
     id: "speech-dictionary",
-    title: msg("Dictionary"),
-    to: "/settings/voice",
+    title: msg("Words"),
+    to: "/settings/transcription",
     searchTerms: [msg("speech voice transcription vocabulary names glossary alias")],
-  },
-  {
-    id: "speech-project-dictionary",
-    title: msg("Project dictionary"),
-    to: "/settings/voice",
-    scope: "project-defaults",
-    searchTerms: [
-      msg("speech voice transcription vocabulary shared dictionary team environment glossary"),
-    ],
   },
   {
     id: "speech-post-processing-model",
     title: msg("Cleanup model"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     scope: "environment",
     searchTerms: [msg("speech voice transcript cleanup provider model post-processing")],
   },
   {
     id: "speech-correction-word",
     title: msg("Correction cue"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("speech voice cleanup sorry scratch that fix mistake")],
   },
   {
     id: "speech-silence-filtering",
     title: msg("Silence filtering"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("voice speech vad silero pauses noise")],
   },
   {
     id: "remove-filler-words",
     title: msg("Remove filler words"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("voice speech transcription hesitation um uh cleanup")],
   },
   {
     id: "speech-post-processing",
     title: msg("Clean up transcripts"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("speech transcription polish clean provider prompt post-processing")],
   },
   {
     id: "speech-models",
     title: msg("Transcription models"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [
       msg(
         "speech voice stt download whisper parakeet canary moonshine accuracy speed benchmark languages",
@@ -882,13 +873,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "speech-hardware",
     title: msg("Transcription hardware and model unloading"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("speech voice stt advanced gpu cpu acceleration memory unload idle")],
   },
   {
     id: "speech-streaming",
     title: msg("Streaming transcription"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [
       msg("speech voice stt advanced native live preview batch after stopping slow lag"),
     ],
@@ -896,13 +887,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "microphone-test",
     title: msg("Test microphone"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("test mic audio playback loopback record input level")],
   },
   {
     id: "transcription-test",
     title: msg("Test model"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     searchTerms: [msg("test voice speech model transcription recognition")],
   },
   {
@@ -1349,7 +1340,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "voice-models",
     title: msg("Voice models"),
-    to: "/settings/voice",
+    to: "/settings/transcription",
     desktopOnly: true,
   },
   {
@@ -1847,7 +1838,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/custom-models": null,
-  "/settings/voice": null,
+  "/settings/transcription": null,
   "/settings/skills": null,
   // SCIENT-FORK:START — Scient Extensions
   "/settings/extensions": null,
@@ -2020,15 +2011,22 @@ export function settingsForThisPlatform(
   items: ReadonlyArray<SettingsSearchItem>,
 ): ReadonlyArray<SettingsSearchItem> {
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
+  const transcriptionTargets = new Set([
+    "voice-models",
+    "voice-transcription-destination",
+    "voice-microphone",
+    "dictation-shortcut-mode",
+    "speech-models",
+    "speech-hardware",
+    "speech-dictionary",
+  ]);
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.macOnly || isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)) &&
-      // SCIENT-FORK: Scient's voice page lists only its models until the voice decision;
-      // T3's voice settings are dormant.
-      (item.to !== "/settings/voice" || item.id === "voice-models"),
+      (item.to !== "/settings/transcription" || transcriptionTargets.has(item.id)),
   );
 }
 

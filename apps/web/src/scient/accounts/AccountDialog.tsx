@@ -582,7 +582,9 @@ export function AccountDialog({
   onClose: () => void;
   initialApiKey?: {
     readonly name: string;
-    readonly envName: string;
+    readonly envName?: string;
+    readonly speechOnly?: boolean;
+    readonly customModelProtocol?: "openai-completions" | "openai-responses" | "anthropic-messages";
     readonly sites?: ReadonlyArray<string>;
   };
   onSaved?: (accountId: AccountId) => void;
@@ -643,8 +645,13 @@ export function AccountDialog({
         ? {
             kind: "api-key",
             sites: initialApiKey.sites ?? [],
-            auth: { type: "bearer" },
-            envName: initialApiKey.envName,
+            auth:
+              initialApiKey.customModelProtocol === "anthropic-messages"
+                ? { type: "header", name: "x-api-key" }
+                : { type: "bearer" },
+            ...(initialApiKey.envName ? { envName: initialApiKey.envName } : {}),
+            ...(initialApiKey.customModelProtocol ? { purpose: "custom-models" } : {}),
+            ...(initialApiKey.speechOnly ? { speechOnly: true } : {}),
           }
         : null),
   );
@@ -713,7 +720,9 @@ export function AccountDialog({
       secrets: Object.fromEntries(
         Object.entries(fieldSecrets).map(([field, input]) => [
           field,
-          input.type === "scient" ? { ...input, saveTo } : input,
+          input.type === "scient" && !(details.kind === "api-key" && details.speechOnly)
+            ? { ...input, saveTo }
+            : input,
         ]),
       ),
     });
@@ -1045,8 +1054,11 @@ export function AccountDialog({
                     }
                   />
                 ))}
-                <MoreOptionsFields details={details} onChange={setDetails} />
-                {secretFields(details).length > 0 ? (
+                {details.kind === "api-key" && details.speechOnly ? null : (
+                  <MoreOptionsFields details={details} onChange={setDetails} />
+                )}
+                {secretFields(details).length > 0 &&
+                !(details.kind === "api-key" && details.speechOnly) ? (
                   <SaveStores
                     kept={account ? Object.values(account.secrets)[0] : undefined}
                     stores={snapshot.stores}

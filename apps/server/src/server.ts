@@ -1,3 +1,4 @@
+import * as LegacySpeechKeys from "./speech/LegacySpeechKeys.ts";
 // SCIENT-FORK:START — qualified Antigravity installer composition.
 import { scientAntigravityInstallationLayer } from "./scient/providerLifecycle/ScientAntigravityInstallation.ts";
 // SCIENT-FORK:END
@@ -64,6 +65,11 @@ import * as SpeechService from "./speech/SpeechService.ts";
 import * as CloudSpeech from "./speech/CloudSpeech.ts";
 import { speechHttpApiLayer } from "./speech/http.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
+import * as TranscriptionCompletion from "./transcription/TranscriptionCompletion.ts";
+import * as TranscriptionJobs from "./transcription/TranscriptionJobs.ts";
+import * as TranscriptionCloudEngines from "./transcription/CloudEngines.ts";
+import * as TranscriptionHttp from "./transcription/http.ts";
+import * as ChatGptTranscription from "./transcription/chatgpt.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as IssueService from "./issue/IssueService.ts";
@@ -1078,6 +1084,11 @@ export const layerMakeRoutes = Layer.mergeAll(
     generatedImageTempSweepLayer,
     // SCIENT-FORK:END
     speechStreamRouteLayer,
+    TranscriptionHttp.layer,
+    TranscriptionHttp.enginesLayer,
+    TranscriptionHttp.notesLayer,
+
+    TranscriptionCompletion.layer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
@@ -1119,12 +1130,17 @@ export const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(
-    SpeechService.layer.pipe(
-      Layer.provide(layerServerSettings),
-      Layer.provide(SpeechModelStore.layer),
+    TranscriptionJobs.layer.pipe(
+      Layer.provide(ChatGptTranscription.layer),
+      Layer.provideMerge(SpeechService.layer.pipe(Layer.provide(layerServerSettings))),
     ),
   ),
-  Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
+  Layer.provide(
+    Layer.merge(
+      Layer.merge(SpeechModelStore.layer, TranscriptionCloudEngines.layer),
+      CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer)),
+    ).pipe(Layer.provide(LegacySpeechKeys.layer)),
+  ),
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   ScientRouteServices.provideScientRouteServices,

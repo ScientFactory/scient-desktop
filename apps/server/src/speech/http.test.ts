@@ -79,7 +79,13 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       Layer.provide(speechHttpApiLayer),
       Layer.provide(principal(AuthOrchestrationOperateScope)),
       Layer.provide(
-        Layer.succeed(SpeechService.SpeechService, {
+        Layer.mock(SpeechService.SpeechService)({
+          openRecordingVad: async () => {
+            throw new Error("not used");
+          },
+          withRecordingWindow: async () => {
+            throw new Error("not used");
+          },
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
           models: () => Effect.succeed({ models: [] }),
@@ -191,6 +197,12 @@ effectIt.effect(
           Layer.provide(principalWith(scopes)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
+              openRecordingVad: async () => {
+                throw new Error("not used");
+              },
+              withRecordingWindow: async () => {
+                throw new Error("not used");
+              },
               models: () => Effect.succeed({ models: [linkedModel] }),
               downloadModel: () => Effect.succeed({ models: [linkedModel], cancelled: true }),
             }),
@@ -333,7 +345,13 @@ effectIt.effect.each([
     Effect.gen(function* () {
       // Only authentication and the native service are replaced; exercise the actual HTTP handlers and codecs.
       const transcribe = vi.fn(() => Effect.fail(error));
-      const service = Layer.succeed(SpeechService.SpeechService, {
+      const service = Layer.mock(SpeechService.SpeechService)({
+        openRecordingVad: async () => {
+          throw new Error("not used");
+        },
+        withRecordingWindow: async () => {
+          throw new Error("not used");
+        },
         status: Effect.succeed({ supported: false as const, reason: "test" }),
         prepareModel: Effect.void,
         models: () => Effect.succeed({ models: [] }),
@@ -420,7 +438,16 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
       HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
         Layer.provide(speechHttpApiLayer),
         Layer.provide(principal(AuthOrchestrationOperateScope)),
-        Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+        Layer.provide(
+          Layer.mock(SpeechService.SpeechService)({
+            openRecordingVad: async () => {
+              throw new Error("not used");
+            },
+            withRecordingWindow: async () => {
+              throw new Error("not used");
+            },
+          }),
+        ),
         Layer.provide(failingCleanup),
         // Cleanup makes a real temporary directory; the HTTP services only carry a no-op filesystem.
         Layer.provide(NodeServices.layer),
@@ -437,7 +464,6 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             options: {
-              speechCustomWords: [],
               speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
             },
             transcript: "um so hello world",

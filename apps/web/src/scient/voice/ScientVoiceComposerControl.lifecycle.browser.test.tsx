@@ -1,3 +1,7 @@
+vi.mock("./catalogDictation", () => ({
+  useCatalogDictation: () => ({ enabled: true, setup: {} }),
+}));
+
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 
 import { describe, expect, it, vi } from "vite-plus/test";

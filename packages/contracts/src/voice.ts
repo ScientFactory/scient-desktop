@@ -1,11 +1,11 @@
-// Keep the wire contract engine-neutral and serializable so the composer does not depend on
-// Electron or whisper.cpp. Only local ships today; result engine identity still remains explicit.
+import { DictationRecognitionHints } from "./transcriptionWords.ts";
+// Scient dictation preferences and recorded-audio job payloads.
 
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
-/** The decoded request is limited to 10 MiB by the voice core. */
+/** Maximum encoded length for a 10 MiB recording. */
 export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3);
 
 /**
@@ -15,7 +15,7 @@ export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3
  */
 export const VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS = 20_000;
 
-/** Languages Scient can explicitly pin for local Whisper transcription. */
+/** Languages Scient can explicitly pin for local catalog transcription. */
 const VOICE_TRANSCRIPTION_LANGUAGE_CODES = [
   "ar",
   "de",
@@ -43,7 +43,7 @@ const VOICE_TRANSCRIPTION_LANGUAGE_CODES = [
 export const VoiceTranscriptionLanguage = Schema.Literals(VOICE_TRANSCRIPTION_LANGUAGE_CODES);
 export type VoiceTranscriptionLanguage = typeof VoiceTranscriptionLanguage.Type;
 
-/** Saved preference. `auto` leaves language detection to Whisper. */
+/** Saved preference. `auto` uses automatic language detection. */
 export const VoiceLanguagePreference = Schema.Literals([
   "auto",
   ...VOICE_TRANSCRIPTION_LANGUAGE_CODES,
@@ -51,12 +51,12 @@ export const VoiceLanguagePreference = Schema.Literals([
 export type VoiceLanguagePreference = typeof VoiceLanguagePreference.Type;
 
 /**
- * Who turns dictation into text. `local` is this computer's Whisper and `chatgpt` is ChatGPT through
+ * Who turns dictation into text. `local` is the local environment's speech worker and `chatgpt` is ChatGPT through
  * a provider's ChatGPT sign-in (Scient Agent or Codex). `auto` has not chosen yet: it dictates with
  * a local model that is already set up, and otherwise offers ChatGPT, when a sign-in exists, beside
  * the local models the first time the microphone is used.
  */
-export const VoiceDictationEngine = Schema.Literals(["auto", "local", "chatgpt"]);
+export const VoiceDictationEngine = Schema.Literals(["auto", "local", "cloud", "chatgpt", "off"]);
 export type VoiceDictationEngine = typeof VoiceDictationEngine.Type;
 
 export const VOICE_LANGUAGE_NAMES = {
@@ -91,6 +91,7 @@ export const VoiceTranscriptCorrectionText = TrimmedNonEmptyString.check(
 export type VoiceTranscriptCorrectionText = typeof VoiceTranscriptCorrectionText.Type;
 
 export const VoiceTranscriptCorrectionRequest = Schema.Struct({
+  hints: Schema.optionalKey(DictationRecognitionHints),
   transcript: VoiceTranscriptCorrectionText,
   language: Schema.optionalKey(VoiceTranscriptionLanguage),
 });
@@ -158,14 +159,6 @@ export type VoiceTranscriptionErrorKind = typeof VoiceTranscriptionErrorKind.Typ
 export const VoiceAudioMimeType = Schema.Literal("audio/wav");
 export type VoiceAudioMimeType = typeof VoiceAudioMimeType.Type;
 
-/** Built-in model identifiers allowed across IPC. The verified core manifest is authoritative. */
-export const VoiceModelId = Schema.Literals([
-  "whisper-small-multilingual-q5_1",
-  "whisper-medium-multilingual-q5_0",
-  "whisper-large-v3-turbo-multilingual-q5_0",
-]);
-export type VoiceModelId = typeof VoiceModelId.Type;
-
 const VoiceTranscriptionRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const VoiceCancelTranscriptionRequest = Schema.Struct({
@@ -173,16 +166,10 @@ export const VoiceCancelTranscriptionRequest = Schema.Struct({
 });
 export type VoiceCancelTranscriptionRequest = typeof VoiceCancelTranscriptionRequest.Type;
 
-/**
- * Untrusted transcribe request as it crosses the IPC boundary. Audio is
- * base64-encoded so it survives JSON transport; the core decodes and strictly
- * validates it (24 kHz mono 16-bit PCM WAV) before inference.
- */
+/** Recorded clip passed by the dictation controller to the selected engine adapter. */
 export const VoiceTranscribeRequest = Schema.Struct({
-  // Older renderers omit the identity; their cancellation cannot target scoped requests.
+  hints: Schema.optionalKey(DictationRecognitionHints),
   requestId: Schema.optionalKey(VoiceTranscriptionRequestId),
-  // Bound the string at the main-process IPC decoder before the core allocates
-  // a decode buffer. The core independently validates the exact decoded size.
   audioBase64: TrimmedNonEmptyString.check(Schema.isMaxLength(VOICE_AUDIO_BASE64_MAX_CHARS)),
   mimeType: VoiceAudioMimeType,
   sampleRateHz: NonNegativeInt,
@@ -196,76 +183,5 @@ export const VoiceTranscript = Schema.Struct({
   text: Schema.String,
   engine: VoiceEngineId,
   language: Schema.optionalKey(TrimmedNonEmptyString),
-  modelId: Schema.optionalKey(VoiceModelId),
 });
 export type VoiceTranscript = typeof VoiceTranscript.Type;
-
-/** Progress of a resumable model download. */
-export const VoiceModelDownloadProgress = Schema.Struct({
-  modelId: VoiceModelId,
-  downloadedBytes: NonNegativeInt,
-  totalBytes: NonNegativeInt,
-});
-export type VoiceModelDownloadProgress = typeof VoiceModelDownloadProgress.Type;
-
-/** Lifecycle state of a locally installed model. */
-export const VoiceModelState = Schema.Union([
-  Schema.Struct({
-    state: Schema.Literal("missing"),
-    partialBytes: Schema.optionalKey(NonNegativeInt),
-  }),
-  Schema.Struct({
-    state: Schema.Literal("downloading"),
-    downloadedBytes: NonNegativeInt,
-    totalBytes: NonNegativeInt,
-  }),
-  Schema.Struct({
-    state: Schema.Literal("ready"),
-    byteSize: NonNegativeInt,
-  }),
-  Schema.Struct({ state: Schema.Literal("unavailable"), message: TrimmedNonEmptyString }),
-  Schema.Struct({ state: Schema.Literal("error"), message: TrimmedNonEmptyString }),
-]);
-export type VoiceModelState = typeof VoiceModelState.Type;
-
-/** Safe metadata and lifecycle state for one installed/catalog model. */
-export const VoiceModelSummary = Schema.Struct({
-  id: VoiceModelId,
-  displayName: TrimmedNonEmptyString,
-  description: TrimmedNonEmptyString,
-  byteSize: NonNegativeInt,
-  state: VoiceModelState,
-});
-export type VoiceModelSummary = typeof VoiceModelSummary.Type;
-
-export const VoiceModelRecommendation = Schema.Struct({
-  modelId: VoiceModelId,
-  reason: TrimmedNonEmptyString,
-});
-export type VoiceModelRecommendation = typeof VoiceModelRecommendation.Type;
-
-/** Complete authoritative snapshot consumed by setup and Settings → Voice. */
-export const VoiceModelsSnapshot = Schema.Struct({
-  runtimeAvailable: Schema.Boolean,
-  runtimeMessage: Schema.optionalKey(TrimmedNonEmptyString),
-  selectedModelId: Schema.NullOr(VoiceModelId),
-  recommendation: Schema.NullOr(VoiceModelRecommendation),
-  activeDownloadModelId: Schema.NullOr(VoiceModelId),
-  models: Schema.Array(VoiceModelSummary),
-});
-export type VoiceModelsSnapshot = typeof VoiceModelsSnapshot.Type;
-
-export const VoiceModelOperationRequest = Schema.Struct({ modelId: VoiceModelId });
-export type VoiceModelOperationRequest = typeof VoiceModelOperationRequest.Type;
-
-export const VoiceModelDownloadRequest = Schema.Struct({
-  modelId: VoiceModelId,
-  selectOnSuccess: Schema.optionalKey(Schema.Boolean),
-});
-export type VoiceModelDownloadRequest = typeof VoiceModelDownloadRequest.Type;
-
-export const VoiceModelRemoveRequest = Schema.Struct({
-  modelId: VoiceModelId,
-  replacementModelId: Schema.optionalKey(Schema.NullOr(VoiceModelId)),
-});
-export type VoiceModelRemoveRequest = typeof VoiceModelRemoveRequest.Type;

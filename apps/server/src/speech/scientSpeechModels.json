@@ -1,0 +1,31 @@
+{
+  "_comment": "Scient's speech models outside @handy-computer/models; listed before the generated catalog.",
+  "models": [
+    {
+      "id": "vladkens/ivrit-whisper-large-v3-turbo-gguf",
+      "revision": "5d15b8bc0cf961639ac3d3647157514a24eb0084",
+      "name": "ivrit.ai Whisper Large V3 Turbo",
+      "description": "Whisper fine-tuned for Hebrew",
+      "filename": "ivrit-whisper-large-v3-turbo-Q8_0.gguf",
+      "size": 886381920,
+      "sha256": "da1f765ce2cfc495459fb3cc5deb2aaa2fa741eec79bff259b3da0481c4533ac",
+      "license": "apache-2.0",
+      "languages": ["he"],
+      "benchmark": {
+        "accuracy": {
+          "he": {
+            "grade": "D",
+            "errorPercent": 20.6
+          }
+        },
+        "secondsPer30s": {
+          "accelerated": 1.14
+        }
+      },
+      "recommended": false,
+      "supportsStreaming": false,
+      "supportsLanguageDetection": false,
+      "supportsTranslation": false
+    }
+  ]
+}

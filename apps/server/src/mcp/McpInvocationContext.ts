@@ -35,6 +35,8 @@ const ALL_MCP_CAPABILITIES = [
   "documents:build",
   /** Run code in Scient Compute sessions and read their results. */
   "compute",
+  /** Start, check and cancel project transcriptions. */
+  "transcription",
   "skills:read",
   "skills:write",
   "sources:read",

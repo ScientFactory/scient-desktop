@@ -98,6 +98,9 @@ export function needsLinuxPackaging(paths) {
     "scripts/stage-",
     "scripts/lib/",
     "scripts/qualify-linux-",
+    "scripts/qualify-packaged-speech.mjs",
+    "apps/server/src/speech/",
+    "apps/server/src/speech-packaging-probe.ts",
     "scripts/measure-linux-",
   ];
   return paths.some(

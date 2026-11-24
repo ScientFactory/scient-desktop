@@ -140,6 +140,37 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
   }
 }
 
+export const acquireTranscriptionHold = Effect.fn("KeepAwake.acquireTranscriptionHold")(
+  function* () {
+    const platform = yield* HostProcess.Platform;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const isWsl =
+      platform === "linux" &&
+      (yield* fileSystem.readFileString("/proc/sys/kernel/osrelease").pipe(
+        Effect.map((release) => release.toLowerCase().includes("microsoft")),
+        Effect.orElseSucceed(() => false),
+      ));
+    const command = inhibitorCommand(platform, process.pid, isWsl, yield* HostProcess.Environment);
+    if (!command) return;
+    yield* spawner
+      .spawn(
+        ChildProcess.make(command.command, command.args, {
+          detached: false,
+          shell: false,
+          stdin: command.stdin,
+          stdout: "ignore",
+          stderr: "ignore",
+        }),
+      )
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("transcription sleep inhibitor unavailable", { cause }),
+        ),
+      );
+  },
+);
+
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;

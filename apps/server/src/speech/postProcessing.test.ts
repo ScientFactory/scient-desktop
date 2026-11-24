@@ -65,7 +65,6 @@ it.effect("cleanup pinned to a provider that cannot generate text uses the text 
       const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
       yield* postProcessing.process({
         options: {
-          speechCustomWords: [],
           speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
         },
         transcript: "um hello world",

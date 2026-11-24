@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { render } from "../../../test/render";
-import { AccountRow, MainSiteChoice } from "./AccountsPage";
+import { AccountRow, ApiKeysDialog, MainSiteChoice } from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, googleRecovery, ProfileDetail } from "./BrowserProfiles";
 import { RemoteComputers } from "./RemoteComputers";
@@ -719,4 +719,69 @@ it("signs in once on the computer that refused a copy, in that computer's own br
     state.environments = [];
     Reflect.deleteProperty(window, "desktopBridge");
   }
+});
+
+it("shows both key consumers and lists their names before removal", async () => {
+  await page.viewport(1050, 800);
+  const onEdit = vi.fn();
+  const value: AccountSummary = {
+    ...account,
+    name: "Research gateway",
+    details: { kind: "api-key", sites: ["https://models.example.test"], auth: { type: "bearer" } },
+    secrets: { token: { source: { type: "scient" } } },
+  };
+  await using _screen = await render(
+    <ApiKeysDialog
+      rows={[
+        {
+          id: value.accountId,
+          name: value.name,
+          account: value,
+          service: value.details.kind === "api-key" ? value.details.sites[0] : undefined,
+          stored: "accounts",
+          uses: [
+            {
+              label: "Custom models",
+              consumerName: "Research chat",
+              href: "/settings/custom-models",
+            },
+            { label: "Transcription", consumerName: "Meeting notes", href: "/settings/voice" },
+          ],
+        },
+      ]}
+      roots={[]}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      onEdit={onEdit}
+      onActivity={() => undefined}
+      onKept={() => undefined}
+      onClose={() => undefined}
+    />,
+  );
+  await expect.element(page.getByText(/Used by Custom models and Transcription/)).toBeVisible();
+  const directory = import.meta.env.VITE_SCIENT_CREDENTIALS_SCREENSHOTS;
+  if (directory) {
+    for (const animation of document.getAnimations())
+      if (animation.effect?.getTiming().iterations !== Infinity) animation.finish();
+    await page.screenshot({ path: directory + "/accounts-api-keys-light.png" });
+    const background = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = "var(--background)";
+    document.documentElement.classList.add("dark");
+    try {
+      await page.screenshot({ path: directory + "/accounts-api-keys-dark.png" });
+    } finally {
+      document.documentElement.classList.remove("dark");
+      document.body.style.backgroundColor = background;
+    }
+  }
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Replace key…" }).click();
+  await expect.element(page.getByText("Custom models · Research chat")).toBeVisible();
+  await expect.element(page.getByText("Transcription · Meeting notes")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  expect(onEdit).toHaveBeenCalledWith(value);
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Remove…" }).click();
+  await expect.element(page.getByText("Custom models · Research chat")).toBeVisible();
+  await expect.element(page.getByText("Transcription · Meeting notes")).toBeVisible();
 });

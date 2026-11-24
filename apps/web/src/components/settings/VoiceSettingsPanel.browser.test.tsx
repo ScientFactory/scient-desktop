@@ -1,3 +1,6 @@
+import { WordsEditor } from "~/scient/transcription/WordsEditor";
+import type { TranscriptionWord } from "@t3tools/contracts";
+import { useState } from "react";
 import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
@@ -649,47 +652,60 @@ it("shows the model's effective language and restores the saved preference when 
   expect(getClientSettings().speechLanguage).toBe("fr");
 });
 
-it("keeps punctuation in a saved dictionary term and its alias", async () => {
-  const previous = getClientSettings();
-  using cleanup = new DisposableStack();
-  cleanup.defer(() => __setClientSettingsForTests(previous));
-  __setClientSettingsForTests({ ...previous, speechCustomWords: [] });
-  await using screen = await render(
-    <SettingsScopeProvider search={{}} onChange={() => {}}>
-      <VoiceSettingsPanel />
-    </SettingsScopeProvider>,
+function WordsEditorProbe(props: {
+  initial: readonly TranscriptionWord[];
+  save: (words: readonly TranscriptionWord[]) => void;
+}) {
+  const [words, setWords] = useState(props.initial);
+  return (
+    <WordsEditor
+      label="word list"
+      words={words}
+      onSave={(word) => {
+        const next = [
+          ...words.filter((entry) => entry.term !== word.term || entry.language !== word.language),
+          word,
+        ];
+        props.save(next);
+        setWords(next);
+      }}
+      onRemove={(word) => {
+        const next = words.filter(
+          (entry) => entry.term !== word.term || entry.language !== word.language,
+        );
+        props.save(next);
+        setWords(next);
+      }}
+    />
   );
+}
+
+// SCIENT-FORK:START — Uses the suite's Words editor and settings fixtures.
+it("keeps punctuation in a saved word and its alias", async () => {
+  const save = vi.fn();
+  await using screen = await render(<WordsEditorProbe initial={[]} save={save} />);
   await userEvent.type(
-    screen.getByRole("textbox", { name: "Add a word or phrase to the dictionary" }),
+    screen.getByRole("textbox", { name: "Add a word or phrase to the word list" }),
     "O'Reilly{Enter}",
   );
-  expect(getClientSettings().speechCustomWords[0]?.term).toBe("O'Reilly");
   await userEvent.click(screen.getByRole("button", { name: "Add an alias for O'Reilly" }));
   await userEvent.type(
     screen.getByRole("textbox", { name: "Alias for O'Reilly" }),
     '"Oh Really"{Enter}',
   );
-  expect(getClientSettings().speechCustomWords).toEqual([
-    { term: "O'Reilly", aliases: ['"Oh Really"'] },
+  expect(save).toHaveBeenLastCalledWith([
+    { term: "O'Reilly", variants: ['"Oh Really"'], language: "und", source: "user" },
   ]);
 });
 
-it("keeps a dictionary term and alias draft on the Enter that confirms an IME candidate", async () => {
-  const previous = getClientSettings();
-  using cleanup = new DisposableStack();
-  cleanup.defer(() => __setClientSettingsForTests(previous));
-  __setClientSettingsForTests({
-    ...previous,
-    speechCustomWords: [{ term: "日本語", aliases: [] }],
-  });
+it("keeps a word and alias draft on the Enter that confirms an IME candidate", async () => {
+  const save = vi.fn();
   await using screen = await render(
-    <SettingsScopeProvider search={{}} onChange={() => {}}>
-      <VoiceSettingsPanel />
-    </SettingsScopeProvider>,
+    <WordsEditorProbe initial={[{ term: "日本語", language: "ja", source: "user" }]} save={save} />,
   );
   const composingEnter = () =>
     new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
-  const term = screen.getByRole("textbox", { name: "Add a word or phrase to the dictionary" });
+  const term = screen.getByRole("textbox", { name: "Add a word or phrase to the word list" });
   await userEvent.fill(term, "にほん");
   term.element().dispatchEvent(composingEnter());
   await expect.element(term).toHaveValue("にほん");
@@ -697,25 +713,21 @@ it("keeps a dictionary term and alias draft on the Enter that confirms an IME ca
   const alias = screen.getByRole("textbox", { name: "Alias for 日本語" });
   await userEvent.fill(alias, "にほん");
   alias.element().dispatchEvent(composingEnter());
-  expect(getClientSettings().speechCustomWords).toEqual([{ term: "日本語", aliases: [] }]);
+  expect(save).not.toHaveBeenCalled();
   await expect.element(alias).toHaveValue("にほん");
 });
+// SCIENT-FORK:END
 
 it("cancels an alias draft on Esc without closing Settings", async () => {
-  const previous = getClientSettings();
-  using cleanup = new DisposableStack();
-  cleanup.defer(() => __setClientSettingsForTests(previous));
-  __setClientSettingsForTests({
-    ...previous,
-    speechCustomWords: [{ term: "Kubernetes", aliases: [] }],
-  });
+  const save = vi.fn();
   await using screen = await render(
     <AppRouteModal label="Settings">
-      <SettingsScopeProvider search={{}} onChange={() => {}}>
-        <VoiceSettingsPanel />
-      </SettingsScopeProvider>
+      <WordsEditorProbe
+        initial={[{ term: "Kubernetes", language: "und", source: "user" }]}
+        save={save}
+      />
     </AppRouteModal>,
-    { router: "/settings/voice" },
+    { router: "/settings/transcription" },
   );
   const settings = screen.getByRole("dialog", { name: "Settings" });
   const addAlias = screen.getByRole("button", { name: "Add an alias for Kubernetes" });
@@ -731,7 +743,7 @@ it("cancels an alias draft on Esc without closing Settings", async () => {
   await expect.element(alias).not.toBeInTheDocument();
   await expect.element(settings).toHaveAttribute("data-open");
   await expect.element(settings).toHaveFocus();
-  expect(getClientSettings().speechCustomWords).toEqual([{ term: "Kubernetes", aliases: [] }]);
+  expect(save).not.toHaveBeenCalled();
 
   await userEvent.keyboard("{Escape}");
 
@@ -883,3 +895,21 @@ it("records from the first connected microphone in the saved order", async () =>
     .element(screen.getByRole("button", { name: "Forget System default" }))
     .not.toBeInTheDocument();
 });
+
+// SCIENT-FORK:START — Uses the suite's Words editor and settings fixtures.
+it("shows and removes language-scoped accepted Words without removing the undetermined entry", async () => {
+  const save = vi.fn();
+  const global = { term: "שלום", language: "und", source: "user" } as const;
+  const accepted = {
+    term: "שלום",
+    language: "he",
+    preferred: "שלוֹם",
+    source: "suggested-accepted",
+    note: "Context",
+  } as const;
+  await using screen = await render(<WordsEditorProbe initial={[global, accepted]} save={save} />);
+  await expect.element(screen.getByText("he", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Remove שלום (he)" }));
+  expect(save).toHaveBeenLastCalledWith([global]);
+});
+// SCIENT-FORK:END

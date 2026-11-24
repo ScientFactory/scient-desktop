@@ -24,6 +24,21 @@ const isPdfSourceDescriptor = Schema.is(PdfSourceDescriptor);
 
 export type ScientRightPanelSurface =
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
+  | {
+      readonly id: "scient:recordings";
+      readonly kind: "scient";
+      readonly module: "recordings";
+      readonly projectId: string;
+    }
+  | {
+      readonly id: `scient:recording:${string}`;
+      readonly kind: "scient";
+      readonly module: "recording";
+      readonly projectId: string;
+      readonly source: string;
+      readonly match?: { readonly version: string; readonly time: number; readonly query: string };
+      readonly title: string;
+    }
   | { readonly id: `scient:new-tab:${string}`; readonly kind: "scient"; readonly module: "new-tab" }
   | {
       readonly id: `scient:compute:${string}`;
@@ -77,6 +92,28 @@ export type ScientRightPanelSurface =
       /** The linked folder, for the tab's title. */
       readonly folder: string;
     };
+
+export function scientRecordingsSurface(
+  projectId: string,
+): Extract<ScientRightPanelSurface, { module: "recordings" }> {
+  return { id: "scient:recordings", kind: "scient", module: "recordings", projectId };
+}
+
+export function scientRecordingSurface(
+  projectId: string,
+  source: string,
+  match?: { version: string; time: number; query: string },
+): Extract<ScientRightPanelSurface, { module: "recording" }> {
+  return {
+    id: `scient:recording:${encodeURIComponent(projectId)}:${encodeURIComponent(source)}`,
+    kind: "scient",
+    module: "recording",
+    projectId,
+    source,
+    ...(match ? { match } : {}),
+    title: source.split(/[\\/]/).at(-1) ?? source,
+  };
+}
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
   return { id: "scient:sources", kind: "scient", module: "sources" };
@@ -200,6 +237,38 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   if (typeof value !== "object" || value === null) return null;
   const surface = value as Record<string, unknown>;
   if (surface.kind !== "scient") return null;
+  if (
+    surface.id === "scient:recordings" &&
+    surface.module === "recordings" &&
+    typeof surface.projectId === "string" &&
+    surface.projectId.length > 0
+  ) {
+    return scientRecordingsSurface(surface.projectId);
+  }
+  if (
+    surface.module === "recording" &&
+    typeof surface.projectId === "string" &&
+    typeof surface.source === "string" &&
+    surface.source.length > 0 &&
+    surface.source.length <= 4096
+  ) {
+    const match = surface.match as
+      | Partial<{ version: string; time: number; query: string }>
+      | null
+      | undefined;
+    return scientRecordingSurface(
+      surface.projectId,
+      surface.source,
+      match &&
+        typeof match.version === "string" &&
+        typeof match.time === "number" &&
+        Number.isFinite(match.time) &&
+        match.time >= 0 &&
+        typeof match.query === "string"
+        ? { version: match.version, time: match.time, query: match.query }
+        : undefined,
+    );
+  }
   if (surface.id === "scient:sources" && surface.module === "sources") {
     return scientSourcesSurface();
   }
@@ -306,6 +375,10 @@ export function scientRightPanelSurfaceTitle(
   resolve: MessageResolver = m,
 ): string {
   switch (surface.module) {
+    case "recording":
+      return surface.title;
+    case "recordings":
+      return resolve(msg("Recordings"));
     case "sources":
       return resolve(msg("Library", { $context: "the reference library panel" }));
     case "new-tab":

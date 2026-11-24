@@ -17,6 +17,7 @@ export interface VoiceTranscriptCorrectionClient {
     readonly environmentId: EnvironmentId;
     readonly transcript: string;
     readonly language?: VoiceTranscriptionLanguage;
+    readonly hints?: readonly string[];
     readonly signal: AbortSignal;
   }) => Promise<VoiceTranscriptCorrectionResult>;
 }
@@ -38,11 +39,12 @@ export function makeVoiceTranscriptCorrectionClient<E>(
     readonly input: {
       readonly transcript: string;
       readonly language?: VoiceTranscriptionLanguage;
+      readonly hints?: readonly string[];
     };
   }) => Promise<AtomCommandResult<VoiceTranscriptCorrectionResult, E>>,
 ): VoiceTranscriptCorrectionClient {
   return {
-    correct: async ({ environmentId, transcript, language, signal }) => {
+    correct: async ({ environmentId, transcript, language, hints, signal }) => {
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const result = await new Promise<AtomCommandResult<VoiceTranscriptCorrectionResult, E>>(
         (resolve, reject) => {
@@ -50,7 +52,7 @@ export function makeVoiceTranscriptCorrectionClient<E>(
           signal.addEventListener("abort", onAbort, { once: true });
           void run({
             environmentId,
-            input: { transcript, ...(language ? { language } : {}) },
+            input: { transcript, ...(language ? { language } : {}), ...(hints ? { hints } : {}) },
           })
             .then(resolve, reject)
             .finally(() => signal.removeEventListener("abort", onAbort));
@@ -69,6 +71,7 @@ export async function correctVoiceTranscript(input: {
   readonly environmentId: EnvironmentId | undefined;
   readonly transcript: string;
   readonly language?: VoiceTranscriptionLanguage;
+  readonly hints?: readonly string[];
   readonly signal: AbortSignal;
 }): Promise<VoiceTranscriptCorrectionOutcome> {
   if (!input.enabled || !input.correctionClient || !input.environmentId) {
@@ -80,6 +83,7 @@ export async function correctVoiceTranscript(input: {
       environmentId: input.environmentId,
       transcript: input.transcript,
       ...(input.language ? { language: input.language } : {}),
+      ...(input.hints ? { hints: input.hints } : {}),
       signal: input.signal,
     });
     const text = result.text.trim();

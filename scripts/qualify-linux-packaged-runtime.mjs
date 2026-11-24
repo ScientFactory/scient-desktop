@@ -1,3 +1,4 @@
+import { qualifyPackagedSpeech } from "./qualify-packaged-speech.mjs";
 import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
@@ -11,7 +12,6 @@ import { runDesktopSmoke } from "../apps/desktop/scripts/smoke-test.mjs";
 
 const runtimeFiles = [
   "resource-monitor/scient-resource-monitor",
-  "whisper-runtime/whisper-server",
   "synctex-runtime/synctex",
   "kde-capture/scient-kde-snap-shot",
   "hyprland-capture/scient-hyprland-snap-shot",
@@ -54,7 +54,7 @@ export function inspectLinuxPayload(root) {
     );
     NodeAssert.ok(stat.mode & 0o111, `Required external binary is not executable: ${file}`);
   }
-  for (const dir of ["synctex-runtime", "whisper-runtime"]) {
+  for (const dir of ["synctex-runtime"]) {
     NodeAssert.ok(
       NodeFS.readdirSync(NodePath.join(resources, dir)).some((name) =>
         /license|copying/i.test(name),
@@ -66,16 +66,10 @@ export function inspectLinuxPayload(root) {
       `${dir} provenance is required`,
     );
   }
-  NodeAssert.ok(
-    NodeFS.readdirSync(NodePath.join(resources, "whisper-runtime")).some((name) =>
-      name.includes(".so"),
-    ),
-    "Whisper shared libraries are required",
-  );
   return { resources, archive, entries };
 }
 
-/** Same-stage AppImages differ only in the five explicitly restored ASAR trees. */
+/** Same-stage AppImages differ only in the explicitly restored ASAR trees. */
 export function compareLinuxPayloads(cleanRoot, baselineRoot) {
   const clean = inspectLinuxPayload(cleanRoot);
   const baselineArchive = NodePath.join(baselineRoot, "resources/app.asar");
@@ -189,6 +183,7 @@ async function qualify() {
     entry: NodePath.join(archive, "apps/server/dist/overleaf-packaging-probe.mjs"),
     helper: NodePath.join(resources, "file-exchange/scient-file-publication"),
   });
+  qualifyPackagedSpeech(NodePath.join(root, "scient"), resources);
   const profile = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-linux-qualification-"));
   const env = {
     ...process.env,
@@ -235,9 +230,6 @@ async function qualify() {
     const synctex = run(binary("synctex-runtime/synctex"), ["help"]);
     NodeAssert.equal(synctex.status, 0, synctex.stderr);
     NodeAssert.match(synctex.stdout + synctex.stderr, /SyncTeX/i);
-    const whisper = run(binary("whisper-runtime/whisper-server"), ["--help"]);
-    NodeAssert.equal(whisper.status, 0, whisper.stderr);
-    NodeAssert.match(whisper.stdout + whisper.stderr, /--request-path/);
     const monitor = run(binary("resource-monitor/scient-resource-monitor"), [], {
       input:
         [
@@ -317,7 +309,7 @@ async function qualify() {
         "extracted archive/resources",
         "dynamic library resolution",
         "SyncTeX CLI",
-        "Whisper CLI",
+        "packaged speech worker",
         "resource monitor protocol/sample/shutdown",
         "capture helper execution/session rejection",
         "desktop survival/shutdown",
@@ -325,7 +317,7 @@ async function qualify() {
       ],
       limitations: [
         "Xvfb launch smoke does not establish renderer/backend readiness or visual acceptance",
-        "Live KDE/Hyprland compositor capture and voice transcription remain separate acceptance",
+        "Live KDE/Hyprland compositor capture, GPU inference and microphone capture require separate acceptance",
         "Unsigned CI artifacts are not release or updater qualification",
       ],
     };

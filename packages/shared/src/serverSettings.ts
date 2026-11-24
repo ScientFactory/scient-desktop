@@ -1,6 +1,7 @@
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
+  LEGACY_WORDS_TRANSITION_ENABLED,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -23,6 +24,8 @@ import {
   ServerSettings,
   type ServerSettingsPatch,
   withIdleCompaction,
+  type SpeechCustomWords,
+  type TranscriptionWord,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -286,11 +289,15 @@ function mergeProjectSettingsOverridesPatch(
     // SCIENT-FORK:END
     const storedProviderInstances = current[projectId]?.providerInstances;
     const storedTitleInstructions = current[projectId]?.threadTitleInstructions;
-    const { threadTitleInstructions, ...overrides } = entry;
+    const { threadTitleInstructions, speechProjectCustomWords, ...overrides } = entry;
+    const legacyWords = LEGACY_WORDS_TRANSITION_ENABLED
+      ? (speechProjectCustomWords ?? current[projectId]?.speechProjectCustomWords)
+      : current[projectId]?.speechProjectCustomWords;
     const merged: ProjectSettingsOverrides = {
       // Preserve downgraded storage, but reject new unknown writes so clients can detect unsupported settings.
       ...pickOverrideKeys(current[projectId], false),
       ...pickOverrideKeys(overrides, true),
+      ...(legacyWords === undefined ? {} : { speechProjectCustomWords: legacyWords }),
       // SCIENT-FORK:START — an omitted title instruction survives; null clears it.
       ...(threadTitleInstructions === undefined
         ? storedTitleInstructions === undefined
@@ -404,6 +411,77 @@ function patchedIdleCompaction(
   return globalIdleCompaction(current) === "off" ? "off" : "onReturn";
 }
 
+export function mergeLegacySpeechWords(
+  current: readonly TranscriptionWord[],
+  legacy: SpeechCustomWords,
+): readonly TranscriptionWord[] {
+  const key = (term: string, language: string) =>
+    JSON.stringify([language.toLowerCase(), term.trim().normalize("NFC").toLowerCase()]);
+  const merged = new Map(current.map((word) => [key(word.term, word.language), word]));
+  for (const { term, aliases } of legacy) {
+    const spelling = term.trim();
+    const id = key(spelling, "und");
+    const existing = merged.get(id);
+    const word = existing ?? {
+      term: spelling,
+      preferred: spelling,
+      language: "und",
+      source: "user",
+    };
+    const variants = [
+      ...new Set([...(word.variants ?? []), spelling, ...aliases.map((alias) => alias.trim())]),
+    ].filter((variant) => variant !== word.term && variant !== word.preferred);
+    merged.set(id, { ...word, ...(variants.length > 0 ? { variants } : {}) });
+  }
+  return [...merged.values()];
+}
+
+const legacySpellingKey = (text: string) => text.trim().normalize("NFC").toLowerCase();
+
+export function reconcileLegacySpeechWords(
+  words: readonly TranscriptionWord[],
+  previous: SpeechCustomWords,
+  incoming: SpeechCustomWords,
+): readonly TranscriptionWord[] {
+  const before = new Map(previous.map((row) => [legacySpellingKey(row.term), row]));
+  const additions = incoming.flatMap((row) => {
+    const old = before.get(legacySpellingKey(row.term));
+    if (!old) return [row];
+    const oldAliases = new Set(old.aliases);
+    const aliases = row.aliases.filter((alias) => !oldAliases.has(alias));
+    return row.term === old.term && aliases.length === 0 ? [] : [{ term: row.term, aliases }];
+  });
+  return mergeLegacySpeechWords(words, additions);
+}
+
+function applyTranscriptionWordEdit(
+  words: readonly TranscriptionWord[],
+  edit: NonNullable<ServerSettingsPatch["editTranscriptionWord"]>,
+): readonly TranscriptionWord[] {
+  const { word, operation } = edit;
+  const index = words.findIndex(
+    (entry) =>
+      entry.language.toLowerCase() === word.language.toLowerCase() &&
+      legacySpellingKey(entry.term) === legacySpellingKey(word.term),
+  );
+  if (operation === "remove") return words.filter((_, offset) => offset !== index);
+  if (index === -1) return [...words, word];
+  return words.map((entry, offset) =>
+    offset === index
+      ? {
+          ...entry,
+          ...word,
+          source: entry.source,
+          ...(entry.variants || word.variants
+            ? {
+                variants: [...new Set([...(entry.variants ?? []), ...(word.variants ?? [])])],
+              }
+            : {}),
+        }
+      : entry,
+  );
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
@@ -412,6 +490,9 @@ export function applyServerSettingsPatch(
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     migrateModelPreferences,
+    migrateLegacySpeechWords,
+    editTranscriptionWord,
+    speechProjectCustomWords: requestedLegacySpeechPatch,
     setModelFavorites,
     setModelsHidden,
     setProviderModelOrder,
@@ -526,8 +607,53 @@ export function applyServerSettingsPatch(
     };
   }
   const next = deepMerge(current, patchForMerge);
+  const importWords =
+    LEGACY_WORDS_TRANSITION_ENABLED &&
+    migrateLegacySpeechWords &&
+    !current.legacySpeechWordsReceipts.includes(migrateLegacySpeechWords.id);
+  const legacySpeechPatch = LEGACY_WORDS_TRANSITION_ENABLED
+    ? requestedLegacySpeechPatch
+    : undefined;
+  const legacyWords =
+    legacySpeechPatch === undefined
+      ? next.transcriptionWords
+      : reconcileLegacySpeechWords(
+          next.transcriptionWords,
+          current.speechProjectCustomWords,
+          legacySpeechPatch,
+        );
+  const importedWords = importWords
+    ? mergeLegacySpeechWords(legacyWords, migrateLegacySpeechWords.words)
+    : legacyWords;
+  const projectWordWrites = { ...current.legacyProjectSpeechWordWrites };
+  for (const [projectId, entry] of Object.entries(projectSettingsOverridesPatch ?? {})) {
+    const id = projectId as ProjectId;
+    const incoming = entry?.speechProjectCustomWords;
+    if (!LEGACY_WORDS_TRANSITION_ENABLED || incoming === undefined) continue;
+    const previous = current.projectSettingsOverrides[id]?.speechProjectCustomWords;
+    if (JSON.stringify(previous) === JSON.stringify(incoming)) continue;
+    projectWordWrites[id] = [...(projectWordWrites[id] ?? [previous ?? []]), incoming];
+  }
   const nextWithReplacementsBase = {
     ...next,
+    legacyProjectSpeechWordWrites: projectWordWrites,
+    transcriptionWords: editTranscriptionWord
+      ? applyTranscriptionWordEdit(importedWords, editTranscriptionWord)
+      : importedWords,
+    ...(legacySpeechPatch === undefined
+      ? {}
+      : {
+          speechProjectCustomWords: requestedLegacySpeechPatch,
+          legacyEnvironmentSpeechWordsMigrated: true,
+        }),
+    ...(importWords
+      ? {
+          legacySpeechWordsReceipts: [
+            ...current.legacySpeechWordsReceipts,
+            migrateLegacySpeechWords.id,
+          ],
+        }
+      : {}),
     favorites,
     providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined

@@ -1,3 +1,5 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useThreadShell } from "~/state/entities";
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
@@ -17,17 +19,19 @@ export function AssistantCitationCommentEditor({
   onCancel,
   onDraftChange,
 }: {
-  citation: Pick<AssistantCitation, "comment" | "environmentId">;
+  citation: Pick<AssistantCitation, "comment" | "environmentId"> &
+    Partial<Pick<AssistantCitation, "threadId">>;
   mode?: "create" | "edit";
   inputRef?: Ref<HTMLTextAreaElement>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
-  // SCIENT-FORK: T3 voice setup is dormant; Scient's comment control never opens it.
-  onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
   const gt = useGT();
+  const sourceThread = useThreadShell(
+    citation.threadId ? scopeThreadRef(citation.environmentId, citation.threadId) : null,
+  );
   const [comment, setComment] = useState(citation.comment ?? "");
   const [voiceBusy, setVoiceBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -56,6 +60,8 @@ export function AssistantCitationCommentEditor({
           "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.",
         );
 
+  const activeProviderInstanceId =
+    sourceThread?.modelSelection?.instanceId ?? sourceThread?.providerInstanceId;
   return (
     <div
       data-citation-comment-editor="true"
@@ -115,6 +121,8 @@ export function AssistantCitationCommentEditor({
           className={voiceBusy ? "min-w-0 flex-1" : ""}
           disabled={commentTooLong}
           environmentId={citation.environmentId}
+          {...(activeProviderInstanceId ? { activeProviderInstanceId } : {})}
+          projectId={sourceThread?.projectId ?? null}
           onBusyChange={setVoiceBusy}
           onTranscript={(transcript) => {
             const replacement = buildVoiceDraftReplacement(comment, transcript).replacement;

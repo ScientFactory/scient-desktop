@@ -835,27 +835,6 @@ async function waitForStopped(
 }
 
 /**
- * Voice needs a native helper that is built once per machine, not stored in
- * Git. A checkout that lacks it takes the one another checkout staged, and a
- * checkout that has it shares it; nothing is built or downloaded here, and a
- * failure never stops the app from starting.
- */
-export function shareDevelopmentVoiceRuntime({
-  root,
-  spawnSync = NodeChildProcess.spawnSync,
-} = {}) {
-  try {
-    spawnSync(
-      process.execPath,
-      [NodePath.join(root, "scripts", "stage-whisper-runtime.ts"), "--dev-cache-only"],
-      { cwd: root, stdio: "ignore", timeout: 10_000 },
-    );
-  } catch {
-    // Voice then reports that it is unavailable, as it did before.
-  }
-}
-
-/**
  * Refuses a checkout whose app data is the dev identity home's unless it is the home's registered
  * checkout, before the launcher reads or clears any runner or app state there. Loaded on demand
  * like the copy: the stable controller's launcher copy has no identity module.
@@ -982,7 +961,6 @@ async function runApp() {
   }
   // Only the owning runner, with no app of this checkout running, may change
   // the checkout's helper.
-  shareDevelopmentVoiceRuntime({ root: paths.root });
   if (paths.role === "candidate") await shareDevelopmentIdentity(paths);
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];

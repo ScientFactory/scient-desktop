@@ -6,7 +6,7 @@ import {
   recommendSpeechModels,
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
-  resolveSpeechVocabulary,
+  dictationSpelling,
 } from "./speech.ts";
 
 describe("speech PCM request framing", () => {
@@ -24,7 +24,6 @@ describe("speech PCM request framing", () => {
       JSON.stringify({
         speechLanguage: "fr",
         speechTranslateToEnglish: false,
-        speechCustomWords: [],
         speechRemoveFillerWords: false,
       }),
     );
@@ -52,25 +51,15 @@ describe("speech PCM request framing", () => {
   });
 });
 
-describe("resolveSpeechVocabulary", () => {
-  it("prefers project spellings and keeps hints out of the dictionary", () => {
-    const personal = Array.from({ length: 100 }, (_, index) => ({
-      term: `word${index}`,
-      aliases: index === 0 ? ["Effect"] : [],
-    }));
-    const resolved = resolveSpeechVocabulary({
-      personal,
-      project: [{ term: "effect", aliases: ["a fact"] }],
-      hints: ["  T3   Code ", "word1", "", "x".repeat(51), "t3 code"],
-    });
-    expect(resolved.speechHints).toEqual(["T3 Code"]);
-    expect(resolved.speechCustomWords).toHaveLength(100);
-    expect(resolved.speechCustomWords.slice(0, 2)).toEqual([
-      { term: "effect", aliases: ["a fact"] },
-      { term: "word0", aliases: [] },
-    ]);
-    expect(resolved.speechCustomWords.at(-1)?.term).toBe("word98");
-  });
+it("replaces exact server spellings independently of any recognition hints", () => {
+  const spell = dictationSpelling([
+    { term: "C#", variants: ["C sharp"], language: "und", source: "user" },
+    { term: "שלום", variants: ["שלם"], language: "he", source: "user" },
+    { term: "東京", variants: ["とうきょう"], language: "ja", source: "user" },
+  ]);
+  expect(spell("C sharp, c# and C. שלם: ושלם. 新とうきょう駅")).toBe(
+    "C#, C# and C. שלום: ושלם. 新東京駅",
+  );
 });
 
 describe("chooseSetupSpeechModel", () => {

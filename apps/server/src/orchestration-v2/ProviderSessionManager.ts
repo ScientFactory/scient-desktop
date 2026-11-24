@@ -973,6 +973,7 @@ export const layerWithOptions = (
               "issues",
               "documents:build",
               "compute",
+              "transcription",
               "sources:read",
               "sources:write",
               // SCIENT-FORK:START — every agent can save the user's own skills.

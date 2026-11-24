@@ -77,7 +77,9 @@ const syncHtmlFullscreen = () => {
   // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
-    element !== null && element.tagName !== "WEBVIEW",
+    element?.classList.contains("recording-stage")
+      ? "recording"
+      : element !== null && element.tagName !== "WEBVIEW",
   );
 };
 // A reload or renderer crash never reports the old document's exit, so each document reports its start.

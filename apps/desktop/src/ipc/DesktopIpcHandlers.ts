@@ -249,9 +249,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(uninstallCliCommand);
   yield* ipc.handle(addCliCommandToPath);
 
-  for (const voiceMethod of VoiceIpc.methods) {
-    yield* ipc.handle(voiceMethod);
-  }
+  yield* ipc.handle(VoiceIpc.hasLegacyModels);
+  yield* ipc.handle(VoiceIpc.removeLegacyModels);
+  yield* ipc.handle(VoiceIpc.hadLegacySelection);
   yield* ipc.handle(VoiceIpc.requestMicrophoneAccess);
   // SCIENT-FORK:START — Scient Accounts: install handlers beside the voice bridge.
   yield* installAccountsIpc();

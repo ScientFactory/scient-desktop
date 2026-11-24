@@ -1,9 +1,7 @@
+import type { VoiceSetupSnapshot } from "./voiceClient";
+import type { VoiceSetupClient } from "./voiceClient";
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
-import type {
-  DesktopVoiceBridge,
-  VoiceMicrophoneAccessStatus,
-  VoiceModelsSnapshot,
-} from "@t3tools/contracts";
+import type { VoiceMicrophoneAccessStatus } from "@t3tools/contracts";
 import { useLayoutEffect } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -28,18 +26,17 @@ import {
   type ScientVoiceController,
 } from "./useScientVoiceController.ts";
 
-const snapshot: VoiceModelsSnapshot = {
+const snapshot: VoiceSetupSnapshot = {
   runtimeAvailable: true,
-  selectedModelId: "whisper-small-multilingual-q5_1",
+  selectedModelId: "catalog/example-small",
   recommendation: null,
-  activeDownloadModelId: null,
   models: [
     {
-      id: "whisper-small-multilingual-q5_1",
+      id: "catalog/example-small",
       displayName: "Small",
       description: "Test model",
       byteSize: 1,
-      state: { state: "ready", byteSize: 1 },
+      state: { state: "ready" },
     },
   ],
 };
@@ -53,7 +50,9 @@ function pendingPermission() {
 }
 
 describe("voice native permission lifecycle", () => {
-  let client: DesktopVoiceBridge;
+  let client: { -readonly [Key in keyof VoiceSetupClient]: VoiceSetupClient[Key] } & {
+    cancelTranscription: () => Promise<void>;
+  };
 
   function Probe({ _fixture }: { _fixture: _Fixture }) {
     const value = useScientVoiceController({ client, onTranscript: () => undefined });
@@ -73,7 +72,6 @@ describe("voice native permission lifecycle", () => {
       downloadModel: vi.fn().mockResolvedValue(snapshot),
       cancelModelDownload: vi.fn(),
       selectModel: vi.fn(),
-      removeModel: vi.fn(),
       transcribe: vi.fn(),
       cancelTranscription: vi.fn().mockResolvedValue(undefined),
       onModelDownloadProgress: () => () => undefined,

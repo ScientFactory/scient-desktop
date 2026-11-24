@@ -12,33 +12,38 @@ vi.mock("gt-react", async (importOriginal) =>
   (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
 );
 
-function stubVoiceBridge(): void {
+const catalog = vi.hoisted(() => ({ setup: null as object | null }));
+vi.mock("./catalogDictation", () => ({
+  useCatalogDictation: () => ({ enabled: catalog.setup !== null, setup: catalog.setup }),
+}));
+
+function stubCatalog(): void {
   const voice = {
     getModelsState: vi.fn().mockResolvedValue({
       runtimeAvailable: true,
       selectedModelId: null,
       recommendation: {
-        modelId: "whisper-small-multilingual-q5_1",
+        modelId: "catalog/example-small",
         reason: "Test recommendation",
       },
       activeDownloadModelId: null,
       models: [
         {
-          id: "whisper-small-multilingual-q5_1",
+          id: "catalog/example-small",
           displayName: "Multilingual Small",
           description: "Test Small model",
           byteSize: 1,
           state: { state: "missing" },
         },
         {
-          id: "whisper-medium-multilingual-q5_0",
+          id: "catalog/example-medium",
           displayName: "Multilingual Medium",
           description: "Test Medium model",
           byteSize: 2,
           state: { state: "missing" },
         },
         {
-          id: "whisper-large-v3-turbo-multilingual-q5_0",
+          id: "catalog/example-turbo",
           displayName: "Multilingual Turbo",
           description: "Test Turbo model",
           byteSize: 3,
@@ -48,7 +53,7 @@ function stubVoiceBridge(): void {
     }),
     downloadModel: vi.fn().mockResolvedValue({
       runtimeAvailable: true,
-      selectedModelId: "whisper-small-multilingual-q5_1",
+      selectedModelId: "catalog/example-small",
       recommendation: null,
       activeDownloadModelId: null,
       models: [],
@@ -60,24 +65,25 @@ function stubVoiceBridge(): void {
     cancelTranscription: vi.fn().mockResolvedValue(undefined),
     onModelDownloadProgress: vi.fn().mockReturnValue(() => undefined),
   };
-  vi.stubGlobal("window", { desktopBridge: { voice } });
+  catalog.setup = voice;
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn() } });
 }
 
 afterEach(() => {
+  catalog.setup = null;
   vi.unstubAllGlobals();
 });
 
 describe("ScientVoiceComposerControl rendering", () => {
-  it("renders nothing when the desktop voice bridge is absent (web build)", () => {
+  it("renders nothing when local catalog dictation is unavailable", () => {
     const markup = renderToStaticMarkup(
       <ScientVoiceComposerControl onTranscript={() => undefined} />,
     );
     expect(markup).toBe("");
   });
 
-  it("renders the mic affordance when the voice bridge is present", () => {
-    stubVoiceBridge();
+  it("renders the mic affordance when local catalog dictation is available", () => {
+    stubCatalog();
     const markup = renderToStaticMarkup(
       <ScientVoiceComposerControl onTranscript={() => undefined} />,
     );

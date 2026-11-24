@@ -19,7 +19,10 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { service, blobs } = yield* makeHarness();
+      const accountId = AccountId.make("acc_synthetic123");
+      const speechConsumers = [{ accountId, label: "gpt-transcribe", engineId: "fixture-engine" }];
       const handlers = makeAccountsRpcHandlers({
+        speechConsumers: Effect.succeed(speechConsumers),
         accounts: service,
         observeRpcEffect: (_method, effect) => effect,
         observeRpcStream: (_method, stream) => stream,
@@ -42,14 +45,15 @@ it.effect(
       const reader = yield* RpcTest.makeClient(group).pipe(
         Effect.provide(Layer.merge(layer, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
       );
-      yield* reader[WS_METHODS.accountsSnapshot]({});
+      expect((yield* reader[WS_METHODS.accountsSnapshot]({})).speechConsumers).toEqual(
+        speechConsumers,
+      );
       expect(yield* reader[WS_METHODS.accountsActivity]({})).toEqual([]);
       expect(
         (yield* Stream.runCollect(
           reader[WS_METHODS.accountsSubscribeChanges]({}).pipe(Stream.take(1)),
         )).length,
       ).toBe(1);
-      const accountId = AccountId.make("acc_synthetic123");
       const before = blobs.size;
       const writes = [
         reader[WS_METHODS.accountsKeychainCandidates]({}),

@@ -2,6 +2,7 @@ import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -9,6 +10,9 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import * as LegacySpeechKeys from "./LegacySpeechKeys.ts";
+import { AccountsService } from "../scient/accounts/AccountsService.ts";
+import { makeHarness } from "../scient/accounts/Accounts.testkit.ts";
 
 it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved key", (provider) =>
   Effect.gen(function* () {
@@ -19,12 +23,19 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     let resolved: string | undefined;
     let cached: string | undefined;
     const read = vi.fn(() => Effect.sync(() => [(cached ??= resolved)]));
-    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello word alias" }));
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
-          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(
+            ServerSettings.ServerSettingsService.layerTest({
+              transcriptionWords: [
+                { term: "Canonical", variants: ["word alias"], language: "en", source: "user" },
+                { term: "Excluded", language: "fr", source: "user" },
+              ],
+            }),
+          ),
           Layer.provide(
             Layer.mock(SecretResolver.SecretResolver)({
               read,
@@ -38,15 +49,13 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
         ),
       ),
     );
-    // A full dictionary plus a hint still stays within xAI's 100-term limit.
-    const words = Array.from({ length: 99 }, (_, index) => `word${index}`);
+    const words = Array.from({ length: 14 }, (_, index) => `word${index}`);
     const transcribe = (pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer)) =>
       service
         .transcribe(provider, pcm, {
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
           speechLanguage: "en",
-          speechCustomWords: ["T3 Code", ...words].map((term) => ({ term, aliases: [] })),
-          speechHints: ["Server"],
+          speechHints: ["Server", "T3 Code", ...words],
         })
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
@@ -55,7 +64,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
-    expect(yield* transcribe()).toBe("hello");
+    expect(yield* transcribe()).toBe("hello Canonical");
     const [url, init] = upstream.mock.calls[0]!;
     expect(String(url)).toBe(
       {
@@ -70,9 +79,10 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
       provider === "openai" ? "gpt-transcribe" : "grok-voice-transcribe-2.0",
     );
     expect(form.getAll(provider === "openai" ? "keywords[]" : "keyterm")).toEqual([
+      "Canonical",
       "Server",
       "T3 Code",
-      ...words.slice(0, 98),
+      ...words.slice(0, 13),
     ]);
     expect(form.get(provider === "openai" ? "languages[]" : "language")).toBe("en");
     expect([...form.keys()].at(-1)).toBe("file");
@@ -89,7 +99,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     expect((yield* service.configured)[provider]).toBe(true);
     expect(read).not.toHaveBeenCalled();
     resolved = "resolved-fixture";
-    expect(yield* transcribe()).toBe("hello");
+    expect(yield* transcribe()).toBe("hello Canonical");
     expect(read).toHaveBeenCalledWith([reference]);
     expect(new Headers(upstream.mock.calls[2]?.[1]?.headers).get("authorization")).toBe(
       "Bearer resolved-fixture",
@@ -166,42 +176,77 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
   }),
 );
 
-it.effect("removing a key while a catalog read is pending prevents the upload", () =>
-  Effect.gen(function* () {
-    const service = yield* CloudSpeech.CloudSpeech.pipe(
-      Effect.provide(
-        CloudSpeech.layer.pipe(
-          Layer.provide(FetchHttpClient.layer),
-          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
-          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+it.effect.each(["remove", "replace"] as const)(
+  "blocks an Accounts-backed upload when Set Key will %s the key during catalog lookup",
+  (change) =>
+    Effect.gen(function* () {
+      const { service: accounts } = yield* makeHarness();
+      const resolveSpeechKey = vi.fn(accounts.resolveSpeechKey);
+      const service = yield* CloudSpeech.CloudSpeech.pipe(
+        Effect.provide(
+          CloudSpeech.layer.pipe(
+            Layer.provide(LegacySpeechKeys.layer),
+            Layer.provide(Layer.succeed(AccountsService, { ...accounts, resolveSpeechKey })),
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(
+              ServerSettings.ServerSettingsService.layerTest({
+                cloudSpeechCredentials: { openrouter: "synthetic-old-key" },
+              }),
+            ),
+            Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+          ),
         ),
-      ),
-    );
-    const catalogStarted = Promise.withResolvers<void>();
-    const catalog = Promise.withResolvers<Response>();
-    const uploads: string[] = [];
-    const upstream: typeof fetch = async (input) => {
-      if (new URL(String(input)).pathname.endsWith("/models")) {
-        catalogStarted.resolve();
-        return catalog.promise;
-      }
-      uploads.push(String(input));
-      return Response.json({ text: "unexpected" });
-    };
-    yield* service.setKey("openrouter", Redacted.make("old-key"));
-    const job = yield* service
-      .transcribe(
+      );
+      expect((yield* service.configured).openrouter).toBe(true);
+      expect(resolveSpeechKey).not.toHaveBeenCalled();
+      expect((yield* accounts.snapshot).accounts).toHaveLength(0);
+      const catalogStarted = Promise.withResolvers<void>();
+      const catalog = Promise.withResolvers<Response>();
+      const uploads = vi.fn<(_init: RequestInit | undefined) => Response>(() =>
+        Response.json({ text: "uploaded" }),
+      );
+      const upstream: typeof fetch = async (input, init) => {
+        if (new URL(String(input)).pathname.endsWith("/models")) {
+          catalogStarted.resolve();
+          return catalog.promise;
+        }
+        return uploads(init);
+      };
+      const transcribe = service
+        .transcribe(
+          "openrouter",
+          new Uint8Array(4),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          "acme/voice",
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      const job = yield* transcribe.pipe(Effect.forkChild);
+      yield* Effect.promise(() => catalogStarted.promise);
+      const before = (yield* accounts.snapshot).accounts;
+      expect(before).toHaveLength(1);
+      resolveSpeechKey.mockClear();
+      expect((yield* service.configured).openrouter).toBe(true);
+      expect(resolveSpeechKey).not.toHaveBeenCalled();
+      yield* service.setKey(
         "openrouter",
-        new Uint8Array(4),
-        DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        "acme/voice",
-      )
-      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.forkChild);
-    yield* Effect.promise(() => catalogStarted.promise);
-    yield* service.setKey("openrouter", null);
-    catalog.resolve(Response.json({ data: [{ id: "acme/voice" }] }));
-    const exit = yield* Fiber.await(job);
-    expect(uploads).toEqual([]);
-    expect(exit._tag).toBe("Failure");
-  }),
+        change === "replace" ? Redacted.make("synthetic-new-key") : null,
+      );
+      catalog.resolve(Response.json({ data: [{ id: "acme/voice" }] }));
+      expect(Exit.findErrorOption(yield* Fiber.await(job))).toMatchObject({
+        value: { reason: change === "replace" ? "key-changed" : "missing-key" },
+      });
+      expect(uploads).not.toHaveBeenCalled();
+      if (change === "replace") {
+        expect((yield* accounts.snapshot).accounts.map(({ accountId }) => accountId)).toEqual(
+          before.map(({ accountId }) => accountId),
+        );
+        expect(yield* transcribe).toBe("uploaded");
+        expect(new Headers(uploads.mock.lastCall?.[0]?.headers).get("authorization")).toBe(
+          "Bearer synthetic-new-key",
+        );
+      } else {
+        expect((yield* service.configured).openrouter).toBe(false);
+        expect(yield* Effect.flip(transcribe)).toMatchObject({ reason: "missing-key" });
+      }
+    }),
 );
