@@ -12,7 +12,7 @@ import * as NodeURL from "node:url";
 
 export const DEV_IDENTITY_ENV = "SCIENT_DEV_IDENTITY";
 /** Bumped whenever the lock, journal or vault handling changes; home and seed must agree. */
-export const DEV_IDENTITY_PROTOCOL = 2;
+export const DEV_IDENTITY_PROTOCOL = 3;
 export const DEV_IDENTITY_MARKER = "dev-identity.json";
 const JOURNAL = "dev-identity-journal.json";
 const HOME_RECORD = "dev-identity-home.json";
@@ -34,6 +34,11 @@ const STAGED_SUFFIX = ".dev-identity-staged";
 const OLD_SUFFIX = ".dev-identity-old";
 /** Private scratch inside a state directory; cookie jars are decrypted here, never in /tmp. */
 const STAGING_DIR = "dev-identity-staging";
+const OAUTH_GRANT_KIND = "oauth-connection";
+/** A dev app's connectors whose sign-in it borrows from the home's own server. */
+const CONNECTOR_BROKER = "dev-connector-broker.json";
+const CONNECTOR_RECORD =
+  /^connector-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.bin$/u;
 
 /**
  * Secret records that are the owner's identity, never the install's. Each family is replaced as a
@@ -513,6 +518,275 @@ export function reencryptSecret(name, bytes, sourceKey, targetKey) {
   return bytes;
 }
 
+/**
+ * A connector record's envelope (AccountsConnectorCredentials): vault-sealed, or plain JSON from
+ * before the vault. Undefined when it cannot be read; such a record is never copied.
+ */
+export function readConnectorEnvelope(name, bytes, key) {
+  const record = name.replace(/\.bin$/u, "");
+  try {
+    const plain =
+      bytes[0] === 123
+        ? bytes
+        : bytes[0] === 1 && key
+          ? vaultDecrypt(key, record, bytes)
+          : undefined;
+    if (plain === undefined) return undefined;
+    const envelope = JSON.parse(plain.toString("utf8"));
+    return typeof envelope?.kind === "string" && typeof envelope.material === "string"
+      ? envelope
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The OAuth material inside a sign-in envelope, or undefined when it is not one. */
+const oauthMaterialOf = (envelope) => {
+  if (envelope?.kind !== OAUTH_GRANT_KIND) return undefined;
+  try {
+    const material = JSON.parse(Buffer.from(envelope.material, "base64").toString("utf8"));
+    return material?.format === 1 ? material : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * A sign-in envelope with its grant and client registrations removed: refresh tokens rotate, so
+ * only one app may hold them. The owner's own OAuth client stays, as it does not rotate.
+ */
+export function withoutOAuthGrant(envelope) {
+  const material = oauthMaterialOf(envelope);
+  if (material === undefined) return undefined;
+  const kept = {
+    format: 1,
+    ...(material.ownClient === undefined ? {} : { ownClient: material.ownClient }),
+    registrations: [],
+  };
+  return { ...envelope, material: Buffer.from(JSON.stringify(kept)).toString("base64") };
+}
+
+/** The grant id of a sign-in envelope, when it holds a grant. */
+const grantIdOf = (envelope) => {
+  const grantId = oauthMaterialOf(envelope)?.session?.grantId;
+  return typeof grantId === "string" ? grantId : undefined;
+};
+
+const sealConnectorEnvelope = (name, envelope, key) => {
+  const bytes = Buffer.from(JSON.stringify(envelope));
+  return key === undefined ? bytes : vaultEncrypt(key, name.replace(/\.bin$/u, ""), bytes);
+};
+
+const oauthConnectorsOf = (extensions) =>
+  Array.isArray(extensions?.connectors)
+    ? extensions.connectors.filter(
+        (connector) =>
+          connector?.auth?.type === "oauth" && typeof connector.connectorId === "string",
+      )
+    : [];
+
+/** The app whose sign-in a record holds, as the server records it at sign-in. */
+const grantOwnerOf = (envelope) => {
+  const material = oauthMaterialOf(envelope);
+  return material?.session !== undefined &&
+    typeof material.ownerEnvironmentId === "string" &&
+    material.ownerEnvironmentId !== ""
+    ? material.ownerEnvironmentId
+    : undefined;
+};
+
+/**
+ * The target's own connector sign-ins, which a copy keeps: a grant the target's server recorded
+ * as its own, under a key that opens it. A copied grant names the app it came from.
+ */
+function ownOAuthGrants({ targetStateDir, targetKey, capture }) {
+  const owned = new Map();
+  const environmentId = readEnvironmentId(targetStateDir);
+  if (targetKey === undefined || environmentId === undefined) return owned;
+  const sourceById = new Map(
+    oauthConnectorsOf(capture.extensions).map((connector) => [connector.connectorId, connector]),
+  );
+  const targetExtensions = readJsonObject(NodePath.join(targetStateDir, "scient-extensions.json"));
+  for (const connector of oauthConnectorsOf(targetExtensions)) {
+    const ref = connector.auth.credentialRef;
+    const source = sourceById.get(connector.connectorId);
+    if (typeof ref !== "string" || source === undefined || source.url !== connector.url) continue;
+    const name = `${ref}.bin`;
+    if (!CONNECTOR_RECORD.test(name)) continue;
+    const bytes = readBytes(NodePath.join(targetStateDir, "secrets", name));
+    if (bytes === undefined) continue;
+    if (grantOwnerOf(readConnectorEnvelope(name, bytes, targetKey)) !== environmentId) continue;
+    owned.set(connector.connectorId, { name, connector });
+  }
+  return owned;
+}
+
+/** The home's signed-in OAuth connectors, which a dev app borrows instead of copying. */
+function borrowableOAuthConnectors({ capture, sourceKey, owned }) {
+  const borrowed = new Map();
+  for (const connector of oauthConnectorsOf(capture.extensions)) {
+    if (connector.status !== "connected" || owned.has(connector.connectorId)) continue;
+    const ref = connector.auth.credentialRef;
+    const name = typeof ref === "string" ? `${ref}.bin` : undefined;
+    const bytes = name === undefined ? undefined : capture.secrets.get(name);
+    if (
+      bytes === undefined ||
+      grantIdOf(readConnectorEnvelope(name, bytes, sourceKey)) === undefined
+    ) {
+      continue;
+    }
+    if (typeof connector.url === "string")
+      borrowed.set(connector.connectorId, { url: connector.url });
+  }
+  return borrowed;
+}
+
+/**
+ * Connector states for the target: a sign-in it made stays as it is; every other OAuth connector
+ * waits for its own sign-in, keeping a reference only to a record the copy wrote.
+ */
+function connectorStatesFor({ extensions, owned, written, borrowed = new Set() }) {
+  if (!Array.isArray(extensions?.connectors)) return extensions;
+  return {
+    ...extensions,
+    connectors: extensions.connectors.map((connector) => {
+      if (connector?.auth?.type !== "oauth") return connector;
+      const own = owned.get(connector.connectorId);
+      if (own !== undefined) {
+        return {
+          ...connector,
+          auth: own.connector.auth,
+          status: own.connector.status,
+          authRevision: own.connector.authRevision ?? connector.authRevision,
+          ...(own.connector.lastError === undefined
+            ? { lastError: undefined }
+            : { lastError: own.connector.lastError }),
+        };
+      }
+      const { credentialRef, ...auth } = connector.auth;
+      const keepsRef = typeof credentialRef === "string" && written.has(`${credentialRef}.bin`);
+      return {
+        ...connector,
+        auth: keepsRef ? { ...auth, credentialRef } : auth,
+        status:
+          connector.status === "connected" && !borrowed.has(connector.connectorId)
+            ? "needs-auth"
+            : connector.status,
+        lastError: undefined,
+      };
+    }),
+  };
+}
+
+/**
+ * Retires connector grants a dev app holds but did not sign in itself, which only a copy from
+ * the home or the installed app could have left: removed here only, never revoked, since the app
+ * it came from may still hold it. A profile that never took a copy, or a record no key here
+ * opens, is left as it is.
+ */
+export function retireCopiedOAuthGrants(stateDir, { isRunning = () => false } = {}) {
+  if (!exists(NodePath.join(stateDir, DEV_IDENTITY_MARKER))) return false;
+  const secrets = NodePath.join(stateDir, "secrets");
+  const extensionsPath = NodePath.join(stateDir, "scient-extensions.json");
+  const extensions = readJsonObject(extensionsPath);
+  const key = readBytes(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`));
+  const usableKey = key?.length === 32 ? key : undefined;
+  const environmentId = readEnvironmentId(stateDir);
+  const retired = [];
+  for (const connector of oauthConnectorsOf(extensions)) {
+    const ref = connector.auth.credentialRef;
+    const name = typeof ref === "string" ? `${ref}.bin` : undefined;
+    if (name === undefined || !CONNECTOR_RECORD.test(name)) continue;
+    const bytes = readBytes(NodePath.join(secrets, name));
+    const envelope =
+      bytes === undefined ? undefined : readConnectorEnvelope(name, bytes, usableKey);
+    const material = oauthMaterialOf(envelope);
+    // Its own only when both ids exist and match; two missing ids prove nothing.
+    if (
+      material?.session === undefined ||
+      (environmentId !== undefined && grantOwnerOf(envelope) === environmentId)
+    ) {
+      continue;
+    }
+    const stripped = withoutOAuthGrant(envelope);
+    if (stripped !== undefined)
+      retired.push({ name, bytes, stripped, connectorId: connector.connectorId });
+  }
+  if (retired.length === 0 || isRunning()) return false;
+  const changes = new StagedChanges(stateDir);
+  try {
+    for (const { name, bytes, stripped } of retired) {
+      changes.write(
+        NodePath.join(secrets, name),
+        sealConnectorEnvelope(name, stripped, bytes[0] === 1 ? usableKey : undefined),
+      );
+    }
+    const retiredIds = new Set(retired.map((entry) => entry.connectorId));
+    changes.write(
+      extensionsPath,
+      jsonBytes({
+        ...extensions,
+        connectors: extensions.connectors.map((connector) =>
+          retiredIds.has(connector?.connectorId) && connector.status === "connected"
+            ? { ...connector, status: "needs-auth", lastError: undefined }
+            : connector,
+        ),
+      }),
+    );
+  } catch (error) {
+    changes.abort();
+    throw error;
+  }
+  changes.commit();
+  return true;
+}
+
+/**
+ * A dev app started with its own accounts only: it stops borrowing the home's sign-ins, and the
+ * connectors it borrowed wait for a sign-in of its own.
+ */
+export function stopBorrowing(stateDir) {
+  const bindingPath = NodePath.join(stateDir, CONNECTOR_BROKER);
+  const binding = readJsonObject(bindingPath);
+  if (binding === undefined) return false;
+  const borrowed = new Set(Object.keys(binding.connectors ?? {}));
+  const secrets = NodePath.join(stateDir, "secrets");
+  const key = readBytes(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`));
+  const extensionsPath = NodePath.join(stateDir, "scient-extensions.json");
+  const extensions = readJsonObject(extensionsPath);
+  const hasOwnGrant = (connector) => {
+    const ref = connector.auth.credentialRef;
+    const name = typeof ref === "string" ? `${ref}.bin` : undefined;
+    const bytes = name === undefined ? undefined : readBytes(NodePath.join(secrets, name));
+    return (
+      bytes !== undefined &&
+      oauthMaterialOf(readConnectorEnvelope(name, bytes, key?.length === 32 ? key : undefined))
+        ?.session !== undefined
+    );
+  };
+  const changes = new StagedChanges(stateDir);
+  if (Array.isArray(extensions?.connectors)) {
+    changes.write(
+      extensionsPath,
+      jsonBytes({
+        ...extensions,
+        connectors: extensions.connectors.map((connector) =>
+          connector?.auth?.type === "oauth" &&
+          borrowed.has(connector.connectorId) &&
+          connector.status === "connected" &&
+          !hasOwnGrant(connector)
+            ? { ...connector, status: "needs-auth", lastError: undefined }
+            : connector,
+        ),
+      }),
+    );
+  }
+  changes.remove(bindingPath);
+  changes.commit();
+  return true;
+}
+
 /** The owner's accounts, without the senders, keys, choices and sharing of the source install. */
 export function scrubAccountsState(state) {
   const next = { ...state };
@@ -757,7 +1031,14 @@ export function captureIdentity(
  * file key when it has none; a record that cannot be re-encrypted stops the copy. The target's
  * other records sealed under its key stay, and so does its own part of the Accounts document.
  */
-function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
+function stageSecrets({
+  changes,
+  capture,
+  sourceKey,
+  targetStateDir,
+  target,
+  ownGrants = new Map(),
+}) {
   const targetSecrets = NodePath.join(targetStateDir, "secrets");
   NodeFS.mkdirSync(targetSecrets, { recursive: true, mode: 0o700 });
   const key = target.key ?? makePortableVault().key;
@@ -769,6 +1050,7 @@ function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
   );
   for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
   const kept = pendingRecords(target.accounts);
+  for (const { name } of ownGrants.values()) kept.add(name);
   for (const name of kept) removed.delete(name);
   const sealAccounts = (accounts) =>
     vaultEncrypt(
@@ -781,10 +1063,26 @@ function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
     if (kept.has(name)) continue;
     let output;
     try {
-      output =
-        name === `${ACCOUNTS_STATE}.bin` && capture.accounts !== undefined
-          ? sealAccounts(scrubAccountsState(capture.accounts))
-          : reencryptSecret(name, bytes, sourceKey ?? key, key);
+      if (CONNECTOR_RECORD.test(name)) {
+        // Only records positively read as connector credentials travel, and a sign-in only
+        // without its grant.
+        const envelope = readConnectorEnvelope(name, bytes, sourceKey ?? key);
+        if (envelope === undefined) continue;
+        output =
+          envelope.kind === OAUTH_GRANT_KIND
+            ? (() => {
+                const stripped = withoutOAuthGrant(envelope);
+                return stripped === undefined
+                  ? undefined
+                  : sealConnectorEnvelope(name, stripped, key);
+              })()
+            : sealConnectorEnvelope(name, envelope, key);
+      } else {
+        output =
+          name === `${ACCOUNTS_STATE}.bin` && capture.accounts !== undefined
+            ? sealAccounts(scrubAccountsState(capture.accounts))
+            : reencryptSecret(name, bytes, sourceKey ?? key, key);
+      }
     } catch (error) {
       throw new Error(`${name.replace(/\.bin$/u, "")} could not be decrypted.`, { cause: error });
     }
@@ -826,7 +1124,17 @@ function stageSettings({ changes, capture, targetStateDir, sourceDirs, targetDir
   changes.write(targetPath, jsonBytes(next));
 }
 
-function stageConnectors({ changes, capture, targetStateDir, sourceDirs, targetDir }) {
+function stageConnectors({
+  changes,
+  capture,
+  targetStateDir,
+  sourceDirs,
+  targetDir,
+  ownGrants = new Map(),
+  written = new Set(),
+  borrowed = new Map(),
+  homeStateDir,
+}) {
   const from = NodePath.join(capture.stateDir, "connectors");
   const to = NodePath.join(targetStateDir, "connectors");
   if (exists(from)) changes.copyTree(from, to);
@@ -838,11 +1146,24 @@ function stageConnectors({ changes, capture, targetStateDir, sourceDirs, targetD
     changes.remove(path);
     return;
   }
+  const extensions = connectorStatesFor({
+    extensions: capture.extensions,
+    owned: ownGrants,
+    written,
+    borrowed: new Set(borrowed.keys()),
+  });
+  const bindingPath = NodePath.join(targetStateDir, CONNECTOR_BROKER);
+  if (borrowed.size > 0 && homeStateDir !== undefined) {
+    changes.write(
+      bindingPath,
+      jsonBytes({ version: 1, homeStateDir, connectors: Object.fromEntries(borrowed) }),
+    );
+  } else if (exists(bindingPath)) {
+    changes.remove(bindingPath);
+  }
   changes.write(
     path,
-    jsonBytes(
-      disownOutsideFolders(rebasePaths(capture.extensions, sourceDirs, targetDir), targetDir),
-    ),
+    jsonBytes(disownOutsideFolders(rebasePaths(extensions, sourceDirs, targetDir), targetDir)),
   );
 }
 
@@ -1171,6 +1492,11 @@ export function prepareHomeStart({
   assertHomeLayout(home, installed);
   recoverInterruptedCopy(home.stateDir);
   clearStaging(home.stateDir);
+  // A home seeded by an earlier version holds copies of the installed app's sign-ins.
+  retireCopiedOAuthGrants(home.stateDir, {
+    // This start's own runner receipt is not another app.
+    isRunning: () => homeAppIsRunning(home, (pid) => pid !== process.pid && processIsAlive(pid)),
+  });
   return "ready";
 }
 
@@ -1189,6 +1515,9 @@ export function claimHomeStart({
   home = resolveDevIdentityHome(),
   installed = resolveInstalledApp(),
   pid = process.pid,
+  environment = process.env,
+  // eslint-disable-next-line t3code/no-global-process-runtime -- The launcher runs before any app runtime exists.
+  platform = NodeOS.platform(),
 }) {
   assertHomeCheckout({ checkoutRoot, stateRoot, home });
   if (!sameFile(stateRoot, home.root)) {
@@ -1199,6 +1528,17 @@ export function claimHomeStart({
       try {
         recoverInterruptedCopy(stateDir);
         clearStaging(stateDir);
+        // A second start of an app that already runs must not rewrite its connectors under it.
+        // Asked only when something would change; without lsof (Windows) it counts as running.
+        const running = () => platform === "win32" || processesUsingState(stateDir).length > 0;
+        retireCopiedOAuthGrants(stateDir, { isRunning: running });
+        if (
+          environment[DEV_IDENTITY_ENV] === "off" &&
+          exists(NodePath.join(stateDir, CONNECTOR_BROKER)) &&
+          !running()
+        ) {
+          stopBorrowing(stateDir);
+        }
       } finally {
         releaseState();
       }
@@ -1233,8 +1573,11 @@ export function claimHomeStart({
  * Processes other than this one with a file open directly in the home's state or browser data:
  * an app's databases, however it was started and whatever started it.
  */
-const processesUsingHome = (home) => {
-  const dirs = [home.stateDir, NodePath.join(home.stateDir, "electron-userdata")].filter(exists);
+const processesUsingHome = (home) => processesUsingState(home.stateDir);
+
+/** Processes other than this one with a file open in an app's state or browser data. */
+const processesUsingState = (stateDir) => {
+  const dirs = [stateDir, NodePath.join(stateDir, "electron-userdata")].filter(exists);
   if (dirs.length === 0) return [];
   const result = NodeChildProcess.spawnSync("lsof", ["-t", ...dirs.flatMap((dir) => ["+d", dir])], {
     encoding: "utf8",
@@ -1342,7 +1685,11 @@ function lockStateDir(stateDir) {
 async function copyIdentity({ targetStateDir, home, environment, now }) {
   recoverInterruptedCopy(targetStateDir);
   clearStaging(targetStateDir);
-  if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
+  retireCopiedOAuthGrants(targetStateDir);
+  if (environment[DEV_IDENTITY_ENV] === "off") {
+    stopBorrowing(targetStateDir);
+    return { status: "disabled" };
+  }
   if (!exists(home.stateDir)) return { status: "no-home" };
   if (exists(NodePath.join(home.stateDir, JOURNAL))) return { status: "home-interrupted" };
   const generation = homeGeneration(home);
@@ -1372,17 +1719,28 @@ async function copyIdentity({ targetStateDir, home, environment, now }) {
   let secrets = [];
   let websites = { copied: [], skipped: [] };
   try {
+    const sourceKey = capture.secrets.get(`${VAULT_KEY_FILE}.bin`);
+    const ownGrants =
+      protection === "file"
+        ? ownOAuthGrants({ targetStateDir, targetKey: target.key, capture })
+        : new Map();
     if (protection === "file") {
-      secrets = stageSecrets({
-        changes,
-        capture,
-        sourceKey: capture.secrets.get(`${VAULT_KEY_FILE}.bin`),
-        targetStateDir,
-        target,
-      });
+      secrets = stageSecrets({ changes, capture, sourceKey, targetStateDir, target, ownGrants });
     }
     stageSettings({ changes, capture, targetStateDir, ...paths, fullProfile: firstStart });
-    stageConnectors({ changes, capture, targetStateDir, ...paths });
+    stageConnectors({
+      changes,
+      capture,
+      targetStateDir,
+      ...paths,
+      ownGrants,
+      written: new Set(secrets),
+      borrowed:
+        protection === "file"
+          ? borrowableOAuthConnectors({ capture, sourceKey, owned: ownGrants })
+          : new Map(),
+      homeStateDir: home.stateDir,
+    });
     const clientSettings = stageClientSettings({
       changes,
       sourceStateDir: home.stateDir,
@@ -1662,15 +2020,22 @@ export async function seedDevIdentityHome({
       if (!(error instanceof TargetVaultError)) throw error;
       throw new Error(`The identity home was left as it was: ${error.message}.`, { cause: error });
     }
+    const ownGrants = ownOAuthGrants({
+      targetStateDir: home.stateDir,
+      targetKey: target.key,
+      capture,
+    });
     const changes = new StagedChanges(home.stateDir);
     try {
-      report.secrets = stageSecrets({
+      const written = stageSecrets({
         changes,
         capture,
         sourceKey,
         targetStateDir: home.stateDir,
         target,
-      }).length;
+        ownGrants,
+      });
+      report.secrets = written.length;
       stageSettings({
         changes,
         capture,
@@ -1678,7 +2043,14 @@ export async function seedDevIdentityHome({
         ...paths,
         fullProfile: true,
       });
-      stageConnectors({ changes, capture, targetStateDir: home.stateDir, ...paths });
+      stageConnectors({
+        changes,
+        capture,
+        targetStateDir: home.stateDir,
+        ...paths,
+        ownGrants,
+        written: new Set(written),
+      });
       const clientSettings = stageClientSettings({
         changes,
         sourceStateDir: installed.stateDir,

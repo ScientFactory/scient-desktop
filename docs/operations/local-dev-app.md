@@ -341,9 +341,19 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   The copy records its steps before it publishes them, so a copy cut off partway
   is finished on the next start; if it cannot be finished, or a candidate's data
   folder links into the home or the installed app, the candidate does not start.
-- A connector whose sign-in renews itself can be renewed by any app holding the
-  copy. If a candidate renews it, the home may need to sign in to that connector
-  again; candidates started afterwards copy the new sign-in.
+- Connector sign-ins (OAuth grants) never travel: a refresh token works for one
+  app only, so a copy would sign the others out. `seed` copies each connector
+  and the owner's own OAuth client, and leaves it needing a sign-in in the
+  home. A candidate borrows each connector the home signed in: while the
+  identity app runs, the candidate asks its server for a short-lived access
+  token, and only the home refreshes. While it is closed, those connectors
+  pause in the candidate and say so; they never ask for a sign-in there. A
+  sign-in made in a candidate, on a connector the home has
+  too, is that candidate's own and is kept across restarts (the home's
+  connector list still replaces the candidate's). The first start of this version retires, in that app only, the
+  grants older copies left (the home's included); nothing is revoked at the
+  service, so the installed app stays signed in, and the home then needs one
+  sign-in per connector. Older checkouts still copy grants until they update.
 - `SCIENT_DEV_IDENTITY=off pnpm dev:app:start` starts a candidate with only its
   own accounts. `pnpm dev:identity status` shows the home.
 
