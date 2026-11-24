@@ -53,6 +53,8 @@ import {
   ConnectorRecoveryAction,
   connectorRecoveryTarget,
 } from "~/scient/extensions/ConnectorRecoveryAction";
+import { RequestedMcpSignInAction } from "~/scient/extensions/RequestedMcpSignIn";
+import { isMcpSignInRequestNotice } from "@t3tools/contracts";
 // SCIENT-FORK:END
 import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, CircleAlertIcon, RotateCcwIcon } from "lucide-react";
@@ -509,9 +511,22 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? connectorRecoveryTarget(payload.toolName, payload.input)
       : null;
   const mcpSignIn =
+    // SCIENT-FORK:START — a sign-in the agent asked for offers it while the chat still needs it.
     payload?.type === "system_notice" &&
     payload.mcpSignIn !== undefined &&
-    payload.providerThreadId !== null ? (
+    payload.providerThreadId !== null &&
+    isMcpSignInRequestNotice(payload) ? (
+      <RequestedMcpSignInAction
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadId={payload.threadId}
+        providerThreadId={payload.providerThreadId}
+        server={payload.mcpSignIn.server}
+        noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
+      />
+    ) : // SCIENT-FORK:END
+    payload?.type === "system_notice" &&
+      payload.mcpSignIn !== undefined &&
+      payload.providerThreadId !== null ? (
       <McpSignInAction
         environmentId={ctx.activeThreadEnvironmentId}
         threadId={payload.threadId}

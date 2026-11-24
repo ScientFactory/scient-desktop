@@ -1,9 +1,9 @@
 {
   "claudeSystemAppendBytes": 7361,
   "codexAdditionalContextBytes": 8681,
-  "mcpToolListJsonBytes": 146456,
+  "mcpToolListJsonBytes": 147032,
   "eagerComputeToolListJsonBytes": 2107,
-  "codexAdditionalContextAllCapabilitiesBytes": 11645,
-  "scientAwarenessAllCapabilitiesBytes": 5751,
+  "codexAdditionalContextAllCapabilitiesBytes": 11749,
+  "scientAwarenessAllCapabilitiesBytes": 5855,
   "scientOrchestrationBytes": 4192
 }

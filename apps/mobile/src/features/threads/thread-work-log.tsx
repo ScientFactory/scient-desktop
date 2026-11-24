@@ -58,6 +58,11 @@ import * as DateTime from "effect/DateTime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+// SCIENT-FORK:START — a requested MCP sign-in follows the chat's live MCP status.
+import { isMcpSignInRequestNotice, requestedMcpSignInIsOpen } from "@t3tools/contracts";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadMcpStatus } from "../../state/threadMcpStatus";
+// SCIENT-FORK:END
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
@@ -909,6 +914,27 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   );
   const [mcpSignInOpen, setMcpSignInOpen] = useState(false);
   const signInNotice = row.projectedItem.item;
+  // SCIENT-FORK:START — a sign-in the agent asked for offers it while the chat still needs it.
+  const requestedSignIn =
+    signInNotice.type === "system_notice" && isMcpSignInRequestNotice(signInNotice)
+      ? signInNotice
+      : null;
+  const liveMcpStatus = useEnvironmentQuery(
+    requestedSignIn
+      ? threadMcpStatus({
+          environmentId: props.environmentId,
+          input: { threadId: requestedSignIn.threadId },
+        })
+      : null,
+  ).data;
+  const requestedSignInOpen =
+    requestedSignIn === null ||
+    (requestedSignIn.mcpSignIn !== undefined &&
+      requestedMcpSignInIsOpen(liveMcpStatus, {
+        server: requestedSignIn.mcpSignIn.server,
+        providerThreadId: requestedSignIn.providerThreadId,
+      }));
+  // SCIENT-FORK:END
   const mcpSignedIn = useAtomValue(
     signInNotice.type === "system_notice" && signInNotice.mcpSignIn !== undefined
       ? threadEnvironment.mcpSignedInAtom(props.environmentId, {
@@ -1017,6 +1043,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const notice = row.projectedItem.item;
   const mcpSignInTarget: McpSignInTarget | null =
     canSignInToMcp &&
+    requestedSignInOpen &&
     notice.type === "system_notice" &&
     notice.mcpSignIn !== undefined &&
     notice.providerThreadId !== null
@@ -1028,6 +1055,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       : null;
   // Signed in, the notice is an ordinary row again.
   const opensMcpSignIn = mcpSignInTarget !== null && !mcpSignedIn;
+  // SCIENT-FORK:START — a sheet whose request closed does not reopen by itself later.
+  if (mcpSignInOpen && mcpSignInTarget === null) setMcpSignInOpen(false);
+  // SCIENT-FORK:END
   // A sign-in notice opens its sheet instead; a nested button would be out of VoiceOver's reach.
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined && !opensMcpSignIn;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;

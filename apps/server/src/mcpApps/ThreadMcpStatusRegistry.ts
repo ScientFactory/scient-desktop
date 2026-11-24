@@ -82,6 +82,33 @@ export interface ManagedThreadMcpSource {
   readonly changes: Stream.Stream<ThreadId | null>;
 }
 
+/**
+ * The agent asked for one of its own servers' sign-in. `shown`: a Sign in row is in the chat.
+ * `not-available`: off or failed. `card`: no row possible, only the thread's MCP status.
+ * `inactive`: its session ended. `none`: no such server.
+ */
+export type McpSignInRequestOutcome =
+  | {
+      readonly _tag:
+        | "shown"
+        | "signed-in"
+        | "not-available"
+        | "card"
+        | "checking"
+        | "claudeai"
+        | "inactive";
+      readonly displayName: string;
+    }
+  | { readonly _tag: "none" };
+
+/** A live session's answer to a sign-in request for one of its servers, from a fresh read. */
+export type McpSignInShowResult =
+  | "shown"
+  | "signed-in"
+  | "checking"
+  | "not-available"
+  | "unavailable";
+
 /** One provider attachment's right to report a thread's native servers. */
 export interface ThreadMcpAttachment {
   readonly threadId: ThreadId;
@@ -96,6 +123,8 @@ interface ThreadNativeState {
   /** False once the attachment ended; its last observations stay visible. */
   readonly sessionActive: boolean;
   readonly servers: ReadonlyMap<string, ThreadMcpServerObservation>;
+  /** Puts a Sign in row for the named server in the session's current turn. */
+  readonly showSignIn: ((server: string) => Effect.Effect<McpSignInShowResult>) | undefined;
 }
 
 const statusRank = (server: ThreadMcpServerObservation): number => {
@@ -133,6 +162,8 @@ export class ThreadMcpStatusRegistry extends Context.Service<
       readonly providerInstanceId: ProviderInstanceId;
       readonly providerThreadId: ProviderThreadId;
       readonly providerSessionId: ProviderSessionId;
+      /** Puts a Sign in row for a server in the session's current turn. */
+      readonly showSignIn?: (server: string) => Effect.Effect<McpSignInShowResult>;
     }) => Effect.Effect<ThreadMcpAttachment>;
     /** Replaces every native observation; ignored unless `attachment` is current and open. */
     readonly replaceNative: (
@@ -152,6 +183,14 @@ export class ThreadMcpStatusRegistry extends Context.Service<
       readonly providerThreadId: ProviderThreadId;
       readonly server: string;
     }) => Effect.Effect<void>;
+    /**
+     * The agent asks for one of its own servers' sign-in, by name: the live session that reported
+     * it needs one shows the user a Sign in row.
+     */
+    readonly requestSignIn: (input: {
+      readonly threadId: ThreadId;
+      readonly server: string;
+    }) => Effect.Effect<McpSignInRequestOutcome>;
     /** Attach an optional host-managed status provider; returns an unregister effect. */
     readonly registerManagedSource: (
       source: ManagedThreadMcpSource,
@@ -246,6 +285,7 @@ const make = Effect.gen(function* () {
     readonly providerInstanceId: ProviderInstanceId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerSessionId: ProviderSessionId;
+    readonly showSignIn?: (server: string) => Effect.Effect<McpSignInShowResult>;
   }) {
     const generation = yield* Ref.getAndUpdate(nextGeneration, (value) => value + 1);
     yield* Ref.update(threads, (current) => {
@@ -259,6 +299,7 @@ const make = Effect.gen(function* () {
         providerSessionId: input.providerSessionId,
         generation,
         sessionActive: true,
+        showSignIn: input.showSignIn,
         servers: new Map(
           [...(previous?.servers ?? new Map<string, ThreadMcpServerObservation>())].map(
             // Last known, but not this session's until it reports them: no action targets them.
@@ -318,6 +359,8 @@ const make = Effect.gen(function* () {
         ? {
             ...state,
             sessionActive: false,
+            // The ended session's adapter is not kept reachable through its last report.
+            showSignIn: undefined,
             servers: new Map(
               [...state.servers].map(([id, server]) => [id, { ...server, sessionActive: false }]),
             ),
@@ -355,6 +398,42 @@ const make = Effect.gen(function* () {
       });
     },
   );
+
+  const requestSignIn = Effect.fn("ThreadMcpStatusRegistry.requestSignIn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly server: string;
+  }) {
+    const state = (yield* Ref.get(threads)).get(input.threadId);
+    const needle = input.server.trim().toLowerCase();
+    const server =
+      state === undefined
+        ? undefined
+        : [...state.servers.values()].find(
+            (candidate) =>
+              candidate.name.toLowerCase() === needle ||
+              candidate.displayName.toLowerCase() === needle,
+          );
+    if (state === undefined || server === undefined) return { _tag: "none" } as const;
+    const { displayName } = server;
+    // A report from a session that ended says nothing about the agent's servers now.
+    if (!state.sessionActive || !server.sessionActive)
+      return { _tag: "inactive", displayName } as const;
+    if (server.status === "ready") return { _tag: "signed-in", displayName } as const;
+    if (server.status !== "needs-sign-in" && server.status !== "checking")
+      return { _tag: "not-available", displayName } as const;
+    if (server.source === "claudeai") return { _tag: "claudeai", displayName } as const;
+    if (state.showSignIn === undefined)
+      return { _tag: server.status === "checking" ? "checking" : "card", displayName } as const;
+    // The session reads its servers again first: a status that was still settling is not trusted.
+    const shown = yield* state
+      .showSignIn(server.name)
+      .pipe(Effect.orElseSucceed((): McpSignInShowResult => "unavailable"));
+    if (shown !== "unavailable") return { _tag: shown, displayName } as const;
+    const after = (yield* Ref.get(threads)).get(input.threadId);
+    if (after?.generation !== state.generation || !after.sessionActive)
+      return { _tag: "inactive", displayName } as const;
+    return { _tag: server.status === "checking" ? "checking" : "card", displayName } as const;
+  });
 
   const serviceScope = yield* Effect.scope;
   const registerManagedSource = Effect.fn("ThreadMcpStatusRegistry.registerManagedSource")(
@@ -447,6 +526,7 @@ const make = Effect.gen(function* () {
     upsertNative,
     detach,
     markSignInCompleted,
+    requestSignIn,
     registerManagedSource,
     snapshot,
     subscribe,

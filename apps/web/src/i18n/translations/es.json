@@ -3476,9 +3476,6 @@
   "b90e87f4b7125237": "Detalles",
   "16dc67f5429d8bae": "Trabajo en segundo plano",
   "2188eee8f81b0f51": "Abrir subagente",
-  "ec9e0be8ec693302": "Contraer todas las carpetas",
-  "b791dd86f7991cc0": "Expandir todas las carpetas",
-  "55b936e3014e16c8": "Abrir diff",
   "28bb7ce40dfd349a": "La salida de la terminal no se puede añadir a la respuesta de una pregunta.",
   "801cb8edea94b8f6": "Responde o descarta primero la pregunta y luego añádelo al chat.",
   "aa5507f20d94d5a9": "Actualiza este servidor para enviar archivos con las respuestas a preguntas",
@@ -4881,6 +4878,7 @@
       "v": "v"
     }
   ],
+  "55b936e3014e16c8": "Abrir diff",
   "83c29850641c8935": "En cola",
   "8402f099f88fd0e0": "En ejecución",
   "c5f5b73e92221a6a": "Esperando",
@@ -5765,6 +5763,8 @@
   "1601d7e39a52c48f": "Reintentar la carga del diff",
   "b7b137472adb6989": "Vista previa parcial del diff",
   "f0d79aa56f06663f": "Este archivo es demasiado grande para mostrarlo completo. Los recuentos incluyen todos los cambios.",
+  "ec9e0be8ec693302": "Contraer todas las carpetas",
+  "b791dd86f7991cc0": "Expandir todas las carpetas",
   "7fdde2b893ba1b9d": "Eliminado",
   "e58ce271d835b447": "Añadido",
   "07b9970b662ab70d": "Mostrar el código fuente de Mermaid",
@@ -15632,9 +15632,8 @@
   "60595a8acf9f6a18": "Entregado a esta sesión",
   "a87212dee280b4c9": "Ninguno",
   "eefabf57c07b099f": "Servidores MCP del agente",
-  "cbf2f207ca8b952b": [
-    "Servidores opcionales de plugins o cuentas sin sesión iniciada:",
-    " ",
+  "cbb852130e4dd992": [
+    "Servidores opcionales sin sesión iniciada: ",
     {
       "i": 1,
       "k": "_gt_value_1",

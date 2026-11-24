@@ -118,7 +118,10 @@ import {
 } from "../../scient/threadTimeline/postHandoffSetup";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — real answers stay visible when their turn folds.
-import { keepsSettledAnswerVisible } from "../../scient/threadTimeline/keptAnswers";
+import {
+  keepsSettledAnswerVisible,
+  workEntryOffersMcpSignIn,
+} from "../../scient/threadTimeline/keptAnswers";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — an error about a user's message sits under that message.
 import {
@@ -1312,6 +1315,8 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      // SCIENT-FORK: a sign-in the agent asked for stays in view for the user to act on.
+      if (entry.kind === "work" && workEntryOffersMcpSignIn(entry.entry)) continue;
 
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);

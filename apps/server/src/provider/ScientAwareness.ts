@@ -53,7 +53,7 @@ To fetch a paper, call \`${tools.name("scient_paper_get")}\` first with its DOI 
 
 const buildScientConnectorsAwareness = (tools: ScientToolProjection): string =>
   `## Scient connectors
-When the user needs a service, find one with \`${tools.name("scient_connector_list")}\` and add it with \`${tools.name("scient_connector_add")}\`; if none fits, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it (\`${tools.name("scient_connector_copy")}\`) or sign it in again (\`${tools.name("scient_connector_control")}\`). A hosted connector's tools name their host: before sending the user's private data through a host that is not the service's own, tell the user who receives it and ask once.`;
+When the user needs a service, find one with \`${tools.name("scient_connector_list")}\` and add it with \`${tools.name("scient_connector_add")}\`; if none fits, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it (\`${tools.name("scient_connector_copy")}\`) or sign it in again (\`${tools.name("scient_connector_control")}\`). When an MCP server you need is not signed in, call that with \`sign-in\`: the user gets a Sign in button. A hosted connector's tools name their host: before sending the user's private data through a host that is not the service's own, tell the user who receives it and ask once.`;
 
 /**
  * Included with Library access, so literature work starts in the Library rather than on the web.
