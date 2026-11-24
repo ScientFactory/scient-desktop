@@ -261,4 +261,110 @@ describe("ThreadMcpStatusRegistry", () => {
       yield* unregister;
     }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
   );
+
+  it.effect("routes the agent's sign-in request to the live session that reported the server", () =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const asked: Array<string> = [];
+      const first = yield* registry.attach({
+        ...attachInput("session-1"),
+        showSignIn: (server) => Effect.sync(() => (asked.push(server), "shown" as const)),
+      });
+      yield* registry.replaceNative(first, [
+        { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
+        { name: "claude.ai Gmail", source: "claudeai", status: "needs-sign-in" },
+        { name: "deepwiki", source: "native", status: "ready" },
+        { name: "sentry", source: "native", status: "unreachable" },
+      ]);
+      const request = (server: string) => registry.requestSignIn({ threadId, server });
+
+      expect(yield* request(" GURU ")).toEqual({ _tag: "shown", displayName: "guru" });
+      expect(asked).toEqual(["guru"]);
+      expect(yield* request("claude.ai Gmail")).toEqual({
+        _tag: "claudeai",
+        displayName: "claude.ai Gmail",
+      });
+      expect(yield* request("deepwiki")).toEqual({ _tag: "signed-in", displayName: "deepwiki" });
+      expect(yield* request("sentry")).toEqual({ _tag: "not-available", displayName: "sentry" });
+      expect(yield* request("notion")).toEqual({ _tag: "none" });
+      expect(
+        yield* registry.requestSignIn({ threadId: ThreadId.make("other"), server: "guru" }),
+      ).toEqual({ _tag: "none" });
+
+      // Ended: the last report stays, but no session can act on it.
+      yield* registry.detach(first);
+      expect(yield* request("guru")).toEqual({ _tag: "inactive", displayName: "guru" });
+
+      // A replacement session that has not reported yet cannot either; one that can't show a
+      // row sends the user to the server's own row.
+      const second = yield* registry.attach(attachInput("session-2"));
+      expect(yield* request("guru")).toEqual({ _tag: "inactive", displayName: "guru" });
+      yield* registry.replaceNative(second, [
+        { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
+        { name: "zotero", source: "native", status: "checking" },
+      ]);
+      expect(yield* request("guru")).toEqual({ _tag: "card", displayName: "guru" });
+      expect(yield* request("zotero")).toEqual({ _tag: "checking", displayName: "zotero" });
+      expect(asked).toEqual(["guru"]);
+    }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
+  );
+
+  it.effect("answers from the session's fresh read of its servers", () =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const reads = new Map<string, ThreadMcpStatusRegistry.McpSignInShowResult>([
+        ["turned-off", "not-available"],
+        ["now-connected", "signed-in"],
+        ["no-turn", "unavailable"],
+      ]);
+      const attachment = yield* registry.attach({
+        ...attachInput("session-1"),
+        showSignIn: (server) => Effect.succeed(reads.get(server) ?? "unavailable"),
+      });
+      yield* registry.replaceNative(
+        attachment,
+        [...reads.keys()].map((name) => ({
+          name,
+          source: "native" as const,
+          status: "needs-sign-in" as const,
+        })),
+      );
+      const request = (server: string) => registry.requestSignIn({ threadId, server });
+      expect(yield* request("turned-off")).toEqual({
+        _tag: "not-available",
+        displayName: "turned-off",
+      });
+      expect(yield* request("now-connected")).toEqual({
+        _tag: "signed-in",
+        displayName: "now-connected",
+      });
+      expect(yield* request("no-turn")).toEqual({ _tag: "card", displayName: "no-turn" });
+    }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
+  );
+
+  it.effect("calls a request inactive when its session ends while it answers", () =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const ending: { attachment?: ThreadMcpStatusRegistry.ThreadMcpAttachment } = {};
+      const attachment = yield* registry.attach({
+        ...attachInput("session-1"),
+        showSignIn: () =>
+          registry.detach(ending.attachment!).pipe(Effect.as("unavailable" as const)),
+      });
+      ending.attachment = attachment;
+      yield* registry.replaceNative(attachment, [
+        { name: "guru", source: "native", status: "needs-sign-in" },
+        { name: "deepwiki", source: "native", status: "ready" },
+      ]);
+      expect(yield* registry.requestSignIn({ threadId, server: "guru" })).toEqual({
+        _tag: "inactive",
+        displayName: "guru",
+      });
+      // A last report from an ended session does not vouch for the server either.
+      expect(yield* registry.requestSignIn({ threadId, server: "deepwiki" })).toEqual({
+        _tag: "inactive",
+        displayName: "deepwiki",
+      });
+    }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
+  );
 });

@@ -1,5 +1,6 @@
 import { isSubstantiveAnswer } from "@scientfactory/conversation/answer-visibility";
 
+import type { WorkLogEntry } from "~/session-logic";
 import { type ChatMessage, isImageAttachment } from "~/types";
 
 // Message objects are reused across timeline derivations, so each is read once.
@@ -20,4 +21,13 @@ export function keepsSettledAnswerVisible(message: ChatMessage): boolean {
     verdicts.set(message, verdict);
   }
   return verdict;
+}
+
+/**
+ * A Sign in row the agent asked for stays visible when its turn folds: the agent tells the user
+ * to use it, so it must not sit behind "Worked for…".
+ */
+export function workEntryOffersMcpSignIn(entry: Pick<WorkLogEntry, "structuredPayload">): boolean {
+  const payload = entry.structuredPayload;
+  return payload?.type === "system_notice" && payload.mcpSignIn !== undefined;
 }

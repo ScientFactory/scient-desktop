@@ -3476,9 +3476,6 @@
   "b90e87f4b7125237": "Details",
   "16dc67f5429d8bae": "Background work",
   "2188eee8f81b0f51": "Open subagent",
-  "ec9e0be8ec693302": "Collapse all folders",
-  "b791dd86f7991cc0": "Expand all folders",
-  "55b936e3014e16c8": "Open diff",
   "28bb7ce40dfd349a": "Terminal output can't be added to a question answer.",
   "801cb8edea94b8f6": "Answer or dismiss the question first, then add it to chat.",
   "aa5507f20d94d5a9": "Update this server to send files with question answers",
@@ -4882,6 +4879,7 @@
       "v": "v"
     }
   ],
+  "55b936e3014e16c8": "Open diff",
   "83c29850641c8935": "Queued",
   "8402f099f88fd0e0": "Running",
   "c5f5b73e92221a6a": "Waiting",
@@ -5766,6 +5764,8 @@
   "1601d7e39a52c48f": "Retry loading diff",
   "b7b137472adb6989": "Partial diff preview",
   "f0d79aa56f06663f": "This file is too large to show in full. Counts include all changes.",
+  "ec9e0be8ec693302": "Collapse all folders",
+  "b791dd86f7991cc0": "Expand all folders",
   "7fdde2b893ba1b9d": "Removed",
   "e58ce271d835b447": "Added",
   "07b9970b662ab70d": "Show Mermaid source",
@@ -15510,9 +15510,8 @@
   "60595a8acf9f6a18": "Delivered to this session",
   "a87212dee280b4c9": "None",
   "eefabf57c07b099f": "Agent MCP servers",
-  "cbf2f207ca8b952b": [
-    "Optional plugin or account servers not signed in:",
-    " ",
+  "cbb852130e4dd992": [
+    "Optional servers not signed in: ",
     {
       "i": 1,
       "k": "_gt_value_1",

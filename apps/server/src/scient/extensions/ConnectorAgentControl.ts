@@ -74,6 +74,15 @@ const requireSummary = Effect.fn("ConnectorAgentControl.find")(function* (name: 
   return found;
 });
 
+/** Whether a Scient connector goes by this name; false where Scient has no connectors. */
+export const isScientConnector = Effect.fn("ConnectorAgentControl.isScientConnector")(
+  function* (name: string) {
+    const { runtime } = yield* services;
+    return findSummary((yield* runtime.list()).connectors, name) !== undefined;
+  },
+  Effect.orElseSucceed(() => false),
+);
+
 /** Whether the person gave this connector to the calling agent; every agent when none were chosen. */
 const forThisAgent = (
   summary: Pick<ConnectorSummary, "agents">,
