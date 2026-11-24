@@ -744,6 +744,7 @@ Proof body.
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
+    const onOpenResult = vi.fn();
     const raw =
       "\\begin{theorem}\nFor $u_0 \\in L^2(\\Omega)$, $t \\ge 0$.\n\\custom{Keep}\n\\end{theorem}";
     let current = "\\documentclass{article}\n\\begin{document}\n" + raw + "\n\\end{document}";
@@ -757,6 +758,7 @@ Proof body.
           source={text}
           sourceSnapshot={owner.snapshot}
           disabled={false}
+          onOpenResult={onOpenResult}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
           onEdit={(request) => {
@@ -770,6 +772,11 @@ Proof body.
       );
     }
     await _fixture.root0.rerender(<Harness />);
+    await expect
+      .poll(() => onOpenResult.mock.calls[0]?.[0])
+      .toEqual({
+        outcome: "source-only-content",
+      });
     await page.getByRole("button", { name: "Edit this block’s LaTeX", exact: true }).click();
     await page
       .getByRole("textbox", { name: "Block LaTeX source", exact: true })

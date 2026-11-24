@@ -352,6 +352,8 @@ export const ServerProvider = Schema.Struct({
    * and is never persisted to the provider status cache.
    */
   probePending: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK: a hydrated status is available to the UI before a fresh probe.
+  statusFromCache: Schema.optionalKey(Schema.Boolean),
   message: Schema.optional(TrimmedNonEmptyString),
   availability: Schema.optional(ServerProviderAvailability),
   unavailableReason: Schema.optional(TrimmedNonEmptyString),

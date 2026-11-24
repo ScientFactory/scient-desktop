@@ -75,6 +75,7 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
 \end{document}`;
   const sourceSnapshot = createLatexEditorSourceSnapshot(source);
   const draftKey = "opening-presentation-pipeline";
+  const onOpenResult = vi.fn();
   const onEdit = vi.fn(() => ({
     accepted: false as const,
     reason: "No writes in opening fixture.",
@@ -117,6 +118,7 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
           draftKey={draftKey}
           disabled={false}
           onEdit={onEdit}
+          onOpenResult={onOpenResult}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
           onOpenFileSource={() => {}}
@@ -199,6 +201,7 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     await vi.waitFor(() => expect(projectMounted).toBe(true));
     sample();
     expect(_fixture.container.textContent).not.toContain("Finding the document");
+    expect(onOpenResult).not.toHaveBeenCalled();
     await act(() => change("layout"));
     await expect
       .poll(() => _fixture.container!.querySelector(".scient-latex-visual-document"), {
@@ -224,6 +227,7 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     expect(first.getBoundingClientRect().top).toBeLessThan(
       scroll.getBoundingClientRect().bottom + 2000,
     );
+    await expect.poll(() => onOpenResult.mock.calls[0]?.[0]).toEqual({ outcome: "editable" });
     expect(onEdit).not.toHaveBeenCalled();
   } finally {
     sampling = false;

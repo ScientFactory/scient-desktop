@@ -38,8 +38,10 @@ function View({
   visible,
   environment,
   viewKey,
+  oncePerOpening,
 }: {
   visible: boolean;
+  oncePerOpening?: boolean;
   environment: string;
   viewKey?: string;
 }) {
@@ -47,6 +49,7 @@ function View({
     visible ? { name: "feature.viewed", properties: { feature: "latex-visual" } } : null,
     EnvironmentId.make(environment),
     viewKey,
+    oncePerOpening,
   );
   return null;
 }
@@ -98,6 +101,29 @@ describe("analytics view hook lifecycle", () => {
       await screen.rerender(<View visible environment="remote" viewKey="tab:PRIVATE" />);
     expect(transport.record).toHaveBeenCalledTimes(4);
     expect(JSON.stringify(transport.record.mock.calls)).not.toContain("PRIVATE");
+  });
+
+  it("records a one-off opening across visibility and connection changes", async () => {
+    setup();
+    await using screen = await render(null, { router: false });
+    let hidden = false;
+    using _visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockImplementation(() => (hidden ? "hidden" : "visible"));
+    const show = (visible: boolean) =>
+      screen.rerender(<View visible={visible} environment="remote" oncePerOpening />);
+    await show(true);
+    expect(transport.record).toHaveBeenCalledOnce();
+    hidden = true;
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    hidden = false;
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    transport.connection = {};
+    await show(true);
+    expect(transport.record).toHaveBeenCalledOnce();
+    await show(false);
+    await show(true);
+    expect(transport.record).toHaveBeenCalledTimes(2);
   });
 
   it("only observes the current view after consent discovery and document visibility changes", async () => {
