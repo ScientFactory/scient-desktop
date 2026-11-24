@@ -8,6 +8,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import { windowsPowerShellPath } from "@t3tools/shared/windowsSystem";
+
 export interface TrashHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory: string;
@@ -34,7 +36,7 @@ export async function moveToTrash(
 ): Promise<ReadonlyArray<TrashOutcome>> {
   if (paths.length === 0) return [];
   if (host.platform === "darwin") return trashOnMac(paths);
-  if (host.platform === "win32") return trashOnWindows(paths);
+  if (host.platform === "win32") return trashOnWindows(host.environment, paths);
   const outcomes: TrashOutcome[] = [];
   for (const path of paths) outcomes.push(await trashFreedesktop(host, path));
   return outcomes;
@@ -140,10 +142,13 @@ $results = foreach ($path in $paths) {
 ConvertTo-Json -InputObject @($results) -Compress
 `;
 
-async function trashOnWindows(paths: ReadonlyArray<string>): Promise<ReadonlyArray<TrashOutcome>> {
+async function trashOnWindows(
+  environment: NodeJS.ProcessEnv,
+  paths: ReadonlyArray<string>,
+): Promise<ReadonlyArray<TrashOutcome>> {
   try {
     const output = await run(
-      "powershell.exe",
+      windowsPowerShellPath(environment),
       [
         "-NoProfile",
         "-NonInteractive",

@@ -7,6 +7,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsPowerShellPath } from "@t3tools/shared/windowsSystem";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -67,6 +68,7 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
   const processes = yield* ProcessRunner.ProcessRunner;
   const analytics = yield* AnalyticsService;
   const platform = yield* HostProcess.Platform;
+  const hostEnvironment = yield* HostProcess.Environment;
   const policy = yield* ScientAgentRuntimePolicy.ScientAgentRuntimePolicy;
   const readRecord = policy.read;
   const updateRecord = policy.update;
@@ -87,7 +89,7 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
           .run(
             platform === "win32"
               ? {
-                  command: "powershell.exe",
+                  command: windowsPowerShellPath(hostEnvironment),
                   args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_COST_SCRIPT],
                   timeout: "10 seconds",
                 }
