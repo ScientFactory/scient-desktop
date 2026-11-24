@@ -177,9 +177,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       model,
       { preserveUnavailableSelection: true },
     );
-    // SCIENT-FORK:START — read the draft target the composer edits.
     const storedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-    // SCIENT-FORK:END
     const draft = draftModelSelectionApplies(storedDraft, threadHasStarted(activeThread))
       ? storedDraft
       : null;

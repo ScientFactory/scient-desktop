@@ -347,6 +347,7 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
     version: null,
     providerCount: 0,
     rows: [{ environmentId: alvin, label: "alvin", app: "server", skipped: null, providers: [] }],
+    machines: [],
     restarts: [],
     otherServers: [
       {

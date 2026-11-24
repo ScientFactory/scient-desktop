@@ -2,6 +2,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   MessageId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -85,6 +86,8 @@ const reply = responseContextRecord({
   subagents: [],
 });
 const replyReference = formatInlineContextReference(responseContextReference(reply));
+// The queued run's model, which an edit keeps unless the composer picks another.
+const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
 
 function Harness(props: {
   readonly hookRef: RefObject<HookResult | null>;
@@ -96,7 +99,7 @@ function Harness(props: {
     threadDraftTarget: THREAD,
     activeThreadId: THREAD.threadId,
     serverProjection: {
-      runs: [{ id: RUN, status: "queued" }],
+      runs: [{ id: RUN, status: "queued", modelSelection }],
       messages: props.messages,
     } as unknown as ThreadStructure,
     promptRef: { current: "" },
@@ -124,6 +127,7 @@ async function setup(messages: ReadonlyArray<unknown> = []) {
 }
 
 const content = (prompt: string, replyTo: typeof reply | null = null) => ({
+  modelSelection,
   prompt,
   images: [],
   files: [],

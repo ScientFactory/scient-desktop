@@ -68,6 +68,9 @@ on:
       - .github/workflows/mobile-eas-production.yml
       - .github/workflows/mobile-eas-production-build.yml
 
+permissions:
+  contents: read
+
 # SCIENT-FORK:START mobile-release-gate
 # Scient's Expo project. app.config.ts reads these; without a project id OTA updates stay off.
 env:

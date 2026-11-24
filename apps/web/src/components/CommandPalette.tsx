@@ -3138,7 +3138,16 @@ function OpenCommandPaletteDialog(props: {
 
     // SCIENT-FORK:START — browse-path Enter is handled by handleBrowseKeyDownCapture
     // SCIENT-FORK:END
-    if (event.key === "Backspace" && query === "" && isSubmenu) {
+    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
+
+    if (
+      event.key === "Backspace" &&
+      query === "" &&
+      isSubmenu &&
+      !event.repeat &&
+      !event.nativeEvent.isComposing &&
+      event.keyCode !== 229
+    ) {
       event.preventDefault();
       // SCIENT-FORK:START — clearing the clone path never leaves the clone; the back arrow does.
       if (addProjectCloneFlow?.step === "confirm") return;
@@ -3146,8 +3155,6 @@ function OpenCommandPaletteDialog(props: {
       popView();
       return;
     }
-
-    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
 
     if (event.key === "Tab" && isBrowsing && !relativePathNeedsActiveProject) {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;

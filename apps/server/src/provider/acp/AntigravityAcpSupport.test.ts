@@ -185,6 +185,16 @@ describe("Antigravity Auto", () => {
         request("Run mcp_scient_preview_status", {
           CommandLine: "Run mcp_scient_preview_status",
         }),
+        // A directly called tool's rawInput is its own arguments, whatever their names.
+        // SCIENT-FORK:START — Scient's server name, so the title check decides.
+        request("Run mcp_github_create_issue", {
+          ServerName: "scient",
+          ToolName: "delegate_task",
+        }),
+        request("Running create_issue", { ServerName: "scient", ToolName: "delegate_task" }),
+        // call_mcp_tool is titled for the tool it calls.
+        request("MCP Tool create_issue", { ServerName: "scient", ToolName: "delegate_task" }),
+        // SCIENT-FORK:END
       ]) {
         expect(antigravityPermissionDisposition(policy, otherCall)).toBe("ask");
       }

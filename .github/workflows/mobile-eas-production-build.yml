@@ -31,6 +31,9 @@ on:
       MOBILE_SOURCEMAPS_R2:
         required: false
 
+permissions:
+  contents: read
+
 # SCIENT-FORK:START mobile-release-gate
 # Scient's Expo project. app.config.ts reads these; a called workflow does not inherit the
 # caller's env, so it sets them again.

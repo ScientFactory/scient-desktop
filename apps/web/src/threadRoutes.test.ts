@@ -154,6 +154,17 @@ describe("threadRoutes", () => {
         draftThreadExists: false,
       }),
     ).toBe("loading");
+    // A link to an environment this app has no connection to never bootstraps.
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
+        draftThreadExists: false,
+        environmentUnreachable: true,
+      }),
+    ).toBe("unreachable");
   });
   // SCIENT-FORK:END
 

@@ -211,7 +211,12 @@ export default function FileBrowserPanel({
       const position = pointerIsFresh
         ? { x: pointer.x, y: pointer.y }
         : { x: anchorRect.left, y: anchorRect.bottom };
-      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileTarget = {
+        environmentId,
+        filePath: relativePath,
+        workspaceRoot: cwd,
+        isDirectory: item.kind === "directory",
+      };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
       // SCIENT-FORK:START — the file management groups around the upstream items
       const manageItems = fileActions.menuItems(item.path);
