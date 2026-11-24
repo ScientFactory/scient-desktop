@@ -731,6 +731,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`4c2e2b373433b729b4080f8bab42aa0754b63304` is recorded in
+[the 2026-11-24 364ca47868 receipt](docs/internals/t3-upstream-sync-20261124-364ca47868.md),
+Scient PR #1100. Literal merge `31ebaa3db55319006d59e0195d7c4fe1ab7b4f06` has owned base
+`f992f3b3c12e4f7ae30f0b913d2a0f9b1fb53a1b` and the frozen official target as parents, retaining
+the 177 official commits after `364ca47868`. T3's macOS port-scanner fix replaces Scient's; a
+parent's Stop skips idle delegated children while Scient still settles what they left; a task
+folder its project tears down stays out of automatic cleanup when commands may not run; a
+failed server update restored after a relaunch is retried from Scient's update circle. T3's
+visit watermark stays replaced by Scient's answer acknowledgement. Release remains separate.
+
+The previous committed alignment through
 `364ca478682e25c6373c041dc5774d6b726b2c08` is recorded in
 [the 2026-11-24 4ce9f8c1b8 receipt](docs/internals/t3-upstream-sync-20261124-4ce9f8c1b8.md).
 Literal merge `910f988e85bd23633c7878551223be41512fde50` has owned base
@@ -741,7 +752,7 @@ settlement releasing the queue; preview pages run in their own JavaScript world,
 sign-in scripts run in the preload's world 999; Scient's large request bodies keep their own cap
 under T3's 1 MiB API default. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `4ce9f8c1b87e3b70682a9e1a5737679340ebdfae` is recorded in
 [the 2026-11-24 8ff66fc563 receipt](docs/internals/t3-upstream-sync-20261124-8ff66fc563.md).
 Literal merge `90e38a8031645ba1fe37b86c280be23ec4d33709` has owned base
