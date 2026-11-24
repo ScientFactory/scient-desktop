@@ -790,6 +790,19 @@ describe("Scient tests placed in T3's test files", () => {
     expect(f.inspect().checks[0].status).toBe("passed");
   });
 
+  it("knows a merged T3 commit's tests before the alignment records its boundary", () => {
+    const f = placementFixture();
+    f.git("checkout", "--quiet", "-b", "t3", f.upstream);
+    f.writeTests('it("a new T3 case", () => {});');
+    f.commit();
+    f.git("checkout", "--quiet", "main");
+    f.git("merge", "--quiet", "--no-ff", "-X", "theirs", "-m", "merge T3", "t3");
+    const merged = f.git("rev-parse", "HEAD");
+    expect(f.inspect(["--base", f.base, "--head", merged]).checks[0].status).toBe("passed");
+    f.writeTests('it("a new T3 case", () => {});', 'it("a Scient case", () => {});');
+    expect(f.inspect(["--base", f.base]).checks[0].status).toBe("review-needed");
+  });
+
   it("counts a second test with a T3 test's title as new", () => {
     const f = placementFixture();
     f.writeTests('it("keeps the T3 case", () => {});');

@@ -523,8 +523,9 @@ It also checks test placement, line by line: in a T3 test file, a test declarati
 literal title (`it(`, `test(` and modifiers such as `it.effect(`, `it.skipIf(…)(`,
 `it.each<T>(…)(` or a multiline `it.for([…])(`; not an `it.layer(…)(` suite) outside a
 `SCIENT-FORK:START`/`END` pair (each marker a comment line that starts with it) is new when
-that title occurs unmarked more often than in the base or at the frozen upstream, so tests an
-alignment brings from T3 are not new. Each unmarked test the change drops (a T3 test T3 still
+that title occurs unmarked more often than in the base or at the newest T3 commit (the frozen
+upstream, or a T3 commit the change merges before recording it), so tests an alignment brings
+from T3 are not new. Each unmarked test the change drops (a T3 test T3 still
 has, one T3 added since the base, or Scient's own) offsets one new title as a retitle; a test
 T3 deleted, a retitle an earlier change made, or one inside a region offsets nothing. New
 titles beyond the offsets are `review-needed`, listed as candidates when an offset applied. A
