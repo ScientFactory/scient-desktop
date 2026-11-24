@@ -95,6 +95,8 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { isActiveProviderConnectionOperation } from "~/scient/providerConnection/providerConnectionPresentation";
 import { hasRuntimeModelCatalog } from "../../providerModels";
+// SCIENT-FORK: Scient Agent can require the app's own update.
+import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
 
 export type ModelPickerItem = {
   isDefault?: boolean | undefined;
@@ -230,6 +232,8 @@ function ModelPickerProviderNotices({
               <p className="line-clamp-3 text-muted-foreground">
                 {getProviderStatusMessage(entry.snapshot, messages)}
               </p>
+              {/* SCIENT-FORK: Scient Agent can require the app's own update. */}
+              <ProviderAppUpdateButton requiresAppUpdate={entry.snapshot.requiresAppUpdate} />
               <InlineButton
                 className="mt-1"
                 onClick={() => {

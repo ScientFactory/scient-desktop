@@ -115,6 +115,8 @@ import { toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+// SCIENT-FORK: Scient Agent can require the app's own update.
+import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = msg(
@@ -1227,6 +1229,8 @@ function AgentRow({
             {detail}
           </p>
         ) : null}
+        {/* SCIENT-FORK: Scient Agent can require the app's own update. */}
+        <ProviderAppUpdateButton requiresAppUpdate={provider.requiresAppUpdate} />
       </div>
       <div className="shrink-0">
         {state === "ready" ? (

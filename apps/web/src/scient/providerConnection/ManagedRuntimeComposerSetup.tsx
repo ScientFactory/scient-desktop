@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
 
+import { ProviderAppUpdateButton } from "../desktopUpdate/ProviderAppUpdateButton";
 import type { Icon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import {
@@ -226,12 +227,22 @@ export function ManagedRuntimeComposerSetup(props: {
     );
   }
 
+  const appUpdateButton = (
+    <ProviderAppUpdateButton requiresAppUpdate={props.provider.requiresAppUpdate} />
+  );
+
   if (needsManagedRuntimeRecovery(props.provider)) {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
-            localError ?? managedRuntimeRepairMessage(props.provider, name, undefined, messages)
+            <div className="flex items-center gap-2">
+              <span>
+                {localError ??
+                  managedRuntimeRepairMessage(props.provider, name, undefined, messages)}
+              </span>
+              {!localError ? appUpdateButton : null}
+            </div>
           }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
@@ -319,7 +330,14 @@ export function ManagedRuntimeComposerSetup(props: {
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
-            failed ? (props.provider.message ?? gt("Refresh to try again.")) : props.modelSetupHint
+            failed ? (
+              <div className="flex items-center gap-2">
+                <span>{props.provider.message ?? gt("Refresh to try again.")}</span>
+                {appUpdateButton}
+              </div>
+            ) : (
+              props.modelSetupHint
+            )
           }
           icon={
             failed ? (

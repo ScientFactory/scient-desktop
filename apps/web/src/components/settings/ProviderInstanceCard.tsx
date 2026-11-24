@@ -101,6 +101,8 @@ import {
   getProviderVersionLabel,
   providerAuthLabel,
 } from "./providerStatus";
+// SCIENT-FORK: Scient Agent can require the app's own update.
+import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -1122,6 +1124,8 @@ export function ProviderInstanceCard({
         {inlineStatusDetail ? (
           <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
+        {/* SCIENT-FORK: Scient Agent can require the app's own update. */}
+        <ProviderAppUpdateButton requiresAppUpdate={effectiveProvider?.requiresAppUpdate} />
         {/* SCIENT-FORK:START — a failed update stays visible while signed in. */}
         {failureInfoNode ? (
           <>
@@ -1142,6 +1146,8 @@ export function ProviderInstanceCard({
       {inlineStatusDetail ? (
         <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
       ) : null}
+      {/* SCIENT-FORK: Scient Agent can require the app's own update. */}
+      <ProviderAppUpdateButton requiresAppUpdate={effectiveProvider?.requiresAppUpdate} />
     </>
   );
   const versionAdvisoryNode = versionAdvisory ? (

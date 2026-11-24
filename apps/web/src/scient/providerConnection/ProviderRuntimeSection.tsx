@@ -26,6 +26,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
+import { ProviderAppUpdateButton } from "../desktopUpdate/ProviderAppUpdateButton";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
@@ -767,9 +768,14 @@ export function ProviderRuntimeSection(props: {
               </p>
             ) : null}
             {statusMessage ? (
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                {statusMessage}
-              </p>
+              <div className="mt-0.5 flex items-center gap-2">
+                <p className="text-xs leading-relaxed text-muted-foreground">{statusMessage}</p>
+                <ProviderAppUpdateButton
+                  requiresAppUpdate={
+                    providerRuntimeError === statusMessage ? provider.requiresAppUpdate : undefined
+                  }
+                />
+              </div>
             ) : null}
             <ProviderRuntimeCatalogLine runtime={runtime} />
           </div>
