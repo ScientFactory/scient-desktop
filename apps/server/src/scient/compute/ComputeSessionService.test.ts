@@ -3876,6 +3876,38 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("admits none of a run whose later cell reuses an id for other code", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (id: string, code: string) => ({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        executionId: ComputeExecutionId.make(id),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        code,
+        source: { _tag: "console" as const },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("quiet-hold", "held");
+          yield* waitForExecution(ComputeExecutionId.make("held"), "running");
+          const error = yield* Effect.flip(
+            service.submitExecutions({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              submissions: [cell("fresh", "print(1)"), cell("held", "print(2)")],
+            }),
+          );
+          expect(error.reason).toBe("execution-conflict");
+          expect((yield* waitForSession("ready")).pendingCount).toBe(0);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("returns the same execution for a repeated submission", () =>
     Effect.gen(function* () {
       const test = yield* harness();

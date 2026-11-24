@@ -3271,6 +3271,19 @@ const make = Effect.gen(function* () {
       : yield* Deferred.await(admitted.ready);
   });
 
+  /** Whether a recorded request is this submission again, which may then be answered twice. */
+  const sameSubmittedCode = (
+    live: LiveComputeSession,
+    record: ComputeSessionRecord,
+    input: ComputeSubmitExecutionInput,
+    request: ComputeExecutionRequestRecord,
+  ) =>
+    request.sessionId === live.sessionId &&
+    request.generation === record.generation &&
+    request.codeHash === codeHash(input.code) &&
+    request.code === input.code &&
+    sameExecutionSource(request.source, input.source);
+
   const admitSubmission = Effect.fn("ComputeSessionService.admitSubmission")(function* (
     live: LiveComputeSession,
     input: ComputeSubmitExecutionInput,
@@ -3327,11 +3340,7 @@ const make = Effect.gen(function* () {
       }
     }
     const sameSubmission = (request: ComputeExecutionRequestRecord) =>
-      request.sessionId === live.sessionId &&
-      request.generation === record.generation &&
-      request.codeHash === codeHash(input.code) &&
-      request.code === input.code &&
-      JSON.stringify(request.source) === JSON.stringify(input.source);
+      sameSubmittedCode(live, record, input, request);
     // Idempotent only for the same immutable request. Reusing an identifier
     // for different code would otherwise overwrite history or return the
     // result of work the caller did not submit.
@@ -3462,15 +3471,6 @@ const make = Effect.gen(function* () {
     const outcome = yield* live.mutation
       .withPermits(1)(
         Effect.gen(function* () {
-          const queue = yield* Ref.get(live.queueRef);
-          const room = MAXIMUM_PENDING_COMPUTE_EXECUTIONS - queue.pending.length;
-          if (input.submissions.length > room) {
-            return yield* computeError(
-              "submit",
-              "queue-full",
-              "This run has more cells than the session can queue.",
-            );
-          }
           const stored = new Map(
             yield* Effect.forEach(
               input.submissions,
@@ -3483,6 +3483,33 @@ const make = Effect.gen(function* () {
               Effect.mapError(persistenceError("submit", "Unable to inspect the execution ids.")),
             ),
           );
+          // Checked whole before anything is admitted, so a refused batch leaves nothing running.
+          const queue = yield* Ref.get(live.queueRef);
+          const pendingNow = yield* Ref.get(live.pendingRef);
+          const record = yield* Ref.get(live.recordRef);
+          let newWork = 0;
+          for (const submission of input.submissions) {
+            const earlier = stored.get(submission.executionId);
+            const prior = pendingNow.get(submission.executionId)?.request ?? earlier?.request;
+            if (prior !== undefined && !sameSubmittedCode(live, record, submission, prior)) {
+              return yield* computeError(
+                "submit",
+                "execution-conflict",
+                `Execution '${submission.executionId}' already names different submitted code.`,
+              );
+            }
+            const settled =
+              earlier?.result != null &&
+              TERMINAL_COMPUTE_EXECUTION_STATUSES.has(earlier.result.status);
+            if (!pendingNow.has(submission.executionId) && !settled) newWork += 1;
+          }
+          if (newWork > MAXIMUM_PENDING_COMPUTE_EXECUTIONS - queue.pending.length) {
+            return yield* computeError(
+              "submit",
+              "queue-full",
+              "This run has more cells than the session can queue.",
+            );
+          }
           const journal: Omit<ComputeSessionJournalEntry, "sequence">[] = [];
           const prepared = yield* Effect.gen(function* () {
             for (const submission of input.submissions) {
