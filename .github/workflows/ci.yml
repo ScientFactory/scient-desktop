@@ -356,14 +356,31 @@ jobs:
       # but ACP process-tree live tests compile a small pthread fixture with `cc`
       # and soft-skip when it is missing. Install build-essential so that path
       # always runs in CI instead of silently no-oping.
+      # SCIENT-FORK:START — only when the image's `cc` cannot build and run a pthread program, so
+      # desktop's libsecret install below is usually its only apt transaction.
+      - name: Check C toolchain for process-tree fixtures
+        id: toolchain
+        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        run: |
+          if bash .github/scripts/pthread-cc.sh; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      # SCIENT-FORK:END
       - name: Install C toolchain for process-tree fixtures
         # SCIENT-FORK:START — Scient's own runner for desktop.
-        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        if: ${{ (matrix.part == 1 || matrix.part == 6) && steps.toolchain.outputs.ready != 'true' }}
         # SCIENT-FORK:END
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
+      # SCIENT-FORK:START — the fixtures soft-skip without it, so its absence fails here.
+      - name: Require C toolchain for process-tree fixtures
+        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        run: bash .github/scripts/pthread-cc.sh
+      # SCIENT-FORK:END
 
       - uses: ./.github/actions/setup-apt-mirrors
         # SCIENT-FORK:START — Scient's own runner for desktop.

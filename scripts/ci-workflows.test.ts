@@ -549,6 +549,24 @@ describe("CI workflow decisions", () => {
     expect(Object.keys(workflow.jobs).filter((id) => id.includes("performance"))).toEqual([]);
   });
 
+  it("installs the C toolchain only when the image's cannot build a pthread program", () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string };
+    const steps = workflow.jobs.test!.steps! as Array<Step>;
+    const at = (name: string) => steps.findIndex((step) => step.name === name);
+    const check = at("Check C toolchain for process-tree fixtures");
+    const install = at("Install C toolchain for process-tree fixtures");
+    const require = at("Require C toolchain for process-tree fixtures");
+    expect(check).toBeLessThan(install);
+    expect(install).toBeLessThan(require);
+    expect(steps[install]!.if).toBe(
+      "${{ (matrix.part == 1 || matrix.part == 6) && steps.toolchain.outputs.ready != 'true' }}",
+    );
+    for (const index of [check, require])
+      expect(steps[index]!.run).toContain("bash .github/scripts/pthread-cc.sh");
+    // Before any workspace install, as the unconditional install was.
+    expect(require).toBeLessThan(at("Setup Vite+"));
+  });
+
   it("installs CI-script dependencies before Node tests and always tests every workspace", () => {
     const steps = workflow.jobs.lint!.steps!;
     const install = steps.findIndex((step) => step.uses === "./.github/actions/setup-ci-deps");
