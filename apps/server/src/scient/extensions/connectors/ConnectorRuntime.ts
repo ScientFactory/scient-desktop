@@ -320,6 +320,9 @@ const secretFingerprint = (secrets: ReadonlyArray<string | undefined>): string =
 const pluginKeyRefusalMessage = (record: Pick<ConnectorRecord, "displayName">) =>
   `${record.displayName} rejected the key bound in Scient Accounts. Ask the user to update that account, then retry.`;
 
+const refusedBorrowedSignInMessage = (record: Pick<ConnectorRecord, "displayName">) =>
+  `${record.displayName} refused the sign-in borrowed from Scient (Dev) · identity. Sign in to it there.`;
+
 /** What a dev app says about a refused token, so the token itself never leaves it. */
 const tokenHash = (token: string) =>
   NodeCrypto.createHash("sha256").update(token).digest("base64url");
@@ -1660,13 +1663,20 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     const currentFingerprint =
       credential.secrets.length > 0 ? secretFingerprint(credential.secrets) : undefined;
     // The same key the service refused is not sent again until it changes or the person checks.
+    // A token borrowed from the dev identity home counts as a key: only the home renews it.
     if (
       !recheck &&
-      record.auth.type !== "oauth" &&
+      (record.auth.type !== "oauth" || credential.brokeredGrant !== undefined) &&
       currentFingerprint !== undefined &&
       rejectedCredentialFingerprints.get(record.connectorId) === currentFingerprint
     ) {
-      return { type: "rejected", message: refusedKeyMessage(record) } satisfies SendOutcome;
+      return {
+        type: "rejected",
+        message:
+          credential.brokeredGrant === undefined
+            ? refusedKeyMessage(record)
+            : refusedBorrowedSignInMessage(record),
+      } satisfies SendOutcome;
     }
     const first = yield* send(credential.headers);
     if (Exit.isFailure(first)) {
@@ -1734,6 +1744,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       // The home refreshes the grant it owns; this app only asks for the new token once.
       const leased: Credential = yield* leasedCredential(record, credential.accessToken);
       if (leased.type !== "ok") return leased satisfies SendOutcome;
+      const refusedBorrowed = (secrets: ReadonlyArray<string | undefined>) => {
+        rejectedCredentialFingerprints.set(record.connectorId, secretFingerprint(secrets));
+        return {
+          type: "rejected",
+          message: refusedBorrowedSignInMessage(record),
+        } satisfies SendOutcome;
+      };
+      // The home could not renew it: the refused token is never sent again.
+      if (leased.accessToken === credential.accessToken) return refusedBorrowed(leased.secrets);
       // Signed in again at the home meanwhile: never repeat the request as another account.
       if (leased.brokeredGrant !== credential.brokeredGrant) {
         return {
@@ -1750,17 +1769,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           ),
         } satisfies SendOutcome;
       }
-      if (borrowedReplay.value.status === 401) {
+      const borrowedVerdict = yield* refusedCredential(borrowedReplay.value, leased.secrets);
+      if (borrowedVerdict.refused) {
         yield* cancelBody(borrowedReplay.value);
-        return {
-          type: "failed",
-          message: `${record.displayName} refused the sign-in borrowed from Scient (Dev) · identity. Sign in to it there.`,
-        } satisfies SendOutcome;
+        return refusedBorrowed(leased.secrets);
       }
       return {
         type: "response",
         response: borrowedReplay.value,
         secrets: [...credential.secrets, ...leased.secrets],
+        ...(borrowedVerdict.forbidden === undefined
+          ? {}
+          : { forbidden: borrowedVerdict.forbidden }),
       } satisfies SendOutcome;
     }
     const refreshed = yield* refreshSession(record, credential.accessToken);

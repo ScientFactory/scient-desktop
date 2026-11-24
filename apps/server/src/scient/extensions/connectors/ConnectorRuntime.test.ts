@@ -5341,6 +5341,71 @@ describe("connector sign-ins a dev app borrows from the dev identity home", () =
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("never sends a borrowed token again once the service refused it", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      // The vendor refuses even the token the home renews.
+      const server = yield* serveLeases((request) =>
+        home.runtime.leaseForDevApp!(request).pipe(
+          Effect.tap((lease) =>
+            Effect.sync(() => {
+              if (lease.status === "ok" && request.staleTokenHash !== undefined) {
+                vendor.refusedTokens.add(lease.accessToken);
+              }
+            }),
+          ),
+        ),
+      );
+      const port = (server.address() as { port: number }).port;
+      const homeRoot = NodePath.join(home.config.stateDir, "..", "identity-home");
+      const homeStateDir = NodePath.join(homeRoot, "scient-next-dev");
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(home.config.stateDir, CONNECTOR_STATE_FILE), "utf8"),
+        ),
+      );
+      for (const connector of state.connectors) delete connector.auth.credentialRef;
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(homeStateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(homeRoot, "dev-identity-home.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(homeStateDir, "dev-connector-lease.json"),
+          JSON.stringify({ version: 1, host: "127.0.0.1", port, token: "lease-token" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(home.config.stateDir, "dev-identity.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(home.config.stateDir, "dev-connector-broker.json"),
+          JSON.stringify({
+            version: 1,
+            homeStateDir,
+            connectors: { [connectorId]: { url: `${vendor.base}/secure/mcp` } },
+          }),
+        );
+      });
+      const devApp = yield* makeHarness({ seedStateFile: JSON.stringify(state) });
+      devApp.delivered.add(connectorId);
+      vendor.validTokens.delete("vendor-access-token-1");
+      let renewedRefusals = 0;
+      vendor.refusing.arrived = () => void renewedRefusals++;
+      const refusedResult = {
+        content: [{ type: "text", text: expect.stringContaining("Sign in to it there") }],
+        isError: true,
+      };
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(1)))).toMatchObject({
+        id: 1,
+        result: refusedResult,
+      });
+      // The home still lends the refused token; the dev app keeps it to itself.
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(2)))).toMatchObject({
+        id: 2,
+        result: refusedResult,
+      });
+      expect(renewedRefusals).toBe(1);
+      expect(vendor.refreshCount).toBe(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("uses the home's token in a dev app with no sign-in of its own", () =>
     Effect.gen(function* () {
       const home = yield* makeHarness();
