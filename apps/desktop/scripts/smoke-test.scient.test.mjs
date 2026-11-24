@@ -114,14 +114,29 @@ describe("runDesktopSmokeWithOutputFiles", () => {
   it("scans output only after the caller's wait, so late output from the app's helpers counts", async () => {
     const fixture = makeFixture();
     const pidFile = NodePath.join(fixture.root, "helper.pid");
+    // The helper writes only once the caller's wait releases it, after the app has stopped.
+    const releaseFile = NodePath.join(fixture.root, "release");
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
     const result = await runDesktopSmokeWithOutputFiles({
       executable: process.execPath,
       args: [
         "-e",
         `
         const { spawn } = require("node:child_process");
-        const helper = spawn(process.execPath, ["-e", "setTimeout(() => process.stderr.write('Uncaught Error: late'), 1500)"],
-          { stdio: ["ignore", "inherit", "inherit"] });
+        const helper = spawn(process.execPath, ["-e", ${JSON.stringify(
+          `const release = setInterval(() => {
+            if (!require("node:fs").existsSync(${JSON.stringify(releaseFile)})) return;
+            clearInterval(release);
+            process.stderr.write("Uncaught Error: late");
+          }, 10);`,
+        )}], { stdio: ["ignore", "inherit", "inherit"] });
         require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid));
         setInterval(() => {}, 1000);
       `,
@@ -136,19 +151,13 @@ describe("runDesktopSmokeWithOutputFiles", () => {
       beforeScan: async () => {
         const helper = Number(NodeFS.readFileSync(pidFile, "utf8"));
         lingering.push(helper);
-        await expect
-          .poll(
-            () => {
-              try {
-                process.kill(helper, 0);
-                return true;
-              } catch {
-                return false;
-              }
-            },
-            { timeout: 5_000 },
-          )
-          .toBe(false);
+        assert.isTrue(alive(helper), "the helper outlives the app");
+        assert.notInclude(
+          NodeFS.readFileSync(NodePath.join(fixture.root, "output", "stderr.log"), "utf8"),
+          "Uncaught",
+        );
+        NodeFS.writeFileSync(releaseFile, "");
+        await expect.poll(() => alive(helper), { timeout: 5_000 }).toBe(false);
       },
     });
     assert.equal(result.passed, false);
