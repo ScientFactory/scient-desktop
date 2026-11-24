@@ -756,6 +756,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   >();
   /** SHA-256 fingerprints of rejected non-OAuth secrets so unchanged bad keys stay blocked until updated. */
   const rejectedCredentialFingerprints = new Map<string, string>();
+  /**
+   * In a dev app, the last token borrowed from the dev identity home that a service refused. Each
+   * lease names it, so the home lends a renewed token (or none), never that one. A stale entry is
+   * harmless: the home refreshes only a token that is still its current one.
+   */
+  const refusedBorrowedTokens = new Map<string, string>();
   /** Accounts' binding revision when a plugin key was refused; a later revision may hold a new key. */
   const pluginRefusalBindingRevisions = new Map<string, number | undefined>();
   /** Raised when a plugin key's refusal starts or ends, so its next delivery reloads the tools. */
@@ -1452,7 +1458,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         let session = entry?.material.session;
         // This app's own sign-in comes first; without one, the dev identity home may lend one.
         if (session === undefined && devBroker?.binds(record.connectorId, record.url) === true) {
-          return yield* leasedCredential(record, undefined);
+          return yield* leasedCredential(record, refusedBorrowedTokens.get(record.connectorId));
         }
         if (session === undefined) {
           if (record.status === "connected") {
@@ -1499,13 +1505,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
    */
   const leasedCredential = Effect.fn("ConnectorRuntime.leasedCredential")(function* (
     record: ConnectorRecord,
-    stale: string | undefined,
+    /** SHA-256 of the token a service refused; the home lends a renewed one or none. */
+    staleTokenHash: string | undefined,
   ) {
     const lease = yield* devBroker!.lease({
       connectorId: record.connectorId,
       url: record.url,
-      ...(stale === undefined ? {} : { staleTokenHash: tokenHash(stale) }),
+      ...(staleTokenHash === undefined ? {} : { staleTokenHash }),
     });
+    if (lease.status === "ok" && tokenHash(lease.accessToken) === staleTokenHash) {
+      return { type: "failed", message: refusedBorrowedSignInMessage(record) } satisfies Credential;
+    }
     if (lease.status !== "ok" || !isProtectableCredential(lease.accessToken)) {
       return {
         type: "failed",
@@ -1663,20 +1673,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     const currentFingerprint =
       credential.secrets.length > 0 ? secretFingerprint(credential.secrets) : undefined;
     // The same key the service refused is not sent again until it changes or the person checks.
-    // A token borrowed from the dev identity home counts as a key: only the home renews it.
     if (
       !recheck &&
-      (record.auth.type !== "oauth" || credential.brokeredGrant !== undefined) &&
+      record.auth.type !== "oauth" &&
       currentFingerprint !== undefined &&
       rejectedCredentialFingerprints.get(record.connectorId) === currentFingerprint
     ) {
-      return {
-        type: "rejected",
-        message:
-          credential.brokeredGrant === undefined
-            ? refusedKeyMessage(record)
-            : refusedBorrowedSignInMessage(record),
-      } satisfies SendOutcome;
+      return { type: "rejected", message: refusedKeyMessage(record) } satisfies SendOutcome;
     }
     const first = yield* send(credential.headers);
     if (Exit.isFailure(first)) {
@@ -1740,19 +1743,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         message: rejectedMessage,
       } satisfies SendOutcome;
     }
-    if (credential.brokeredGrant !== undefined) {
+    if (credential.brokeredGrant !== undefined && credential.accessToken !== undefined) {
       // The home refreshes the grant it owns; this app only asks for the new token once.
-      const leased: Credential = yield* leasedCredential(record, credential.accessToken);
+      const refusedHash = tokenHash(credential.accessToken);
+      refusedBorrowedTokens.set(record.connectorId, refusedHash);
+      const leased: Credential = yield* leasedCredential(record, refusedHash);
       if (leased.type !== "ok") return leased satisfies SendOutcome;
-      const refusedBorrowed = (secrets: ReadonlyArray<string | undefined>) => {
-        rejectedCredentialFingerprints.set(record.connectorId, secretFingerprint(secrets));
-        return {
-          type: "rejected",
-          message: refusedBorrowedSignInMessage(record),
-        } satisfies SendOutcome;
-      };
-      // The home could not renew it: the refused token is never sent again.
-      if (leased.accessToken === credential.accessToken) return refusedBorrowed(leased.secrets);
+      const refusedBorrowed = {
+        type: "rejected",
+        message: refusedBorrowedSignInMessage(record),
+      } satisfies SendOutcome;
+      // The refused token itself is never sent again.
+      if (leased.accessToken === credential.accessToken) return refusedBorrowed;
       // Signed in again at the home meanwhile: never repeat the request as another account.
       if (leased.brokeredGrant !== credential.brokeredGrant) {
         return {
@@ -1772,7 +1774,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const borrowedVerdict = yield* refusedCredential(borrowedReplay.value, leased.secrets);
       if (borrowedVerdict.refused) {
         yield* cancelBody(borrowedReplay.value);
-        return refusedBorrowed(leased.secrets);
+        if (leased.accessToken !== undefined) {
+          refusedBorrowedTokens.set(record.connectorId, tokenHash(leased.accessToken));
+        }
+        return refusedBorrowed;
       }
       return {
         type: "response",

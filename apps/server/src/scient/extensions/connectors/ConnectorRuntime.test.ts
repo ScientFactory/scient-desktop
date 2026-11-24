@@ -5396,13 +5396,14 @@ describe("connector sign-ins a dev app borrows from the dev identity home", () =
         id: 1,
         result: refusedResult,
       });
-      // The home still lends the refused token; the dev app keeps it to itself.
+      // The next call asks the home for a token other than the refused one; none is sent twice.
       expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(2)))).toMatchObject({
         id: 2,
         result: refusedResult,
       });
-      expect(renewedRefusals).toBe(1);
-      expect(vendor.refreshCount).toBe(1);
+      // Each renewed token was sent, and refused, once.
+      expect(renewedRefusals).toBe(vendor.refreshCount);
+      expect(new Set(vendor.issued.map(({ token }) => token)).size).toBe(vendor.issued.length);
     }).pipe(Effect.provide(testLayer)),
   );
 
