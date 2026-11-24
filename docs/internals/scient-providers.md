@@ -881,16 +881,20 @@ Scient Agent.
   starting it. Oh My Pi is probed with `--version`. Scient Agent is probed with `--runtime-info`,
   which prints one JSON object: `product`, the Scient Agent `version`, the `upstream` Oh My Pi
   release, and `rpcProtocolVersions`. The product must be `scient-agent`, the version 0.1.0 or
-  newer below 2.0, the upstream release Oh My Pi 18.2.8 or newer on major 18 or 19 (1.x is built on
-  19), and RPC v2 offered. That upstream range is Scient Agent's own, apart from the stock Oh My Pi
-  provider's.
+  newer, the upstream release Oh My Pi 18.2.8 or newer, and RPC v2 offered. There is no ceiling on
+  either version: Scient Agent is checked against Scient before each release, and a managed update
+  is test-run before it is activated, so the version numbers carry no compatibility rule. A release
+  that offers only RPC protocols newer than v2 is refused with "needs a newer version of Scient",
+  and the provider's status carries `requiresAppUpdate` so the app can offer its own update. The
+  stock Oh My Pi provider keeps its supported major.
   An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
   runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
 - Two versions. A process reports `version` (the product's, shown to the user) and
   `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
-  `runtimeVersion`. For Oh My Pi the two are equal. A cursor resumes on the major that wrote it,
-  and Scient Agent's also resumes forward from 18 to 19 (`resumableUpstreamMajors`), since 19 reads
-  an 18 session.
+  `runtimeVersion`. For Oh My Pi the two are equal. A cursor resumes on the major that wrote it.
+  Scient Agent's also resumes forward onto any later Oh My Pi major
+  (`resumesEarlierUpstreamSessions`), never back: each Scient Agent release is checked to resume
+  the sessions earlier releases wrote.
 - State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
   and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
   treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a

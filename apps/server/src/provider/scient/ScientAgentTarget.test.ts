@@ -36,10 +36,17 @@ describe("scientAgentTarget.identify", () => {
     expect(scientAgentTarget.identify("{not json")).toBeUndefined();
   });
 
-  it("refuses a Scient Agent release outside the supported range", () => {
-    expect(scientAgentTarget.identify(runtimeInfo({ version: "2.0.0" }))).toBeUndefined();
+  it("refuses a Scient Agent release before the first, and no later one", () => {
     expect(scientAgentTarget.identify(runtimeInfo({ version: "0.0.9" }))).toBeUndefined();
     expect(scientAgentTarget.identify(runtimeInfo({ version: "latest" }))).toBeUndefined();
+    expect(scientAgentTarget.identify(runtimeInfo({ version: "2.0.0" }))).toEqual({
+      version: "2.0.0",
+      runtimeVersion: "18.4.8",
+    });
+    expect(scientAgentTarget.identify(runtimeInfo({ version: "0.7.3" }))).toEqual({
+      version: "0.7.3",
+      runtimeVersion: "18.4.8",
+    });
   });
 
   it("refuses a version that is not well formed", () => {
@@ -62,13 +69,13 @@ describe("scientAgentTarget.identify", () => {
     expect(scientAgentTarget.identify(runtimeInfo({ version: "0.1.0-rc.1" }))).toBeUndefined();
   });
 
-  it("refuses a build on an Oh My Pi release the server is not qualified against", () => {
+  it("runs a build on any Oh My Pi release from the oldest whose RPC it speaks", () => {
     const onUpstream = (version: string) =>
       scientAgentTarget.identify(runtimeInfo({ upstream: { name: "oh-my-pi", version } }));
-    expect(onUpstream("20.0.0")).toBeUndefined();
     expect(onUpstream("18.2.7")).toBeUndefined();
     expect(onUpstream("18.2.8")).toEqual({ version: "0.1.0", runtimeVersion: "18.2.8" });
-    expect(onUpstream("19.0.1")).toEqual({ version: "0.1.0", runtimeVersion: "19.0.1" });
+    expect(onUpstream("19.1.1")).toEqual({ version: "0.1.0", runtimeVersion: "19.1.1" });
+    expect(onUpstream("23.0.0")).toEqual({ version: "0.1.0", runtimeVersion: "23.0.0" });
   });
 
   it("refuses upstream metadata that is not an Oh My Pi release", () => {
@@ -84,6 +91,21 @@ describe("scientAgentTarget.identify", () => {
 
   it("refuses a build that does not offer RPC protocol v2", () => {
     expect(scientAgentTarget.identify(runtimeInfo({ rpcProtocolVersions: [1] }))).toBeUndefined();
+  });
+
+  it("says a release speaking only newer protocols needs a newer Scient", () => {
+    expect(scientAgentTarget.needsNewerApp?.(runtimeInfo({ rpcProtocolVersions: [3] }))).toBe(true);
+    // Not for one that speaks v2, another product, or a release before the first.
+    expect(scientAgentTarget.needsNewerApp?.(runtimeInfo())).toBe(false);
+    expect(
+      scientAgentTarget.needsNewerApp?.(runtimeInfo({ product: "omp", rpcProtocolVersions: [3] })),
+    ).toBe(false);
+    expect(
+      scientAgentTarget.needsNewerApp?.(
+        runtimeInfo({ version: "0.0.9", rpcProtocolVersions: [3] }),
+      ),
+    ).toBe(false);
+    expect(scientAgentTarget.newerAppDetail).toContain("Update Scient");
   });
 });
 

@@ -9,15 +9,12 @@ import type { OmpTarget } from "../omp/OmpTarget.ts";
 
 /** The oldest Scient Agent release this server drives. */
 const SCIENT_AGENT_MINIMUM_VERSION = "0.1.0";
-/** The first Scient Agent release this server is not qualified against. */
-const SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE = "2.0.0";
-/** The Scient Agent majors this server is qualified against: 1.x is built on Oh My Pi 19. */
-const SCIENT_AGENT_SUPPORTED_MAJORS = [0, 1];
 /**
- * The Oh My Pi majors a Scient Agent build may run here. Scient Agent is qualified release by
- * release, so this range is its own, apart from the stock Oh My Pi provider's.
+ * Scient Agent is ScientFactory's own product, checked against Scient before each release, so this
+ * server accepts any release that speaks its RPC protocol: no ceiling on the product's version and
+ * none on the Oh My Pi release it is built from. A managed update is also test-run before it is
+ * activated.
  */
-const SCIENT_AGENT_UPSTREAM_MAJORS = [18, 19];
 
 const SCIENT_AGENT_PRODUCT = "scient-agent";
 
@@ -66,13 +63,21 @@ const SEMVER =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 
 const isSupportedScientAgentVersion = (version: string): boolean =>
-  SEMVER.test(version) &&
-  compareSemverVersions(version, SCIENT_AGENT_MINIMUM_VERSION) >= 0 &&
-  SCIENT_AGENT_SUPPORTED_MAJORS.includes(Number(version.split(".")[0]));
+  SEMVER.test(version) && compareSemverVersions(version, SCIENT_AGENT_MINIMUM_VERSION) >= 0;
 
 const isSupportedUpstreamVersion = (version: string): boolean =>
-  compareSemverVersions(version, OMP_MINIMUM_VERSION) >= 0 &&
-  SCIENT_AGENT_UPSTREAM_MAJORS.includes(Number(version.split(".")[0]));
+  SEMVER.test(version) && compareSemverVersions(version, OMP_MINIMUM_VERSION) >= 0;
+
+/** A Scient Agent release that speaks none of the RPC protocols this server does: a newer app does. */
+const speaksNoProtocolOfThisApp = (stdout: string): boolean => {
+  const info = decodeRuntimeInfo(stdout.trim());
+  return (
+    info._tag === "Some" &&
+    info.value.product === SCIENT_AGENT_PRODUCT &&
+    isSupportedScientAgentVersion(info.value.version) &&
+    !info.value.rpcProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)
+  );
+};
 
 /**
  * Scient Agent: ScientFactory's agent, built from Oh My Pi. It speaks the same
@@ -101,18 +106,21 @@ export const scientAgentTarget: OmpTarget = {
     return product === SCIENT_AGENT_PRODUCT &&
       isSupportedScientAgentVersion(version) &&
       upstream.name === SCIENT_AGENT_UPSTREAM &&
-      SEMVER.test(upstream.version) &&
       isSupportedUpstreamVersion(upstream.version) &&
       rpcProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)
       ? { version, runtimeVersion: upstream.version }
       : undefined;
   },
-  unsupportedDetail: `This is not a Scient Agent release this version of Scient supports (${SCIENT_AGENT_MINIMUM_VERSION} or newer, before ${SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE}). Check the configured executable.`,
+  unsupportedDetail: `This is not a Scient Agent release this version of Scient supports (${SCIENT_AGENT_MINIMUM_VERSION} or newer). Check the configured executable.`,
+  needsNewerApp: speaksNoProtocolOfThisApp,
+  newerAppDetail:
+    "This Scient Agent release needs a newer version of Scient. Update Scient to use it.",
   minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
   noModelsHint:
     "Sign in to a model account, add a custom model in Settings, or start a local model server such as Ollama.",
-  // Oh My Pi 19 resumes an 18 session, so threads keep their native history across the update.
-  resumableUpstreamMajors: SCIENT_AGENT_UPSTREAM_MAJORS,
+  // Each release is checked to resume the sessions earlier releases wrote, so threads keep their
+  // native history across an update to a later Oh My Pi, major or not.
+  resumesEarlierUpstreamSessions: true,
 };
 
 /** The directory Scient Agent keeps all of its own files in, assigned by this server. */
