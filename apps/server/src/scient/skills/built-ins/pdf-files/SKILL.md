@@ -26,4 +26,7 @@ export PATH='<nativePathPrefix>':"$PATH"
    Done when the extraction has page locators or the requested operation has produced a new PDF.
 
 3. **Reopen and look.** For an unprotected derivative, run `"$PY" "$DOC" validate out.pdf` and `"$PY" "$DOC" render out.pdf --out NEW_DIR`. For a protected derivative, use the password-aware checks in the reference. Reopen with pypdf, compare page count, order, retained structures and form values as applicable, and open the page images. Inspect every page of a short file and at least all changed and boundary pages of a long one. For extraction, compare the result with the rendered source. Done when data and visible output agree with the request, with limits recorded.
+
+   For right-to-left or mixed-direction content, check the paragraph edge on the page image and read the words on both sides of inline language switches. Check wrapped spans, niqqud, punctuation, signed ranges and table order where present. For a form or overlay, verify the stored value or source text and the visible order separately. Check both the interactive and flattened render if delivering both.
+
 4. **Deliver.** Link the files and state the pages inspected and any incomplete checks. If images could not be inspected, write “visual inspection not performed” and give the reason. Done when each deliverable and its verification status are clear.
