@@ -46,9 +46,9 @@ describe("numeric font size in LaTeX", () => {
 });
 
 describe("named fonts in LaTeX", () => {
-  const pdftex = "\\fontfamily{qtm}\\selectfont";
+  const pdftex = "\\fontfamily{ptm}\\selectfont";
   const fontspec =
-    "\\IfFontExistsTF{Times New Roman}{\\fontspec{Times New Roman}}{\\fontspec{Latin Modern Roman}}";
+    "\\IfFontExistsTF{Times New Roman}{\\fontspec{Times New Roman}}{\\fontspec{lmroman10-regular.otf}}";
 
   it("reads both written forms as the same catalogue font", () => {
     expect(latexTextDeclarationAt(`${pdftex} text`)?.mark).toBe(
@@ -67,7 +67,7 @@ describe("named fonts in LaTeX", () => {
       ),
     ).toBeNull();
     expect(
-      latexTextDeclarationAt(`${fontspec.replace("Latin Modern Roman", "Evil")} x`),
+      latexTextDeclarationAt(`${fontspec.replace("lmroman10-regular.otf", "Evil")} x`),
     ).toBeNull();
   });
 
@@ -170,7 +170,7 @@ describe("fix-cm for exact sizes", () => {
       ],
     };
     const result = applyLatexVisualDocumentChange(base, projection, sized, {});
-    expect(result?.source).toContain("\\usepackage{fix-cm}");
+    expect(result?.source).toContain("\\RequirePackage{fix-cm}\n\\documentclass");
     expect(result?.source).toContain("{\\fontsize{13}{15.6}\\selectfont Plain text.}");
     const withPackage = base.replace(
       "\\begin{document}",

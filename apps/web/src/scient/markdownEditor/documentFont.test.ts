@@ -21,6 +21,19 @@ describe("Markdown document font front matter", () => {
     expect(readMarkdownDocumentFont(null)).toEqual(none);
   });
 
+  it("edits quoted keys and indented mappings in place, preserving unrelated YAML", () => {
+    const source = "---\n  title: Study\n  'fontsize': 11pt # keep\n---";
+    expect(writeMarkdownDocumentFont(source, { fontSize: "12pt", fontFamily: "Arial" })).toBe(
+      "---\n  title: Study\n  'fontsize': 12pt # keep\n  mainfont: Arial\n---",
+    );
+    expect(
+      writeMarkdownDocumentFont("---\nmainfont: [Arial,\n# note\n  Georgia]\n---", {
+        fontSize: "10pt",
+        fontFamily: "Arial",
+      }),
+    ).toBeUndefined();
+  });
+
   it("creates a block when there is none, and returns null when nothing is wanted", () => {
     expect(writeMarkdownDocumentFont(null, { fontFamily: "Arial", fontSize: "12pt" })).toBe(
       "---\nfontsize: 12pt\nmainfont: Arial\n---",

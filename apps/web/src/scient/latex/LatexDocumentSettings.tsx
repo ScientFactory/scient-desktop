@@ -293,7 +293,7 @@ export function LatexDocumentSettings(props: {
               />
             </DocumentSettingsField>
           </div>
-          <DocumentSettingsField label={gt("Font")}>
+          <DocumentSettingsField label={gt("Main font")}>
             <LatexSelect
               size="sm"
               width="fluid"
@@ -306,8 +306,9 @@ export function LatexDocumentSettings(props: {
                 { value: "monospace", label: gt("Code", { $context: "monospace font family" }) },
                 ...FONT_CATALOGUE.map((font) => {
                   const unavailable =
-                    (changes.engine ?? extended.engine) === "pdflatex" &&
-                    font.latex.pdftex === null;
+                    (changes.engine
+                      ? changes.engine === "pdflatex"
+                      : extended.fontEngine === "pdftex") && font.latex.pdftex === null;
                   return {
                     value: font.name,
                     label: unavailable

@@ -236,18 +236,10 @@ LaTeX Visual has no floating selection toolbar, so the panel is reached through
 (the baseline is 1.2 times the size). Existing `\large`-style commands stay as
 written and show their number; they change only when you edit that text. With
 pdfLaTeX, Computer Modern has only fixed sizes, so Scient adds
-`\usepackage{fix-cm}` the first time an explicit size is written to a document
+`\RequirePackage{fix-cm}` before the document class the first time an explicit size is written to a document
 that loads no scalable font package.
 
-A font is saved as `\fontfamily{qtm}\selectfont` in a pdfLaTeX document, which
-offers only the fonts with a free look-alike (TeX Gyre Termes for Times New
-Roman, Heros for Arial and Helvetica, Pagella for Palatino, Latin Modern). Under
-XeLaTeX, LuaLaTeX or Tectonic, or when `fontspec` is loaded, it is saved as an
-`\IfFontExistsTF` guard around `\fontspec{…}` with a Latin Modern fallback, so a
-font missing on the machine never stops the build. Other fonts are listed but
-disabled in a pdfLaTeX document, with a note. Arial and Helvetica share one
-pdfLaTeX family, so the list shows Arial for either. Hebrew text needs the Hebrew
-font of the language setup.
+pdfLaTeX offers Times New Roman (Nimbus Roman), Arial and Helvetica (Nimbus Sans), and the Latin Modern families. The editor writes a font family code such as `\fontfamily{ptm}\selectfont`. Arial and Helvetica share a code and reopen as Arial. XeLaTeX and LuaLaTeX can use the other named fonts installed on the computer that compiles the document. For inline text, a missing face uses the matching Latin Modern font file supplied by Scient’s managed TinyTeX. Hebrew text follows its own language settings.
 
 <a id="hebrew-and-mixed-language-documents"></a>
 
@@ -994,16 +986,7 @@ columns, line/paragraph spacing, custom paper dimensions, binding and mirrored
 margins, supported fonts and engine, heading/title defaults and simple running
 headers and footers. Custom executable definitions stay in Source.
 
-The **Font** list sets the font of the whole document: Default, three generic
-families, then the same named fonts as **Text > Font / Size**. In a pdfLaTeX
-document it writes `\renewcommand{\familydefault}{qtm}` (the family code of a free
-look-alike), so only fonts that have one are offered; the others are greyed with
-"needs XeLaTeX or LuaLaTeX". Under XeLaTeX or LuaLaTeX it writes
-`\setmainfont{Garamond}` and loads `fontspec`; the font must be installed on the
-machine that compiles. Change the compiler and the font in the same card and
-**Apply** writes both. **Default** removes only the active `\familydefault` line (never
-one in a comment or inside a macro) and a `\setmainfont` that names a listed font;
-a font you wrote yourself stays.
+The **Main font** list changes the document’s base family. With pdfLaTeX it writes a family code. With XeLaTeX or LuaLaTeX it adds a guarded `\setmainfont` choice. If the named font is missing, compilation continues with the existing main font. **Default** removes a recognized choice. Explicit Hebrew fonts remain in the language setup in Source.
 
 Each setting starts from the document's current setup. **Apply** writes only
 changed settings; **Cancel** discards the draft. Blank custom margin fields retain

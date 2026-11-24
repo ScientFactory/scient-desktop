@@ -39,7 +39,7 @@ function font(
 
 export const FONT_CATALOGUE: ReadonlyArray<CatalogueFont> = [
   font("Times New Roman", "serif", "Tinos, 'Liberation Serif', Times", true, {
-    pdftex: "qtm",
+    pdftex: "ptm",
     fontspec: "Times New Roman",
   }),
   font("Cambria", "serif", "Caladea", false, {
@@ -51,7 +51,7 @@ export const FONT_CATALOGUE: ReadonlyArray<CatalogueFont> = [
     fontspec: "Georgia",
   }),
   font("Palatino", "serif", "'Palatino Linotype', 'Book Antiqua'", false, {
-    pdftex: "qpl",
+    pdftex: null,
     fontspec: "Palatino",
   }),
   font("Garamond", "serif", "'EB Garamond'", false, {
@@ -67,11 +67,11 @@ export const FONT_CATALOGUE: ReadonlyArray<CatalogueFont> = [
     fontspec: "Latin Modern Roman",
   }),
   font("Arial", "sans-serif", "Arimo, 'Liberation Sans', Helvetica", true, {
-    pdftex: "qhv",
+    pdftex: "phv",
     fontspec: "Arial",
   }),
   font("Helvetica", "sans-serif", "'Helvetica Neue', Arimo", false, {
-    pdftex: "qhv",
+    pdftex: "phv",
     fontspec: "Helvetica",
   }),
   font("Calibri", "sans-serif", "Carlito", false, {
@@ -87,7 +87,7 @@ export const FONT_CATALOGUE: ReadonlyArray<CatalogueFont> = [
     fontspec: "David",
   }),
   font("Courier New", "monospace", "Cousine, 'Liberation Mono', Courier", false, {
-    pdftex: "qcr",
+    pdftex: null,
     fontspec: "Courier New",
   }),
   font("Consolas", "monospace", "Inconsolata, Menlo", false, {
@@ -107,4 +107,16 @@ const BY_NAME: ReadonlyMap<string, CatalogueFont> = new Map(
 /** The catalogue entry for a name written in a file, or null for any other string. */
 export function catalogueFont(name: string): CatalogueFont | null {
   return BY_NAME.get(name) ?? null;
+}
+
+/** Also recognize TeX Gyre families in existing documents. */
+export function fontForLatexCode(code: string | undefined) {
+  if (!code) return undefined;
+  const legacy: Readonly<Record<string, string>> = {
+    qtm: "Times New Roman",
+    qhv: "Arial",
+    qpl: "Palatino",
+    qcr: "Courier New",
+  };
+  return FONT_CATALOGUE.find((font) => font.latex.pdftex === code || font.name === legacy[code]);
 }

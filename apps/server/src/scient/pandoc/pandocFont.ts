@@ -1,3 +1,10 @@
+import {
+  latexSourceCommands,
+  latexSourceArgument,
+  latexPreambleEnd,
+  latexVisualFontMetrics,
+  GUARDED_MAIN_FONT,
+} from "@scientfactory/scient-document/latex";
 /**
  * Word export of local font size and family. Scient's recognised `<span style>` forms are turned
  * into Word character styles before raw HTML is stripped; the `fontsize` and `mainfont` front
@@ -9,6 +16,7 @@ import {
   type MarkdownFontSpan,
   FONT_CATALOGUE,
   catalogueFont,
+  fontForLatexCode,
   normalizeFontSize,
   parseMarkdownFontSpanOpen,
 } from "@scientfactory/scient-markdown";
@@ -27,6 +35,7 @@ const BASE_SIZE = new RegExp(`^(${DOCUMENT_FONT_SIZES.join("|")})$`, "u");
 
 /** The base font of the document, and the local fonts used, which the reference document defines. */
 export interface FontPass {
+  readonly readLatexCarriers?: boolean;
   readonly base: WordBaseFont;
   readonly used: Map<string, WordLocalFont>;
 }
@@ -110,30 +119,17 @@ export function wordBaseFontOf(meta: Record<string, unknown>): WordBaseFont {
 // size group is rewritten to a `\textcolor` carrier Pandoc keeps, then turned into the same Word
 // style as a Markdown span.
 
-// Sizes of the standard class commands, in points, for the 10, 11 and 12 pt class options
-// (the same table as the Visual editor's layout).
-const LATEX_NAMED_SIZES: Readonly<Record<string, readonly [number, number, number]>> = {
-  tiny: [5, 6, 6],
-  scriptsize: [7, 8, 8],
-  footnotesize: [8, 9, 10],
-  small: [9, 10, 10.95],
-  normalsize: [10, 10.95, 12],
-  large: [12, 12, 14.4],
-  Large: [14.4, 14.4, 17.28],
-  LARGE: [17.28, 17.28, 20.74],
-  huge: [20.74, 20.74, 24.88],
-  Huge: [24.88, 24.88, 24.88],
+const CLASS_METRICS = {
+  10: latexVisualFontMetrics(10),
+  11: latexVisualFontMetrics(11),
+  12: latexVisualFontMetrics(12),
 };
 const LATEX_SIZE_COMMAND = new RegExp(
-  String.raw`^\\(?:(${Object.keys(LATEX_NAMED_SIZES).join("|")})|fontsize\s*\{\s*(\d+(?:\.\d+)?)\s*(?:pt)?\s*\}\s*\{[^{}]*\}\s*\\selectfont)(?:\{\}|(?![A-Za-z@])\s?)`,
+  String.raw`^\\(?:(${Object.keys(CLASS_METRICS[10]).join("|")})|fontsize\s*\{\s*(\d+(?:\.\d+)?)\s*(?:pt)?\s*\}\s*\{[^{}]*\}\s*\\selectfont)(?:\{\}|(?![A-Za-z@])\s?)`,
   "u",
 );
 const LATEX_SIZE_CARRIER = "scient-size-";
 const LATEX_SIZE_MACRO = String.raw`\newcommand{\ScientSize}[2]{\textcolor{#1}{#2}}`;
-const LATEX_CLASS_SIZE = new RegExp(
-  String.raw`\\documentclass\[[^\]]*?\b(${DOCUMENT_FONT_SIZES.join("|")})\b[^\]]*\]`,
-  "u",
-);
 const LATEX_FAMILY_DEFAULT = /\\renewcommand\s*\{\\familydefault\}\s*\{\\?([A-Za-z0-9]+)\}/gu;
 const LATEX_MAIN_FONT = /\\setmainfont\s*(?:\[[^\]]*\]\s*)?\{([^{}]+)\}/gu;
 const LATEX_FAMILIES: Readonly<Record<string, string>> = {
@@ -142,13 +138,22 @@ const LATEX_FAMILIES: Readonly<Record<string, string>> = {
   tt: "Courier New",
 };
 
-/** The source without its comments, so commented lines are never read as settings. */
-const withoutComments = (source: string): string => source.replaceAll(/(?<!\\)%.*$/gmu, "");
-
-/** The class option size, 10 when absent (LaTeX's own default). */
-function latexClassSize(source: string): 10 | 11 | 12 {
-  const option = LATEX_CLASS_SIZE.exec(withoutComments(source))?.[1];
-  return option === "11pt" ? 11 : option === "12pt" ? 12 : 10;
+/** Read only commands that execute in the document preamble. */
+function fontPreamble(source: string) {
+  const text = source.slice(0, latexPreambleEnd(source));
+  const commands = latexSourceCommands(text).filter((command) => command.depth === 0);
+  const active = new Set(commands.map((command) => command.from));
+  const last = (pattern: RegExp) =>
+    [...text.matchAll(pattern)].findLast((match) => active.has(match.index));
+  const cls = commands.find((command) => command.name === "documentclass");
+  const options =
+    cls &&
+    latexSourceArgument(text, cls.to, "[", "]")
+      ?.value.split(",")
+      .map((value) => value.trim());
+  const size = options?.findLast((value) => ["10pt", "11pt", "12pt"].includes(value));
+  const classSize = size === "12pt" ? 12 : size === "11pt" ? 11 : 10;
+  return { last, classSize } as const;
 }
 
 const LATEX_FONT_CARRIER = "scient-font-";
@@ -167,7 +172,7 @@ function latexDeclaration(
     const points =
       named === undefined
         ? normalizeFontSize(Number(command[2]))
-        : (LATEX_NAMED_SIZES[named]?.[classSize - 10] ?? null);
+        : (CLASS_METRICS[classSize][named as keyof (typeof CLASS_METRICS)[10]]?.[0] ?? null);
     return points === null
       ? null
       : {
@@ -178,7 +183,9 @@ function latexDeclaration(
   const code = LATEX_FONT_CODE.exec(rest);
   const named = code === null ? LATEX_FONT_NAME.exec(rest) : null;
   const index = FONT_CATALOGUE.findIndex((font) =>
-    code === null ? font.latex.fontspec === named?.[1] : font.latex.pdftex === code[1],
+    code === null
+      ? font.latex.fontspec === named?.[1]
+      : font.name === fontForLatexCode(code[1])?.name,
   );
   const match = code ?? named;
   return match === null || index < 0
@@ -186,137 +193,141 @@ function latexDeclaration(
     : { carrier: `${LATEX_FONT_CARRIER}${index}`, length: match[0].length };
 }
 
-const isEscaped = (text: string, index: number): boolean => {
-  let backslashes = 0;
-  while (index - 1 - backslashes >= 0 && text[index - 1 - backslashes] === "\\") backslashes += 1;
-  return backslashes % 2 === 1;
-};
+// A literal brace, a formula or a verbatim example must never delimit an export rewrite.
+const OPAQUE_ENVIRONMENT =
+  /^\\begin\s*\{(verbatim\*?|Verbatim|lstlisting|minted|comment|math|displaymath|equation\*?|align(?:at)?\*?|flalign\*?|gather\*?|multline\*?|eqnarray\*?)\}/u;
+const INLINE_LITERAL = /^\\(?:verb\*?|lstinline(?:\[[^\]]*\])?)([^\sA-Za-z*])/u;
 
-/** Index of the `}` closing the `{` at `open`, or -1. Comments and escaped braces are skipped. */
-function braceEnd(text: string, open: number): number {
-  let depth = 0;
-  for (let index = open; index < text.length; index += 1) {
-    const char = text[index];
-    if (char === "%" && !isEscaped(text, index)) {
-      const newline = text.indexOf("\n", index);
-      if (newline < 0) return -1;
-      index = newline;
-    } else if (char === "{" && !isEscaped(text, index)) depth += 1;
-    else if (char === "}" && !isEscaped(text, index)) {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return -1;
-}
-
-// Environments whose content is copied as is.
-const LATEX_VERBATIM_START = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/u;
-// `\verb|…|` and `\lstinline|…|` (or with braces): the delimiter closes the copied text.
-const LATEX_INLINE_VERBATIM = /^\\(?:verb\*?|lstinline(?:\[[^\]]*\])?)([^\sA-Za-z*])/u;
-
-function rewriteSizeGroups(
-  text: string,
-  counter: { found: boolean },
-  classSize: 10 | 11 | 12,
-): string {
-  let out = "";
-  let inMath = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index] ?? "";
-    if (char === "%" && !isEscaped(text, index)) {
-      const newline = text.indexOf("\n", index);
-      const end = newline < 0 ? text.length : newline;
-      out += text.slice(index, end);
-      index = end - 1;
+export function rewriteLatexSizeGroups(source: string): string {
+  if (/\\ScientSize\b|scient-(?:size|font)-/u.test(source)) return source;
+  const { classSize } = fontPreamble(source);
+  const groups: Array<{
+    start: number;
+    declaration: ReturnType<typeof latexDeclaration>;
+    opaqueCount: number;
+  }> = [];
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  let opaqueCount = 0;
+  let mathEnd = "";
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === "%") {
+      const end = source.indexOf("\n", i);
+      i = end < 0 ? source.length : end;
       continue;
     }
-    if (char === "\\" && !isEscaped(text, index)) {
-      const verbatim = LATEX_VERBATIM_START.exec(text.slice(index));
-      if (verbatim !== null) {
-        const close = `\\end{${verbatim[1]}}`;
-        const end = text.indexOf(close, index);
-        const stop = end < 0 ? text.length : end + close.length;
-        out += text.slice(index, stop);
-        index = stop - 1;
-        continue;
-      }
-      const inline = LATEX_INLINE_VERBATIM.exec(text.slice(index));
-      if (inline !== null) {
-        const opener = inline[1] ?? "";
-        const from = index + inline[0].length;
-        const stop = opener === "{" ? braceEnd(text, from - 1) : text.indexOf(opener, from);
-        const end = stop < 0 ? text.length : stop + 1;
-        out += text.slice(index, end);
-        index = end - 1;
-        continue;
-      }
-      const next = text[index + 1];
-      if (next === "(" || next === "[") inMath = true;
-      else if (next === ")" || next === "]") inMath = false;
+    if (mathEnd && source.startsWith(mathEnd, i)) {
+      i += mathEnd.length - 1;
+      mathEnd = "";
+      continue;
     }
-    if (char === "$" && !isEscaped(text, index)) inMath = !inMath;
-    if (char === "{" && !inMath && !isEscaped(text, index)) {
-      const declaration = latexDeclaration(text.slice(index + 1), classSize);
-      const end = declaration === null ? -1 : braceEnd(text, index);
-      if (declaration !== null && end >= 0) {
-        counter.found = true;
-        const body = text.slice(index + 1 + declaration.length, end);
-        // The group's own braces stay, so it is still a group (or an argument) to Pandoc.
-        out += `{\\ScientSize{${declaration.carrier}}{${rewriteSizeGroups(body, counter, classSize)}}}`;
-        index = end;
+    if (c === "\\") {
+      const rest = source.slice(i);
+      const env = OPAQUE_ENVIRONMENT.exec(rest);
+      if (env) {
+        const name = env[1]!.replace("*", "\\*");
+        const close = new RegExp("\\\\end\\s*\\{" + name + "\\}", "gu");
+        close.lastIndex = i + env[0].length;
+        if (!close.exec(source)) return source;
+        i = close.lastIndex - 1;
+        opaqueCount++;
         continue;
       }
+      const literal = INLINE_LITERAL.exec(rest);
+      if (literal) {
+        const delimiter = literal[1]!;
+        let end = i + literal[0].length;
+        if (delimiter === "{" && rest.startsWith("\\lstinline")) {
+          let depth = 1;
+          while (end < source.length && depth) {
+            if (source[end] === "{") depth++;
+            if (source[end] === "}") depth--;
+            end++;
+          }
+          if (depth) return source;
+          i = end - 1;
+        } else {
+          i = source.indexOf(delimiter, end);
+          if (i < 0) return source;
+        }
+        opaqueCount++;
+        continue;
+      }
+      const next = source[i + 1];
+      if (!mathEnd && (next === "(" || next === "[")) {
+        mathEnd = next === "(" ? "\\)" : "\\]";
+        opaqueCount++;
+      }
+      i++;
+      continue;
     }
-    out += char;
+    if (mathEnd) continue;
+    if (c === "$") {
+      mathEnd = source[i + 1] === "$" ? "$$" : "$";
+      i += mathEnd.length - 1;
+      opaqueCount++;
+    } else if (c === "{") {
+      const declaration = latexDeclaration(source.slice(i + 1), classSize);
+      groups.push({ start: i + 1, declaration, opaqueCount });
+      if (declaration) i += declaration.length;
+    } else if (c === "}") {
+      const group = groups.pop();
+      if (!group) return source;
+      if (group.declaration && group.opaqueCount === opaqueCount) {
+        edits.push({
+          start: group.start,
+          end: group.start + group.declaration.length,
+          text: "\\ScientSize{" + group.declaration.carrier + "}{",
+        });
+        edits.push({ start: i, end: i, text: "}" });
+      }
+    }
   }
-  return out;
+  if (groups.length || mathEnd || !edits.length) return source;
+  let from = 0;
+  const chunks = [LATEX_SIZE_MACRO, "\n"];
+  for (const edit of edits.sort((a, b) => a.start - b.start)) {
+    chunks.push(source.slice(from, edit.start), edit.text);
+    from = edit.end;
+  }
+  chunks.push(source.slice(from));
+  return chunks.join("");
 }
-
-/** The LaTeX source with each `{\large …}` size group made readable by Pandoc. */
-export function rewriteLatexSizeGroups(source: string): string {
-  const counter = { found: false };
-  const rewritten = rewriteSizeGroups(source, counter, latexClassSize(source));
-  return counter.found ? `${LATEX_SIZE_MACRO}\n${rewritten}` : source;
-}
-
-/** The value of the last match of `pattern` in `text`. */
-const lastValue = (text: string, pattern: RegExp): string | undefined =>
-  [...text.matchAll(pattern)].at(-1)?.[1]?.trim();
 
 /**
  * The base font set by the preamble, as the Visual card writes it: the class option size (10 pt
- * when absent), and the font the text is set in. A sans-serif or monospace `\familydefault`
- * wins; otherwise a catalogue font in `\setmainfont` (it defines the roman family), then a
- * catalogue font code in `\familydefault`, then the generic roman family.
+ * when absent) and the active family. An explicit \familydefault selects the text family;
+ * \setmainfont names the face used when the roman family is active.
  */
 export function latexBaseFontOf(source: string): WordBaseFont {
-  const active = withoutComments(source);
-  const bodyStart = active.indexOf("\\begin{document}");
-  const preamble = bodyStart < 0 ? active : active.slice(0, bodyStart);
-  const familyDefault = lastValue(preamble, LATEX_FAMILY_DEFAULT);
-  const mainFont = lastValue(preamble, LATEX_MAIN_FONT);
+  const { last, classSize } = fontPreamble(source);
+  const familyDefault = last(LATEX_FAMILY_DEFAULT)?.[1];
+  const mainFont = [last(LATEX_MAIN_FONT), last(GUARDED_MAIN_FONT)]
+    .filter((m) => m !== undefined)
+    .sort((a, b) => a.index - b.index)
+    .at(-1)?.[1]
+    ?.trim();
   const generic = familyDefault?.match(/^(rm|sf|tt)default$/u)?.[1];
   const family =
     (generic === "sf" || generic === "tt" ? LATEX_FAMILIES[generic] : undefined) ??
-    FONT_CATALOGUE.find((font) => font.latex.fontspec === mainFont)?.name ??
-    FONT_CATALOGUE.find((font) => font.latex.pdftex === familyDefault)?.name ??
+    fontForLatexCode(familyDefault)?.name ??
+    catalogueFont(mainFont ?? "")?.name ??
     (generic === "rm" ? LATEX_FAMILIES["rm"] : undefined);
   return {
-    sizePoints: latexClassSize(source),
+    sizePoints: classSize,
     family: family ?? DEFAULT_WORD_BASE_FONT.family,
   };
 }
 
 /** The font a Pandoc-read LaTeX span stands for, or null for any other span. */
-function latexSpanFont(attributes: unknown): WordLocalFont | null {
+function latexSpanFont(attributes: unknown, readCarriers: boolean): WordLocalFont | null {
   if (!Array.isArray(attributes)) return null;
   const [, classes, pairs] = attributes as [unknown, unknown, unknown];
   if (Array.isArray(classes)) {
     if (classes.includes("sans-serif")) return { family: LATEX_FAMILIES["sf"] ?? "Arial" };
     if (classes.includes("roman")) return { family: LATEX_FAMILIES["rm"] ?? "Times New Roman" };
   }
-  if (!Array.isArray(pairs)) return null;
+  if (!readCarriers || !Array.isArray(pairs)) return null;
   for (const pair of pairs) {
     const style = Array.isArray(pair) && pair[0] === "style" ? pair[1] : null;
     const carried = Predicate.isString(style)
@@ -344,7 +355,7 @@ export function applyLatexFontSpans(
   }
   if (!Predicate.isObject(value)) return;
   if (isPandocNode(value) && value.t === "Span" && Array.isArray(value.c)) {
-    const own = latexSpanFont(value.c[0]);
+    const own = latexSpanFont(value.c[0], pass.readLatexCarriers !== false);
     if (own !== null) {
       const font = { ...outer, ...own };
       applyLatexFontSpans(value.c[1], pass, font);

@@ -55,6 +55,7 @@ export {
 export {
   FONT_CATALOGUE,
   catalogueFont,
+  fontForLatexCode,
   type CatalogueFont,
   type FontCategory,
 } from "./fontCatalogue.ts";

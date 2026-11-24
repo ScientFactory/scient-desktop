@@ -8,6 +8,7 @@ import {
 } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
+import type { Mark } from "prosemirror-model";
 import { history } from "prosemirror-history";
 import {
   inputRules,
@@ -24,7 +25,7 @@ import { goToNextCell, tableEditing } from "prosemirror-tables";
 import { scientMarkdownDirectionPresentationPlugin } from "./directionPresentation";
 import { scientMarkdownDocumentFontPlugin } from "./documentFontPresentation";
 import { runScientMarkdownCommand } from "./commands";
-import { scientMarkdownSchema } from "./schema";
+import { scientMarkdownSchema, unstyleBoundaryWhitespace } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
 import { imageFigurePlugin } from "./imageFigures";
 import { scientMarkdownOutlinePlugin } from "./outline";
@@ -37,6 +38,12 @@ import {
   type ScientMarkdownShortcutId,
 } from "../shortcuts";
 import { scientMarkdownResultsPlugin } from "./results";
+
+export type ScientMarkdownTransactionOrigin = "user" | "external" | "system";
+
+export const scientMarkdownTransactionOriginKey = new PluginKey<ScientMarkdownTransactionOrigin>(
+  "scientMarkdownTransactionOrigin",
+);
 
 const sourceIdentityPluginKey = new PluginKey("scientMarkdownSourceIdentity");
 
@@ -126,9 +133,102 @@ function sourceIdentityPlugin(): Plugin {
   });
 }
 
+// Apply the same mark changes to the live view and its undo history as to saved Markdown.
+function boundaryWhitespacePlugin(): Plugin {
+  // Once typing continues, an unstyled trailing space can become internal to the mark.
+  let ordinarySpace = false;
+  let typing:
+    | { from: number; to: number; marks: readonly Mark[]; browserSpace: boolean }
+    | undefined;
+  return new Plugin({
+    props: {
+      handleDOMEvents: {
+        beforeinput(_view, event) {
+          ordinarySpace = event.inputType === "insertText" && event.data === " ";
+          return false;
+        },
+      },
+    },
+    appendTransaction(transactions, oldState, state) {
+      const previous = typing;
+      const spaceInput = ordinarySpace;
+      ordinarySpace = false;
+      typing = undefined;
+      if (
+        !transactions.some((tr) => {
+          const origin = tr.getMeta(scientMarkdownTransactionOriginKey);
+          return tr.docChanged && origin !== "external" && origin !== "system";
+        })
+      )
+        return null;
+      const from = oldState.doc.content.findDiffStart(state.doc.content);
+      const end = oldState.doc.content.findDiffEnd(state.doc.content);
+      if (from === null || !end) return null;
+      const tr = state.tr;
+      const caret = state.selection.empty ? state.selection.from : -1;
+      if (
+        previous &&
+        oldState.selection.empty &&
+        oldState.selection.from === previous.to &&
+        from === previous.to &&
+        caret > from &&
+        end.a === from &&
+        end.b === caret &&
+        state.doc.resolve(caret).parent === state.doc.resolve(from).parent
+      ) {
+        if (
+          previous.browserSpace &&
+          tr.doc.textBetween(previous.to - 1, previous.to) === "\u00a0"
+        ) {
+          tr.insertText(" ", previous.to - 1, previous.to);
+        }
+        for (const mark of previous.marks) tr.addMark(previous.from, previous.to, mark);
+      }
+      tr.doc.nodesBetween(
+        previous ? Math.min(previous.from, from) : from,
+        Math.max(from, end.b),
+        (node, pos) => {
+          if (!["paragraph", "heading", "table_cell", "table_header"].includes(node.type.name))
+            return true;
+          const content = unstyleBoundaryWhitespace(node);
+          const start = node.content.findDiffStart(content);
+          const stop = node.content.findDiffEnd(content);
+          if (start !== null && stop) {
+            tr.replaceWith(pos + 1 + start, pos + 1 + stop.a, content.cut(start, stop.b));
+          }
+          return false;
+        },
+      );
+      if (!tr.docChanged) return null;
+      tr.setSelection(state.selection.getBookmark().resolve(tr.doc));
+      const before = caret >= 0 ? state.doc.resolve(caret).nodeBefore : null;
+      const space = before?.isText ? /\s+$/u.exec(before.text!)?.[0] : null;
+      const marks = state.storedMarks ?? state.selection.$from.marks();
+      if (
+        space &&
+        before &&
+        marks.length &&
+        end.b === caret &&
+        from <= caret &&
+        marks.some((mark) => !mark.isInSet(tr.doc.resolve(caret).marks()))
+      ) {
+        typing = {
+          from: previous?.to === from ? previous.from : caret - space.length,
+          to: caret,
+          marks,
+          browserSpace: spaceInput,
+        };
+        tr.setStoredMarks(marks);
+      } else if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
+      return tr;
+    },
+  });
+}
+
 export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
   return [
     sourceIdentityPlugin(),
+    boundaryWhitespacePlugin(),
     scientMarkdownDirectionPresentationPlugin(),
     scientMarkdownDocumentFontPlugin(),
     imageUploadPlugin(),

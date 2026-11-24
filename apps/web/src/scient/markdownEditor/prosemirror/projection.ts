@@ -4,7 +4,7 @@ import {
   type MarkdownSourceBlock,
   type MarkdownSourceLedger,
 } from "@scientfactory/scient-markdown";
-import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
+import { type Node as ProseMirrorNode } from "prosemirror-model";
 
 import { findScientBackslashMathSpans } from "~/scient/math/scientMathText";
 import { makeFaithfulMarkdownParse } from "./faithfulParse";
@@ -12,7 +12,6 @@ import {
   scientMarkdownParser,
   scientMarkdownSchema,
   scientMarkdownSerializer,
-  unstyleBoundaryWhitespace,
   withMarkdownSourceId,
 } from "./schema";
 
@@ -171,7 +170,9 @@ function parseBlock(
   if (block.nestedBlockKinds.some((kind) => SOURCE_ONLY_NESTED_KINDS.has(kind))) {
     return rawBlock(block);
   }
-  const parsed = parseFaithfully(block.source, { references: { ...environment.references } });
+  const context = { references: { ...environment.references }, unsupportedFontSpan: false };
+  const parsed = parseFaithfully(block.source, context);
+  if (context.unsupportedFontSpan) return rawBlock(block);
   if (!parsed || parsed.childCount !== 1) return rawBlock(block);
   const node = parsed.child(0);
   if (!matchesBlockKind(block, node) || !headingsAreOneLine(node)) return rawBlock(block);
@@ -566,44 +567,24 @@ export function projectScientMarkdownSource(
       if (patched !== null) cache.verified.set(node, source);
     }
     cache.sources.set(node, { original, source });
-    // A front matter block is valid only at the first byte: new, it replaces the blank prefix.
-    if (index === 0 && original === undefined && node.attrs.sourceKind === "yaml") output = "";
+    const insertingYaml = index === 0 && original === undefined && node.attrs.sourceKind === "yaml";
+    const prefix = projection.ledger.prefix;
+    if (insertingYaml) output = prefix.startsWith("\uFEFF") ? "\uFEFF" : "";
     const from = output.length;
     output += source;
     blockRanges.push({ from, to: from + source.length });
     const nextSourceId = nodes[index + 1] ? sourceIdOf(nodes[index + 1]!) : null;
     const originalSequenceContinues =
       directOriginal !== undefined && originalSuccessorById.get(directOriginal.id) === nextSourceId;
+    if (insertingYaml && prefix.replace(/^\uFEFF/u, "")) {
+      output += projection.ledger.lineEnding + prefix.replace(/^\uFEFF/u, "");
+      return;
+    }
     output += originalSequenceContinues
       ? directOriginal.trailing
       : inferredSeparator(projection.ledger, index, nodes.length);
   });
   return { source: output, blockRanges };
-}
-
-/**
- * The inline content of a paragraph or heading as the file can state it: whitespace carries no
- * style at a style boundary (`unstyleBoundaryWhitespace`), and spaces at the ends of the block
- * and next to a line break are dropped (Markdown ignores them).
- */
-function fileInlineContent(block: ProseMirrorNode): Fragment {
-  const joined: ProseMirrorNode[] = [];
-  unstyleBoundaryWhitespace(block).forEach((child) => joined.push(child));
-  const trimmed: ProseMirrorNode[] = [];
-  joined.forEach((child, index) => {
-    if (!child.isText) {
-      trimmed.push(child);
-      return;
-    }
-    let text = child.text ?? "";
-    if (index === 0 || joined[index - 1]?.type.name === "hard_break")
-      text = text.replace(/^[ \t]+/u, "");
-    if (index === joined.length - 1 || joined[index + 1]?.type.name === "hard_break")
-      text = text.replace(/[ \t]+$/u, "");
-    if (text !== "")
-      trimmed.push(text === child.text ? child : child.type.schema.text(text, child.marks));
-  });
-  return Fragment.fromArray(trimmed);
 }
 
 function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
@@ -614,13 +595,7 @@ function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode
     "referenceHref",
     "referenceTitle",
   ]);
-  const canonical = (original: ProseMirrorNode): unknown => {
-    // A table cell keeps its edge spaces in the file (`&#32;`), so only its styles are unified.
-    const node = ["paragraph", "heading"].includes(original.type.name)
-      ? original.copy(fileInlineContent(original))
-      : ["table_cell", "table_header"].includes(original.type.name)
-        ? original.copy(unstyleBoundaryWhitespace(original))
-        : original;
+  const canonical = (node: ProseMirrorNode, trimEnd = false, trimStart = false): unknown => {
     const attrs = Object.fromEntries(
       Object.entries(node.attrs).filter(
         ([name]) =>
@@ -629,17 +604,29 @@ function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode
       ),
     );
     if (node.type.name === "image") attrs.alt = attrs.alt ?? "";
+    const children = Array.from({ length: node.childCount }, (_, i) =>
+      canonical(
+        node.child(i),
+        ["paragraph", "heading"].includes(node.type.name) && i === node.childCount - 1,
+        ["paragraph", "heading"].includes(node.type.name) && i === 0,
+      ),
+    );
     return {
       type: node.type.name,
       attrs,
-      text: node.text,
+      text: node.isText
+        ? (trimStart ? node.text?.replace(/^ +/u, "") : node.text)?.replace(
+            trimEnd ? / +$/u : /$^/u,
+            "",
+          )
+        : node.text,
       marks: node.marks.map((mark) => ({
         type: mark.type.name,
         attrs: Object.fromEntries(
           Object.entries(mark.attrs).filter(([name]) => !metadata.has(name)),
         ),
       })),
-      content: Array.from({ length: node.childCount }, (_, i) => canonical(node.child(i))),
+      content: children,
     };
   };
   return JSON.stringify(canonical(before)) === JSON.stringify(canonical(after));

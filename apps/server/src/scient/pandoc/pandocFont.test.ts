@@ -88,6 +88,14 @@ describe("latexBaseFontOf", () => {
     ).toEqual({ sizePoints: 12, family: "Courier New" });
   });
 
+  it("reads spaced class options and ignores commands inside an unused macro", () => {
+    expect(
+      latexBaseFontOf(String.raw`\documentclass [a4paper, 12pt] {article}
+\setmainfont{Georgia}
+\newcommand{\unused}{\setmainfont{Calibri}\renewcommand{\familydefault}{\ttdefault}}
+\begin {document}\setmainfont{Arial}`),
+    ).toEqual({ sizePoints: 12, family: "Georgia" });
+  });
   it("uses LaTeX's 10 pt and Word's default font when nothing is set", () => {
     expect(latexBaseFontOf("\\documentclass{article}")).toEqual({
       sizePoints: 10,
@@ -195,7 +203,7 @@ describe("LaTeX font sizes", () => {
     expect(
       latexBaseFontOf(preamble("\\renewcommand{\\familydefault}{qtm}", "\\setmainfont{Calibri}"))
         .family,
-    ).toBe("Calibri");
+    ).toBe("Times New Roman");
     expect(
       latexBaseFontOf(
         preamble("\\setmainfont{Georgia}", "\\renewcommand{\\familydefault}{\\rmdefault}"),

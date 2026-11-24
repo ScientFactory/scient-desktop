@@ -61,6 +61,7 @@
     "@scientfactory/provider-runtime": "workspace:*",
     "@scientfactory/scient-citations": "workspace:*",
     "@scientfactory/scient-cloud": "workspace:*",
+    "@scientfactory/scient-document": "workspace:*",
     "@scientfactory/scient-markdown": "workspace:*",
     "@scientfactory/scient-skills": "workspace:*",
     "@scientfactory/scient-sources": "workspace:*",

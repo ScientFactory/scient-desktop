@@ -84,45 +84,51 @@ function withoutNeutralMarks(marks: readonly Mark[]): readonly Mark[] {
 /**
  * Whitespace where the styles change loses the `WHITESPACE_NEUTRAL_MARKS` (links and code keep
  * it), as the file cannot hold them there; shared by the writer and the round-trip guard.
- * Passes repeat until a whole run of spaces and line breaks is unstyled; marks only go, so it ends.
+ * Find the first and last non-whitespace content of each equal-mark run in one pass.
  */
 export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
-  let content = block.content;
-  for (;;) {
-    const next = unstyleWhitespaceNextToChange(content);
-    if (next.eq(content)) return next;
-    content = next;
+  const result: ProseMirrorNode[] = [];
+  const children = Array.from({ length: block.childCount }, (_, i) => block.child(i));
+  for (let start = 0; start < children.length;) {
+    const marks = children[start]!.marks;
+    let end = start;
+    let offset = 0;
+    let first = Infinity;
+    let last = 0;
+    while (end < children.length && Mark.sameSet(marks, children[end]!.marks)) {
+      const node = children[end++]!;
+      if (node.isText) {
+        const text = node.text!;
+        const lead = text.search(/\S/u);
+        if (lead >= 0) {
+          first = Math.min(first, offset + lead);
+          last = offset + text.trimEnd().length;
+        }
+      } else if (node.type.name !== "hard_break") {
+        first = Math.min(first, offset);
+        last = offset + node.nodeSize;
+      }
+      offset += node.nodeSize;
+    }
+    const edge = withoutNeutralMarks(marks);
+    offset = 0;
+    for (let i = start; i < end; i++) {
+      const node = children[i]!;
+      const size = node.nodeSize;
+      const left = Math.max(0, Math.min(size, first - offset));
+      const right = Math.max(left, Math.min(size, last - offset));
+      if (edge.length === marks.length || (left === 0 && right === size)) result.push(node);
+      else if (right === left) result.push(node.mark(edge));
+      else {
+        if (left) result.push(node.cut(0, left).mark(edge));
+        result.push(node.cut(left, right));
+        if (right < size) result.push(node.cut(right).mark(edge));
+      }
+      offset += size;
+    }
+    start = end;
   }
-}
-
-function unstyleWhitespaceNextToChange(content: Fragment): Fragment {
-  const children: ProseMirrorNode[] = [];
-  content.forEach((child) => children.push(child));
-  const unstyled: ProseMirrorNode[] = [];
-  children.forEach((child, index) => {
-    const sameBefore = Mark.sameSet(child.marks, children[index - 1]?.marks ?? Mark.none);
-    const sameAfter = Mark.sameSet(child.marks, children[index + 1]?.marks ?? Mark.none);
-    if (child.type.name === "hard_break") {
-      unstyled.push(sameBefore && sameAfter ? child : child.mark(withoutNeutralMarks(child.marks)));
-      return;
-    }
-    if (!child.isText || (sameBefore && sameAfter)) {
-      unstyled.push(child);
-      return;
-    }
-    const text = child.text ?? "";
-    const lead = sameBefore ? 0 : (/^\s*/u.exec(text)?.[0].length ?? 0);
-    const tail = sameAfter ? 0 : (/\s*$/u.exec(text.slice(lead))?.[0].length ?? 0);
-    const edgeMarks = withoutNeutralMarks(child.marks);
-    for (const [from, to, marks] of [
-      [0, lead, edgeMarks],
-      [lead, text.length - tail, child.marks],
-      [text.length - tail, text.length, edgeMarks],
-    ] as const) {
-      if (from < to) unstyled.push(child.cut(from, to).mark(marks));
-    }
-  });
-  return Fragment.fromArray(unstyled);
+  return Fragment.fromArray(result);
 }
 
 /** The same document with `unstyleBoundaryWhitespace` applied to every paragraph and heading. */
@@ -702,10 +708,11 @@ gfmTokenizer.inline.ruler.before("html_inline", "scient_font_span", (state, sile
   const contentEnd = fontSpanEnd(state.src, contentStart, state.posMax);
   if (contentEnd < 0) return false;
   // Code spans, comments and escapes hide tags from a raw scan: such text stays source.
-  if (/`|<!--|\\</u.test(state.src.slice(contentStart, contentEnd + 1))) return false;
   if (
+    /\x60|<!--|\\</u.test(state.src.slice(contentStart, contentEnd + 1)) ||
     hasNestedSpanOfKind(state.src, contentStart, contentEnd, "size" in span ? "size" : "family")
   ) {
+    if (!silent && state.env) state.env.unsupportedFontSpan = true;
     return false;
   }
   if (!silent) {
@@ -1074,6 +1081,26 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       const label = retainedReferenceLabel(node.attrs, "src");
       if (label === null) defaultMarkdownSerializer.nodes.image?.(state, node, parent, index);
       else state.write(`![${state.esc(node.attrs.alt || "")}][${label}]`);
+    },
+    text: (state, node, parent, index) => {
+      const text = node.text!;
+      // Preserve a separate whitespace run at a mark boundary, and indentation after a break.
+      const isolated = parent.childCount > 1 && /^[ \t]+$/u.test(text);
+      const lead =
+        (index === 0 && isolated) ||
+        (index > 0 && parent.child(index - 1).type.name === "hard_break")
+          ? (/^[ \t]+/u.exec(text)?.[0] ?? "")
+          : "";
+      const rest = text.slice(lead.length);
+      const tail = isolated && index === parent.childCount - 1 ? rest : "";
+      if (!lead && !tail) {
+        defaultMarkdownSerializer.nodes.text!(state, node, parent, index);
+        return;
+      }
+      const entities = (spaces: string) => spaces.replaceAll(" ", "&#32;").replaceAll("\t", "&#9;");
+      if (lead) state.write(entities(lead));
+      if (rest.length > tail.length) state.text(rest.slice(0, rest.length - tail.length));
+      if (tail) state.write(entities(tail));
     },
     paragraph: (state, node, parent, index) => {
       blockWithDirection(state, node, () => {

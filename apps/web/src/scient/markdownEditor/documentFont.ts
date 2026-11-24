@@ -1,3 +1,4 @@
+import { isMap, isScalar, parseDocument } from "yaml";
 import {
   DOCUMENT_FONT_SIZES,
   catalogueFont,
@@ -24,55 +25,64 @@ const YAML_FRONT_MATTER = /^(---[ \t]*)(\r?\n)([\s\S]*?)(?:\r?\n)?(---[ \t]*)(\s
 const SIZE_KEY = "fontsize";
 const FAMILY_KEY = "mainfont";
 
-interface KeyLine {
-  readonly index: number;
-  /** The value without quotes and trailing comment; null when it spans several lines. */
-  readonly value: string | null;
-  readonly comment: string;
-}
-
-function findKey(lines: readonly string[], key: string): KeyLine | null {
-  const index = lines.findIndex((line) => new RegExp(`^${key}[ \\t]*:`, "u").test(line));
-  if (index < 0) return null;
-  const line = lines[index]!;
-  const rest = line.slice(line.indexOf(":") + 1);
-  const comment = /\s+#.*$/u.exec(rest)?.[0] ?? "";
-  const text = rest.slice(0, rest.length - comment.length).trim();
-  const continues = /^\s+\S/u.test(lines[index + 1] ?? "") || /^[|>]/u.test(text) || text === "";
-  return {
-    index,
-    value: continues ? null : text.replace(/^(["'])(.*)\1$/u, "$2"),
-    comment,
-  };
-}
-
-function bodyLines(frontMatter: string): string[] | null {
-  const body = YAML_FRONT_MATTER.exec(frontMatter)?.[3];
-  return body === undefined ? null : body.split(/\r?\n/u);
+/** Keep source ranges so changing a setting preserves the rest of the YAML verbatim. */
+function fontMapping(frontMatter: string) {
+  const match = YAML_FRONT_MATTER.exec(frontMatter);
+  if (!match) return null;
+  const body = match[3] ?? "";
+  const doc = parseDocument(body);
+  if (
+    doc.errors.length ||
+    doc.warnings.length ||
+    (doc.contents && (!isMap(doc.contents) || doc.contents.flow))
+  )
+    return null;
+  const fields = new Map<
+    string,
+    { start: number; end: number; value: string; lineStart: number }
+  >();
+  let indent = "";
+  if (isMap(doc.contents)) {
+    for (const pair of doc.contents.items) {
+      if (!isScalar(pair.key) || !pair.key.range || typeof pair.key.value !== "string") return null;
+      const start = pair.key.range[0];
+      const lineStart = body.lastIndexOf("\n", start - 1) + 1;
+      indent = body.slice(lineStart, start);
+      if (!/^ *$/u.test(indent)) return null;
+      if (pair.key.value !== SIZE_KEY && pair.key.value !== FAMILY_KEY) continue;
+      const value = pair.value;
+      if (
+        !isScalar(value) ||
+        !value.range ||
+        value.anchor ||
+        value.tag ||
+        /[\r\n]/u.test(body.slice(start, value.range[1])) ||
+        ["BLOCK_FOLDED", "BLOCK_LITERAL"].includes(value.type ?? "")
+      )
+        return null;
+      fields.set(pair.key.value, {
+        start: value.range[0],
+        end: value.range[1],
+        value: String(value.value),
+        lineStart,
+      });
+    }
+  }
+  return { fields, indent, body, match };
 }
 
 export function readMarkdownDocumentFont(frontMatter: string | null): MarkdownDocumentFont {
-  const lines = frontMatter === null ? [] : (bodyLines(frontMatter) ?? []);
-  const size = findKey(lines, SIZE_KEY)?.value ?? null;
-  const family = findKey(lines, FAMILY_KEY)?.value ?? null;
+  const fields = frontMatter && fontMapping(frontMatter)?.fields;
+  const size = fields ? fields.get(SIZE_KEY)?.value : null;
+  const family = fields ? fields.get(FAMILY_KEY)?.value : null;
   return {
     fontSize: DOCUMENT_FONT_SIZES.find((candidate) => candidate === size) ?? null,
-    fontFamily: family !== null && catalogueFont(family) !== null ? family : null,
+    fontFamily: family && catalogueFont(family) ? family : null,
   };
 }
 
-/**
- * Whether the settings can be written: no front matter yet, or a YAML block whose
- * font keys are single-line values. Otherwise the card stays off and the file is left alone.
- */
 export function canWriteMarkdownDocumentFont(frontMatter: string | null): boolean {
-  if (frontMatter === null) return true;
-  const lines = bodyLines(frontMatter);
-  if (lines === null) return false;
-  return [SIZE_KEY, FAMILY_KEY].every((key) => {
-    const found = findKey(lines, key);
-    return found === null || found.value !== null;
-  });
+  return frontMatter === null || fontMapping(frontMatter) !== null;
 }
 
 /**
@@ -90,28 +100,44 @@ export function writeMarkdownDocumentFont(
     ];
     return wanted.length ? `---\n${wanted.join("\n")}\n---` : null;
   }
-  const match = YAML_FRONT_MATTER.exec(frontMatter);
-  if (!match || !canWriteMarkdownDocumentFont(frontMatter)) return undefined;
-  const [, open, eol, , close, after = ""] = match;
-  const newline = eol ?? "\n";
-  const lines = [...(bodyLines(frontMatter) ?? [])];
+  const parsed = fontMapping(frontMatter);
+  if (!parsed) return undefined;
+  const { match, fields, indent } = parsed;
+  const open = match[1]!;
+  const eol = match[2]!;
+  const after = match[5];
+  let body = parsed.body;
   const current = readMarkdownDocumentFont(frontMatter);
-  const edits: ReadonlyArray<readonly [string, string | null, string | null]> = [
+  const changes: Array<{ from: number; to: number; text: string }> = [];
+  const additions: string[] = [];
+  for (const [key, before, wanted] of [
     [SIZE_KEY, current.fontSize, font.fontSize],
     [FAMILY_KEY, current.fontFamily, font.fontFamily],
-  ];
-  for (const [key, before, wanted] of edits) {
-    if (before === wanted) continue;
-    const found = findKey(lines, key);
-    if (wanted === null) {
-      if (found) lines.splice(found.index, 1);
-    } else if (found) {
-      lines[found.index] = `${key}: ${wanted}${found.comment}`;
+  ] as const) {
+    if (wanted === before) continue;
+    const field = fields.get(key);
+    if (!field) {
+      if (wanted) additions.push(indent + key + ": " + wanted);
+    } else if (wanted) {
+      changes.push({ from: field.start, to: field.end, text: wanted });
     } else {
-      // A new key goes after the last other key; blank lines inside the block are kept.
-      lines.splice(lines.findLastIndex((line) => line !== "") + 1, 0, `${key}: ${wanted}`);
+      const end = body.indexOf("\n", field.end);
+      const tail = body.slice(field.end, end < 0 ? body.length : end).trim();
+      changes.push({
+        from: field.lineStart,
+        to: end < 0 ? body.length : end + 1,
+        text: tail ? indent + tail + (end < 0 ? "" : eol) : "",
+      });
     }
   }
-  if (lines.every((line) => line === "")) return null;
-  return `${open}${newline}${lines.join(newline)}${newline}${close}${after}`;
+  for (const change of changes.sort((a, b) => b.from - a.from))
+    body = body.slice(0, change.from) + change.text + body.slice(change.to);
+  if (additions.length) {
+    const trailing = /(?:\r?\n)*$/u.exec(body)![0];
+    const at = body.length - trailing.length;
+    body = body.slice(0, at) + (at ? eol : "") + additions.join(eol) + trailing;
+  }
+  if (!body.trim()) return null;
+  const updated = open + eol + body + eol + match[4] + (after ?? "");
+  return fontMapping(updated) ? updated : undefined;
 }

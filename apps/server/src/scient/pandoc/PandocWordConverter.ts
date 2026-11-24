@@ -305,7 +305,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const scratch = yield* makePandocScratch(tool.scratchRoot);
         const scrub = (text: string) => text.split(scratch.root).join("").slice(0, 400);
-        const run = (
+        const runRaw = (
           args: ReadonlyArray<string>,
           stdin: Uint8Array,
           limits: PandocLimits,
@@ -324,17 +324,27 @@ const make = Effect.gen(function* () {
             Effect.tapError((error) =>
               error.reason === "spawn-failed" ? tool.discardUnstartable(pandoc) : Effect.void,
             ),
-            Effect.mapError((error) => runFailure(error, kind)),
           );
+        const run = (...args: Parameters<typeof runRaw>) =>
+          runRaw(...args).pipe(Effect.mapError((error) => runFailure(error, kind)));
 
         // 1. Read. Tabs stay as written, as Scient's Markdown parser reads them
         // (and so Mermaid fences keep the identity their captured image has).
-        const read = yield* run(
-          input.latex
-            ? ["--sandbox", "-f", "latex", "-t", "json"]
-            : ["--sandbox", "--preserve-tabs", "-f", SCIENT_PANDOC_READER, "-t", "json"],
-          new TextEncoder().encode(input.latex ? rewriteLatexSizeGroups(source) : source),
-          readLimits,
+        const readSource = (text: string) =>
+          runRaw(
+            input.latex
+              ? ["--sandbox", "-f", "latex", "-t", "json"]
+              : ["--sandbox", "--preserve-tabs", "-f", SCIENT_PANDOC_READER, "-t", "json"],
+            new TextEncoder().encode(text),
+            readLimits,
+          );
+        const prepared = input.latex ? rewriteLatexSizeGroups(source) : source;
+        const read = yield* readSource(prepared).pipe(
+          Effect.catchIf(
+            (error) => prepared !== source && error.reason === "parse-error",
+            () => readSource(source),
+          ),
+          Effect.mapError((error) => runFailure(error, kind)),
         );
         const decoded = yield* decodePandocDocument(new TextDecoder().decode(read.stdout)).pipe(
           Effect.mapError(
@@ -383,7 +393,11 @@ const make = Effect.gen(function* () {
         const citations = applyCitations(document.blocks, bibliography);
         // Read before the security pass, which clears the document's metadata.
         const baseFont = input.latex ? latexBaseFontOf(source) : wordBaseFontOf(document.meta);
-        const fontPass = { base: baseFont, used: new Map<string, WordLocalFont>() };
+        const fontPass = {
+          readLatexCarriers: prepared !== source,
+          base: baseFont,
+          used: new Map<string, WordLocalFont>(),
+        };
         if (input.latex) applyLatexFontSpans(document.blocks, fontPass);
         else applyFontSpans(document.blocks, fontPass);
         const security = yield* securePandocDocument(document, {

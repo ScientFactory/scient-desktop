@@ -160,7 +160,7 @@ describe("document settings named fonts", () => {
 
   it("writes a pdfLaTeX family code for a font with a look-alike, and reads it back", () => {
     const next = updateLatexDocumentSettingsSource(document(), { fontFamily: "Times New Roman" })!;
-    expect(next).toContain("\\renewcommand{\\familydefault}{qtm}");
+    expect(next).toContain("\\renewcommand{\\familydefault}{ptm}");
     expect(documentLayoutSettings(next).fontFamily).toBe("Times New Roman");
     expect(documentBody(next)).toBe(documentBody(document()));
   });
@@ -178,6 +178,18 @@ describe("document settings named fonts", () => {
     expect(next).not.toContain("familydefault");
     expect(documentLayoutSettings(next).fontFamily).toBe("Garamond");
     expect(documentBody(next)).toBe(documentBody(document()));
+  });
+
+  it("preserves an optioned main font and custom family across picker changes", () => {
+    const source = xelatex("\\usepackage{fontspec}\n\\setmainfont[Ligatures=TeX]{Georgia}\n");
+    expect(documentLayoutSettings(source).fontFamily).toBe("Georgia");
+    const next = updateLatexDocumentSettingsSource(source, { fontFamily: "Garamond" })!;
+    expect(next).toContain("\\IfFontExistsTF{Garamond}{\\setmainfont[Ligatures=TeX]{Garamond}}{}");
+    expect(documentLayoutSettings(next).fontFamily).toBe("Garamond");
+    const reset = updateLatexDocumentSettingsSource(next, { fontFamily: "default" })!;
+    expect(reset).toContain("\\setmainfont[Ligatures=TeX]{Georgia}");
+    const custom = document("\\renewcommand{\\familydefault}{mycustom}\n");
+    expect(updateLatexDocumentSettingsSource(custom, { fontFamily: "default" })).toBe(custom);
   });
 
   it("applies a font together with the engine change in one update", () => {

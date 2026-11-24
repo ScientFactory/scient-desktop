@@ -10,7 +10,6 @@ import {
   steppedRuns,
   wordAround,
 } from "../writing/fontTarget";
-import { declaredLatexCompiler } from "./latexCompiler";
 import { latexFontFamilyDeclaration, type LatexFontEngine } from "./latexTextFormatting";
 
 const NAMED_SIZES = [
@@ -191,14 +190,7 @@ export function stepLatexFontSize(
  * The form named fonts are written in: guarded `\fontspec` names when the document is compiled
  * with XeLaTeX, LuaLaTeX or Tectonic or loads `fontspec`, font family codes otherwise (pdfLaTeX).
  */
-export function latexFontEngine(setupSource: string): LatexFontEngine {
-  const declared = declaredLatexCompiler(setupSource);
-  if (declared === "xelatex" || declared === "lualatex" || declared === "tectonic")
-    return "fontspec";
-  return /^[^%\n]*\\usepackage(?:\[[^\]]*\])?\{[^}]*\bfontspec\b[^}]*\}/mu.test(setupSource)
-    ? "fontspec"
-    : "pdftex";
-}
+export { latexFontEngine } from "./latexTextFormatting";
 
 /** Whether the document's engine can write this font by name. */
 export function latexFontAvailable(engine: LatexFontEngine, family: string): boolean {

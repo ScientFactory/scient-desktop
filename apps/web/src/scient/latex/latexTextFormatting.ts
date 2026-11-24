@@ -1,5 +1,7 @@
+import { latexPackageInventory } from "./latexPackages";
+import { declaredLatexCompiler } from "./latexCompiler";
 import {
-  FONT_CATALOGUE,
+  fontForLatexCode,
   catalogueFont,
   normalizeFontSize,
 } from "@scientfactory/scient-markdown/fonts";
@@ -103,14 +105,23 @@ const FONT_FAMILY_CODE_DECLARATION =
 const FONT_FAMILY_NAME_DECLARATION =
   /^\\IfFontExistsTF\{([^{}]+)\}\{\\fontspec\{\1\}\}\{\\fontspec\{([^{}]+)\}\}(?:\{\}|[\t\r\n ]*)/u;
 
-/** The fonts used when a named font is missing under XeLaTeX or LuaLaTeX: Latin Modern, always installed. */
+/** The fonts used when a named font is missing under XeLaTeX or LuaLaTeX: Latin Modern files in the managed TeX distribution. */
 const FALLBACK_FONT: Readonly<Record<string, string>> = {
-  serif: "Latin Modern Roman",
-  "sans-serif": "Latin Modern Sans",
-  monospace: "Latin Modern Mono",
+  serif: "lmroman10-regular.otf",
+  "sans-serif": "lmsans10-regular.otf",
+  monospace: "lmmono10-regular.otf",
 };
 
-/** The declaration that selects a catalogue font, or null when the form does not offer it. */
+/** An explicit engine takes precedence over active preamble package declarations. */
+export function latexFontEngine(setupSource: string): LatexFontEngine {
+  const declared = declaredLatexCompiler(setupSource);
+  if (declared === "xelatex" || declared === "lualatex" || declared === "tectonic")
+    return "fontspec";
+  return declared !== "pdflatex" && latexPackageInventory(setupSource).loaded.has("fontspec")
+    ? "fontspec"
+    : "pdftex";
+}
+
 export function latexFontFamilyDeclaration(engine: LatexFontEngine, family: string): string | null {
   const font = catalogueFont(family);
   if (!font) return null;
@@ -132,12 +143,14 @@ export function latexTextDeclarationAt(source: string): { mark: string; length: 
   }
   const code = FONT_FAMILY_CODE_DECLARATION.exec(source);
   if (code) {
-    const font = FONT_CATALOGUE.find((entry) => entry.latex.pdftex === code[1]);
-    return font ? { mark: latexFontFamilyMark("pdftex", font.name), length: code[0].length } : null;
+    const font = fontForLatexCode(code[1]);
+    return font && font.latex.pdftex === code[1]
+      ? { mark: latexFontFamilyMark("pdftex", font.name), length: code[0].length }
+      : null;
   }
   const named = FONT_FAMILY_NAME_DECLARATION.exec(source);
   if (named) {
-    const font = FONT_CATALOGUE.find((entry) => entry.latex.fontspec === named[1]);
+    const font = catalogueFont(named[1]!);
     const written = font && latexFontFamilyDeclaration("fontspec", font.name);
     return font && named[0].startsWith(written ?? "\0")
       ? { mark: latexFontFamilyMark("fontspec", font.name), length: named[0].length }

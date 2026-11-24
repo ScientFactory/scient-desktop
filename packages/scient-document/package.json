@@ -11,6 +11,10 @@
     "./testing": {
       "types": "./src/testing/index.ts",
       "import": "./src/testing/index.ts"
+    },
+    "./latex": {
+      "types": "./src/latex.ts",
+      "import": "./src/latex.ts"
     }
   },
   "scripts": {

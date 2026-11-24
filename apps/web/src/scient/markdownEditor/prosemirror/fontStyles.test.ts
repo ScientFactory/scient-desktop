@@ -68,7 +68,7 @@ describe("Markdown font size and family", () => {
       'a <span style="font-size:12pt">x <span style="font-size:20pt">y</span> z</span>\n';
     const session = open(source);
     // The outer span stays source, so " z" keeps its meaning and the bytes are unchanged.
-    expect(markedText(session, "font_size")).toEqual(["y"]);
+    expect(session.state.doc.firstChild!.type.name).toBe("raw_block");
     expect(session.session.draftSource).toBe(source);
   });
 
@@ -82,6 +82,17 @@ describe("Markdown font size and family", () => {
     },
   );
 
+  it("retains a list with same-kind nested spans as editable source", () => {
+    const item = '- <span style="font-size:12pt">x <span style="font-size:20pt">y</span> z</span>';
+    const session = open(item + "\n\nNext\n");
+    expect(session.state.doc.firstChild!.type.name).toBe("raw_block");
+    session.applyTransaction(
+      session.state.tr.insertText("!", session.state.doc.content.size - 1),
+      "user",
+    );
+    expect(session.session.draftSource).toBe(item + "\n\nNext!\n");
+  });
+
   it("lets a size span sit inside a font span", () => {
     const session = open(
       `<span style="font-family:'Arial'">a <span style="font-size:20pt">b</span> c</span>\n`,
@@ -91,12 +102,12 @@ describe("Markdown font size and family", () => {
   });
 
   it("writes new front matter at the first byte, even before leading blank lines", () => {
-    const session = open("\n\nHello\n");
+    const session = open("\uFEFF\n\nHello\n");
     runScientMarkdownDocumentFont({ fontFamily: "Arial", fontSize: "12pt" }, session.state, (tr) =>
       session.applyTransaction(tr, "user"),
     );
     expect(session.session.draftSource).toBe(
-      "---\nfontsize: 12pt\nmainfont: Arial\n---\n\nHello\n",
+      "\uFEFF---\nfontsize: 12pt\nmainfont: Arial\n---\n\n\nHello\n",
     );
   });
 
@@ -249,8 +260,8 @@ describe("Whitespace is not styled content", () => {
     type(session, 7, " ");
     expect(session.pendingWriteback).toBeNull();
     expect(session.session.draftSource).toBe('un <span style="font-size:14pt">bien</span>  mot\n');
-    // The editor still shows the typed space with the size, so typing on continues in it.
-    expect(markedText(session, "font_size")).toEqual(["bien "]);
+    expect(markedText(session, "font_size")).toEqual(["bien"]);
+    expect(markedText(open(session.session.draftSource), "font_size")).toEqual(["bien"]);
   });
 
   it("accepts a space typed after a bold word", () => {
@@ -353,8 +364,8 @@ describe("Whitespace is not styled content", () => {
     select(session, 0, 8);
     run(session, "font-size-14");
     expect(session.pendingWriteback).toBeNull();
-    // The spaces beside the code keep the size on screen; the file writes them outside the tag.
-    expect(markedText(session, "font_size")).toEqual(["aa ", " cc"]);
+    expect(markedText(session, "font_size")).toEqual(["aa", "cc"]);
+    expect(markedText(open(session.session.draftSource), "font_size")).toEqual(["aa", "cc"]);
     expect(session.session.draftSource).toContain("`bb`");
     expect(session.session.draftSource).not.toMatch(/<span[^>]*>`/u);
   });
@@ -476,7 +487,10 @@ describe("Whitespace rule: other marks and characters", () => {
     const session = open("aa bb  \ncc dd ee\n");
     session.applyTransaction(session.state.tr.delete(1 + 6, 1 + 8), "user");
     expect(session.pendingWriteback).toBeNull();
-    expect(session.session.draftSource).toBe("aa bb\\\n dd ee\n");
+    expect(session.session.draftSource).toBe("aa bb\\\n&#32;dd ee\n");
+    expect(open(session.session.draftSource).state.doc.textContent).toBe(
+      session.state.doc.textContent,
+    );
   });
 
   it("sizes a word with an apostrophe between letters as a whole, but not a lone apostrophe", () => {

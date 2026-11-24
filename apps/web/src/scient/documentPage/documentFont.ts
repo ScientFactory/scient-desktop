@@ -63,7 +63,7 @@ export function rehypeApplyFontSpans() {
 
 /** The leading `---` block of the document, if it starts with one. */
 export function documentFontOfMarkdown(markdown: string) {
-  const front = LEADING_FRONT_MATTER.exec(markdown);
+  const front = LEADING_FRONT_MATTER.exec(markdown.replace(/^\uFEFF/u, ""));
   return readMarkdownDocumentFont(front?.[0] ?? null);
 }
 

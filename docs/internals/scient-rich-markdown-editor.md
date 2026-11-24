@@ -33,20 +33,16 @@ mode names are not a second public four-mode switch.
 Rich prose, headings, lists/tasks, GFM tables, links/wiki links, images, footnotes,
 citation syntax, math, code, scientific fences, and exact-source islands exist.
 Citation keys are not a claim of bibliography resolution or LaTeX citation parity.
-Inline color/highlight controls are not part of this surface's current formatting
-catalog. Local font size and family are: `<span style="font-size:12pt">` and
-`<span style="font-family:'Name'">` are the only span forms read (the tokenizer
-rule `scient_font_span`; names come from the shared catalogue in
-`packages/scient-markdown/src/fontCatalogue.ts`; a span nested in a span of the
-same kind is left as source), and the document font lives in the `fontsize` and
-`mainfont` front matter keys. `font_size` and `font_family` come first in mark rank, so
-the writer puts their spans outside every other mark. The caret word, the value shown for a
-selection and the size step are shared with LaTeX Visual (`writing/fontTarget.ts`). Whitespace is not styled content: where the set of marks
-changes, a space or line break loses `em`, `strong`, `strike`, `font_size` and `font_family`
-(`unstyleBoundaryWhitespace` in `schema.ts`), in the writer and in the round-trip guard
-(`hasSameWritebackContent`), so the guard does not refuse edits the file cannot hold; links and
-code keep their spaces. Font commands skip inline code, and the size or font shown for a
-selection ignores whitespace-only text (`selectionMarkValue.ts`). Shared menus, math commands, renderers and footer components
+The editor reads local font sizes and families from `<span style="font-size:12pt">` and
+`<span style="font-family:'Name'">`. Names come from the shared font catalogue.
+A block containing nested spans of the same kind remains editable as source.
+Whole-document font choices use the `fontsize` and `mainfont` keys in YAML front matter.
+The writer places font spans inside links and outside emphasis and strikethrough.
+Both editors share caret-word targeting, selection values and size steps in `writing/fontTarget.ts`.
+At a change of style, the live Markdown document and writer apply the same whitespace rule
+in `unstyleBoundaryWhitespace`. Links and code retain their whitespace. The writeback
+guard checks the reopened text and marks. Font commands skip inline code and ignore
+whitespace-only text when reading a selection. Shared menus, math commands, renderers and footer components
 do not merge the Markdown and LaTeX grammars, document models, or undo histories.
 
 Source preservation is bounded. Unchanged ledger ranges are reused exactly;

@@ -819,6 +819,34 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     );
 
+    it.live(
+      "exports literal braces and math without changing user macros or emitting carriers",
+      () =>
+        Effect.gen(function* () {
+          const wrap = (body: string) =>
+            "\\documentclass{article}\n\\begin{document}\n" + body + "\n\\end{document}";
+          const { document } = yield* exportLatex(
+            "literal-braces",
+            wrap(
+              [
+                "{\\large a \\verb|}| b}.",
+                "\\begin {verbatim}\n{\\large literal}\n\\end{verbatim}",
+                "\\begin{equation}a {\\large b}\\end{equation}",
+                "{\\large styled}",
+              ].join("\n\n"),
+            ),
+          );
+          expect(document).toContain("literal");
+          expect(document).toContain("Scient12pt");
+          expect(document).not.toMatch(/scient-size-|\\ScientSize/u);
+          const own = yield* exportLatex(
+            "own-macro",
+            wrap("\\newcommand{\\ScientSize}{Original}\\ScientSize{} {\\large X}"),
+          );
+          expect(own.document).toContain("Original");
+        }),
+    );
+
     it.live("exports size groups next to commands and inside arguments", () =>
       Effect.gen(function* () {
         const { document } = yield* exportLatex(

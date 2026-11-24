@@ -496,6 +496,7 @@ export function scientReferenceDocumentParts(
   ];
 }
 
+// Reuse common combinations without retaining every document’s style set for the server lifetime.
 const cached = new Map<string, Promise<Uint8Array>>();
 
 function packReferenceDocument(
@@ -515,7 +516,7 @@ function packReferenceDocument(
   });
 }
 
-/** The packed reference document for a base font and the local fonts used; built once per combination. */
+/** The packed reference document for a base font and the local fonts used; recent combinations are reused. */
 export const scientReferenceDocumentFor = (
   base: WordBaseFont,
   used: ReadonlyArray<WordLocalFont> = [],
@@ -528,7 +529,12 @@ export const scientReferenceDocumentFor = (
     const existing = cached.get(key);
     if (existing !== undefined) return existing;
     const packed = packReferenceDocument(base, used);
+    const oldest = cached.keys().next();
+    if (cached.size >= 16 && !oldest.done) cached.delete(oldest.value);
     cached.set(key, packed);
+    void packed.catch(() => {
+      if (cached.get(key) === packed) cached.delete(key);
+    });
     return packed;
   });
 

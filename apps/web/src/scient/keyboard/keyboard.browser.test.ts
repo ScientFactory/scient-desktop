@@ -41,6 +41,24 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("portable keyboard preferences", () => {
+  it("dispatches persisted logical punctuation ahead of positional size defaults", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const sequence = new ShortcutSequence("latex", undefined, true);
+    const events = [
+      key(">", { code: "Period", metaKey: true, shiftKey: true }),
+      key(";", { code: "Semicolon", metaKey: true }),
+      key("+", { code: "Equal", metaKey: true, shiftKey: true }),
+    ];
+    expect(sequence.peek(events[0]!)).toEqual({ command: "latex.fontSizeLarger" });
+    saveKeyboardPreferences({
+      ...defaults,
+      overrides: { "latex.bold": ["meta+>", "meta+;", "meta+plus"] },
+    });
+    reloadKeyboardPreferences();
+    for (const event of events) expect(sequence.peek(event)).toEqual({ command: "latex.bold" });
+  });
   it("migrates legacy exact-key overrides and retains original persisted data", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

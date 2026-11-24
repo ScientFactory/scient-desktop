@@ -65,7 +65,9 @@ describe("export of local font styles", () => {
 
   it("reads the whole-document keys of a leading front matter only", () => {
     expect(
-      documentFontOfMarkdown("---\ntitle: T\nfontsize: 12pt\nmainfont: Courier New\n---\n\ntext"),
+      documentFontOfMarkdown(
+        "\uFEFF---\ntitle: T\nfontsize: 12pt\nmainfont: Courier New\n---\n\ntext",
+      ),
     ).toEqual({ fontFamily: "Courier New", fontSize: "12pt" });
     expect(documentFontOfMarkdown("text\n\n---\nfontsize: 12pt\n---\n")).toEqual({
       fontFamily: null,
