@@ -96,6 +96,10 @@ vi.mock("../../state/session", async (original) => {
 });
 vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
   const Effect = await import("effect/Effect");
+  const whisperLanguages =
+    "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu haw ha he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo yue zh".split(
+      " ",
+    );
   return {
     ...(await original<typeof import("@t3tools/client-runtime/voice-input")>()),
     getEnvironmentSpeechStatus: () =>
@@ -133,10 +137,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
             name: "Whisper Large v3",
             description: "Recording transcription",
             size: 1_668_741_440,
-            languages:
-              "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu haw ha he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo yue zh".split(
-                " ",
-              ),
+            languages: whisperLanguages,
             accuracy: 4,
             speed: 1,
             recommended: false,
@@ -144,6 +145,21 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
             active: false,
             supportsLanguageDetection: true,
             supportsTranslation: true,
+            supportsStreaming: false,
+          },
+          {
+            id: "handy-computer/whisper-large-v3-turbo-gguf",
+            name: "Whisper Large v3 Turbo",
+            description: "Multilingual recording transcription",
+            size: 886_381_760,
+            languages: whisperLanguages,
+            accuracy: 4,
+            speed: 2,
+            recommended: false,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: true,
+            supportsTranslation: false,
             supportsStreaming: false,
           },
           {
@@ -370,7 +386,7 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .element(screen.getByText("Recommended for mixed languages", { exact: true }))
       .toBeVisible();
     await expect
-      .element(screen.getByRole("button", { name: "Download Whisper Large v3" }))
+      .element(screen.getByRole("button", { name: "Download Whisper Large v3 Turbo" }))
       .toBeVisible();
     expect(screen.getByRole("button", { name: /^Open details for / }).all()).toHaveLength(4);
     await expect
@@ -397,8 +413,13 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
 
     if (theme === "light") {
       const canary = screen.getByRole("button", { name: "Download Canary 180M Flash" });
-      await expect.element(canary).not.toBeInTheDocument();
-      await screen.getByRole("button", { name: /Show 1 more model/ }).click();
+      const largeV3 = screen.getByRole("button", {
+        name: "Download Whisper Large v3",
+        exact: true,
+      });
+      await expect.element(largeV3).not.toBeInTheDocument();
+      await screen.getByRole("button", { name: /Show 2 more models/ }).click();
+      await expect.element(largeV3).toBeVisible();
       await expect.element(canary).toBeVisible();
       await screen.getByRole("button", { name: "Show fewer models" }).click();
       await expect.element(canary).not.toBeInTheDocument();

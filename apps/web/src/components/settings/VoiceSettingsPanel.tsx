@@ -877,6 +877,7 @@ function AdvancedSpeechSettings({
   );
 }
 
+const WHISPER_TURBO_MODEL_ID = "handy-computer/whisper-large-v3-turbo-gguf";
 const WHISPER_SMALL_MODEL_ID = "handy-computer/whisper-small-gguf";
 
 export function DictationEngineCatalog({
@@ -918,13 +919,16 @@ export function DictationEngineCatalog({
   const recordingModel =
     recordingChoices.find((model) => model.state === "installed") ?? recordingChoices[0];
   const recommendedModel = recommendation?.model;
+  const multilingualModel =
+    models.find((model) => model.id === WHISPER_TURBO_MODEL_ID) ??
+    models.find((model) => model.id === MULTILINGUAL_RECORDING_MODEL_ID);
   const ordered = [
     ...new Set(
       [
         recommendedModel,
-        recordingModel,
-        ...[MULTILINGUAL_RECORDING_MODEL_ID, HEBREW_RECORDING_MODEL_ID, WHISPER_SMALL_MODEL_ID].map(
-          (id) => models.find((model) => model.id === id),
+        multilingualModel ?? recordingModel,
+        ...[HEBREW_RECORDING_MODEL_ID, WHISPER_SMALL_MODEL_ID].map((id) =>
+          models.find((model) => model.id === id),
         ),
         ...models,
       ].filter((model) => model !== undefined),
@@ -938,7 +942,7 @@ export function DictationEngineCatalog({
   const catalogBadge = (model: EnvironmentSpeechModel) => {
     if (model.id === WHISPER_SMALL_MODEL_ID) return gt("Lightweight multilingual");
     if (model.id === HEBREW_RECORDING_MODEL_ID) return gt("Recommended for Hebrew");
-    if (model.id === MULTILINGUAL_RECORDING_MODEL_ID) return gt("Recommended for mixed languages");
+    if (model.id === multilingualModel?.id) return gt("Recommended for mixed languages");
     if (model.id === recommendedModel?.id && effectiveLanguage !== "he")
       return gt("Recommended for {language}", {
         language: languageLabel(effectiveLanguage, locale),
