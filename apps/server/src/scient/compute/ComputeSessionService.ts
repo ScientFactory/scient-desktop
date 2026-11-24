@@ -132,8 +132,8 @@ import {
 } from "./ComputeWorkspaceAdmission.ts";
 import { withComputeWorkspaceReservation } from "./ComputeWorkspaceLifetime.ts";
 import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
-import { privateKernelFolder } from "./KernelSpecs.ts";
-import { PYTHON_LIBRARIES_VARIABLE, type PythonLibraries } from "./PythonLibraries.ts";
+import { PYTHON_LIBRARIES_VARIABLE, privateKernelFolder } from "./KernelSpecs.ts";
+import type { PythonLibraries } from "./PythonLibraries.ts";
 import { chooseRuntime, orderByChoice, type RuntimeChoice } from "./RuntimeSelection.ts";
 import { discoveryContext, pathModule } from "./RuntimeDiscovery.ts";
 import { ToolDiscovery } from "./ToolDiscovery.ts";

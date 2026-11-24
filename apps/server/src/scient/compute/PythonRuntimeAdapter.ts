@@ -30,8 +30,11 @@ import {
   type DiscoveredRuntime,
   type DiscoveryContext,
 } from "./RuntimeDiscovery.ts";
-import { PRIVATE_KERNEL_STARTER, kernelPrograms } from "./KernelSpecs.ts";
-import { PYTHON_LIBRARIES_VARIABLE } from "./PythonLibraries.ts";
+import {
+  PRIVATE_KERNEL_STARTER,
+  PYTHON_LIBRARIES_VARIABLE,
+  kernelPrograms,
+} from "./KernelSpecs.ts";
 import { readPythonFacts } from "./RuntimeFacts.ts";
 import { makeRuntimeProbeCache, type RuntimeProbeCache } from "./RuntimeProbeCache.ts";
 

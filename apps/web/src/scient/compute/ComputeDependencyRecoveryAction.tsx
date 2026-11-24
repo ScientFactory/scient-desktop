@@ -1,7 +1,13 @@
 import { T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
 import { LoaderCircle, Play } from "lucide-react";
-import { ComputeSessionId, type ComputeSessionRecord } from "@t3tools/contracts";
+import {
+  ComputeExecutionId,
+  ComputeSessionId,
+  type ComputeExecutionRecord,
+  type ComputeSessionRecord,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
@@ -10,12 +16,39 @@ import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { managedDependencyRuntime } from "./computeDependencyRecovery";
+import { reportComputeFailure } from "./ComputeSessionControls";
 import { replaceComputeContextSession } from "./computeContextCoordinator";
 import {
   getComputeContext,
   useComputeContextStore,
   type ComputeContextId,
 } from "./computeContextStore";
+
+/** Submits a failed run's own code again in its session; the caller follows it like any run. */
+export function useComputeRunAgain(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly onSubmitted: (executionId: ComputeExecutionId) => void;
+}) {
+  const gt = useGT();
+  const submit = useAtomCommand(computeEnvironment.submitExecution, { reportFailure: false });
+  return async (session: ComputeSessionRecord, execution: ComputeExecutionRecord) => {
+    const executionId = ComputeExecutionId.make(randomUUID());
+    const result = await submit({
+      environmentId: input.environmentId,
+      input: {
+        cwd: input.cwd,
+        sessionId: session.sessionId,
+        executionId,
+        expectedGeneration: session.generation,
+        code: execution.request.code,
+        source: execution.request.source,
+      },
+    });
+    if (result._tag === "Failure") return reportComputeFailure(gt("Unable to run again"), result);
+    input.onSubmitted(executionId);
+  };
+}
 
 /** What an error row can do about a missing dependency, given by the surface that owns the run. */
 export interface ComputeDependencyRecoveryPlace {

@@ -1,4 +1,5 @@
 import type {
+  ComputeExecutionRecord,
   ComputeOutput,
   ComputeRuntimeInspection,
   ComputeSessionRecord,
@@ -204,5 +205,25 @@ export function managedDependencyRuntime(input: {
           (pkg) => pkg.name === distribution && Boolean(pkg.version),
         ),
     )?.profile ?? null
+  );
+}
+
+/** A later run of the same code in the same session succeeded, so this failure is dealt with. */
+export function fixedByLaterRun(
+  run: {
+    readonly session: Pick<ComputeSessionRecord, "sessionId">;
+    readonly execution: ComputeExecutionRecord;
+  },
+  runs: ReadonlyArray<{
+    readonly session: Pick<ComputeSessionRecord, "sessionId">;
+    readonly execution: ComputeExecutionRecord;
+  }>,
+): boolean {
+  return runs.some(
+    (other) =>
+      other.session.sessionId === run.session.sessionId &&
+      other.execution.request.code === run.execution.request.code &&
+      other.execution.request.submittedAt > run.execution.request.submittedAt &&
+      other.execution.result?.status === "succeeded",
   );
 }

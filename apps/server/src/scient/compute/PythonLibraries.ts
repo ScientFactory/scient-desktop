@@ -16,9 +16,6 @@ import {
   runOwnedProcess,
 } from "./ManagedPythonProvisioner.ts";
 
-/** Names the folder a Python kernel adds behind the person's own packages. */
-export const PYTHON_LIBRARIES_VARIABLE = "SCIENT_PYTHON_LIBRARIES";
-
 /** A package name as an index lists it: no versions, extras, URLs or options. */
 const DISTRIBUTION_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/u;
 
