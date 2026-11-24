@@ -31,6 +31,7 @@ export function computeQualificationSuites(paths) {
   ]);
   const exact = new Set([
     ".github/workflows/scient-compute-python-kernel.yml",
+    ".github/scripts/match-windows-llvm.sh",
     ".github/scripts/compute-ci-gate.mjs",
     ".github/scripts/compute-ci-gate.test.mjs",
     "apps/server/src/atomicWrite.ts",

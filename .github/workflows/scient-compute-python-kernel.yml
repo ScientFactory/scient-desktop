@@ -411,27 +411,9 @@ jobs:
           export SCIENT_TEST_BARE_PYTHON
           vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
 
-      # A Windows image can ship a Visual Studio C++ library newer than its LLVM supports
-      # (STL1000, "expected Clang 22 or newer"), and every clang++ build then fails. Update LLVM
-      # only when the image's clang++ cannot build against its own library.
       - name: Match LLVM to the Visual Studio C++ library
         if: ${{ runner.os == 'Windows' && (matrix.part == 'all' || matrix.part == 'files') }}
-        run: |
-          set -euo pipefail
-          probe="$RUNNER_TEMP/stl-probe"
-          mkdir -p "$probe"
-          printf '#include <concepts>\nint main() { return 0; }\n' > "$probe/a.cpp"
-          clang="/c/Program Files/LLVM/bin/clang++.exe"
-          "$clang" --version | head -n 1
-          if "$clang" -std=gnu++2b "$probe/a.cpp" -o "$probe/a.exe" 2> "$probe/err.txt"; then
-            echo "clang++ builds against this image's C++ library."
-            exit 0
-          fi
-          grep -q STL1000 "$probe/err.txt" || { cat "$probe/err.txt"; exit 1; }
-          echo "clang++ is older than this image's C++ library; updating LLVM."
-          choco upgrade llvm -y --no-progress > "$probe/choco.txt" || { tail -n 40 "$probe/choco.txt"; exit 1; }
-          "$clang" --version | head -n 1
-          "$clang" -std=gnu++2b "$probe/a.cpp" -o "$probe/a.exe"
+        run: bash .github/scripts/match-windows-llvm.sh
 
       - name: Run real files and scan this computer
         if: ${{ matrix.part == 'all' || matrix.part == 'files' }}
