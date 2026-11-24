@@ -212,7 +212,31 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
               Stream.fromPull(Effect.succeed(pull)).pipe(
                 Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
               ),
-            ).pipe(Stream.filter(predicate), Stream.runHead, Effect.timeout("10 seconds"));
+            ).pipe(
+              Stream.filter(predicate),
+              Stream.runHead,
+              Effect.timeout("10 seconds"),
+              Effect.tapError(() =>
+                orchestrator.getThreadProjection(threadId).pipe(
+                  Effect.tap((projection) =>
+                    Effect.logError("Pi probe timeout", {
+                      runs: projection.runs.map((run) => ({
+                        id: run.id,
+                        status: run.status,
+                        attempt: run.activeAttemptId,
+                      })),
+                      attempts: projection.attempts.map((attempt) => ({
+                        id: attempt.id,
+                        status: attempt.status,
+                      })),
+                      errors: projection.turnItems.filter((item) => item.type === "error"),
+                    }),
+                  ),
+                  Effect.timeout("3 seconds"),
+                  Effect.ignore,
+                ),
+              ),
+            );
             return yield* Option.match(found, {
               onNone: () => Effect.die("No decisive projection"),
               onSome: Effect.succeed,

@@ -1159,6 +1159,12 @@ export const layer: Layer.Layer<
                 }),
             effects: finalization.effects,
           });
+          if (input.run.id.includes("pi-observed-foreign"))
+            yield* Effect.logWarning("Pi probe: finalization write", {
+              runId: input.run.id,
+              terminal: input.terminal.status,
+              committed: result.committed,
+            });
           if (!result.committed) {
             // SCIENT-FORK:START — retire only an actual atomic owner rejection.
             yield* input.onRunOwnerLost ?? Effect.void;
@@ -2410,6 +2416,10 @@ export const layer: Layer.Layer<
                       )
                     : [];
                   let nextRetryWarningAt = completedAt;
+                  if (input.run.id.includes("pi-observed-foreign"))
+                    yield* Effect.logWarning("Pi probe: stream failure about to write", {
+                      runId: input.run.id,
+                    });
                   yield* writeOwnedFinalRunEvents({
                     run: input.run,
                     rootNode: input.rootNode,
@@ -2642,6 +2652,11 @@ export const layer: Layer.Layer<
                 cause,
               }).pipe(
                 Effect.andThen(interruptProviderEvents),
+                Effect.tap(() =>
+                  Effect.logWarning("Pi probe: failed start joined consumer", {
+                    runId: input.run.id,
+                  }),
+                ),
                 Effect.andThen(Ref.get(latestProviderThread)),
                 Effect.flatMap((providerThread) =>
                   Ref.get(latestTurnItemOrdinal).pipe(
