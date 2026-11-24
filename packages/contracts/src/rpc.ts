@@ -16,6 +16,7 @@ import {
   McpAppToolInfoInput,
   McpAppUpdateModelContextInput,
 } from "./mcpApps.ts";
+import { ThreadMcpStatusInput, ThreadMcpStatusSnapshot } from "./threadMcpStatus.ts";
 import {
   PeerLink,
   PeerLinkClientPairingInput,
@@ -828,6 +829,7 @@ export const WS_METHODS = {
   providerUploadFeedback: "provider.uploadFeedback",
   providerMcpSignInStart: "provider.mcpSignIn.start",
   providerMcpSignInComplete: "provider.mcpSignIn.complete",
+  threadMcpStatusSubscribe: "thread.mcpStatus.subscribe",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerAuthComplete: "provider.auth.complete",
@@ -2182,6 +2184,13 @@ const WsProviderMcpSignInCompleteRpc = Rpc.make(WS_METHODS.providerMcpSignInComp
   error: Schema.Union([ProviderMcpSignInError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadMcpStatusSubscribeRpc = Rpc.make(WS_METHODS.threadMcpStatusSubscribe, {
+  payload: ThreadMcpStatusInput,
+  success: ThreadMcpStatusSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsSubscribeVcsBranchRpc = Rpc.make(WS_METHODS.subscribeVcsBranch, {
   payload: VcsStatusInput,
   success: VcsBranchStatus,
@@ -2928,6 +2937,7 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsProviderUploadFeedbackRpc,
   WsProviderMcpSignInStartRpc,
   WsProviderMcpSignInCompleteRpc,
+  WsThreadMcpStatusSubscribeRpc,
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,

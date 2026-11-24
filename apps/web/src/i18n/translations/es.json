@@ -15253,6 +15253,11 @@
     },
     " para"
   ],
+  "343ed23b123919d6": "No se pudo iniciar sesión",
+  "1bfcefb0511c17c5": "Abre Ajustes → Extensiones para terminar de iniciar sesión en {name}",
+  "0595a3dddcfced3b": "Iniciar sesión en {name}",
+  "165b1e80e7911320": "Abriendo…",
+  "9f90d63bcad3e2a7": "Gestionar",
   "5c6b2c0220202c13": "Ver {first}, {second} y {count} más",
   "8e531b8a23c825ed": "Ver {first} y {second}",
   "cfdd30a105672dea": "Ver {name}",
@@ -15453,9 +15458,26 @@
   "b95005276b251a4f": "Conecta un entorno de ejecución para gestionar las extensiones.",
   "ecc76bbd8a7fa124": "Descubrir",
   "c136813370b18a00": "Explorar todos los servidores MCP",
+  "85f63fdc66c617bc": "La comprobación falló",
+  "32e4206b582653e6": "{name} está conectado",
+  "a553be36e93303cd": "Listo",
+  "1f8fa7d98ec3df40": "Credencial rechazada",
+  "efe132d82235637c": "Se necesitan permisos",
+  "b2d917bb4b78f1fe": "Servicios conectados: {connected} listos, {issues} requieren atención",
   "7f83064be7319b99": "Servicios conectados: {delivered} entregados, {skipped} omitidos",
+  "479ca9411badb6b5": "Servicios conectados: {count} activos",
   "c7370daf10755896": "Entregado",
+  "b10b1d18e63b6ca6": "Servidores MCP del agente",
   "0dfc582858939130": "Omitida",
+  "1adf711055ecf6ae": "Envía un mensaje para reactivar esta sesión y luego inicia sesión aquí.",
+  "0cd6a948710dc4f9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " requieren atención"
+  ],
   "166fd2daa35c3b7b": [
     "· ",
     {
@@ -15466,8 +15488,19 @@
     " omitidos"
   ],
   "34d5da835e278d6f": "Servicios conectados",
+  "57886ae9c159ba86": "Requiere atención",
   "60595a8acf9f6a18": "Entregado a esta sesión",
   "a87212dee280b4c9": "Ninguno",
+  "eefabf57c07b099f": "Servidores MCP del agente",
+  "cbf2f207ca8b952b": [
+    "Servidores opcionales de plugins o cuentas sin sesión iniciada:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "bb4910d55ac221b8": "Gestionar los servicios conectados",
   "04a25cc23244a916": "Scient no pudo iniciar sesión en GitHub. Vuelve a intentarlo.",
   "3ccba1564083dc6e": "Copiar el código de inicio de sesión",
@@ -20999,8 +21032,8 @@
   "d30766084a77c43d": "Claro",
   "9108c100510087ae": "Normal",
   "505335f730ff03bb": "Grosor del texto de la interfaz",
-  "02e954957f67488d": "Advertencias del gráfico",
   "ca5372d2ce4632b8": "Advertencias del gráfico ({count})",
+  "02e954957f67488d": "Advertencias del gráfico",
   "bbfafcbe87c87a65": "No se pudo analizar el código fuente de Plotly.",
   "69e585c0c8e31b4d": "Figura de Plotly",
   "25f2f2780bbe1756": "No se pudo copiar el código fuente de Plotly.",

@@ -2211,3 +2211,44 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(JSON.parse(activity.getFullDetail()!).item).toMatchObject({ text });
   expect(activity.getCopyText()).toContain(text);
 });
+
+it("leaves out MCP startup and sign-in notices older servers wrote when live status replaces them", () => {
+  const item = {
+    ...base("mcp-startup-notice", "2026-06-20T00:00:02.000Z", 1),
+    type: "system_notice" as const,
+    level: "warning" as const,
+    title: "MCP server cloudflare failed to start",
+    message:
+      "MCP client for `cloudflare` failed to start: MCP startup failed: handshaking with MCP server failed: Auth required",
+    nativeItemRef: {
+      driver: ProviderDriverKind.make("codex"),
+      nativeId: "mcp-startup-failed:turn-1:cloudflare",
+      strength: "weak" as const,
+    },
+  };
+  const generic = {
+    ...base("generic-notice", "2026-06-20T00:00:03.000Z", 2),
+    type: "system_notice" as const,
+    title: "Steer delivery not confirmed",
+    message: "Your steer could not be confirmed before the turn ended.",
+  };
+  const signIn = {
+    ...base("mcp-sign-in-notice", "2026-06-20T00:00:04.000Z", 3),
+    type: "system_notice" as const,
+    title: "MCP server guru needs a sign-in",
+    message: "The guru MCP server needs a sign-in before Claude can use it.",
+    mcpSignIn: { server: "guru" },
+  };
+  const rows = [projected(item, 0), projected(generic, 1), projected(signIn, 2)];
+  const summaries = (hideMcpStartupNotices: boolean) =>
+    buildThreadFeed(rows, { hideMcpStartupNotices })
+      .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
+      .map((activity) => activity.summary);
+  expect(summaries(true)).toEqual([generic.message]);
+  // A host without live MCP status keeps them, labeled by their title.
+  expect(summaries(false)).toEqual([
+    "MCP server cloudflare failed to start",
+    generic.message,
+    "MCP server guru needs a sign-in",
+  ]);
+});

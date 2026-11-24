@@ -106,6 +106,7 @@ import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
+import * as ThreadMcpStatusRegistry from "./mcpApps/ThreadMcpStatusRegistry.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
@@ -1073,7 +1074,7 @@ export const buildAppUnderTest = (options?: {
         // Provider installs run through T3's service, over the mocked installations below.
         Layer.provide(ProviderInstallation.layer),
         // Provider maintenance and text generation wait on the server's one installation gate.
-        Layer.provide(ProviderInstallationGate.layer),
+        Layer.provide(Layer.merge(ProviderInstallationGate.layer, ThreadMcpStatusRegistry.layer)),
         Layer.provide(Layer.mock(SecretCheck.SecretCheck)({})),
         // The runtime layer, not the websocket layer, owns the one session scanner.
         Layer.provide(

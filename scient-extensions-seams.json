@@ -46,7 +46,9 @@
     "apps/web/src/scient/compute/ComputeLanguagePanel.tsx",
     "apps/server/src/telemetry/ExtensionAnalytics.ts",
     "apps/server/src/telemetry/ExtensionAnalytics.test.ts",
-    "scripts/dev-identity.mjs"
+    "scripts/dev-identity.mjs",
+    "apps/server/src/mcpApps/ThreadMcpStatusRegistry.ts",
+    "apps/mobile/src/features/threads/ThreadMcpStatusRequests.tsx"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -72,6 +74,11 @@
     }
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/web/src/components/chat/TimelineWorkEntryRow.tsx",
+      "anchor": "connectorRecoveryTarget",
+      "purpose": "Offer a Scient connector's own Sign in or Manage on the row of an agent's lookup or check of that connector."
+    },
     {
       "path": "apps/server/src/testUtils/shardWeights.json",
       "anchor": "\"src/assets/AssetAccess.test.ts\":",

@@ -18,6 +18,7 @@ import * as PluginConnectorEligibility from "./plugins/PluginConnectorEligibilit
 import * as ScientPluginRegistry from "./plugins/ScientPluginRegistry.ts";
 import * as PluginKeyBindings from "./PluginKeyBindings.ts";
 import * as ProviderPluginManagement from "./ProviderPluginManagement.ts";
+import * as ScientThreadMcpStatusBridge from "./ScientThreadMcpStatusBridge.ts";
 
 // One eligibility instance beneath both the runtime (which checks it) and the
 // plugin registry (which publishes it).
@@ -36,6 +37,7 @@ const ExtensionOwnersLive = Layer.mergeAll(
   ProviderPluginManagement.layer,
 ).pipe(Layer.provideMerge(ConnectorCoreLive));
 
-export const ScientExtensionsLayerLive = changeFeedLayer.pipe(
-  Layer.provideMerge(ExtensionOwnersLive),
-);
+export const ScientExtensionsLayerLive = Layer.merge(
+  changeFeedLayer,
+  ScientThreadMcpStatusBridge.layer,
+).pipe(Layer.provideMerge(ExtensionOwnersLive));

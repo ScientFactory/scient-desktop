@@ -24,6 +24,7 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
+  isLegacyMcpStartupNotice,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
@@ -769,6 +770,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         item.deliveries?.some((delivery) => delivery.status === "sent") === true)
     )
       continue;
+    // MCP startup and sign-in notices older servers wrote; the thread's live MCP status replaces them.
+    if (item.type === "system_notice" && isLegacyMcpStartupNotice(item)) continue;
     // SCIENT-FORK:END
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({

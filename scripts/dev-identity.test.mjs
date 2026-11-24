@@ -26,7 +26,9 @@ import {
   prepareHomeStart,
   previewPartitionDirectory,
   reencryptSecret,
+  retireCopiedOAuthGrants,
   scrubAccountsState,
+  stopBorrowing,
   seedDevIdentityHome,
   setupHomeCheckout,
   vaultProtection,
@@ -64,7 +66,19 @@ const decrypt = (key, name, blob) => {
   return Buffer.concat([decipher.update(blob.subarray(29)), decipher.final()]);
 };
 
-const PROTOCOL_LINE = "export const DEV_IDENTITY_PROTOCOL = 2;\n";
+/** A connector credential record as AccountsConnectorCredentials writes it. */
+const connectorEnvelope = (kind, material, connectorId = "con_test") => ({
+  format: 1,
+  version: 1,
+  owner: { type: "connector", connectorId },
+  kind,
+  label: "test",
+  material: Buffer.from(
+    typeof material === "string" ? material : JSON.stringify(material),
+  ).toString("base64"),
+});
+
+const PROTOCOL_LINE = "export const DEV_IDENTITY_PROTOCOL = 3;\n";
 const noOpenFiles = () => [];
 const homeAt = (root) => ({ root, stateDir: NodePath.join(root, "scient-next-dev") });
 
@@ -1057,7 +1071,7 @@ describe("setupHomeCheckout", () => {
 });
 
 describe("code review guards", () => {
-  it("re-encrypts connector sign-ins on seed and keeps legacy JSON ones readable", async () => {
+  it("re-encrypts connector keys on seed, including legacy JSON ones, and skips unreadable records", async () => {
     const root = scratch();
     const installedRoot = NodePath.join(root, "installed");
     const stateDir = NodePath.join(installedRoot, "userdata");
@@ -1069,14 +1083,19 @@ describe("code review guards", () => {
     );
     const current = "connector-77777777-7777-4777-8777-777777777777";
     const legacy = "connector-88888888-8888-4888-8888-888888888888";
+    const unreadable = "connector-99999999-9999-4999-8999-999999999999";
     write(
       NodePath.join(secrets, `${current}.bin`),
-      encrypt(key, current, Buffer.from('{"token":"t"}')),
+      encrypt(key, current, Buffer.from(JSON.stringify(connectorEnvelope("bearer", "t")))),
     );
-    write(NodePath.join(secrets, `${legacy}.bin`), '{"token":"old"}');
+    write(
+      NodePath.join(secrets, `${legacy}.bin`),
+      JSON.stringify(connectorEnvelope("bearer", "old")),
+    );
+    write(NodePath.join(secrets, `${unreadable}.bin`), '{"token":"t"}');
     write(
       NodePath.join(stateDir, "scient-extensions.json"),
-      JSON.stringify({ refs: [current, legacy] }),
+      JSON.stringify({ refs: [current, legacy, unreadable] }),
     );
     const home = homeAt(NodePath.join(root, "home"));
     await seedDevIdentityHome({
@@ -1091,21 +1110,18 @@ describe("code review guards", () => {
         service === "Scient Accounts" ? key.toString("base64") : null,
       isRunning: () => false,
     });
-    const homeKey = NodeFS.readFileSync(
-      NodePath.join(home.stateDir, "secrets", "accounts-master-key.bin"),
-    );
-    assert.equal(
-      decrypt(
-        homeKey,
-        current,
-        NodeFS.readFileSync(NodePath.join(home.stateDir, "secrets", `${current}.bin`)),
-      ).toString(),
-      '{"token":"t"}',
-    );
-    assert.equal(
-      NodeFS.readFileSync(NodePath.join(home.stateDir, "secrets", `${legacy}.bin`), "utf8"),
-      '{"token":"old"}',
-    );
+    const homeSecrets = NodePath.join(home.stateDir, "secrets");
+    const homeKey = NodeFS.readFileSync(NodePath.join(homeSecrets, "accounts-master-key.bin"));
+    for (const [name, value] of [
+      [current, "t"],
+      [legacy, "old"],
+    ]) {
+      const envelope = JSON.parse(
+        decrypt(homeKey, name, NodeFS.readFileSync(NodePath.join(homeSecrets, `${name}.bin`))),
+      );
+      assert.equal(Buffer.from(envelope.material, "base64").toString(), value);
+    }
+    assert.isFalse(NodeFS.existsSync(NodePath.join(homeSecrets, `${unreadable}.bin`)));
   });
 
   it("leaves the home untouched when the Keychain refuses the installed app's key", async () => {
@@ -2033,5 +2049,251 @@ describe("third review guards", () => {
       NodeFS.readFileSync(NodePath.join(outside, "Cookies"), "utf8"),
       "someone else's jar",
     );
+  });
+});
+
+describe("connector sign-ins never travel", () => {
+  const ref = "connector-12121212-1212-4212-8212-121212121212";
+  const connectorId = "con_linear";
+  const url = "https://mcp.linear.example/mcp";
+  const HOME_ENV = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const CANDIDATE_ENV = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  /** A sign-in as the server stores it; `owner` is the app that made it. */
+  const grant = (grantId, owner) => ({
+    format: 1,
+    ...(owner === undefined ? {} : { ownerEnvironmentId: owner }),
+    ownClient: { clientId: "owner-client", clientSecret: "owner-secret" },
+    registrations: [
+      { issuer: "https://idp", redirectUri: "http://127.0.0.1:1/cb", client: { client_id: "dcr" } },
+    ],
+    session: {
+      grantId,
+      authorizationServerUrl: "https://idp",
+      resource: url,
+      issuer: "https://idp",
+      redirectUri: "http://127.0.0.1:1/cb",
+      client: { client_id: "dcr" },
+      accessToken: `access-${grantId}`,
+      tokenType: "Bearer",
+      refreshToken: `refresh-${grantId}`,
+    },
+  });
+  const oauthConnector = (status = "connected") => ({
+    connectorId,
+    serverName: "linear",
+    displayName: "Linear",
+    url,
+    auth: { type: "oauth", credentialRef: ref, issuer: "https://idp" },
+    status,
+    authRevision: 4,
+  });
+  const writeGrant = (stateDir, key, grantId, owner) =>
+    write(
+      NodePath.join(stateDir, "secrets", `${ref}.bin`),
+      encrypt(
+        key,
+        ref,
+        Buffer.from(
+          JSON.stringify(connectorEnvelope("oauth-connection", grant(grantId, owner), connectorId)),
+        ),
+      ),
+    );
+  const readMaterial = (stateDir) => {
+    const key = NodeFS.readFileSync(NodePath.join(stateDir, "secrets", "accounts-master-key.bin"));
+    const envelope = JSON.parse(
+      decrypt(key, ref, NodeFS.readFileSync(NodePath.join(stateDir, "secrets", `${ref}.bin`))),
+    );
+    return JSON.parse(Buffer.from(envelope.material, "base64").toString());
+  };
+  const connectorOf = (stateDir) =>
+    readJson(NodePath.join(stateDir, "scient-extensions.json")).connectors[0];
+  const writeConnectors = (stateDir, connectors) =>
+    write(
+      NodePath.join(stateDir, "scient-extensions.json"),
+      JSON.stringify({ formatVersion: 3, connectors }),
+    );
+  const homeWithGrant = (root) => {
+    const made = makeFileVaultHome(NodePath.join(root, "home"));
+    writeGrant(made.home.stateDir, made.vault.key, "grant-home", HOME_ENV);
+    writeConnectors(made.home.stateDir, [oauthConnector()]);
+    return made;
+  };
+  const candidateAt = (root) => {
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "environment-id"), `${CANDIDATE_ENV}\n`);
+    return target;
+  };
+  const candidateKey = (target) =>
+    NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-master-key.bin"));
+
+  it("gives a dev app the connector and the owner's client, never the home's grant", async () => {
+    const root = scratch();
+    const { home } = homeWithGrant(root);
+    const target = candidateAt(root);
+
+    assert.equal((await importDevIdentity({ targetStateDir: target, home })).status, "imported");
+
+    const material = readMaterial(target);
+    assert.isUndefined(material.session);
+    assert.deepEqual(material.registrations, []);
+    assert.deepEqual(material.ownClient, {
+      clientId: "owner-client",
+      clientSecret: "owner-secret",
+    });
+    assert.notInclude(
+      NodeFS.readFileSync(NodePath.join(target, "secrets", `${ref}.bin`)).toString("latin1"),
+      "refresh-",
+    );
+    // Signed in at the home: borrowed from the home's server, so it stays connected here.
+    assert.deepInclude(connectorOf(target), { status: "connected", auth: oauthConnector().auth });
+    assert.deepEqual(readJson(NodePath.join(target, "dev-connector-broker.json")), {
+      version: 1,
+      homeStateDir: home.stateDir,
+      connectors: { [connectorId]: { url } },
+    });
+    assert.equal(readMaterial(home.stateDir).session.grantId, "grant-home");
+  });
+
+  it("keeps a sign-in the dev app made itself across later starts", async () => {
+    const root = scratch();
+    const { home } = homeWithGrant(root);
+    const target = candidateAt(root);
+    await importDevIdentity({ targetStateDir: target, home });
+    // The dev app signs in, into the reference it was given; its server records it as its own.
+    writeGrant(target, candidateKey(target), "grant-candidate", CANDIDATE_ENV);
+    writeConnectors(target, [{ ...oauthConnector(), authRevision: 9 }]);
+
+    await importDevIdentity({ targetStateDir: target, home });
+
+    assert.equal(readMaterial(target).session.grantId, "grant-candidate");
+    assert.deepInclude(connectorOf(target), { status: "connected", authRevision: 9 });
+    // Its own sign-in: nothing is borrowed for it any more.
+    assert.isFalse(NodeFS.existsSync(NodePath.join(target, "dev-connector-broker.json")));
+  });
+
+  it("retires any grant the dev app did not make, however it got there", async () => {
+    const root = scratch();
+    const { home, vault } = homeWithGrant(root);
+    const target = candidateAt(root);
+    await importDevIdentity({ targetStateDir: target, home });
+    // An older launcher copied the home's grant over, from before owners were recorded or after.
+    for (const owner of [undefined, HOME_ENV]) {
+      writeGrant(target, candidateKey(target), "grant-home", owner);
+      writeConnectors(target, [oauthConnector()]);
+      await importDevIdentity({ targetStateDir: target, home });
+      assert.isUndefined(readMaterial(target).session);
+    }
+    // With the identity off, still retired, and nothing borrowed.
+    writeGrant(target, candidateKey(target), "grant-home", HOME_ENV);
+    writeConnectors(target, [oauthConnector()]);
+    const off = await importDevIdentity({
+      targetStateDir: target,
+      home,
+      environment: { [DEV_IDENTITY_ENV]: "off" },
+    });
+    assert.equal(off.status, "disabled");
+    assert.isUndefined(readMaterial(target).session);
+    assert.equal(connectorOf(target).status, "needs-auth");
+    assert.isFalse(NodeFS.existsSync(NodePath.join(target, "dev-connector-broker.json")));
+    void vault;
+  });
+
+  it("leaves a profile that never took a copy, and records no key here opens", () => {
+    const root = scratch();
+    const standalone = candidateAt(root);
+    const key = NodeCrypto.randomBytes(32);
+    write(NodePath.join(standalone, "secrets", "accounts-master-key.bin"), key);
+    writeGrant(standalone, key, "grant-standalone");
+    writeConnectors(standalone, [oauthConnector()]);
+    assert.isFalse(retireCopiedOAuthGrants(standalone));
+    assert.equal(readMaterial(standalone).session.grantId, "grant-standalone");
+
+    // A copied profile whose record no key here opens keeps it as it is.
+    write(NodePath.join(standalone, "dev-identity.json"), "{}");
+    NodeFS.rmSync(NodePath.join(standalone, "secrets", "accounts-master-key.bin"));
+    const before = NodeFS.readFileSync(NodePath.join(standalone, "secrets", `${ref}.bin`));
+    assert.isFalse(retireCopiedOAuthGrants(standalone));
+    assert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(standalone, "secrets", `${ref}.bin`)),
+      before,
+    );
+  });
+
+  it("never takes an ownerless grant as the app's own when the app has no id", async () => {
+    const root = scratch();
+    const { home } = homeWithGrant(root);
+    const target = candidateAt(root);
+    await importDevIdentity({ targetStateDir: target, home });
+    writeGrant(target, candidateKey(target), "grant-legacy");
+    writeConnectors(target, [oauthConnector()]);
+    NodeFS.rmSync(NodePath.join(target, "environment-id"));
+    assert.isTrue(retireCopiedOAuthGrants(target));
+    assert.isUndefined(readMaterial(target).session);
+  });
+
+  it("stops borrowing on a direct start with the identity off", async () => {
+    const root = scratch();
+    const { home } = homeWithGrant(root);
+    const target = candidateAt(root);
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.isTrue(stopBorrowing(target));
+    assert.equal(connectorOf(target).status, "needs-auth");
+    assert.isFalse(NodeFS.existsSync(NodePath.join(target, "dev-connector-broker.json")));
+    assert.isFalse(stopBorrowing(target));
+  });
+
+  it("borrows nothing for a connector the home has not signed in", async () => {
+    const root = scratch();
+    const { home } = homeWithGrant(root);
+    writeConnectors(home.stateDir, [oauthConnector("needs-auth")]);
+    const target = candidateAt(root);
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.equal(connectorOf(target).status, "needs-auth");
+    assert.isFalse(NodeFS.existsSync(NodePath.join(target, "dev-connector-broker.json")));
+  });
+
+  it("seeds the home without the installed app's grants, keeping the home's own", async () => {
+    const root = scratch();
+    const installedRoot = NodePath.join(root, "installed");
+    const stateDir = NodePath.join(installedRoot, "userdata");
+    const key = NodeCrypto.randomBytes(32);
+    write(
+      NodePath.join(stateDir, "secrets", "accounts-vault.bin"),
+      Buffer.concat([Buffer.from([1]), encrypt(key, "accounts-vault", Buffer.alloc(0))]),
+    );
+    writeGrant(stateDir, key, "grant-installed", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    writeConnectors(stateDir, [oauthConnector()]);
+    const before = NodeFS.readFileSync(NodePath.join(stateDir, "secrets", `${ref}.bin`));
+    const home = homeAt(NodePath.join(root, "home"));
+    const installed = {
+      stateDir,
+      userData: NodePath.join(installedRoot, "none"),
+      vaultKeychainAccount: "a",
+      cookieKeychains: [],
+    };
+    const readKeychain = async (service) =>
+      service === "Scient Accounts" ? key.toString("base64") : null;
+
+    await seedDevIdentityHome({ home, installed, readKeychain, isRunning: () => false });
+    assert.isUndefined(readMaterial(home.stateDir).session);
+    assert.equal(connectorOf(home.stateDir).status, "needs-auth");
+    assert.deepEqual(NodeFS.readFileSync(NodePath.join(stateDir, "secrets", `${ref}.bin`)), before);
+
+    // The home signs in itself; a forced seed keeps that sign-in.
+    write(NodePath.join(home.stateDir, "environment-id"), `${HOME_ENV}\n`);
+    const homeKey = NodeFS.readFileSync(
+      NodePath.join(home.stateDir, "secrets", "accounts-master-key.bin"),
+    );
+    writeGrant(home.stateDir, homeKey, "grant-home", HOME_ENV);
+    writeConnectors(home.stateDir, [oauthConnector()]);
+    await seedDevIdentityHome({
+      home,
+      installed,
+      readKeychain,
+      isRunning: () => false,
+      force: true,
+    });
+    assert.equal(readMaterial(home.stateDir).session.grantId, "grant-home");
+    assert.equal(connectorOf(home.stateDir).status, "connected");
   });
 });
