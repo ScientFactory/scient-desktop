@@ -2,7 +2,7 @@ vi.mock("./catalogDictation", () => ({
   useCatalogDictation: () => ({ enabled: true, setup: fixture.catalogConnected ? {} : null }),
 }));
 
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 import "../../index.css";
@@ -315,7 +315,7 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .element(screen.getByRole("combobox", { name: "ChatGPT connection" }))
       .toHaveTextContent("Automatic");
     await expect.element(screen.getByRole("button", { name: "Choose a saved key…" })).toBeVisible();
-    await expect.element(screen.getByText("25 languages")).toBeVisible();
+    await expect.element(screen.getByText("25 languages")).not.toBeInTheDocument();
     await expect.element(screen.getByText("for dictation", { exact: true })).toBeVisible();
     await expect.element(screen.getByText("for recordings", { exact: true })).toBeVisible();
     expect(screen.container.querySelector(".bg-warning")).toBeNull();
@@ -336,6 +336,24 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
           .closest("section")!,
       });
     }
+
+    const details = screen.getByRole("button", { name: "Details for Parakeet TDT 0.6B v3" });
+    if (theme === "light") {
+      await details.hover();
+    } else {
+      details.element().focus();
+      await userEvent.keyboard("{Enter}");
+    }
+    const modelDetails = page.getByRole("dialog", { name: "Parakeet TDT 0.6B v3" });
+    await expect.element(modelDetails.getByText("25 languages")).toBeVisible();
+    await expect.element(modelDetails.getByText("Multilingual dictation")).toBeVisible();
+    await expect.element(modelDetails.getByText(/Speed:/)).toBeVisible();
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(modelDetails.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/speech-model-details-${theme}.png` });
+    }
+    await userEvent.keyboard("{Escape}");
+    await expect.element(modelDetails).not.toBeInTheDocument();
 
     await screen.getByRole("button", { name: "Add a provider…" }).click();
     await expect.element(page.getByRole("dialog", { name: "Add a cloud engine" })).toBeVisible();

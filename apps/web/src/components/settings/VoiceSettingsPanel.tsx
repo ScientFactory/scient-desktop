@@ -45,6 +45,7 @@ import {
   AudioLinesIcon,
   CheckIcon,
   DownloadIcon,
+  InfoIcon,
   LanguagesIcon,
   KeyRoundIcon,
   LaptopIcon,
@@ -95,6 +96,13 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import {
+  Popover,
+  PopoverDescription,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../ui/popover";
 import {
   Menu,
   MenuCheckboxItem,
@@ -204,6 +212,26 @@ function EngineCard(props: ModelCardProps) {
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
+  const size = formatSize(model.size);
+  const benchmarks = (
+    <ModelBenchmarks
+      model={model}
+      languages={props.comparisonLanguages}
+      tier={props.benchmarkTier}
+      facts={[
+        ...(model.languages.length > 1
+          ? [
+              gt("{count, plural, one {{count} language} other {{count} languages}}", {
+                count: model.languages.length,
+              }),
+            ]
+          : !model.benchmark && model.languages[0]
+            ? [languageLabel(model.languages[0], locale)]
+            : []),
+        ...(props.manageOnly ? [] : [size]),
+      ]}
+    />
+  );
   return (
     <div
       className={cn(
@@ -215,63 +243,97 @@ function EngineCard(props: ModelCardProps) {
       <div
         className={cn(
           "flex flex-col gap-2.5",
+          props.manageOnly && "h-full",
           !props.stacked &&
             "@min-[28rem]/model:flex-row @min-[28rem]/model:items-start @min-[28rem]/model:gap-4",
         )}
       >
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-medium leading-5">{model.name}</span>
-            {props.recommendation ? (
-              <ModelBadge
-                icon={<StarIcon className="mr-1 size-3" />}
-                label={
-                  props.recommendation === "recommended"
-                    ? props.recommendationLanguage
-                      ? gt("Recommended for {language}", {
-                          language: languageLabel(props.recommendationLanguage, locale),
-                        })
-                      : gt("Recommended")
-                    : props.recommendation === "faster"
-                      ? gt("Faster", { $context: "speech model badge, quicker than Recommended" })
-                      : gt("More accurate")
-                }
-                tooltip={
-                  props.recommendation === "recommended"
-                    ? gt(
-                        "Balanced accuracy and speed for your selected languages on Handy’s reference benchmarks.",
-                      )
-                    : props.recommendation === "faster"
-                      ? gt("Quicker than Recommended on this reference tier, with useful accuracy.")
-                      : gt(
-                          "Higher accuracy with a longer reference processing budget for your selected languages.",
+          <div className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+              <span className="text-sm font-medium leading-5">{model.name}</span>
+              {props.recommendation ? (
+                <ModelBadge
+                  icon={<StarIcon className="mr-1 size-3" />}
+                  label={
+                    props.recommendation === "recommended"
+                      ? props.recommendationLanguage
+                        ? gt("Recommended for {language}", {
+                            language: languageLabel(props.recommendationLanguage, locale),
+                          })
+                        : gt("Recommended")
+                      : props.recommendation === "faster"
+                        ? gt("Faster", { $context: "speech model badge, quicker than Recommended" })
+                        : gt("More accurate")
+                  }
+                  tooltip={
+                    props.recommendation === "recommended"
+                      ? gt(
+                          "Balanced accuracy and speed for your selected languages on Handy’s reference benchmarks.",
                         )
-                }
-              />
-            ) : null}
-            {props.recommendationContext ? (
-              <Badge variant="outline">{props.recommendationContext}</Badge>
-            ) : null}
-            {!props.dictation && model.supportsStreaming ? (
-              <ModelBadge
-                icon={<AudioLinesIcon className="mr-1 size-3" />}
-                label={gt("Live preview")}
-                tooltip={gt(
-                  "Shows words in your draft as you speak, before the recording finishes.",
-                )}
-              />
-            ) : null}
-            {!props.dictation && model.supportsTranslation ? (
-              <ModelBadge
-                icon={<LanguagesIcon className="mr-1 size-3" />}
-                label={gt("Translate")}
-                tooltip={gt(
-                  "Can write English text from speech in another language. Turn on Translate to English to use it.",
-                )}
-              />
+                      : props.recommendation === "faster"
+                        ? gt(
+                            "Quicker than Recommended on this reference tier, with useful accuracy.",
+                          )
+                        : gt(
+                            "Higher accuracy with a longer reference processing budget for your selected languages.",
+                          )
+                  }
+                />
+              ) : null}
+              {props.recommendationContext ? (
+                <Badge variant="outline">{props.recommendationContext}</Badge>
+              ) : null}
+              {!props.dictation && model.supportsStreaming ? (
+                <ModelBadge
+                  icon={<AudioLinesIcon className="mr-1 size-3" />}
+                  label={gt("Live preview")}
+                  tooltip={gt(
+                    "Shows words in your draft as you speak, before the recording finishes.",
+                  )}
+                />
+              ) : null}
+              {!props.dictation && model.supportsTranslation ? (
+                <ModelBadge
+                  icon={<LanguagesIcon className="mr-1 size-3" />}
+                  label={gt("Translate")}
+                  tooltip={gt(
+                    "Can write English text from speech in another language. Turn on Translate to English to use it.",
+                  )}
+                />
+              ) : null}
+            </div>
+            {props.manageOnly ? (
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  delay={150}
+                  closeDelay={100}
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label={gt("Details for {model}", { model: model.name })}
+                    />
+                  }
+                >
+                  <InfoIcon />
+                </PopoverTrigger>
+                <PopoverPopup width="sm" padding="comfortable" align="end">
+                  <div className="space-y-2">
+                    <PopoverTitle>{model.name}</PopoverTitle>
+                    {model.description ? (
+                      <PopoverDescription size="compact">{model.description}</PopoverDescription>
+                    ) : null}
+                    {benchmarks}
+                  </div>
+                </PopoverPopup>
+              </Popover>
             ) : null}
           </div>
-          {model.description ? (
+          {props.manageOnly ? (
+            <p className="mt-1 text-xs text-muted-foreground tabular-nums">{size}</p>
+          ) : model.description ? (
             <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
               {model.description}
             </p>
@@ -281,23 +343,7 @@ function EngineCard(props: ModelCardProps) {
               <T>Uses a model file already on this computer.</T>
             </p>
           ) : null}
-          <ModelBenchmarks
-            model={model}
-            languages={props.comparisonLanguages}
-            tier={props.benchmarkTier}
-            facts={[
-              ...(model.languages.length > 1
-                ? [
-                    gt("{count, plural, one {{count} language} other {{count} languages}}", {
-                      count: model.languages.length,
-                    }),
-                  ]
-                : model.benchmark
-                  ? []
-                  : [languageLabel(model.languages[0] ?? "", locale)]),
-              formatSize(model.size),
-            ]}
-          />
+          {props.manageOnly ? null : benchmarks}
           {downloading ? (
             <div className="mt-2">
               <div
