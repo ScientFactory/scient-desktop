@@ -85,10 +85,10 @@ type NotebookFocusTarget = "cell" | NotebookCaret;
 /** Cells mount their editors and outputs this far ahead of the visible area. */
 const NEAR_MARGIN = "1200px 0px";
 
-/** Tells each cell once when it comes near the view, whatever the scroll container becomes. */
+/** Tells each cell when it comes near the view and when it leaves, whatever the scroll container. */
 function createNearWatcher() {
   let observer: IntersectionObserver | null = null;
-  const watched = new Map<Element, () => void>();
+  const watched = new Map<Element, (near: boolean) => void>();
   return {
     setRoot: (root: HTMLDivElement | null) => {
       observer?.disconnect();
@@ -97,19 +97,14 @@ function createNearWatcher() {
           ? null
           : new IntersectionObserver(
               (entries) => {
-                for (const entry of entries) {
-                  if (!entry.isIntersecting) continue;
-                  observer?.unobserve(entry.target);
-                  watched.get(entry.target)?.();
-                  watched.delete(entry.target);
-                }
+                for (const entry of entries) watched.get(entry.target)?.(entry.isIntersecting);
               },
               { root, rootMargin: NEAR_MARGIN },
             );
       for (const node of watched.keys()) observer?.observe(node);
     },
-    watch: (node: Element, onNear: () => void) => {
-      watched.set(node, onNear);
+    watch: (node: Element, onChange: (near: boolean) => void) => {
+      watched.set(node, onChange);
       observer?.observe(node);
       return () => {
         watched.delete(node);

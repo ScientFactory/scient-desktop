@@ -61,8 +61,8 @@ export interface NotebookCellHandlers {
   readonly delete: (cellId: string) => void;
   /** Opens the cell's editor with its caret there. */
   readonly edit: (cellId: string, caret: NotebookCaret) => void;
-  /** Calls back once when the cell comes near the visible area. */
-  readonly observeNear: (node: Element, onNear: () => void) => () => void;
+  /** Calls back when the cell comes near the visible area and when it leaves it. */
+  readonly observeNear: (node: Element, onChange: (near: boolean) => void) => () => void;
 }
 
 function CellEditor(props: {
@@ -469,12 +469,23 @@ export function NotebookCell(props: {
   const liveRun = useStore(controller.store, (state) => state.liveRuns[cellId]);
   const stale = useStore(controller.store, (state) => state.stale.get(cellId) ?? null);
   const section = useRef<HTMLElement>(null);
+  const outputsBox = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a cell mounts its editor and outputs only when it scrolls near the view.
+  /** The outputs' height when the cell left the view; a box this tall stands in for those outputs. */
+  const [farOutputs, setFarOutputs] = useState<{
+    readonly height: number;
+    readonly outputs: unknown;
+  } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a cell mounts its editor and outputs only while it is near the view.
   useEffect(() => {
     if (section.current === null) return;
-    return handlers.observeNear(section.current, () => setNear(true));
-  }, [handlers]);
+    return handlers.observeNear(section.current, (isNear) => {
+      const height = outputsBox.current?.offsetHeight;
+      if (!isNear && height !== undefined)
+        setFarOutputs({ height, outputs: controller.store.getState().cells[cellId]?.outputs });
+      setNear(isNear);
+    });
+  }, [handlers, controller, cellId]);
   const sectionHeading = useStore(controller.store, (state) =>
     state.sections.headingCells.has(cellId),
   );
@@ -486,6 +497,7 @@ export function NotebookCell(props: {
   const sectionFolded = cell.folded?.includes("section") === true;
   const rendered = isText && !editing && cell.source.trim() !== "";
   const live = near || selected;
+  const farOutputsHeight = farOutputs?.outputs === cell.outputs ? farOutputs.height : null;
   const language = isCode ? props.language : isText ? "markdown" : "text";
   const onAsk =
     handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId);
@@ -689,8 +701,15 @@ export function NotebookCell(props: {
           >
             <T>Show outputs</T>
           </Button>
+        ) : isCode && !outputsFolded && !live && farOutputsHeight !== null ? (
+          <div style={{ height: farOutputsHeight }} />
         ) : isCode && !outputsFolded ? (
-          <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
+          <div
+            ref={outputsBox}
+            // Keeps the height the outputs had while their stored parts load again.
+            style={farOutputsHeight === null ? undefined : { minHeight: farOutputsHeight }}
+            className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}
+          >
             {activity === null &&
             cell.outputs.length > 0 &&
             !producedInLiveSession &&

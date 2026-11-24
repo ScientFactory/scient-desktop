@@ -79,6 +79,7 @@ const STALE_DELAY_MS = 200;
 const SAVE_RETRY_MS = 3000;
 /** Once typing has paused this long, the editor asks whether the notebook reached the disk. */
 const SETTLE_DELAY_MS = 1500;
+const MAX_LOADED_OUTPUTS = 64;
 
 function newCellId(): string {
   return randomUUID();
@@ -513,6 +514,8 @@ export function createNotebookController(transport: NotebookTransport) {
         return result?.json ?? null;
       });
       outputs.set(key, loading);
+      // Only recent outputs stay decoded; one scrolled back to is read again.
+      if (outputs.size > MAX_LOADED_OUTPUTS) outputs.delete(outputs.keys().next().value ?? "");
       return loading;
     },
     /** Each submitted cell durably expects its run, so its result survives a reload. */
