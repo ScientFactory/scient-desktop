@@ -32,15 +32,16 @@ Checked in this order; the first match wins:
    walked, since Git doesn't always list one), a folder that can't be read, or ignored files other
    than rebuildable outputs and symlinks, for example `.env.local`, notes, logs or an older dev
    app's `.t3/userdata`. Git would delete them with the checkout. Rebuildable means conventional
-   build and cache folders anywhere (`node_modules`, `dist*`, `build`, `out`, `target`,
+   build and cache folders anywhere (`node_modules`, `dist`, `dist-electron`, `build`, `out`, `target`,
    `coverage`, `.next`, `.turbo`, `.vite`, `.vitest`, `.cache`, `.astro`, `__pycache__`,
    `.electron-runtime`), generated outputs only at the exact path their generator writes, and a
    `.t3` folder holding only setup marker files. A secret saved inside a conventional build folder
    would still be removed with it.
 
 If `ps`, `lsof` or the database can't be read at the start, the sweep stops before removing
-anything. If a check fails later, for one checkout or during its recheck, that checkout is kept
-and reported, and the others still run.
+anything. If the process scan, the database read or the inspection of one checkout fails later, that
+checkout is kept and reported, and the others still run. A failed merge lookup only means
+"not known to be merged": the idle rule can still remove the checkout, with its archive tag.
 
 ## What it removes
 
