@@ -63,9 +63,6 @@ it.
 - How many threads and projects you have. Only the numbers, never their names.
 - Your app version, operating system, device type and how you connected.
 - A random identifier for this installation.
-- A scrambled form of your account ID if you sign in to Codex with ChatGPT or to
-  Claude. It lets us recognize one person across computers. We can't turn it back
-  into your account ID.
 - With account analytics activated, the email supplied by a provider sign-in,
   its reported plan when available, and the model services connected in Scient
   Agent. Browser-profile emails and saved website logins are excluded.
