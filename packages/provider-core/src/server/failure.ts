@@ -132,7 +132,11 @@ function curatedCauseMessages(cause: unknown): {
           };
         // A refused native turn left the session intact, and its adapter wrote and redacted the reason.
         case "NativeSessionOperationError": {
-          if ((cause as Record<string, unknown>).breaksSession === false)
+          // An adapter that names a code wrote the user's whole message.
+          if (
+            stringField(cause, "code") !== undefined ||
+            (cause as Record<string, unknown>).breaksSession === false
+          )
             return { known: stringField(cause, "message"), category: categoryMessage() };
           // Beneath the generic open wrapper, the adapter's redacted reason names what failed.
           const detail = stringField(cause, "message")?.replace(/[\s.]+$/u, "");
@@ -254,6 +258,28 @@ export function knownProviderFailureMessage(cause: unknown): string | undefined 
   return curatedCauseMessages(cause).known;
 }
 
+// SCIENT-FORK:START — a native adapter's bounded reason, beneath the wrappers that carry it.
+function nativeOperationCode(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 16 && typeof cause === "object" && cause !== null; depth++) {
+    if (seen.has(cause)) return undefined;
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if ((cause as Record<string, unknown>)._tag === "NativeSessionOperationError")
+        return stringField(cause, "code");
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+// SCIENT-FORK:END
+
 function stringField(value: unknown, key: "message" | "code"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
@@ -340,7 +366,12 @@ export function makeProviderFailure(input: {
     ? REQUEST_TOO_LARGE_MESSAGE
     : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode =
+    input.code ??
+    stringField(input.cause, "code") ??
+    // SCIENT-FORK: a native adapter's code beneath its wrappers.
+    nativeOperationCode(input.cause) ??
+    null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 

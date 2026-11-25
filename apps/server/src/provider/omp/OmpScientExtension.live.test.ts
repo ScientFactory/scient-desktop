@@ -26,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Option from "effect/Option";
 import { OmpSubagentLifecyclePayload } from "effect-omp-rpc/schema";
 import * as Redacted from "effect/Redacted";
@@ -273,6 +274,42 @@ const makeFakeScientMcp = (echoResult?: string) => {
     });
   });
   return { server, calls, rejected: () => rejected };
+};
+
+/** A connector's MCP server that answers its tool catalog only once released. */
+const makeHeldConnector = () => {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const server = NodeHttp.createServer((request, response) => {
+    void readBody(request).then(async (raw) => {
+      const body = JSON.parse(raw) as { readonly id?: number; readonly method: string };
+      if (body.id === undefined) {
+        response.writeHead(202).end();
+        return;
+      }
+      if (body.method === "tools/list") await released;
+      const result =
+        body.method === "initialize"
+          ? { protocolVersion: "2025-06-18", capabilities: { tools: {} } }
+          : body.method === "tools/list"
+            ? {
+                tools: [
+                  {
+                    name: "lookup",
+                    description: "Look a record up.",
+                    inputSchema: { type: "object" },
+                  },
+                ],
+              }
+            : { content: [{ type: "text", text: "looked up" }] };
+      response
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    });
+  });
+  return { server, release };
 };
 
 const makeRoot = (label: string) => {
@@ -524,6 +561,119 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
 
           yield* adapter.close;
           expect(extensionPath && NodeFS.existsSync(extensionPath)).toBe(false);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
+        ),
+      ),
+    180_000,
+  );
+
+  // regression: one connector that never answered kept every Scient Agent turn from starting.
+  it.live(
+    "starts while a connector is still connecting, and offers its tools from the next turn",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* scopedRoot("late-connector");
+          const stub = makeStubModel();
+          const stubPort = yield* listen(stub.server);
+          const mcp = makeFakeScientMcp();
+          const mcpPort = yield* listen(mcp.server);
+          const connector = makeHeldConnector();
+          const connectorPort = yield* listen(connector.server);
+          const instanceId = ProviderInstanceId.make("omp-scient-live-late-connector");
+          const customModels = yield* makeStubModelFactory(
+            root,
+            `http://127.0.0.1:${stubPort}/v1`,
+            instanceId,
+          );
+          let client: OmpRpcProcess | undefined;
+          const threadId = ThreadId.make("omp-scient-live-late-connector");
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          yield* mcpSessions.set({
+            environmentId: EnvironmentId.make("environment-omp-live"),
+            threadId,
+            providerSessionId: "provider-omp-live-late-connector",
+            providerInstanceId: instanceId,
+            endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
+            authorizationHeader: TOKEN,
+            capabilities: new Set(),
+            connectors: [
+              {
+                connectorId: "connector-slow",
+                serverName: "slow",
+                displayName: "Slow",
+                url: `http://127.0.0.1:${connectorPort}/mcp`,
+              },
+            ],
+          });
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+          const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
+          if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
+          const selection = createModelSelection(instanceId, model);
+          // Opening returns only after the agent reported ready, while the connector still holds.
+          const adapter = yield* nativeOmpSession({
+            root,
+            cwd: NodePath.join(root, "cwd"),
+            threadId,
+            modelSelection: selection,
+            target: ompQualifyTarget,
+            binaryPath: binary!,
+            instanceId,
+            stateDir: NodePath.join(root, "state"),
+            attachmentsDir: NodePath.join(root, "attachments"),
+            environment: yield* isolatedEnvironment(root),
+            makeProcess: (options) =>
+              customModels(options).pipe(
+                Effect.tap((started) => Effect.sync(() => (client = started))),
+              ),
+          });
+          const terminals = yield* Queue.unbounded<ProviderAdapterV2Event>();
+          yield* adapter.events.pipe(
+            Stream.runForEach((event) =>
+              event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+          // Depending on the runtime, a connector tool reaches the model as a tool, a device or a
+          // catalog command; each names it in the request.
+          const offered = (index: number) => JSON.stringify(stub.requests[index] ?? null);
+          const turn = Effect.gen(function* () {
+            const sent = stub.requests.length;
+            yield* adapter.start(
+              { text: "Call the Scient echo tool with the text live." },
+              selection,
+            );
+            expect(yield* Queue.take(terminals).pipe(Effect.timeout("90 seconds"))).toMatchObject({
+              status: "completed",
+            });
+            return sent;
+          });
+
+          const first = yield* turn;
+          expect(offered(first)).toContain(SCIENT_TOOL);
+          expect(offered(first)).not.toContain("slow__lookup");
+
+          connector.release();
+          yield* client!.command({ type: "get_state" }).pipe(
+            Effect.flatMap((state) =>
+              JSON.stringify(state.data).includes("slow__lookup")
+                ? Effect.void
+                : Effect.fail("The connector's tools are not registered yet."),
+            ),
+            // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- the agent reports no event when a late tool registers; its state is the only signal.
+            Effect.retry(Schedule.spaced("100 millis")),
+            Effect.timeout("10 seconds"),
+          );
+          const second = yield* turn;
+          expect(offered(second)).toContain("slow__lookup");
+          yield* adapter.close;
         }),
       ).pipe(
         Effect.provide(

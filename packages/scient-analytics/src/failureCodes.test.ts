@@ -18,6 +18,7 @@ describe("analyticsFailureCode", () => {
     ["cursor", "oom_kill"],
     ["codex", "retry_stalled"],
     ["antigravity", "prompt_inactivity"],
+    ["scient", "startup_timeout"],
     ["antigravity", "mcp_load_failed"],
     ["droid", "model_usage_exhausted"],
   ])("keeps %s's known code %s", (provider, code) => {
