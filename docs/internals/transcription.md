@@ -27,21 +27,27 @@ at a time.
 | `use-subtitles`      | Absolute media `source` and `subtitles` selection                                                                                                                               |
 | `list`               | None                                                                                                                                                                            |
 
-`list` accepts `includeCreated` to include revision timestamps and sort newest first. With `query`, it also returns a short matching excerpt from a completed transcript.
+`list` accepts `includeCreated` to include revision timestamps and sort newest first. With `query`, it also returns a short matching excerpt from a completed transcript. With `source`, it returns only that file's revisions.
 `inventory` accepts an optional `language` and `details` flag. It returns
 engine availability and recommendations without account secrets.
 `revision` takes a revision `id`. A completed revision returns the published
 segments and correction review items. An unfinished revision returns segments
 from complete checkpoint records without modifying the ledger.
 
-The Recordings UI registers copied media with `media-register` and reads it
-with `media-list`. `recording-rename` stores a shown `title` in the media
-record; an empty title returns to the file name, and registering again keeps
-it. `recording-trash` moves the media file, every revision directory whose
-`job.json` names that source, and their notes to the host's Trash, then
-removes the media record. It refuses while the source is queued or
-transcribing. These registrations stay in the project if the dialog is
-dismissed. `start-batch` accepts up to 20 recordings in one project and runs
+The Recordings UI registers added media with `media-register` and reads it
+with `media-list`. Added files from outside the project are copied in; files
+already inside are registered where they are. These registrations stay in the
+project if the dialog is dismissed. `media-list` also returns audio and video
+files found in the project that were never registered, from a bounded walk
+(20,000 entries, depth 12, 500 files) that skips hidden folders, `node_modules`,
+`__pycache__`, `venv`, the project's `Transcripts` folder and symbolic links.
+Each project's walk is reused for 10 seconds, so the page's 3-second poll does
+not rescan. A found file's duration appears once its background probe finishes.
+`recording-rename` stores a shown `title` in the media record; an empty title
+returns to the file name, and registering again keeps it. `recording-trash`
+moves the media file, every revision directory whose `job.json` names that
+source, and their notes to the host's Trash, then removes the media record. It
+refuses while the source is queued or transcribing. `start-batch` accepts up to 20 recordings in one project and runs
 them serially through the same job admission and checkpoint pipeline. Pending
 batch requests live in process memory. `pause` stops the active job with its
 checkpoints intact. An explicit resume fails if its original settings,

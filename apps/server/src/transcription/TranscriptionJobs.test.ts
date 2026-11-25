@@ -238,6 +238,55 @@ it.effect("leaves empty projects untouched and isolates corrupt revisions from v
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("lists project media that was never added and finds a file's transcripts by path", () =>
+  Effect.gen(function* () {
+    const project = yield* Effect.acquireRelease(
+      Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "transcription-discovery-")).then(
+          (directory) => NodeFSP.realpath(directory, "utf8"),
+        ),
+      ),
+      (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+    );
+    const jobs = yield* Jobs.TranscriptionJobs;
+    const downloaded = NodePath.join(project, "Downloads", "lecture.mp4");
+    const transcribed = NodePath.join(project, "interview.m4a");
+    const id = "2026-11-25-interview-12345678";
+    yield* Effect.promise(async () => {
+      for (const folder of ["Downloads", ".hidden", "node_modules/pkg", `Transcripts/${id}`])
+        await NodeFSP.mkdir(NodePath.join(project, folder), { recursive: true });
+      await NodeFSP.writeFile(downloaded, "video");
+      await NodeFSP.writeFile(transcribed, "audio");
+      await NodeFSP.writeFile(NodePath.join(project, "notes.txt"), "text");
+      await NodeFSP.writeFile(NodePath.join(project, ".hidden", "skip.mp3"), "audio");
+      await NodeFSP.writeFile(NodePath.join(project, "node_modules/pkg", "skip.wav"), "audio");
+      await NodeFSP.writeFile(NodePath.join(project, "Transcripts", "skip.webm"), "audio");
+      await NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", id, "job.json"),
+        JSON.stringify({ id, source: transcribed, settings: { engine: "local", model: large } }),
+      );
+      await NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", id, "state.json"),
+        JSON.stringify({ stage: "completed", completed: 1 }),
+      );
+    });
+    yield* jobs.execute({ action: "media-register", project, source: transcribed });
+    const listed = yield* jobs.execute({ action: "media-list", project });
+    expect(listed).toEqual({
+      media: expect.arrayContaining([
+        { source: downloaded, size: 5, created: expect.any(Number), queued: false },
+        expect.objectContaining({ source: transcribed }),
+      ]),
+    });
+    expect(listed).toHaveProperty("media.length", 2);
+    expect(
+      yield* jobs.execute({ action: "list", project, includeCreated: true, source: transcribed }),
+    ).toMatchObject([{ job: { id } }]);
+    for (const source of [downloaded, NodePath.join(project, "deleted.mp3")])
+      expect(yield* jobs.execute({ action: "list", project, source })).toEqual([]);
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "rejects concurrent starts, completes cancel, and creates a new revision after a source change",
   () => {
