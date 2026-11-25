@@ -114,10 +114,10 @@ export function useZoteroSync(input: {
       show({ phase: "done", connection, result: { connection, items } });
     } catch (cause) {
       show({ phase: "problem", message: errorText(cause) });
-    } finally {
-      // Batches that landed before a failure changed sources too.
-      if (items.some((item) => item.outcome === "updated")) await input.onChanged();
     }
+    // Batches that landed before a failure changed sources too. (No `finally`: the React
+    // Compiler cannot compile one, and the catch above never rethrows.)
+    if (items.some((item) => item.outcome === "updated")) await input.onChanged();
   };
 
   const resolveConflict = async (
