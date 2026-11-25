@@ -34,6 +34,11 @@ export interface AccountService {
   /** A `msg()` string: resolve it where it is shown. */
   readonly description: string;
   readonly categories: ReadonlyArray<ExtensionCategory>;
+  /**
+   * Categories whose home section leaves this service to the category page, so a catalog pick
+   * takes its place there (Slack instead of Telegram in Email, calendar & chat).
+   */
+  readonly categoryPageOnly?: ReadonlyArray<ExtensionCategory> | undefined;
   readonly websiteUrl?: string | undefined;
   /** ChatGPT's id for the app, the same for every account; absent when ChatGPT has none. */
   readonly chatgptAppId?: string | undefined;
@@ -163,7 +168,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     description: msg(
       "Codex and Scient Agent reach Microsoft Teams through your ChatGPT account, and Claude through claude.ai’s Microsoft 365 connector. Scient never holds your Microsoft sign-in.",
     ),
-    categories: ["communication"],
+    categories: ["most-used", "communication"],
     websiteUrl: "https://teams.microsoft.com",
     chatgptAppId: "connector_246af0940da3457da0e751171dc1ce60",
     claude: claudeConnectorFor("Microsoft Teams"),
@@ -199,6 +204,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
       "Claude and Scient Agent reach Telegram through Anthropic’s Telegram plugin for Claude Code, which works through a bot you create with @BotFather.",
     ),
     categories: ["most-used", "communication"],
+    categoryPageOnly: ["communication"],
     websiteUrl: "https://telegram.org",
     stores: { claude: "telegram@claude-plugins-official" },
   },
@@ -221,10 +227,21 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     description: msg(
       "Each agent reaches Figma through its own ChatGPT or Claude account. Scient never holds your Figma sign-in.",
     ),
-    categories: ["figures", "code"],
+    categories: ["most-used", "figures", "code"],
     websiteUrl: "https://www.figma.com",
     chatgptAppId: "connector_68df038e0ba48191908c8434991bbac2",
     claude: claudeConnectorFor("Figma"),
+  },
+  {
+    id: "zotero",
+    name: "Zotero",
+    tagline: msg("Find saved papers and add citations"),
+    description: msg(
+      "Codex and Scient Agent reach Zotero through OpenAI’s Zotero plugin for Codex, which works with the Zotero desktop app on this computer.",
+    ),
+    categories: ["most-used", "papers"],
+    websiteUrl: "https://www.zotero.org",
+    stores: { codex: "zotero@openai-curated" },
   },
   {
     id: "readwise",
@@ -239,6 +256,17 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     claude: claudeConnectorFor("Readwise"),
   },
   {
+    id: "latex",
+    name: "LaTeX",
+    tagline: msg("Compile LaTeX papers on this computer"),
+    description: msg(
+      "Codex reaches LaTeX through OpenAI’s LaTeX plugin, which compiles with its bundled Tectonic, or with TeX Live or MacTeX when they are installed.",
+    ),
+    categories: ["papers"],
+    websiteUrl: "https://www.latex-project.org",
+    stores: { codex: "latex@openai-bundled" },
+  },
+  {
     id: "boltz",
     name: "Boltz",
     tagline: msg("Predict structures, screen molecules and design binders"),
@@ -248,6 +276,26 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     categories: ["biology", "chemistry"],
     websiteUrl: "https://boltz.bio",
     stores: { claude: "boltz@claude-plugins-official", codex: "boltz-api-cli@openai-curated" },
+  },
+  {
+    id: "life-science-research",
+    name: "Life Science Research",
+    tagline: msg("Research questions across genetics, omics, structure and trials"),
+    description: msg(
+      "OpenAI’s Life Science Research plugin for Codex routes a research question to the right public resources, from human genetics and expression to protein structure, chemistry and clinical evidence, and synthesizes an evidence-backed answer.",
+    ),
+    categories: ["biology"],
+    stores: { codex: "life-science-research@openai-curated" },
+  },
+  {
+    id: "ngs-analysis",
+    name: "NGS Analysis",
+    tagline: msg("Run sequencing analyses, from FASTQ to variants and RNA-seq"),
+    description: msg(
+      "OpenAI’s Life Sciences NGS Analysis plugin for Codex inspects sequencing files on this computer, asks for the missing assay details, and runs supported public pipelines with QC reports and logs.",
+    ),
+    categories: ["biology"],
+    stores: { codex: "ngs-analysis@openai-curated" },
   },
 ];
 

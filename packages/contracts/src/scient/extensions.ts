@@ -633,7 +633,9 @@ export const ExtensionCategory = Schema.Literals([
   "papers",
   "biology",
   "code",
+  "ai-ml",
   "data",
+  "cloud",
   "physics-math",
   "files",
   "communication",
@@ -644,6 +646,42 @@ export const ExtensionCategory = Schema.Literals([
   "social-science",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
+
+/**
+ * The categories servers list. `physics-math` and `earth` are retired, their entries folded into
+ * Data, Papers, Biology and Code; they stay in `ExtensionCategory` so a client still decodes the
+ * catalog of a server from before.
+ */
+export type ListedExtensionCategory = Exclude<ExtensionCategory, "physics-math" | "earth">;
+
+/**
+ * The categories every client decodes: those that existed before `knownCategories`. Servers
+ * assume them for a request without the field, and every server accepts them in a request.
+ * Never extend it.
+ */
+export const EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES: ReadonlyArray<ExtensionCategory> = [
+  "most-used",
+  "papers",
+  "biology",
+  "code",
+  "data",
+  "physics-math",
+  "files",
+  "communication",
+  "projects",
+  "figures",
+  "chemistry",
+  "earth",
+  "social-science",
+];
+
+/**
+ * The categories a client can decode, sent with every Discover and store search request. Servers
+ * then name and filter by only these: an entry in a newer category is listed under the categories
+ * it had before, and a newer section is left out. Clients from before this field send nothing and
+ * are treated as decoding `EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES`.
+ */
+export const KnownExtensionCategories = Schema.optional(Schema.Array(Schema.String));
 
 /**
  * `curated`: Scient's catalog, answered locally without the network.
@@ -661,6 +699,7 @@ export const DiscoverSearchInput = Schema.Struct({
   cursor: Schema.optional(TrimmedNonEmptyString),
   /** `registry` only: page size, 1 to 100. */
   limit: Schema.optional(Schema.Number),
+  knownCategories: KnownExtensionCategories,
 });
 export type DiscoverSearchInput = typeof DiscoverSearchInput.Type;
 
@@ -737,8 +776,14 @@ export const DiscoverCatalog = Schema.Struct({
 });
 export type DiscoverCatalog = typeof DiscoverCatalog.Type;
 
+export const DiscoverCatalogInput = Schema.Struct({ knownCategories: KnownExtensionCategories });
+export type DiscoverCatalogInput = typeof DiscoverCatalogInput.Type;
+
 /** Exact lookup of one curated or registry entry by name; fails with `not-found`. */
-export const DiscoverEntryInput = Schema.Struct({ name: TrimmedNonEmptyString });
+export const DiscoverEntryInput = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  knownCategories: KnownExtensionCategories,
+});
 export type DiscoverEntryInput = typeof DiscoverEntryInput.Type;
 
 export const DiscoverPage = Schema.Struct({

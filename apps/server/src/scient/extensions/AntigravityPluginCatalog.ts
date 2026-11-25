@@ -5,7 +5,7 @@
  */
 import {
   storeCategories,
-  type ExtensionCategory,
+  type ListedExtensionCategory,
   type ExtensionIconDataUri,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -77,7 +77,7 @@ export interface AntigravityCatalogPlugin {
   readonly website?: string | undefined;
   readonly categories: ReadonlyArray<string>;
   /** Scient's Discover categories, from the reviewed map or the catalog's own labels. */
-  readonly scientCategories: ReadonlyArray<ExtensionCategory>;
+  readonly scientCategories: ReadonlyArray<ListedExtensionCategory>;
   readonly logoUrl?: string | undefined;
   readonly keywords: ReadonlyArray<string>;
   readonly includes: ReadonlyArray<string>;
@@ -163,7 +163,7 @@ function componentNames(value: unknown): ReadonlyArray<string> {
 }
 
 /** Reviewed Discover categories per catalog plugin (2026-11-21 catalogs); others fall back. */
-const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ExtensionCategory>>> = {
+const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ListedExtensionCategory>>> = {
   // Google: Workspace, science, developer.
   gmail: ["communication"],
   gcalendar: ["communication", "projects"],
@@ -176,10 +176,10 @@ const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ExtensionCat
   chemistry: ["chemistry"],
   genomics: ["biology"],
   "structural-biology": ["biology", "chemistry"],
-  robotics: ["physics-math", "code"],
+  robotics: ["code"],
   "data-agent-kit-plugin": ["data", "code"],
   looker: ["data"],
-  google_maps_platform: ["earth", "code"],
+  google_maps_platform: ["code"],
   egm: ["files"],
   "android-cli-plugin": ["code"],
   "chrome-devtools-plugin": ["code"],
@@ -225,45 +225,46 @@ const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ExtensionCat
   "mongodb-atlas": ["data", "code"],
   neo4j: ["data", "code"],
   supabase: ["data", "code"],
-  "arize-skills": ["data", "code"],
-  "grafana-cloud-mcp": ["data", "code"],
+  "arize-skills": ["ai-ml", "data"],
+  "grafana-cloud-mcp": ["cloud", "data"],
   "zohobooks-antigravity": ["data"],
-  // Developer, security and operations tooling.
+  // Developer tooling.
   stripe: ["code"],
   auth0: ["code"],
   base44: ["code"],
-  betterstack: ["code"],
   browse: ["code"],
   clerk: ["code"],
-  cloudflare: ["code"],
   coderabbit: ["code"],
   context7: ["code"],
-  crowdstrike: ["code"],
-  datadog: ["code"],
-  dynatrace: ["code"],
-  "endor-labs-agent-kit": ["code"],
-  "harness-antigravity": ["code"],
-  "incident-io": ["code"],
   "leapwork-play": ["code"],
-  netlify: ["code"],
-  "ping-identity-pingone": ["code"],
   postman: ["code"],
   qodo: ["code"],
-  railway: ["code"],
   "scandit-sdk": ["code"],
-  "sentinelone-purple-mcp": ["code"],
-  sentry: ["code"],
-  soc: ["code"],
-  sonarqube: ["code"],
   spacefast: ["code"],
   superpowers: ["code"],
   "testmu-ai": ["code"],
   unity: ["code"],
-  "vercel-plugin": ["code"],
-  virustotal: ["code"],
   wix: ["code"],
   wordpress: ["code"],
   "zoho-crm-plugin": ["code"],
+  // Hosting, delivery, operations and security.
+  betterstack: ["cloud"],
+  cloudflare: ["cloud", "code"],
+  crowdstrike: ["cloud"],
+  datadog: ["cloud"],
+  dynatrace: ["cloud"],
+  "endor-labs-agent-kit": ["cloud"],
+  "harness-antigravity": ["cloud"],
+  "incident-io": ["cloud"],
+  netlify: ["cloud"],
+  "ping-identity-pingone": ["cloud"],
+  railway: ["cloud"],
+  "sentinelone-purple-mcp": ["cloud"],
+  sentry: ["cloud", "code"],
+  soc: ["cloud"],
+  sonarqube: ["cloud"],
+  "vercel-plugin": ["cloud", "code"],
+  virustotal: ["cloud"],
 };
 /**
  * Discover categories for a catalog plugin: the reviewed list, else the catalog's own categories,
@@ -273,7 +274,7 @@ export function antigravityCategories(
   name: string,
   categories: ReadonlyArray<string>,
   keywords: ReadonlyArray<string>,
-): ReadonlyArray<ExtensionCategory> {
+): ReadonlyArray<ListedExtensionCategory> {
   const reviewed = ANTIGRAVITY_CATEGORIES[name];
   if (reviewed) return reviewed;
   for (const labels of [categories, keywords]) {

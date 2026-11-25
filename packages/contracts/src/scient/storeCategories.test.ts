@@ -16,6 +16,7 @@ describe("store category placement", () => {
     expect(storeCategories("semrush", "Productivity")).toEqual(["projects"]);
     expect(storeCategories("box", "productivity")).toEqual(["files"]);
     expect(storeCategories("commit-commands", "productivity")).toEqual(["code"]);
-    expect(storeCategories("railway", "deployment")).toEqual(["code"]);
+    expect(storeCategories("railway", "deployment")).toEqual(["cloud"]);
+    expect(storeCategories("factset", "Finance")).toEqual(["social-science"]);
   });
 });

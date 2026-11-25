@@ -29,6 +29,7 @@ import {
   LocalImportablesResult,
   LocalInspection,
   DiscoverCatalog,
+  DiscoverCatalogInput,
   DiscoverEntry,
   DiscoverEntryInput,
   DiscoverPage,
@@ -91,7 +92,7 @@ export const WsExtensionsListRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.extensio
 
 export const WsExtensionsDiscoverCatalogRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsDiscoverCatalog,
-  { payload: Schema.Struct({}), success: DiscoverCatalog, error: ExtensionsRpcError },
+  { payload: DiscoverCatalogInput, success: DiscoverCatalog, error: ExtensionsRpcError },
 );
 
 export const WsExtensionsDiscoverEntryRpc = Rpc.make(

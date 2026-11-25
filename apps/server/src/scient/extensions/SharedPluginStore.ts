@@ -17,6 +17,7 @@ import {
 } from "./LocalPluginContents.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { readPluginJson, tryLocalPluginRead } from "./LocalPluginFiles.ts";
+import { categoriesForClient } from "./discover/clientCategories.ts";
 
 const Name = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,62}[a-zA-Z0-9])?$/),
@@ -401,10 +402,11 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     function* (input: Omit<ProviderStoreSearchInput, "instanceId">) {
       const result = yield* listing();
       const terms = (input.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+      const shown = categoriesForClient(input.knownCategories);
       const matching = result.entries.filter(
         ({ entry }) =>
           (!input.category ||
-            storeCategories(entry.name, entry.category).some(
+            shown(storeCategories(entry.name, entry.category)).some(
               (category) => category === input.category,
             )) &&
           terms.every((term) =>

@@ -1,7 +1,7 @@
-import type { ExtensionCategory } from "./extensions.ts";
+import type { ListedExtensionCategory } from "./extensions.ts";
 
 /** A store's own category label, lower-cased, to Scient's Discover categories. */
-const STORE_CATEGORIES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
+const STORE_CATEGORIES: Readonly<Record<string, readonly ListedExtensionCategory[]>> = {
   "education & research": ["papers"],
   research: ["papers"],
   learning: ["papers"],
@@ -10,22 +10,23 @@ const STORE_CATEGORIES: Readonly<Record<string, readonly ExtensionCategory[]>> =
   "developer tools": ["code"],
   coding: ["code"],
   development: ["code"],
-  deployment: ["code"],
+  deployment: ["cloud"],
   testing: ["code"],
   automation: ["code"],
   migration: ["code"],
-  security: ["code"],
-  monitoring: ["code"],
+  security: ["cloud"],
+  monitoring: ["cloud"],
   // Productivity is mostly task and work tracking; files, mail and code tools are named below.
   productivity: ["projects"],
   communication: ["communication"],
   creativity: ["figures"],
   design: ["figures"],
-  math: ["physics-math"],
-  location: ["earth"],
+  math: ["data"],
+  location: ["data"],
   "business & operations": ["projects"],
+  finance: ["social-science"],
 };
-const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
+const OVERRIDES: Readonly<Record<string, readonly ListedExtensionCategory[]>> = {
   zotero: ["papers"],
   "life-science-research": ["biology"],
   "ngs-analysis": ["biology"],
@@ -36,18 +37,18 @@ const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
   deepnote: ["data"],
   hex: ["data"],
   motherduck: ["data"],
-  "math-olympiad": ["physics-math"],
-  "math-proof": ["physics-math"],
+  "math-olympiad": ["data"],
+  "math-proof": ["data"],
   "10x-genomics": ["biology"],
-  skywatch: ["earth"],
+  skywatch: ["data"],
   dominodatalab: ["data"],
   "neon-postgres": ["data", "code"],
   supabase: ["data", "code"],
   biorender: ["biology", "figures"],
   fiftyone: ["data", "code"],
-  "huggingface-skills": ["code", "data"],
-  mapbox: ["earth", "code"],
-  "amazon-location-service": ["earth", "code"],
+  "huggingface-skills": ["ai-ml", "code", "data"],
+  mapbox: ["code"],
+  "amazon-location-service": ["code"],
   // Labelled productivity by their stores.
   box: ["files"],
   dropbox: ["files"],
@@ -76,12 +77,50 @@ const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
   "pr-review-toolkit": ["code"],
   hookify: ["code"],
   "desktop-commander": ["code"],
+  // Machine learning: training, serving, evaluation and tracing.
+  mlflow: ["ai-ml"],
+  langfuse: ["ai-ml"],
+  "langfuse-observability": ["ai-ml"],
+  deepeval: ["ai-ml"],
+  "sagemaker-ai": ["ai-ml", "cloud"],
+  "togetherai-skills": ["ai-ml"],
+  nvidia: ["ai-ml", "code"],
+  "nvidia-skills": ["ai-ml", "code"],
+  "pydantic-ai": ["ai-ml", "code"],
+  "datarobot-agent-skills": ["ai-ml"],
+  pixeltable: ["ai-ml", "data"],
+  "atomic-agents": ["ai-ml", "code"],
+  fal: ["ai-ml", "figures"],
+  // Cloud platforms, CI and infrastructure their stores label as development.
+  "aws-agents": ["cloud"],
+  "aws-agents-for-devsecops": ["cloud"],
+  "aws-amplify": ["cloud"],
+  "aws-core": ["cloud"],
+  "aws-data-analytics": ["cloud", "data"],
+  "aws-serverless": ["cloud"],
+  "aws-startup-advisor": ["cloud"],
+  "aws-transform": ["cloud"],
+  "migration-to-aws": ["cloud"],
+  "deploy-on-aws": ["cloud"],
+  azure: ["cloud"],
+  "google-cloud-storage": ["cloud"],
+  digitalocean: ["cloud"],
+  terraform: ["cloud"],
+  buildkite: ["cloud"],
+  circleci: ["cloud"],
+  "teamcity-cli": ["cloud"],
+  netlify: ["cloud"],
+  "netlify-skills": ["cloud"],
+  render: ["cloud"],
+  hostinger: ["cloud"],
+  vantage: ["cloud"],
+  datadog: ["cloud"],
 };
 
 export function storeCategories(
   name: string,
   category: string | undefined,
-): readonly ExtensionCategory[] {
+): readonly ListedExtensionCategory[] {
   return (
     OVERRIDES[name.toLowerCase()] ?? STORE_CATEGORIES[category?.trim().toLowerCase() ?? ""] ?? []
   );

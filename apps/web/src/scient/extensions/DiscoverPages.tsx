@@ -1,9 +1,10 @@
-import type {
-  DiscoverEntry,
-  DiscoverSearchInput,
-  ExtensionCategory,
-  ProviderStoreEntry,
-  ServerProvider,
+import {
+  type DiscoverEntry,
+  type DiscoverSearchInput,
+  EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES,
+  type ExtensionCategory,
+  type ProviderStoreEntry,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
 import { isAccountServiceStoreEntry, storeEntryAudience } from "./accountServices";
@@ -233,6 +234,18 @@ function DiscoverPager({
   );
 }
 
+/** A home field section's longest preview: four rows of the two-column grid. */
+const HOME_SECTION_MAX_ROWS = 8;
+
+/**
+ * How many of a field's `available` items its home section shows: full grid rows only, so no
+ * item sits alone at the end. The category page lists the rest. Most used shows all of itself.
+ */
+function homeSectionRows(available: number): number {
+  const shown = Math.min(available, HOME_SECTION_MAX_ROWS);
+  return shown - (shown % 2);
+}
+
 function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const gt = useGT();
   const messages = useMessages();
@@ -258,32 +271,41 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                 section.category === "most-used" ||
                 section.total + accountServicesFor(section.category).length >= 4,
             )
-            .map((section) => (
-              <ExtensionsSection
-                key={section.category}
-                title={
-                  <Link
-                    to="/settings/extensions/category/$category"
-                    params={{ category: section.category }}
-                    className={SECTION_TITLE_LINK_CLASS}
-                    onPointerEnter={() => prefetchCategory(section.category)}
-                    onFocus={() => prefetchCategory(section.category)}
-                  >
-                    {extensionCategoryTitle(section, messages)}
-                    <SectionTitleChevron />
-                  </Link>
-                }
-              >
-                <ExtensionGrid label={extensionCategoryTitle(section, messages)}>
-                  {accountServicesFor(section.category).map((service) => (
-                    <AccountServiceItem key={`account:${service.id}`} service={service} />
-                  ))}
-                  {section.entries.map((entry) => (
-                    <EntryItem key={entry.name} entry={entry} />
-                  ))}
-                </ExtensionGrid>
-              </ExtensionsSection>
-            ))}
+            .map((section) => {
+              const services = accountServicesFor(section.category).filter(
+                (service) => !service.categoryPageOnly?.includes(section.category),
+              );
+              const rows =
+                section.category === "most-used"
+                  ? services.length + section.entries.length
+                  : homeSectionRows(services.length + section.entries.length);
+              return (
+                <ExtensionsSection
+                  key={section.category}
+                  title={
+                    <Link
+                      to="/settings/extensions/category/$category"
+                      params={{ category: section.category }}
+                      className={SECTION_TITLE_LINK_CLASS}
+                      onPointerEnter={() => prefetchCategory(section.category)}
+                      onFocus={() => prefetchCategory(section.category)}
+                    >
+                      {extensionCategoryTitle(section, messages)}
+                      <SectionTitleChevron />
+                    </Link>
+                  }
+                >
+                  <ExtensionGrid label={extensionCategoryTitle(section, messages)}>
+                    {services.slice(0, rows).map((service) => (
+                      <AccountServiceItem key={`account:${service.id}`} service={service} />
+                    ))}
+                    {section.entries.slice(0, Math.max(0, rows - services.length)).map((entry) => (
+                      <EntryItem key={entry.name} entry={entry} />
+                    ))}
+                  </ExtensionGrid>
+                </ExtensionsSection>
+              );
+            })}
           <nav aria-label={gt("More categories")} className="flex flex-wrap gap-x-6 gap-y-3">
             {catalog.sections
               .filter(
@@ -300,8 +322,7 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                   onPointerEnter={() => prefetchCategory(section.category)}
                   onFocus={() => prefetchCategory(section.category)}
                 >
-                  {extensionCategoryTitle(section, messages)}{" "}
-                  <span className="text-xs text-muted-foreground">{section.total}</span>
+                  {extensionCategoryTitle(section, messages)}
                   <SectionTitleChevron />
                 </Link>
               ))}
@@ -833,7 +854,7 @@ function CategoryContents({
 function Category({ category }: { readonly category: string }) {
   const gt = useGT();
   const messages = useMessages();
-  const { catalog } = useExtensionsEnvironment();
+  const { catalog, catalogError } = useExtensionsEnvironment();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
   const section = catalog?.sections.find((candidate) => candidate.category === category);
@@ -851,18 +872,34 @@ function Category({ category }: { readonly category: string }) {
         </MutedLine>
       </>
     );
+  // A category added after `knownCategories` exists only on servers that list it: an older one
+  // would reject it, so its page loads only once a catalog lists it.
+  const unlisted =
+    !EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES.includes(category) && section === undefined;
+  const missing = unlisted && catalog !== null;
   return (
     <>
       <BackLink to="/settings/extensions">{gt("Discover")}</BackLink>
       <ExtensionsSection
         title={title}
         action={
-          <SearchField label={gt("Search this category")} value={search} onChange={setSearch} />
+          unlisted ? undefined : (
+            <SearchField label={gt("Search this category")} value={search} onChange={setSearch} />
+          )
         }
       >
         {description ? <MutedLine>{description}</MutedLine> : null}
+        {missing ? (
+          <MutedLine>
+            <T>Scient on this machine doesn’t have this category yet. Update it to browse here.</T>
+          </MutedLine>
+        ) : unlisted && catalogError !== null ? (
+          <MutedLine>{catalogError}</MutedLine>
+        ) : null}
       </ExtensionsSection>
-      <CategoryContents key={`${category}:${query}`} category={category} query={query} />
+      {unlisted ? null : (
+        <CategoryContents key={`${category}:${query}`} category={category} query={query} />
+      )}
     </>
   );
 }

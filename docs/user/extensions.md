@@ -10,12 +10,16 @@ which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
-  (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, iMessage,
-  Telegram, GitHub, Slack, Notion, PubMed, Semantic Scholar, Exa, Playwright,
-  Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
-  literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
-  each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
-  section title to see the whole category. Sections and categories list
+  (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, Microsoft Teams,
+  iMessage, Telegram, Figma, Zotero, GitHub, Slack, Notion, Dropbox, Linear, PubMed,
+  Semantic Scholar, Hugging Face, Exa, Canva, Playwright, Context7, Vercel and Cloudflare), then
+  one section per kind of work: Papers & literature, Biology & medicine, Code & developer tools,
+  AI & machine learning, Data & databases, Cloud, DevOps & security, and more. Categories with
+  only a few picks, such as Social science, economics & finance, appear as links after these
+  sections. Each section shows its
+  most useful picks, up to eight and in full rows; select its title to see the whole category,
+  including the matching plugins from each agent's store. After them come the features built into Scient,
+  each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Sections and categories list
   official services, run by the service itself or by Anthropic for it. Community
   servers and MCP Registry servers appear only when you search. Search covers the
   catalog, the registry, and what you have already installed.
