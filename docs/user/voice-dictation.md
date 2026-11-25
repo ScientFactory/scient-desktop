@@ -61,6 +61,38 @@ To change models later, open **Settings → Voice & Transcription**. The page sh
 is recommended for your language, which model is in use, download
 progress, and removal controls.
 
+## Record a lesson
+
+Choose **Record a lesson** from a project's menu in the sidebar, or from
+**Add** on the Recordings page. Pick the project and microphone, then
+**Start recording**.
+
+- Live captions appear while you record. They use the project's
+  **Default engine** under **Recordings** for the recording language, and are
+  only a preview.
+- The audio is saved into the project every second. If Scient closes, the
+  recording is recovered the next time it opens.
+- **Pause** stops recording until you **Resume**.
+- **Stop** saves the recording, transcribes it with the default engine and then
+  writes lesson notes: a summary, key concepts and open questions, each with its
+  time in the recording. The Recordings page opens on the lesson while this
+  runs. A project notes recipe, when set, is used instead of the built-in one.
+
+### Ask a question out loud
+
+Select **Talk** to ask about the lesson while it records. Recording pauses for
+the whole conversation, so neither your question nor the answer is recorded.
+**End and resume** goes back to recording. Use headphones, so the answer is not
+heard by the microphone.
+
+- With Scient Agent signed in to ChatGPT, ChatGPT answers. Your questions go to
+  a **Lesson questions** thread in the project, which reads the live captions.
+- Otherwise, if you added an OpenAI speech engine under **Cloud engines** and
+  allowed audio uploads, OpenAI's realtime model answers with your own key. It
+  hears the most recent part of the lesson's captions.
+
+Talk is hidden when neither is set up.
+
 ## Recordings defaults
 
 To transcribe a recording, [install FFmpeg](https://ffmpeg.org/download.html)

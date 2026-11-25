@@ -42,9 +42,44 @@ batch requests live in process memory. `pause` stops the active job with its
 checkpoints intact. An explicit resume fails if its original settings,
 vocabulary or source have changed. An explicit rerun gets a fresh revision.
 
+### Lessons
+
+A microphone capture can be a lesson. `capture-start` takes the capture `id`
+and the recording `language`, renews the capture lease and returns the
+recording default engine for that language as `captions`
+(`{ kind: "local", modelId }`, `{ kind: "cloud", engineId }` or
+`{ kind: "chatgpt", instanceId }`), or `transcription: "unavailable"` when no
+engine can transcribe. `talk.openai` says whether an OpenAI speech engine with
+upload consent exists.
+
+The window cuts its own microphone stream into clips at a pause after 10
+seconds, or at 30 seconds, and sends each to `voice.dictate` with that engine.
+One clip is transcribed at a time and one waits; a newer clip replaces the
+waiting one. `capture-caption` saves each result by window index under the
+capture directory and rewrites `captions.md` there. Captions are provisional
+and are deleted with the capture.
+
+`capture-finish` with `lesson: { language }` publishes the recording, then
+starts a normal transcription job with the recording default, as
+`transcription: "started"`, or `"queued"` behind the running job. The job is
+marked `lesson` in `job.json`. When it completes, the server makes notes with
+the `lesson` recipe, which reads the whole transcript section by section. A
+nonempty project notes recipe replaces the built-in lesson instruction. The
+direct `notes.md` generator skips lesson jobs. Finishing keeps every saved
+chunk in index order, so a lost chunk costs only its own audio.
+
+`capture-talk` takes the window's WebRTC offer, resolves the key of the first
+OpenAI speech engine with upload consent, and posts the offer to
+`https://api.openai.com/v1/realtime/calls` with `gpt-realtime-2.1`. Its
+instructions carry the latest captions that fit in 24,000 bytes. The key stays
+on the server; the window reads the call's events on its own data channel. For
+ChatGPT, notes `lesson-talk` with the capture ID launches a **Lesson questions**
+project thread that knows the captions path, and the window holds a Scient
+Agent live voice call in its own agent for that thread.
+
 The authenticated notes endpoint, `POST /api/transcription/notes`, uses the same
 grants and resolves a registered project before accessing revisions. Each notes
-recipe launches a project-root thread with the Transcripts skill. Its manifest
+recipe (`summary`, `study-notes`, `action-items` or `lesson`) launches a project-root thread with the Transcripts skill. Its manifest
 associates the thread and Markdown output with the recording's root revision,
 so notes stay visible when the user switches transcript versions. Ask drafts store their thread ID, source revision and source-time range alongside the recording.
 
