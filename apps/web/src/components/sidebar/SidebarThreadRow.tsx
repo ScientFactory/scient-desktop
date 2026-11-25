@@ -1369,6 +1369,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
+                // SCIENT-FORK: the computer its icon marks, which the row's label leaves out.
+                aria-description={multiline ? (environmentLabel ?? undefined) : undefined}
                 aria-current={accessibility.current}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
@@ -1584,6 +1586,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
               data-sidebar-row={threadKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
+              // SCIENT-FORK: the computer its icon marks, which the row's label leaves out.
+              aria-description={environmentLabel ?? undefined}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}

@@ -101,13 +101,21 @@ function Card({
   );
 }
 
-// A folder row's body promises this height to rows scrolled out of view
+// A folder row's body promises a height to rows scrolled out of view
 // (contain-intrinsic-size), so a row that renders shorter throws off revealing the open thread.
-function folderRowHeight(container: HTMLElement) {
-  return container
-    .querySelector<HTMLElement>('[class*="contain-intrinsic-size:auto_--spacing(13.5)"]')
-    ?.getBoundingClientRect().height;
+function folderRowHeights(container: HTMLElement) {
+  let body = container.querySelector<HTMLElement>('[data-testid="sidebar-row-folder"]');
+  while (body && getComputedStyle(body).containIntrinsicHeight === "none") {
+    body = body.parentElement;
+  }
+  if (!body) return null;
+  return {
+    promised: Number.parseFloat(getComputedStyle(body).containIntrinsicHeight.replace("auto ", "")),
+    rendered: body.getBoundingClientRect().height,
+  };
 }
+
+const rowTestId = { card: "sidebar-row-card", "folder-multiline": "sidebar-row-folder" };
 
 it.for<Variant>(["card", "folder-multiline"])(
   "marks a %s row's computer with its icon alone when there are several computers",
@@ -117,10 +125,16 @@ it.for<Variant>(["card", "folder-multiline"])(
     await expect.element(screen.getByText("Spectra fit")).toBeVisible();
     await expect.element(screen.getByRole("img", { name: "Lab server" })).toBeVisible();
     expect(screen.container.textContent).not.toContain("Lab server");
+    // A screen reader hears the computer from the row itself, whose label replaces its contents.
+    await expect
+      .element(screen.getByTestId(rowTestId[variant]))
+      .toHaveAccessibleDescription("Lab server");
     // The line keeps a text line's height without the name.
     const line = screen.getByRole("img", { name: "Lab server" }).element().parentElement;
     expect(line?.getBoundingClientRect().height).toBe(16);
-    if (variant === "folder-multiline") expect(folderRowHeight(screen.container)).toBe(54);
+    if (variant === "folder-multiline") {
+      expect(folderRowHeights(screen.container)).toEqual({ promised: 54, rendered: 54 });
+    }
   },
 );
 
@@ -132,7 +146,7 @@ it("keeps a folder row with only a marker at its promised height", async () => {
     .element(screen.getByRole("button", { name: "Issue #123: Fit spectra" }))
     .toBeVisible();
   expect(screen.container.querySelector('[aria-label="Lab server"]')).toBeNull();
-  expect(folderRowHeight(screen.container)).toBe(54);
+  expect(folderRowHeights(screen.container)).toEqual({ promised: 54, rendered: 54 });
 });
 
 it("leaves a card's computer out when there is only one", async () => {
@@ -141,4 +155,5 @@ it("leaves a card's computer out when there is only one", async () => {
   await expect.element(screen.getByText("Spectra fit")).toBeVisible();
   expect(screen.container.querySelector('[aria-label="Lab server"]')).toBeNull();
   expect(screen.container.textContent).not.toContain("Lab server");
+  await expect.element(screen.getByTestId("sidebar-row-card")).not.toHaveAccessibleDescription();
 });
