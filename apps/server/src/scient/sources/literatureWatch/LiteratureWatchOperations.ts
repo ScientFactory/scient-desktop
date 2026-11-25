@@ -1,0 +1,142 @@
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off -- Promise-based store code with ISO timestamps and run IDs.
+import * as NodeCrypto from "node:crypto";
+
+import {
+  LITERATURE_WATCH_SERVICES,
+  type LiteratureWatch,
+  type LiteratureWatchCandidate,
+  type LiteratureWatchPick,
+  type LiteratureWatchRun,
+  literatureWatchCandidates,
+  literatureWatchWindow,
+  publishLiteratureWatchRun,
+} from "@scientfactory/scient-sources";
+import {
+  changeLiteratureWatchRun,
+  finishLiteratureWatchRun,
+  readLiteratureWatch,
+  readLiteratureWatchRun,
+  writeLiteratureWatchRun,
+} from "@scientfactory/scient-sources/literature-watch-store";
+import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
+
+import { searchWatchService, type WatchSearchOptions } from "./watchSearch.ts";
+
+/** An open run older than this is fetched again rather than resumed. */
+const RUN_REUSE_MS = 24 * 60 * 60 * 1000;
+export const WATCH_TITLES_PAGE = 400;
+
+/** Resumes the watch's open run, or fetches every service's window into a new one. */
+export async function startLiteratureWatchRun(
+  library: ScientLibraryLocation,
+  watchId: string,
+  options: WatchSearchOptions & { readonly now: Date },
+): Promise<LiteratureWatchRun> {
+  const open = await readLiteratureWatchRun(library, watchId);
+  if (open && options.now.getTime() - Date.parse(open.startedAt) < RUN_REUSE_MS) return open;
+  const watch = await readLiteratureWatch(library, watchId);
+  const results = await Promise.all(
+    LITERATURE_WATCH_SERVICES.flatMap((service) => {
+      const query = watch.queries[service];
+      return query
+        ? [
+            searchWatchService(
+              service,
+              query,
+              literatureWatchWindow(watch, service, options.now),
+              options,
+            ),
+          ]
+        : [];
+    }),
+  );
+  const { candidates, alreadySeen } = literatureWatchCandidates(
+    results.flatMap((result) => result.found),
+    watch.seen,
+  );
+  const run: LiteratureWatchRun = {
+    formatVersion: 1,
+    watchId,
+    runId: `run-${options.now.toISOString().slice(0, 10)}-${NodeCrypto.randomUUID().slice(0, 8)}`,
+    startedAt: options.now.toISOString(),
+    services: results.map((result) => result.run),
+    alreadySeen,
+    candidates,
+    delivered: 0,
+  };
+  await writeLiteratureWatchRun(library, run);
+  return run;
+}
+
+/** A compact line per candidate, for title screening. */
+function titleLine(candidate: LiteratureWatchCandidate) {
+  return {
+    id: candidate.candidateId,
+    title: candidate.title,
+    ...(candidate.venue ? { venue: candidate.venue } : {}),
+    ...(candidate.published ? { published: candidate.published } : {}),
+    ...(candidate.kinds?.length ? { kinds: candidate.kinds.slice(0, 3) } : {}),
+    ...(candidate.abstract ? {} : { noAbstract: true as const }),
+  };
+}
+
+/** Titles from `offset`; what is handed out counts as screened when the run is published. */
+export async function literatureWatchTitles(
+  library: ScientLibraryLocation,
+  run: LiteratureWatchRun,
+  offset: number,
+) {
+  const page = run.candidates.slice(offset, offset + WATCH_TITLES_PAGE);
+  const end = offset + page.length;
+  if (end > run.delivered) {
+    await changeLiteratureWatchRun(library, run.watchId, run.runId, (current) => ({
+      ...current,
+      delivered: Math.max(current.delivered, end),
+    }));
+  }
+  return {
+    titles: page.map(titleLine),
+    ...(end < run.candidates.length ? { nextOffset: end } : {}),
+  };
+}
+
+/** Full records for candidates already handed out. */
+export function literatureWatchAbstracts(
+  run: LiteratureWatchRun,
+  candidateIds: ReadonlyArray<string>,
+): ReadonlyArray<LiteratureWatchCandidate> {
+  const wanted = new Set(candidateIds);
+  return run.candidates
+    .slice(0, run.delivered)
+    .filter((candidate) => wanted.has(candidate.candidateId));
+}
+
+export function publishLiteratureWatch(
+  library: ScientLibraryLocation,
+  input: {
+    readonly watchId: string;
+    readonly runId: string;
+    readonly picks: ReadonlyArray<LiteratureWatchPick>;
+    readonly summary?: string;
+    readonly now: Date;
+  },
+): Promise<LiteratureWatch> {
+  return finishLiteratureWatchRun(library, input.watchId, input.runId, (watch, run) =>
+    publishLiteratureWatchRun(
+      watch,
+      run,
+      { picks: input.picks, ...(input.summary ? { summary: input.summary } : {}) },
+      input.now,
+    ),
+  );
+}
+
+/** What to add a briefing item to the Library by, as the identifier intake reads it. */
+export function literatureWatchItemEntry(candidate: LiteratureWatchCandidate): string | null {
+  const { ids } = candidate;
+  if (ids.doi) return ids.doi;
+  if (ids.pmid) return `pmid:${ids.pmid}`;
+  if (ids.arxiv) return `arxiv:${ids.arxiv}`;
+  if (ids.openalex) return `openalex:${ids.openalex}`;
+  return null;
+}

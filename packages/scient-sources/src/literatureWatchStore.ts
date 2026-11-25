@@ -63,7 +63,11 @@ export async function listLiteratureWatches(library: ScientLibraryLocation): Pro
     }
     try {
       watches.push(
-        await readBoundedJson(NodePath.join(directory, entry.name), MAX_WATCH_BYTES, LiteratureWatch),
+        await readBoundedJson(
+          NodePath.join(directory, entry.name),
+          MAX_WATCH_BYTES,
+          LiteratureWatch,
+        ),
       );
     } catch {
       issues.push(`${WATCHES_DIRECTORY}/${entry.name} could not be read.`);
@@ -131,6 +135,23 @@ export async function writeLiteratureWatchRun(
   await withScientLibraryLock(library.root, async () => {
     await readLiteratureWatch(library, run.watchId);
     await atomicWriteJson(runPath(library, run.watchId), run, MAX_RUN_BYTES);
+  });
+}
+
+/** Reads, changes and writes the watch's open run under the Library lock. */
+export async function changeLiteratureWatchRun(
+  library: ScientLibraryLocation,
+  watchId: string,
+  runId: string,
+  change: (run: LiteratureWatchRun) => LiteratureWatchRun,
+): Promise<LiteratureWatchRun> {
+  return withScientLibraryLock(library.root, async () => {
+    const run = await readLiteratureWatchRun(library, watchId);
+    if (!run || run.runId !== runId)
+      throw new Error("That run is no longer open; start a new run.");
+    const next = change(run);
+    await atomicWriteJson(runPath(library, watchId), next, MAX_RUN_BYTES);
+    return next;
   });
 }
 

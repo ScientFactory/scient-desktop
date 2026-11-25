@@ -143,7 +143,8 @@ export const LiteratureWatch = Schema.Struct({
   watchId: NonEmptyString,
   ...LiteratureWatchDefinition.fields,
   paused: Schema.optionalKey(Schema.Literal(true)),
-  scheduledTaskId: Schema.optionalKey(NonEmptyString),
+  /** The thread settings its scheduled runs use, in the server's own contract shape. */
+  runner: Schema.optionalKey(Schema.Unknown),
   /** Per service, the last day a run searched completely; the next run starts there. */
   covered: Schema.Struct({
     pubmed: Schema.optionalKey(Day),
@@ -250,7 +251,9 @@ export function literatureWatchCandidates(
       for (const key of literatureWatchKeys(merged[index]!)) byKey.set(key, index);
     }
   }
-  const fresh = merged.filter((record) => !literatureWatchKeys(record).some((key) => judged.has(key)));
+  const fresh = merged.filter(
+    (record) => !literatureWatchKeys(record).some((key) => judged.has(key)),
+  );
   return {
     candidates: fresh.map((record, index) => ({ ...record, candidateId: `c${index + 1}` })),
     alreadySeen: merged.length - fresh.length,
@@ -322,13 +325,11 @@ export function publishLiteratureWatchRun(
     covered,
     seen: [
       ...watch.seen,
-      ...screened.map(
-        (candidate): LiteratureWatchSeen => ({
-          keys: literatureWatchKeys(candidate).slice(0, 6),
-          fate: picked.has(candidate.candidateId) ? "shown" : "passed",
-          runId: run.runId,
-        }),
-      ),
+      ...screened.map((candidate): LiteratureWatchSeen => ({
+        keys: literatureWatchKeys(candidate).slice(0, 6),
+        fate: picked.has(candidate.candidateId) ? "shown" : "passed",
+        runId: run.runId,
+      })),
     ],
     briefings: [briefing, ...watch.briefings].slice(0, KEPT_BRIEFINGS),
     updatedAt: now.toISOString(),

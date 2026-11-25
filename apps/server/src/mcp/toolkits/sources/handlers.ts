@@ -428,7 +428,7 @@ interface WholeLibrary {
  * Admits a call as the Library's write path does, without a project to move in: a read creates
  * nothing, a write waits for no unfinished restore and finishes interrupted merges first.
  */
-const resolveWholeLibrary = Effect.fn("ScientSourcesToolkit.resolveWholeLibrary")(function* (
+export const resolveWholeLibrary = Effect.fn("ScientSourcesToolkit.resolveWholeLibrary")(function* (
   access: "read" | "write",
 ) {
   if (access === "write") yield* requireSourcesWrite;

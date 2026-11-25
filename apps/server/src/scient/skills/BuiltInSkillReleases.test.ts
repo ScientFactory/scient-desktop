@@ -34,6 +34,7 @@ describe("Scient built-in skill releases", () => {
       "scient.overleaf-sync": true,
       "scient.references": true,
       "scient.systematic-review": true,
+      "scient.literature-watch": true,
       "scient.compare-sources": true,
       "scient.statistics-review": true,
       "scient.check-reported-numbers": true,

@@ -16,7 +16,7 @@ import type { IdentifierLookup, RequestPace } from "./SourceIdentifierResolver.t
 export const ARXIV_IDS_PER_REQUEST = 50;
 
 // arXiv's API terms ask for no more than one request every three seconds.
-const runWithArxivRequestLimit = createSerialRequestLane({ minimumStartIntervalMs: 3_000 });
+export const runWithArxivRequestLimit = createSerialRequestLane({ minimumStartIntervalMs: 3_000 });
 
 const arxivXmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -29,7 +29,7 @@ const arxivXmlParser = new XMLParser({
     name === "entry" || name === "author" || name === "link" || name === "category",
 });
 
-interface ArxivEntry {
+export interface ArxivEntry {
   readonly id: string;
   readonly title: string | null;
   readonly summary: string | null;
@@ -80,7 +80,7 @@ function entryArxivId(idUrl: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
+export function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
   const parsed: unknown = arxivXmlParser.parse(xml);
   const feed =
     parsed && typeof parsed === "object" && "feed" in parsed

@@ -14,6 +14,7 @@ import {
   ScientDocumentRuntimeToolkit,
   ScientDocumentsToolkit,
 } from "./toolkits/documents/tools.ts";
+import { ScientLiteratureWatchToolkit } from "./toolkits/literatureWatch/tools.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
 import {
@@ -50,6 +51,7 @@ export const scientTools = [
   ...Object.values(ScientSourcesToolkit.tools),
   ...Object.values(ScientReferencesToolkit.tools),
   ...Object.values(ScientSystematicReviewsToolkit.tools),
+  ...Object.values(ScientLiteratureWatchToolkit.tools),
   ...Object.values(ScientAnnotationsToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
