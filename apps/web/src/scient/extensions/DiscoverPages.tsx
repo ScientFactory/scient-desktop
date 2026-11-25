@@ -873,17 +873,17 @@ function Category({ category }: { readonly category: string }) {
       </>
     );
   // A category added after `knownCategories` exists only on servers that list it: an older one
-  // would reject it, so its page waits for the catalog and loads nothing when it is missing.
-  const newer = !EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES.includes(category);
-  const waiting = newer && catalog === null && catalogError === null;
-  const missing = newer && catalog !== null && section === undefined;
+  // would reject it, so its page loads only once a catalog lists it.
+  const unlisted =
+    !EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES.includes(category) && section === undefined;
+  const missing = unlisted && catalog !== null;
   return (
     <>
       <BackLink to="/settings/extensions">{gt("Discover")}</BackLink>
       <ExtensionsSection
         title={title}
         action={
-          missing ? undefined : (
+          unlisted ? undefined : (
             <SearchField label={gt("Search this category")} value={search} onChange={setSearch} />
           )
         }
@@ -893,9 +893,11 @@ function Category({ category }: { readonly category: string }) {
           <MutedLine>
             <T>Scient on this machine doesn’t have this category yet. Update it to browse here.</T>
           </MutedLine>
+        ) : unlisted && catalogError !== null ? (
+          <MutedLine>{catalogError}</MutedLine>
         ) : null}
       </ExtensionsSection>
-      {waiting || missing ? null : (
+      {unlisted ? null : (
         <CategoryContents key={`${category}:${query}`} category={category} query={query} />
       )}
     </>

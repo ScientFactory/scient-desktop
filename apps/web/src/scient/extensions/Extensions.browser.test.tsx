@@ -66,6 +66,7 @@ const state = vi.hoisted(() => ({
   providersByEnvironment: {} as Record<string, ServerProvider[]>,
   inventory: null as ExtensionsInventory | null,
   catalog: null as DiscoverCatalog | null,
+  catalogError: null as string | null,
   discoverPages: {} as Record<string, DiscoverPageResult>,
   /** A discover query still waiting, or failed with this message; keyed like `discoverPages`. */
   discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
@@ -280,7 +281,7 @@ vi.mock("../../state/query", async () => {
           error: null,
         };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
-      if (atom.kind === "catalog") return { data: state.catalog, error: null };
+      if (atom.kind === "catalog") return { data: state.catalog, error: state.catalogError };
       if (atom.kind === "entry") {
         const name = String(atom.input?.name);
         const found =
@@ -766,6 +767,7 @@ function setup() {
   };
   state.inventory = inventory();
   state.catalog = catalog;
+  state.catalogError = null;
   state.discoverPages = {};
   state.discoverOutcomes = {};
   state.entries = {};
@@ -1430,6 +1432,19 @@ describe("Discover", () => {
       "Scient on this machine doesn’t have this category yet. Update it to browse here.",
     );
     expect(fixture.container.textContent).not.toContain("Scient’s picks");
+
+    // Until a catalog lists it, nothing is requested: not while loading, not after a failure.
+    state.catalog = null;
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).not.toContain("Scient’s picks");
+    state.catalogError = "The catalog could not be loaded.";
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).toContain("The catalog could not be loaded.");
+    expect(fixture.container.textContent).not.toContain("Scient’s picks");
+    expect(state.queryTargets.some((target) => JSON.stringify(target).includes("cloud"))).toBe(
+      false,
+    );
+    state.catalogError = null;
 
     state.catalog = {
       ...catalog,
