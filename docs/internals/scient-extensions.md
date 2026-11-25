@@ -847,9 +847,16 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   refreshes are throttled to ten minutes. Sign-in opens claude.ai's connector
   settings. Local installed plugin metadata comes from the selected Claude home.
 - **Scient Agent**: bounded `plugin list --json` through the exact configured
-  executable and isolated root, plus `<root>/agent/mcp.json` and plugin MCP files.
-  Configuration proves a server is configured, not connected. Enable, disable,
-  and uninstall are re-read and verified. Foreign Claude installs are read-only
+  executable and isolated root. When `--runtime-info` lists `mcp` in `hostCommands`,
+  `mcp list` reports the servers a conversation would load with their live status and
+  replaces the configured rows; it omits disabled servers, so `disabled` rows and other
+  sources' rows (ChatGPT apps) stay. An older agent, or a failed listing, falls back to
+  `<root>/agent/mcp.json` and plugin MCP files, which prove a server is configured, not
+  connected. **Sign in** runs `mcp login <name>` with `SCIENT_AGENT_HOST_PAGES=1`: the
+  process prints the authorization page and holds the browser callback, in the sign-in's
+  scope, until it reports the outcome; the agent stores the credential and the inventory
+  re-reads. An older agent's rows offer no **Sign in**.
+  Enable, disable, and uninstall are re-read and verified. Foreign Claude installs are read-only
   from this section. No configuration, environment, or credentials from an MCP
   definition are projected into the UI.
 - **Scient Agent's ChatGPT apps**: the apps its own ChatGPT sign-in has
@@ -1263,6 +1270,8 @@ adding its earlier categories in `clientCategories.ts`. `physics-math` and `eart
 their entries moved to `data`, `papers`, `biology` and `code`, and no server lists them any more
 (`ListedExtensionCategory`). They stay in `ExtensionCategory` and in the before-list so a newer
 client still decodes an older server's catalog, and an older server's sections for them still show.
+The web's category copy (`extensionCategoryCopy.ts`) keeps every title and description an older
+server sends, so renaming a section adds its new words without removing the old.
 
 **Icons.** Clients never load remote images. Registry icons are not fetched at runtime;
 Codex store logos use the bounded server-side path above. Every curated server ships with a bundled logo:
