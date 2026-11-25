@@ -939,9 +939,12 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() => {
       expect(screen.text()).toContain("Parent turn 29:");
       expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
+      // SCIENT-FORK:START — scroll events fire on the next frame, after scrollTop has moved, so
+      // a landing within one frame is seen at the end before any scroll has been recorded.
+      expect(shortfalls.length).toBeGreaterThan(0);
+      // SCIENT-FORK:END
     });
 
-    expect(shortfalls.length).toBeGreaterThan(0);
     expect(shortfalls).toEqual(shortfalls.map(() => 0));
   });
 
