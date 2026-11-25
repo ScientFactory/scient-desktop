@@ -1274,39 +1274,52 @@ it("covers a list that mounts again after an opening that never finished loading
   expect(covered()).toBe(true);
 });
 
-it("ends a wheel glide from one thread when the scroller shows another", async (context) => {
-  await using _fixture = _createFixture(context);
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+it.for(["its first mount", "an empty start", "an empty remount"] as const)(
+  "ends a wheel glide from one thread when the scroller shows another, after %s",
+  async (opening, context) => {
+    await using _fixture = _createFixture(context);
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  await render(
-    _fixture,
-    "geometry:glide-a",
-    Array.from({ length: 30 }, (_, i) => entry(i + 600)),
-    { positionHistoryLoading: true },
-  );
-  const node = _fixture.listRef.current!.getScrollableNode()!;
-  const cover = _fixture.host!.querySelector<HTMLElement>("[data-timeline-opening-cover]")!;
-  // A line-mode wheel glides over frames (frames are on the fixture's fake clock).
-  cover.dispatchEvent(
-    new WheelEvent("wheel", {
-      deltaY: 6,
-      deltaMode: WheelEvent.DOM_DELTA_LINE,
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
-  // Another thread opens on the same scroller and waits for its history, so nothing of its own moves it.
-  await render(
-    _fixture,
-    "geometry:glide-b",
-    Array.from({ length: 30 }, (_, i) => entry(i + 700)),
-    { positionHistoryLoading: true },
-  );
-  expect(_fixture.listRef.current!.getScrollableNode()).toBe(node);
-  const shownAt = node.scrollTop;
-  await advanceClock(_fixture, 256);
-  expect(node.scrollTop).toBe(shownAt);
-});
+    const rowsA = Array.from({ length: 30 }, (_, i) => entry(i + 600));
+    const unmounted = async () =>
+      await vi.waitFor(() => {
+        expect(_fixture.listRef.current?.getScrollableNode() ?? null).toBeNull();
+      });
+    // The list can mount or mount again while the same thread stays shown.
+    if (opening === "an empty start") {
+      await render(_fixture, "geometry:glide-a", []);
+      await unmounted();
+    }
+    if (opening === "an empty remount") {
+      await render(_fixture, "geometry:glide-a", rowsA, { positionHistoryLoading: true });
+      await render(_fixture, "geometry:glide-a", []);
+      await unmounted();
+    }
+    await render(_fixture, "geometry:glide-a", rowsA, { positionHistoryLoading: true });
+    const node = _fixture.listRef.current!.getScrollableNode()!;
+    const cover = _fixture.host!.querySelector<HTMLElement>("[data-timeline-opening-cover]")!;
+    // A line-mode wheel glides over frames (frames are on the fixture's fake clock).
+    cover.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: 6,
+        deltaMode: WheelEvent.DOM_DELTA_LINE,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    // Another thread opens on the same scroller and waits for its history, so nothing of its own moves it.
+    await render(
+      _fixture,
+      "geometry:glide-b",
+      Array.from({ length: 30 }, (_, i) => entry(i + 700)),
+      { positionHistoryLoading: true },
+    );
+    expect(_fixture.listRef.current!.getScrollableNode()).toBe(node);
+    const shownAt = node.scrollTop;
+    await advanceClock(_fixture, 256);
+    expect(node.scrollTop).toBe(shownAt);
+  },
+);
 
 function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();

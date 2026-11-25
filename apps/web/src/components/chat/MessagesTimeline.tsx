@@ -1068,12 +1068,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // retained scroller shows another thread, it would treat the new restore as drift and move it.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the scroller's DOM wheel glide to the thread it shows
   useLayoutEffect(() => {
-    const scrollNode = listRef.current?.getScrollableNode();
+    // The attached scroller, not the ref: a list can mount or remount while the thread is shown.
+    const scrollNode = attachedViewport?.scrollNode;
     if (scrollNode) return () => cancelTimelineWheelGlide(scrollNode);
   }, [
+    attachedViewport,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch ends the outgoing thread's glide.
     listIdentityKey,
-    listRef,
   ]);
   // SCIENT-FORK:END
 
