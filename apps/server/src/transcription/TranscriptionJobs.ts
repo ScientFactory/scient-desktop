@@ -69,6 +69,7 @@ import {
 import { mergeWords, recognitionTerms, wordKey } from "./words.ts";
 import { createOverrideRateTable, lookupRate } from "../usage/usagePricing.ts";
 import { decodePcm, probeRecordingDuration, recordingDuration } from "./media.ts";
+import { type DiscoveredMedia, discoverProjectMedia } from "./mediaDiscovery.ts";
 import { sampleSpeechLanguage } from "./languageSample.ts";
 import { scoreSpeech } from "./windows.ts";
 import { relistenPass } from "./relisten.ts";
@@ -180,6 +181,7 @@ export const Request = Schema.Union([
     project: path,
     includeCreated: Schema.optionalKey(Schema.Boolean),
     query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
+    source: Schema.optionalKey(path),
   }),
   Schema.Struct({ action: Schema.Literal("sample-language"), project: path, source: path }),
   Schema.Struct({ action: Schema.Literal("media-list"), project: path }),
@@ -197,7 +199,12 @@ export const Request = Schema.Union([
   Schema.Struct({ action: Schema.Literal("capture-recover"), project: path }),
   Schema.Struct({ action: Schema.Literal("capture-touch"), project: path, id: captureId }),
   Schema.Struct({ action: Schema.Literal("capture-finish"), project: path, id: captureId }),
-  Schema.Struct({ action: Schema.Literal("media-register"), project: path, source: path }),
+  Schema.Struct({
+    action: Schema.Literal("media-register"),
+    project: path,
+    source: path,
+    onlyInProject: Schema.optionalKey(Schema.Boolean),
+  }),
   Schema.Struct({ action: Schema.Literal("revision"), project: path, id: RevisionId }),
   Schema.Struct({ action: Schema.Literal("inventory"), project: path, ...InventoryInput.fields }),
   Schema.Struct({
@@ -550,6 +557,36 @@ const make = Effect.gen(function* () {
       return undefined;
     }
   };
+  // A found file's duration is listed once probed; the listing never waits for the probe, and
+  // the entry, set before the probe, keeps later polls from queueing it again.
+  const foundDurations = new Map<string, { fingerprint: string; value?: number }>();
+  const probedDuration = (project: string, file: DiscoveredMedia) => {
+    const fingerprint = `${file.size}:${file.mtime}`;
+    const known = foundDurations.get(file.source);
+    if (known?.fingerprint === fingerprint) return known.value;
+    if (foundDurations.size >= 4096) {
+      const oldest = foundDurations.keys().next();
+      if (!oldest.done) foundDurations.delete(oldest.value);
+    }
+    const entry: { fingerprint: string; value?: number } = { fingerprint };
+    foundDurations.set(file.source, entry);
+    void durationFor(project, file.source).then((value) => {
+      if (value !== undefined) entry.value = value;
+    });
+    return undefined;
+  };
+  const discoveries = new Map<string, { at: number; files: Promise<DiscoveredMedia[]> }>();
+  const discoveredMedia = (project: string, now: number) => {
+    const cached = discoveries.get(project);
+    if (cached && now - cached.at < 10_000) return cached.files;
+    if (!cached && discoveries.size >= 64) {
+      const oldest = discoveries.keys().next();
+      if (!oldest.done) discoveries.delete(oldest.value);
+    }
+    const files = discoverProjectMedia(project).catch(() => []);
+    discoveries.set(project, { at: now, files });
+    return files;
+  };
   const settled = yield* PubSub.unbounded<SettledTranscription>();
   const requireCloudUpload = Effect.fn("TranscriptionJobs.requireCloudUpload")(function* () {
     const settings = yield* serverSettings.getSettings.pipe(Effect.mapError(failureResponse));
@@ -885,8 +922,14 @@ const make = Effect.gen(function* () {
           await atomicWrite(NodePath.join(root, `recording-${key}.json`), JSON.stringify(media));
           return media;
         };
-        if (input.action === "media-register")
+        if (input.action === "media-register") {
+          // A file outside the project registers nothing, so the caller can copy it in instead.
+          if (input.onlyInProject) {
+            const source = await NodeFSP.realpath(input.source).catch(() => undefined);
+            if (!source || !inside(project, source)) return { media: [] };
+          }
           return { media: [await registerMedia(input.source)] };
+        }
         if (
           input.action === "capture-chunk" ||
           input.action === "capture-touch" ||
@@ -917,8 +960,7 @@ const make = Effect.gen(function* () {
               ),
             );
           if (input.action === "capture-recover") return { captured: true as const };
-          if (!rootStat) return { media: [] };
-          const entries = await NodeFSP.readdir(root, { withFileTypes: true });
+          const entries = rootStat ? await NodeFSP.readdir(root, { withFileTypes: true }) : [];
           const media = await Promise.all(
             entries
               .filter(
@@ -939,7 +981,22 @@ const make = Effect.gen(function* () {
                 }
               }),
           );
-          return { media: media.filter((record) => record !== undefined) };
+          const registered = media.filter((record) => record !== undefined);
+          const known = new Set(registered.map(({ source }) => source));
+          const found = (await discoveredMedia(project, nowMs)).flatMap((file) => {
+            if (known.has(file.source)) return [];
+            const duration = probedDuration(project, file);
+            return [
+              {
+                source: file.source,
+                size: file.size,
+                created: file.created,
+                ...(duration === undefined ? {} : { duration }),
+                queued: queuedSources.has(file.source),
+              },
+            ];
+          });
+          return { media: [...registered, ...found] };
         }
         const status = async (id: string): Promise<Status> => {
           if (active?.root === root && active.id === id && active.status) return active.status;
@@ -1463,6 +1520,11 @@ const make = Effect.gen(function* () {
           } satisfies Published;
         }
         if (input.action === "list") {
+          const source =
+            input.source === undefined
+              ? undefined
+              : await NodeFSP.realpath(input.source).catch(() => null);
+          if (source === null) return [];
           const entries = await NodeFSP.readdir(root, { withFileTypes: true });
           const revisions = await Promise.all(
             entries
@@ -1470,6 +1532,7 @@ const make = Effect.gen(function* () {
               .map(async (entry) => {
                 try {
                   const current = await status(entry.name);
+                  if (source !== undefined && current.job.source !== source) return undefined;
                   if (!input.includeCreated) return current;
                   const metadata = await NodeFSP.stat(NodePath.join(root, entry.name, "job.json"));
                   const corrected =
