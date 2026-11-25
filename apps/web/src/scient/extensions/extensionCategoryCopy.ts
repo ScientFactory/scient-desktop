@@ -23,6 +23,8 @@ const CATEGORY_TITLES: Readonly<Record<string, string>> = {
   "Chemistry & materials": msg("Chemistry & materials"),
   "Earth & environment": msg("Earth & environment"),
   "Social science, economics & finance": msg("Social science, economics & finance"),
+  // Older servers send these, as they do Physics and Earth.
+  "Social science & economics": msg("Social science & economics"),
 };
 
 const CATEGORY_DESCRIPTIONS: Readonly<Record<string, string>> = {
@@ -66,6 +68,13 @@ const CATEGORY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ),
   "Economic and development indicators, census data, markets and open studies.": msg(
     "Economic and development indicators, census data, markets and open studies.",
+  ),
+  // Older servers send these.
+  "Repositories, models, documentation and deployment.": msg(
+    "Repositories, models, documentation and deployment.",
+  ),
+  "Economic and development indicators, census data and open studies.": msg(
+    "Economic and development indicators, census data and open studies.",
   ),
 };
 
