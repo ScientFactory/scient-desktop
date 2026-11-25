@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 
 import { expect, it } from "vite-plus/test";
 
-import { createIndexedDbPdfOcrCache } from "./pdfOcrCache";
+import { createIndexedDbPdfOcrCache, createMemoryPdfOcrCache } from "./pdfOcrCache";
 
 it("evicts the oldest reading and alias even on the first write after reopening", async () => {
   const recognizer = "test";
@@ -44,4 +44,19 @@ it("evicts the oldest reading and alias even on the first write after reopening"
   } finally {
     database.close();
   }
+});
+
+it("keeps a password-unlocked document's readings bounded, dropping the least recently used", async () => {
+  // The rotation only tells the readings apart.
+  const text = (rotation: number) => ({ recognizer: "test", rotation, lines: [] });
+  const cache = createMemoryPdfOcrCache(2);
+  await cache.put("a", "page-1", text(1));
+  await cache.put("b", "page-2", text(2));
+  // Reading page 1 again makes page 2 the oldest.
+  expect(await cache.byPage("page-1")).toEqual(text(1));
+  await cache.put("c", "page-3", text(3));
+  expect(await cache.byImage("b")).toBeNull();
+  expect(await cache.byPage("page-2")).toBeNull();
+  expect(await cache.byPage("page-1")).toEqual(text(1));
+  expect(await cache.byPage("page-3")).toEqual(text(3));
 });

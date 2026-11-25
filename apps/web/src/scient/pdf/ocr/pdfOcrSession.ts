@@ -368,7 +368,9 @@ export function createPdfOcrSession(
       const key = pageKey(page);
       const stored = key === null ? null : await dependencies.cache.byPage(key);
       if (stored) return settle(page, stored);
-      if (disposed || !current) return null;
+      // Nobody wants it any more (it left the view, its search ended, its reader closed):
+      // a page that comes back into view is asked for again by `setVisible`.
+      if (disposed || !current || priorityOf(found) === 0) return null;
       return new Promise<PdfOcrTextContent | null>((resolve) => {
         found.priority = priorityOf(found);
         let ran = false;
@@ -604,7 +606,15 @@ export function createPdfOcrSession(
     const before = viewers.get(viewer) ?? new Set<number>();
     viewers.set(viewer, pages);
     for (const page of before) if (!pages.has(page)) entry(page).visible -= 1;
-    for (const page of pages) if (!before.has(page)) entry(page).visible += 1;
+    for (const page of pages) {
+      if (before.has(page)) continue;
+      const found = entry(page);
+      found.visible += 1;
+      // A scan drawn before it came into view was left unread until someone looks at it.
+      if (found.scanned && !found.content && !found.task && !found.failed && !disposed) {
+        void document.getPage(page).then(recognize, () => null);
+      }
+    }
     updatePriorities();
   };
 

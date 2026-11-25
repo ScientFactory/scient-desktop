@@ -232,17 +232,55 @@ describe("PDF text recognition session", () => {
     );
   });
 
-  it("draws a scanned page with what is ready and has it read for the redraw", async () => {
+  it("reads a drawn scan only while it is in view, and when it comes back", async () => {
     const { document } = fakePdf();
-    const { calls, dependencies } = setup();
-    const session = createPdfOcrSession(document, "doc", dependencies);
+    const memory = createMemoryPdfOcrCache();
+    const lookups: Promise<unknown>[] = [];
+    const cache: PdfOcrCache = {
+      ...memory,
+      byPage: (key) => {
+        const found = memory.byPage(key);
+        lookups.push(found);
+        return found;
+      },
+    };
+    const { calls, dependencies } = setup({ cache });
+    const queued: number[] = [];
+    const queue = dependencies.queue;
+    const session = createPdfOcrSession(document, "doc", {
+      ...dependencies,
+      queue: {
+        add: (priority, work) => {
+          queued.push(priority);
+          return queue.add(priority, work);
+        },
+        get size() {
+          return queue.size;
+        },
+      },
+    });
+    const reader = {};
     const scan = await document.getPage(1);
+
+    // Drawn ahead of the view, then scrolled past before the drawing finished.
+    session.setVisible(reader, new Set([1]));
+    const drawn = streamed(scan);
+    session.setVisible(reader, new Set());
+    expect(await drawn).toBe("Downloaded 2024\n");
+    // The drawing looks the page up, then the reading it asks for does; once that lookup
+    // answers, the reading has decided whether to queue.
+    await vi.waitFor(() => expect(lookups).toHaveLength(2));
+    await lookups[1];
+    expect(queued).toEqual([]);
+    expect(session.recognized(1)).toBe(false);
+
+    // Scrolled back: read and drawn again with its words.
     const read = new Promise<void>((resolve) =>
       session.subscribe((page) => {
         if (page === 1 && session.recognized(1)) resolve();
       }),
     );
-    expect(await streamed(scan)).toBe("Downloaded 2024\n");
+    session.setVisible(reader, new Set([1]));
     await read;
     expect(await streamed(scan)).toBe("Downloaded 2024\nRecognized words\n");
     expect(calls.recognitions).toBe(1);
@@ -363,6 +401,8 @@ describe("PDF text recognition session", () => {
     const { dependencies } = setup({ engine: held.engine });
     const session = createPdfOcrSession(document, "doc", dependencies);
     const scan = await document.getPage(1);
+    // The page in view is drawn and its reading starts.
+    session.setVisible({}, new Set([1]));
     void streamed(scan);
     await vi.waitFor(() => expect(held.asked).toEqual([1]));
 

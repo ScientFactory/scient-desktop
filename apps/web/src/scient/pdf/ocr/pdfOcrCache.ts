@@ -144,19 +144,43 @@ export function createIndexedDbPdfOcrCache(recognizer: string): PdfOcrCache {
   };
 }
 
-/** For browsers without IndexedDB, and tests. */
-export function createMemoryPdfOcrCache(): PdfOcrCache {
+/**
+ * For password-unlocked PDFs, browsers without IndexedDB, and tests. Bounded like the
+ * profile cache: the least recently used reading goes first, with the pages pointing at it.
+ */
+export function createMemoryPdfOcrCache(maxPages = MAX_PAGES): PdfOcrCache {
+  // Map order is use order: a read or write moves an entry to the end.
   const pages = new Map<string, PdfOcrPageText>();
   const aliases = new Map<string, string>();
+  const use = (imageHash: string): PdfOcrPageText | null => {
+    const text = pages.get(imageHash);
+    if (text === undefined) return null;
+    pages.delete(imageHash);
+    pages.set(imageHash, text);
+    return text;
+  };
   return {
-    byImage: async (imageHash) => pages.get(imageHash) ?? null,
+    byImage: async (imageHash) => use(imageHash),
     byPage: async (pageKey) => {
       const image = aliases.get(pageKey);
-      return image === undefined ? null : (pages.get(image) ?? null);
+      return image === undefined ? null : use(image);
     },
     put: async (imageHash, pageKey, text) => {
+      pages.delete(imageHash);
       pages.set(imageHash, text);
-      if (pageKey !== null) aliases.set(pageKey, imageHash);
+      if (pageKey !== null) {
+        aliases.delete(pageKey);
+        aliases.set(pageKey, imageHash);
+      }
+      for (const oldest of pages.keys()) {
+        if (pages.size <= maxPages) break;
+        pages.delete(oldest);
+        for (const [key, image] of aliases) if (image === oldest) aliases.delete(key);
+      }
+      for (const oldest of aliases.keys()) {
+        if (aliases.size <= maxPages) break;
+        aliases.delete(oldest);
+      }
     },
   };
 }
