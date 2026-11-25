@@ -26,6 +26,16 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
 - **Scient-managed Python** is a private, uv-built CPython with reviewed Toolkits, installed as
   immutable generations (`ManagedPythonEnvironment`, `ManagedPythonProvisioner`, recipes in
   `managed-python/`). See [Managed compute recipes](../operations/managed-compute-recipes.md).
+- **Added packages** (`PythonLibraries`) live in `kernels/python-libraries/<hash of sys.prefix and
+  version>` under the compute directory, never in the person's environment. Each addition is one
+  folder in it, published with one rename; before each cell a kernel appends any new one, in order,
+  after its own packages. An add names a ready session; the server takes the interpreter and
+  folders from that session's launch and refuses if the interpreter now maps elsewhere. It
+  resolves with `uv pip compile`, constrained by what the kernel can already import (a local build
+  by its public version), refuses a resolution that needs another version of something installed,
+  and installs only the missing pins with `--no-deps`. Python's descriptor carries the `packages`
+  capability only when this is available. The app offers it for the reviewed names in
+  `computeDependencyRecovery`; agents use `scient_compute_setup` with `package`.
 - Compute is trusted local execution with the server account's authority. Launches drop
   Python/Jupyter overrides and the app's own sign-in tokens (`ComputeEnvironmentPolicy`); the user's
   own credentials stay available to their code.
@@ -60,8 +70,8 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
 - **Outside changes** reach an open editor through `moveEditorToSource`, as the smallest edit, on attach and while open, so a retained copy never outranks the latest text. Conflicts come from a refused save, never from comparing reads with the draft, which can catch your own save in flight. `authoritativeData` is the file as last read; `data` puts your draft first.
 - **The active cell** is drawn by `useScientFileLineRange`, outside the editor's options. A changed
   option rebuilds the editor, and that restores a bare caret: it collapses a drag and can lose a click.
-- **Console** is the Compute tab (`ComputeConsole`): it owns a session like a file tab does, starts it
-  on the first run, and tags runs with the `console` source. A script tab with no session of its own
+- **New console** opens `ComputeConsole` from project history. It owns a session like a file tab does,
+  starts it on the first run, and tags runs with the `console` source. A script tab with no session of its own
   borrows a live Console session of its language (`computeConsoleSession`, `borrowSession`). A
   borrowed binding runs in that session without owning it, so closing the tab only lets go, while an
   explicit Restart or Stop acts on the shared session and capacity recovery never stops it. A
@@ -89,7 +99,9 @@ project before and after it (`ComputeProjectOutputObserver`):
   (`ComputeProjectWriteWatch`), held for the session's runtime scope or one file run. `begin` only
   records a journal position, so admission never touches the disk. `collect` writes a sync file and
   waits for its event, which proves every earlier change was delivered. Coverage comes from this
-  watch alone.
+  watch, except between queued cells of one notebook: there a quick bounded scan of recent changes
+  stands in for the sync wait so the next cell starts sooner, and the cell's coverage reads as
+  partial even on a healthy watch.
 - Python kernels also carry an audit-hook recorder that notes figure and table files each cell opens
   for writing, renames or copies; the bridge sends it as `writes` on `execution-complete`. It adds
   candidates the watch may have lost and proves nothing about coverage: a write through a handle
@@ -107,6 +119,22 @@ project before and after it (`ComputeProjectOutputObserver`):
 - `complete` coverage with no output means the run wrote no figure. Only the macOS and Windows
   watches can give it.
 
+## Linked results
+
+Fresh saved-file runs use the results staging area. Run admission snapshots declared inputs
+and root lockfiles before startup, passes overrides as JSON in `SCIENT_PARAMETERS`, and
+gives the kernel an empty `SCIENT_RESULTS_DIR`. Python reads package metadata from the selected
+kernel before analysis code runs. Publication combines those snapshots with the runtime's
+observed reads and moves a complete revision into its final directory.
+Python records capped directory listing digests and a count of distinct outside files.
+The output folder and audit-observed writes are excluded from automatic file evidence.
+For languages without an audit hook, setup can offer literal paths from the saved source.
+Accepted paths use ordinary declared inputs.
+
+The pending-attempt journal is independent of the revision store. Recovery clears abandoned
+staging and keeps the last successful revision. Comparison reads the stored code identity,
+setup, and output files through the same project-scoped operations used by the app and agents.
+
 ## Agents
 
 The `compute` grant gives every provider session these MCP tools
@@ -115,18 +143,39 @@ The `compute` grant gives every provider session these MCP tools
 | Tool                       | Does                                                                                                                                                                                                               |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `scient_compute_run`       | Runs code in the agent's own session for its chat and language (started on first use, Scient-managed Python when installed) or in a given session; waits up to `waitSeconds` and returns text, errors and figures. |
+| `scient_compute_run_file`  | Runs a saved script through the project session gateway used by the editor. Sessionless languages use the one-shot runner.                                                                                         |
 | `scient_compute_output`    | Reads a run's output, by default the session's latest.                                                                                                                                                             |
 | `scient_compute_sessions`  | Lists live sessions in the project with owners and recent runs.                                                                                                                                                    |
 | `scient_compute_variables` | Lists a session's variables without running code.                                                                                                                                                                  |
 | `scient_compute_control`   | Interrupts, restarts or stops a session.                                                                                                                                                                           |
 | `scient_compute_setup`     | Installs Scient-managed Python or adds Toolkits.                                                                                                                                                                   |
 | `scient_compute_inventory` | Lists languages, runtimes and Toolkits.                                                                                                                                                                            |
-| `scient_notebook_read`     | An outline of a notebook, or listed cells in full, with each cell's state and output as text.                                                                                                                      |
-| `scient_notebook_edit`     | Replaces, inserts, deletes or moves cells, or clears outputs.                                                                                                                                                      |
-| `scient_notebook_run`      | Runs cells in the notebook's session, saves results into the file, and returns outputs and figures.                                                                                                                |
+| `scient_notebook_read`     | Reads headings, parameter defaults, cells, and saved alternatives.                                                                                                                                                 |
+| `scient_notebook_edit`     | Edits and folds cells, tags a parameters cell, or clears outputs.                                                                                                                                                  |
+| `scient_notebook_run`      | Runs cells in the live session, or the whole notebook in a fresh kernel; that run publishes a linked revision when it writes to `SCIENT_RESULTS_DIR`.                                                              |
+| `scient_notebook_stop`     | Stops a fresh notebook run or sweep by path and run ID; completed sweep settings stay saved.                                                                                                                       |
 
-Figures return to the model as MCP image content (`scientToolImages.ts`). Agent runs appear in the
-session's history like any other run, marked by their actor.
+Both execution tools are exposed before discovery on providers that defer tools. File runs
+with parameters or declared inputs use an isolated runtime lifetime and record that setup. The
+runtime receives the same JSON environment variable as a linked-result run. Use
+`scient_results_run` to publish results.
+
+Figures return to the model as MCP image content (`scientToolImages.ts`). Session runs record the
+agent actor independently of the session owner. One-shot runs store the invoking thread on their
+receipt. Older one-shot receipts may lack attribution.
+
+`compute.runHistory` reads the workspace's retained session executions and merges them with
+one-shot receipts. The same read is available through `scient_compute_sessions` with `history`.
+The server keeps a rebuildable in-memory index of request references for recently read projects.
+It selects the page using those references and reads full receipts for the selected entries.
+A notebook batch whose settled summary is unavailable also reads its member receipts.
+Exact execution links with a session ID can read the referenced receipt directly.
+Notebook submissions store a batch ID on each cell request. Project history groups cells by that
+ID before paging. A session also emits the settled count and failure position as soon as all
+receipts in the batch are terminal. Pass `history.notebookBatchId` to page through the cells of a batch.
+The project history fetches output when its row is opened. File Results match the document
+path across sessions. The chat inspector reads the retained run by session and execution ID
+and can render the tool's text output when the provider supplies only the tool result.
 
 ## Notebooks
 
@@ -145,11 +194,52 @@ outputs load when their cell nears the view.
 A run belongs to its cell on the server. `compute.submitCells` admits a run's cells under one lock
 with `source.cell` set, a cell that does not succeed cancels later queued cells of that notebook,
 and each cell durably expects its run (`metadata.scient.pending`), so results reach the file after a
-tab switch or reload. Out-of-date cells come from `@t3tools/shared/notebookStaleness`: a code hash
+tab switch or reload. `NotebookRunRecorder` delivers settled cell runs outside fresh notebook jobs, which copy their own
+cells: the session keeps a run's transcript until the notebook holding the result is saved, the cell
+is gone from the saved file, or the file is gone, and a failed delivery is retried. A run cancelled
+before it started clears its cell's pending marker. Stopping the server leaves deliveries
+unacknowledged; when the editor next reads a notebook with pending cells, the server delivers those
+runs from stored history. A save that fails is retried and reported as the notebook's `saveProblem`.
+The agent's notebook read never writes; its run tool records its own cells so it can answer with them. Out-of-date cells come from `@t3tools/shared/notebookStaleness`: a code hash
 for edits, and a name-based hint for cells reading from something that changed since.
+
+The outline comes from Markdown cell source. Fold edits preserve JupyterLab metadata and keep
+hidden output viewers unmounted. The index retains inter-cell whitespace and raw field values so
+saving a fold leaves the attachment and output bytes alone.
+
+A clean run starts a server-owned job. The editor subscribes to a notebook's latest job, including
+jobs started by another window or an agent, and receives a current snapshot when it reconnects.
+An agent can read status by run ID. The job snapshots the saved code, runs the cells in a fresh kernel and
+copies cell outputs before allowing transcript cleanup. Source edits pause while the job
+runs. Folds remain editable.
+
+After success, the publisher retains files from `SCIENT_RESULTS_DIR`. The guarded notebook
+write updates the injection, parameter evidence and cell outputs when the code still matches
+the snapshot. Display limits are labelled in cell outputs. Sweeps save alternative revisions
+and keep the notebook's published setting. The reader can switch to revisions made with the
+same ordered code, excluding the injected cell, without starting a kernel.
 
 ## Data
 
 `apps/server/src/scient/data/` reads CSV, TSV, Parquet and workbooks in place, a page at a time, for
 the virtual grid in `apps/web/src/scient/dataTable/`. A kernel variable opens in the same grid
-through silent table paging. Nothing needs Python.
+through silent table paging. File profiles reuse these sources. Delimited profiles
+stream over the indexed rows. Parquet profiles keep exact footer statistics
+and run the Python DuckDB worker over the file for distinct and common values.
+Small categories are counted exactly. For higher cardinalities the worker
+estimates distinct values and can estimate which common values to count.
+A bounded leading sample is available on request or when the worker cannot
+finish. Live Python table profiles scan within the kernel's idle inspection
+request and fall back to its bounded first page when the scan budget expires.
+
+Saved-view RPCs use the project binding, an isolated Python DuckDB process and
+a private result directory. Host runtime discovery is cached while the SQL
+runtime preference stays the same. DuckDB receives only verified project file
+paths from the saved SQL. The preview expands supported file globs into explicit
+project paths. The view must contain one SELECT statement.
+
+For a delimited grid search, the save checks that the grid and DuckDB select
+the same source row positions before writing the SQL. The SQL re-runs the
+raw-text filter against the source each time. View saves and exports stage
+their output beside the destination. Publication uses an exclusive hard link
+or an exclusive copy when the volume does not support hard links.

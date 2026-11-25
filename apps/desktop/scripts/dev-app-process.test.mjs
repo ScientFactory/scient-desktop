@@ -284,4 +284,51 @@ describe("createWatchedFileStamps", () => {
     NodeFS.rmSync(bundlePath);
     assert.isTrue(stamps.changed(bundlePath));
   });
+
+  it("compares bytes with the last launch, not with the previous event", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "watched-stamps-"));
+    roots.push(root);
+    const bundlePath = NodePath.join(root, "main.cjs");
+    NodeFS.writeFileSync(bundlePath, "same build");
+    const stamps = createWatchedFileStamps([bundlePath]);
+
+    // A bundler rewrite: truncate, then the same bytes with a new mtime.
+    NodeFS.writeFileSync(bundlePath, "");
+    assert.isTrue(stamps.changed(bundlePath));
+    const later = new Date("2030-01-01T00:00:00Z");
+    NodeFS.writeFileSync(bundlePath, "same build");
+    NodeFS.utimesSync(bundlePath, later, later);
+    assert.isTrue(stamps.changed(bundlePath));
+    assert.isFalse(stamps.contentChanged());
+
+    NodeFS.writeFileSync(bundlePath, "next build");
+    assert.isTrue(stamps.contentChanged());
+    stamps.markLaunched();
+    assert.isFalse(stamps.contentChanged());
+
+    NodeFS.rmSync(bundlePath);
+    assert.isTrue(stamps.contentChanged());
+  });
+
+  it("treats a file it cannot read as changed instead of throwing", () => {
+    const busy = Object.assign(new Error("busy"), { code: "EBUSY" });
+    let failing = false;
+    const stamps = createWatchedFileStamps(["/bundle.cjs"], {
+      stat: () => {
+        if (failing) throw busy;
+        return { size: 1, mtimeMs: 1 };
+      },
+      readFile: () => {
+        if (failing) throw busy;
+        return Buffer.from("x");
+      },
+    });
+    assert.isFalse(stamps.contentChanged());
+    failing = true;
+    assert.isTrue(stamps.changed("/bundle.cjs"));
+    assert.isTrue(stamps.contentChanged());
+    failing = false;
+    assert.isTrue(stamps.changed("/bundle.cjs"));
+    assert.isFalse(stamps.contentChanged());
+  });
 });

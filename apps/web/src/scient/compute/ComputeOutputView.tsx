@@ -19,6 +19,7 @@ import { ComputeFigure } from "./ComputeFigure";
 import { computeOutputBlocks, type ComputeOutputBlock as Block } from "./computeOutputBlocks";
 import { ComputeOutputBlock } from "./ComputeOutputBlock";
 import {
+  computeDiagnosticSummary,
   computeSystemEventLabel,
   type ComputeStaticImageOutput,
 } from "./computeResultPresentation";
@@ -27,13 +28,26 @@ import { ComputeRichOutput, type ComputeRichDisplay } from "./ComputeRichOutput"
 import { renderTerminalText } from "./computeTerminalText";
 import { ComputeTerminalOutput } from "./ComputeTerminalOutput";
 import { computeDependencyRecovery, managedDependencyRuntime } from "./computeDependencyRecovery";
-import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryAction";
-import type { ComputeContextId } from "./computeContextStore";
+import {
+  ComputeAddPackageAction,
+  ComputeDependencyRecoveryAction,
+  type ComputeDependencyRecoveryPlace,
+} from "./ComputeDependencyRecoveryAction";
+
+import type { NotebookDefiningCell } from "../notebook/notebookRunSummary";
+import { extractUndefinedName } from "../notebook/notebookRunSummary";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
 type ComputeDiagnosticOutput = Extract<ComputeOutput, { readonly _tag: "diagnostic" }>;
 type DiagnosticFrame = ComputeDiagnosticOutput["diagnostic"]["frames"][number];
+
+interface NotebookDiagnosticContext {
+  readonly path: string;
+  readonly onReplay?: (() => void) | undefined;
+  readonly onJumpToCell?: ((cellId: string) => void) | undefined;
+  readonly definingCell?: ((name: string) => NotebookDefiningCell | null) | undefined;
+}
 
 type ProjectedBlock =
   | { readonly kind: "stream"; readonly block: Extract<Block, { readonly kind: "stream" }> }
@@ -111,26 +125,87 @@ function projectBlocks(outputs: ReadonlyArray<ComputeOutput>): ReadonlyArray<Pro
 function ComputeDiagnosticFrames(props: {
   readonly frames: ReadonlyArray<DiagnosticFrame>;
   readonly threadRef: ScopedThreadRef;
+  readonly notebookPath?: string | undefined;
 }) {
+  const gt = useGT();
   if (props.frames.length === 0) return null;
   return (
     <div className="mt-1.5 flex flex-wrap gap-1">
-      {props.frames.slice(-6).map((frame) => (
-        <button
-          key={`${frame.relativePath}:${String(frame.line)}:${String(frame.column)}:${frame.functionName ?? ""}`}
-          type="button"
-          className="cursor-pointer rounded-[4px] bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          onClick={() =>
-            useRightPanelStore
-              .getState()
-              .openFile(props.threadRef, frame.relativePath, frame.line ?? undefined)
-          }
+      {props.frames.slice(-6).map((frame) => {
+        const key = `${frame.relativePath}:${String(frame.line)}:${String(frame.column)}:${frame.functionName ?? ""}`;
+        if (frame.relativePath === props.notebookPath) {
+          return frame.line === null ? null : (
+            <span key={key} className="text-[11px] text-muted-foreground">
+              {gt("Line {line} in a notebook cell", { line: frame.line })}
+              {frame.functionName === null ? "" : ` · ${frame.functionName}`}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={key}
+            type="button"
+            className="cursor-pointer rounded-[4px] bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={() =>
+              useRightPanelStore
+                .getState()
+                .openFile(props.threadRef, frame.relativePath, frame.line ?? undefined)
+            }
+          >
+            {frame.relativePath}
+            {frame.line === null ? "" : `:${String(frame.line)}`}
+            {frame.functionName === null ? "" : ` · ${frame.functionName}`}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function NotebookSetupRecovery(props: {
+  readonly errorName: unknown;
+  readonly message: unknown;
+  readonly onReplay: (() => void) | undefined;
+  readonly onJumpToCell?: ((cellId: string) => void) | undefined;
+  readonly definingCell?: NotebookDefiningCell | null | undefined;
+}) {
+  const gt = useGT();
+  const missingName = extractUndefinedName(props.errorName, props.message);
+  if (missingName === null) return null;
+  const defining = props.definingCell ?? null;
+  if (defining?.status === "failed" && props.onJumpToCell !== undefined) {
+    return (
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <p>
+          {gt("Cell {cell} defines {name} and failed.", {
+            cell: defining.cellNumber,
+            name: missingName,
+          })}
+        </p>
+        <Button
+          size="xs"
+          variant="outline"
+          focus="edge"
+          onClick={() => props.onJumpToCell?.(defining.cellId)}
         >
-          {frame.relativePath}
-          {frame.line === null ? "" : `:${String(frame.line)}`}
-          {frame.functionName === null ? "" : ` · ${frame.functionName}`}
-        </button>
-      ))}
+          {gt("Jump to cell {cell}", { cell: defining.cellNumber })}
+        </Button>
+      </div>
+    );
+  }
+  // Replay only helps when an earlier cell defines the name and has not run in this session.
+  if (props.onReplay === undefined || defining?.status !== "not-run") return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <p>
+        {gt("Cell {cell} defines {name} and has not run in this session.", {
+          cell: defining.cellNumber,
+          name: missingName,
+        })}
+      </p>
+      <Button size="xs" variant="outline" focus="edge" onClick={props.onReplay}>
+        <T>Run from top through this cell</T>
+      </Button>
     </div>
   );
 }
@@ -141,18 +216,18 @@ function ComputeDiagnostic(props: {
   readonly session: ComputeSessionRecord;
   readonly threadRef: ScopedThreadRef;
   readonly runtimeInspection: ComputeRuntimeInspection | null;
-  readonly dependencyRecovery?: {
-    readonly contextId: ComputeContextId;
-    readonly onSettled: () => void;
-  };
+  readonly dependencyRecovery?: ComputeDependencyRecoveryPlace;
   readonly onAskAgent?: ((text: string) => void) | undefined;
+  readonly notebook?: NotebookDiagnosticContext | undefined;
 }) {
   const { diagnostic } = props.output;
-  const recovery = computeDependencyRecovery({
-    diagnostic,
-    session: props.session,
-    inspection: props.runtimeInspection,
-  });
+  const recovery = props.dependencyRecovery?.resolved
+    ? null
+    : computeDependencyRecovery({
+        diagnostic,
+        session: props.session,
+        inspection: props.runtimeInspection,
+      });
   const managed =
     recovery === null
       ? null
@@ -161,28 +236,34 @@ function ComputeDiagnostic(props: {
           session: props.session,
           inspection: props.runtimeInspection,
         });
-  const summary = `${diagnostic.errorName}: ${diagnostic.message}`;
+  const canAddPackages =
+    props.runtimeInspection?.languages
+      .find((language) => language.descriptor.languageId === props.session.languageId)
+      ?.descriptor.capabilities.includes("packages") === true;
+  const { summary, traceback } = computeDiagnosticSummary(diagnostic);
+  const fullText = [summary, traceback].filter(Boolean).join("\n");
+  const missingName = extractUndefinedName(diagnostic.errorName, diagnostic.message);
+  const definingCell =
+    missingName === null ? null : (props.notebook?.definingCell?.(missingName) ?? null);
   return (
-    <ComputeOutputBlock copy={() => ({ text: [summary, ...diagnostic.traceback].join("\n") })}>
+    <ComputeOutputBlock copy={() => ({ text: fullText })}>
       <div className="rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs">
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <p className="min-w-0 flex-1 font-medium break-words text-destructive">{summary}</p>
-              {props.onAskAgent === undefined ? null : (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => props.onAskAgent?.([summary, ...diagnostic.traceback].join("\n"))}
-                >
-                  <T>Ask agent</T>
-                </Button>
-              )}
-            </div>
-            {recovery !== null ? (
-              <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                {managed !== null && props.dependencyRecovery !== undefined ? (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                {recovery !== null && props.dependencyRecovery !== undefined && canAddPackages ? (
+                  <ComputeAddPackageAction
+                    contextId={props.dependencyRecovery.contextId}
+                    sessionId={props.session.sessionId}
+                    distribution={recovery.distribution}
+                    runAgain={props.dependencyRecovery.runAgain}
+                  />
+                ) : null}
+                {recovery === null ? null : managed !== null &&
+                  props.dependencyRecovery !== undefined ? (
                   <ComputeDependencyRecoveryAction
                     contextId={props.dependencyRecovery.contextId}
                     session={props.session}
@@ -190,7 +271,7 @@ function ComputeDiagnostic(props: {
                     executable={managed.executable}
                     onSettled={props.dependencyRecovery.onSettled}
                   />
-                ) : (
+                ) : props.dependencyRecovery !== undefined ? null : (
                   <Button
                     size="xs"
                     variant="outline"
@@ -205,16 +286,32 @@ function ComputeDiagnostic(props: {
                     <T>Python settings</T>
                   </Button>
                 )}
+                {props.onAskAgent === undefined ? null : (
+                  <Button size="xs" variant="outline" onClick={() => props.onAskAgent?.(fullText)}>
+                    <T>Ask agent</T>
+                  </Button>
+                )}
               </div>
-            ) : null}
-            <ComputeDiagnosticFrames frames={diagnostic.frames} threadRef={props.threadRef} />
-            {diagnostic.traceback.length > 0 ? (
+            </div>
+            <ComputeDiagnosticFrames
+              frames={diagnostic.frames}
+              threadRef={props.threadRef}
+              notebookPath={props.notebook?.path}
+            />
+            <NotebookSetupRecovery
+              errorName={diagnostic.errorName}
+              message={diagnostic.message}
+              onReplay={props.notebook?.onReplay}
+              onJumpToCell={props.notebook?.onJumpToCell}
+              definingCell={definingCell}
+            />
+            {traceback.length > 0 ? (
               <details className="mt-1 text-muted-foreground">
                 <summary className="cursor-pointer">
-                  <T>Traceback</T>
+                  <T>Details</T>
                 </summary>
                 <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px]">
-                  {diagnostic.traceback.join("\n")}
+                  {traceback}
                 </pre>
               </details>
             ) : null}
@@ -247,13 +344,11 @@ export function ComputeOutputView(props: {
   readonly clipped?: boolean;
   readonly threadRef: ScopedThreadRef;
   readonly source?: ComputeExecutionSource | null;
+  readonly notebook?: NotebookDiagnosticContext | undefined;
   readonly runtimeInspection?: ComputeRuntimeInspection | null;
   /** Puts an error in the chat as a quote of this run. */
   readonly onAskAgent?: ((text: string) => void) | undefined;
-  readonly dependencyRecovery?: {
-    readonly contextId: ComputeContextId;
-    readonly onSettled: () => void;
-  };
+  readonly dependencyRecovery?: ComputeDependencyRecoveryPlace;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -291,6 +386,7 @@ export function ComputeOutputView(props: {
                   ? {}
                   : { dependencyRecovery: props.dependencyRecovery })}
                 onAskAgent={props.onAskAgent}
+                notebook={props.notebook}
               />
             );
           case "figure":

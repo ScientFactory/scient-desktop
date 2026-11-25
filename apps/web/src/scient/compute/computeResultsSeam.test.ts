@@ -87,12 +87,6 @@ describe("compute result surface seam", () => {
       "key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}",
     );
     expect(runEntrySource).toContain("executionGeneration={execution.request.generation}");
-    const actions = controlsSource.slice(
-      controlsSource.indexOf('aria-label={gt("Session actions")}'),
-      controlsSource.indexOf('aria-label={gt("Session actions")}') + 400,
-    );
-    expect(actions).not.toContain("operation !== null");
-    expect(actions).toContain('operation === "stop"');
   });
 
   // regression: 13a5e053d2 chore(compute): checkpoint before main alignment

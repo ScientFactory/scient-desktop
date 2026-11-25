@@ -8,7 +8,13 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
-import { drawSelection, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
+import {
+  drawSelection,
+  EditorView,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+} from "@codemirror/view";
 import { highlightCode, tags } from "@lezer/highlight";
 import pierreDark from "@pierre/theme/pierre-dark";
 import pierreLight from "@pierre/theme/pierre-light";
@@ -111,6 +117,38 @@ const darkHighlightStyle = pierreHighlightStyle(pierreDark, "dark");
 const nestedEditorTheme = { "&.cm-focused": { outline: "none" } };
 const lightEditorTheme = EditorView.theme(nestedEditorTheme);
 const darkEditorTheme = EditorView.theme(nestedEditorTheme, { dark: true });
+const nestedLineNumbersTheme = EditorView.theme({
+  ".cm-content": {
+    padding: "0",
+  },
+  ".cm-line": {
+    padding: "0",
+  },
+  ".cm-gutters": {
+    backgroundColor:
+      "var(--markdown-code-block-background, var(--code-background, var(--secondary)))",
+    borderRight: "none",
+    borderLeft: "none",
+    color: "color-mix(in srgb, var(--muted-foreground) 65%, transparent)",
+    minWidth: "2rem",
+    marginInlineEnd: "0.625rem",
+    userSelect: "none",
+  },
+  ".cm-gutters.cm-gutters-before": {
+    borderRightWidth: "0",
+  },
+  ".cm-lineNumbers": {
+    width: "2rem",
+  },
+  ".cm-lineNumbers .cm-gutterElement": {
+    minWidth: "2rem",
+    padding: "0",
+    textAlign: "right",
+    fontSize: "11px",
+    fontVariantNumeric: "tabular-nums",
+    lineHeight: "20px",
+  },
+});
 
 function editorThemeFor(root: HTMLElement) {
   return root.classList.contains("dark") ? darkEditorTheme : lightEditorTheme;
@@ -148,13 +186,16 @@ function mountStaticStyles() {
 export async function highlightedCodeSpans(
   code: string,
   language: string,
+  appearance?: "light" | "dark",
 ): Promise<ReadonlyArray<HighlightedCodeSpan>> {
   const support = await staticLanguage(language);
   if (support === null) return [{ text: code, className: "" }];
   mountStaticStyles();
-  const style = document.documentElement.classList.contains("dark")
-    ? darkHighlightStyle
-    : lightHighlightStyle;
+  const isDark =
+    appearance === undefined
+      ? document.documentElement.classList.contains("dark")
+      : appearance === "dark";
+  const style = isDark ? darkHighlightStyle : lightHighlightStyle;
   const spans: HighlightedCodeSpan[] = [];
   highlightCode(
     code,
@@ -178,7 +219,7 @@ export interface ScientNestedCodeEditor {
   readonly focusAt: (position: number | "start" | "end") => void;
   /** Whether the caret sits on the first or last visual line. */
   readonly caretAtEdge: (edge: "start" | "end") => boolean;
-  readonly refreshAppearance: () => void;
+  readonly refreshAppearance: (appearance?: "light" | "dark") => void;
   readonly replaceExternalCode: (code: string, language?: string) => void;
   readonly setEditable: (editable: boolean) => void;
   readonly setWordWrap: (wrapped: boolean) => void;
@@ -194,6 +235,7 @@ export function createScientNestedCodeEditor(input: {
   readonly editable: boolean;
   readonly language: string;
   readonly wordWrap?: boolean;
+  readonly lineNumbers?: boolean;
   readonly historyCommands?: { readonly undo: () => boolean; readonly redo: () => boolean };
   readonly onUserCodeChange: (code: string, changes: readonly ScientCodeChange[]) => void;
   readonly onEscape: () => void;
@@ -224,6 +266,7 @@ export function createScientNestedCodeEditor(input: {
         syntaxHighlighting(lightHighlightStyle),
         syntaxHighlighting(darkHighlightStyle),
         appearanceCompartment.of(editorThemeFor(documentRoot)),
+        ...(input.lineNumbers === true ? [lineNumbers(), nestedLineNumbersTheme] : []),
         languageCompartment.of([]),
         editableCompartment.of([
           EditorState.readOnly.of(!editable),
@@ -340,11 +383,14 @@ export function createScientNestedCodeEditor(input: {
       const end = view.coordsAtPos(edge === "start" ? 0 : view.state.doc.length);
       return caret !== null && end !== null && Math.abs(caret.top - end.top) < 2;
     },
-    refreshAppearance: () => {
-      const nextIsDark = documentRoot.classList.contains("dark");
+    refreshAppearance: (appearance) => {
+      const nextIsDark =
+        appearance === undefined ? documentRoot.classList.contains("dark") : appearance === "dark";
       if (destroyed || nextIsDark === isDark) return;
       isDark = nextIsDark;
-      view.dispatch({ effects: appearanceCompartment.reconfigure(editorThemeFor(documentRoot)) });
+      view.dispatch({
+        effects: appearanceCompartment.reconfigure(nextIsDark ? darkEditorTheme : lightEditorTheme),
+      });
     },
     replaceExternalCode: (code, nextLanguage = language) => {
       configureLanguage(nextLanguage);

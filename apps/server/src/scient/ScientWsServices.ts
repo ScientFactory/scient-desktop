@@ -12,9 +12,9 @@ import * as Layer from "effect/Layer";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
 import * as DataTables from "./data/DataTables.ts";
+import { ScientificRunServices } from "./analysis/ScientificRunServices.ts";
+import * as DataViews from "./data/DataViews.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
-import * as ComputeResults from "./results/ComputeResults.ts";
-import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./conversationExport/ConversationExportService.ts";
 import { EditorFlush } from "./editorFlush/EditorFlush.ts";
 import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnectionManager.ts";
@@ -45,9 +45,9 @@ export const captureScientWsServices = Effect.gen(function* () {
   const browserHistory = yield* BrowserHistory;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const dataTables = yield* DataTables.DataTables;
+  const dataViews = yield* DataViews.DataViews;
   const notebooks = yield* NotebookStore.NotebookStore;
-  const computeResults = yield* ComputeResults.ComputeResults;
-  const runtimePreferences = yield* ScientificRuntimePreferences;
+  const scientificRuns = yield* ScientificRunServices;
   const conversationExports = yield* ConversationExportService;
   const editorFlush = yield* EditorFlush;
   const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
@@ -74,9 +74,9 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(DataTables.DataTables, dataTables),
+    Layer.succeed(DataViews.DataViews, dataViews),
     Layer.succeed(NotebookStore.NotebookStore, notebooks),
-    Layer.succeed(ComputeResults.ComputeResults, computeResults),
-    Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
+    Layer.succeed(ScientificRunServices, scientificRuns),
     Layer.succeed(ConversationExportService, conversationExports),
     Layer.succeed(EditorFlush, editorFlush),
   );

@@ -25,6 +25,7 @@ import {
 } from "react";
 
 import { Button } from "~/components/ui/button";
+import { ResultRunSetup, type ResultRunOptions } from "~/scient/results/ResultRunSetup";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import {
   AlertDialog,
@@ -102,7 +103,7 @@ export interface ComputeFileActionsHandle {
   readonly runPrimary: (selection?: ComputeTextRange | null) => void;
   readonly runCellAtLine: (line: number) => void;
   /** Queues notebook cells in order, each recorded against its cell. */
-  readonly runCells: (cells: ReadonlyArray<ComputeNotebookCell>) => Promise<void>;
+  readonly runCells: (cells: ReadonlyArray<ComputeNotebookCell>, runAll?: boolean) => Promise<void>;
 }
 
 export interface ComputeNotebookCell {
@@ -111,6 +112,7 @@ export interface ComputeNotebookCell {
 }
 
 interface ComputeRunSlice extends ComputeCodeSlice {
+  readonly runAll?: boolean;
   readonly cells?: ReadonlyArray<ComputeNotebookCell>;
 }
 
@@ -132,10 +134,17 @@ interface ComputeFileActionsProps {
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
   ) => void;
-  /** Notebooks run cell by cell: the primary action runs every cell. */
-  readonly runAll?: () => void;
-  /** The notebook's own entries for the Run menu. */
-  readonly runMenu?: ReactNode;
+  readonly notebookRun?: {
+    readonly label: string;
+    readonly requiresLiveRuntime: boolean;
+    readonly disabled: boolean;
+    readonly run: () => void;
+    readonly runAll: () => void;
+    readonly runAllDisabled: boolean;
+    readonly menu: ReactNode;
+    /** Replaces the label while a run started elsewhere goes on, such as "Cell 2 of 5". */
+    readonly progress?: { readonly label: string; readonly note: string } | undefined;
+  };
   /** Controls placed just before the Run button. */
   readonly leadingActions?: ReactNode;
   /** Runs submitted for notebook cells, by cell. */
@@ -166,6 +175,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const [operation, setOperation] = useState<ComputeRunKind | "fresh" | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [switching, setSwitching] = useState(false);
+    const [runSetupOpen, setRunSetupOpen] = useState(false);
     const [projectEnvironmentNoted, setProjectEnvironmentNoted] = useLocalStorage(
       `scient.compute.projectEnvironmentNoted:${props.cwd}`,
       false,
@@ -764,6 +774,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             sessionId: session.sessionId,
             expectedGeneration: session.generation,
             path: props.relativePath,
+            ...(slice.runAll ? { runAll: true } : {}),
             cells,
           },
         });
@@ -806,18 +817,26 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     };
 
     const stableRun = useStableCallback(run);
-    const waitingCells = useRef<ComputeNotebookCell[]>([]);
+    const waitingCells = useRef<
+      {
+        readonly cells: ReadonlyArray<ComputeNotebookCell>;
+        readonly runAll: boolean;
+      }[]
+    >([]);
     const cellRun = useRef<Promise<void> | null>(null);
-    const runCells = (cells: ReadonlyArray<ComputeNotebookCell>): Promise<void> => {
-      waitingCells.current.push(...cells);
+    const runCells = (cells: ReadonlyArray<ComputeNotebookCell>, runAll = false): Promise<void> => {
+      waitingCells.current.push({ cells, runAll });
       if (cellRun.current !== null) return cellRun.current;
       const drained = (async () => {
-        while (waitingCells.current.length > 0) {
-          const batch = waitingCells.current.splice(0);
+        for (
+          let batch = waitingCells.current.shift();
+          batch;
+          batch = waitingCells.current.shift()
+        ) {
           await stableRun("cell", {
-            code: batch.map((cell) => cell.code).join("\n"),
+            code: batch.cells.map((cell) => cell.code).join("\n"),
             range: { startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 },
-            cells: batch,
+            ...batch,
           });
         }
       })().finally(() => {
@@ -856,7 +875,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? null
         : computeCell(props.contents, caretLine + 1, props.language.cellMarker);
     const fileSlice = computeFile(props.contents);
-    const runFresh = async () => {
+    const runFresh = async (options?: ResultRunOptions) => {
       if (
         props.contextId === undefined ||
         operation !== null ||
@@ -902,6 +921,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             runOnce: {
               executionId,
               code: fileSlice.code,
+              ...options,
               source: {
                 _tag: "document",
                 origin: "file",
@@ -1089,25 +1109,44 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       capacityBlocked;
     const primaryRunBlocked = primary.kind === "file" && fileRunBlocked;
     const liveRunDisabled = busy || !runtimeToolbar.canRun || primaryRunBlocked;
+    const notebookRun = props.notebookRun;
+    const notebookRunDisabled =
+      notebookRun !== undefined &&
+      (notebookRun.disabled || busy || (notebookRun.requiresLiveRuntime && !runtimeToolbar.canRun));
     const runMenuDisabled =
       busy ||
       (props.language.languageId !== "matlab" && !runtimeToolbar.canRun && readyRuntime === null);
+    const runtimeExecutable = liveSession?.runtime?.executable ?? activeRuntime?.profile.executable;
     const runtimeNote =
       [
-        liveSession?.runtime ? liveSession.runtime.executable : null,
-        "note" in runtimeToolbar ? runtimeToolbar.note : null,
+        runtimeExecutable,
+        missingScientificPackages.length > 0
+          ? gt("Missing Scientific Python Toolkit packages: {packages}", {
+              packages: missingScientificPackages.join(", "),
+            })
+          : "note" in runtimeToolbar
+            ? runtimeToolbar.note
+            : null,
       ]
         .filter(Boolean)
         .join(" · ") || undefined;
-    const primaryRunTooltip = primaryRunBlocked
-      ? (matlabFileCapability?.reason ?? gt("This definition is called from a script."))
-      : primary.slice === null
-        ? gt("Nothing to run")
-        : !runtimeToolbar.canRun
-          ? runtimeToolbar.label
-          : busy
-            ? gt("Another compute action is finishing")
-            : primary.label;
+    const notebookProgress = notebookRun?.progress;
+    const primaryRunTooltip =
+      notebookProgress !== undefined
+        ? notebookProgress.note
+        : notebookRun !== undefined
+          ? notebookRun.requiresLiveRuntime && !runtimeToolbar.canRun
+            ? runtimeToolbar.label
+            : notebookRun.label
+          : primaryRunBlocked
+            ? (matlabFileCapability?.reason ?? gt("This definition is called from a script."))
+            : primary.slice === null
+              ? gt("Nothing to run")
+              : !runtimeToolbar.canRun
+                ? runtimeToolbar.label
+                : busy
+                  ? gt("Another compute action is finishing")
+                  : primary.label;
 
     useImperativeHandle(
       ref,
@@ -1250,7 +1289,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     <Link
                       to="/settings/scientific-computing/$languageId"
                       params={{ languageId: props.language.languageId }}
-                      search={{ environmentId: props.environmentId }}
+                      search={{
+                        environmentId: props.environmentId,
+                        ...(runtimeExecutable === undefined
+                          ? {}
+                          : { cwd: props.cwd, runtime: runtimeExecutable }),
+                      }}
                     />
                   }
                 >
@@ -1271,30 +1315,36 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   size="xs"
                   variant="outline"
                   shape="group-start"
+                  focus={notebookRun ? "edge" : undefined}
                   aria-label={
-                    props.runAll
-                      ? gt("Run all")
+                    notebookRun
+                      ? (notebookProgress?.label ?? notebookRun.label)
                       : primaryRunBlocked
                         ? gt("MATLAB definition file")
                         : primary.label
                   }
                   disabled={
-                    props.runAll
-                      ? !runtimeToolbar.canRun
+                    notebookRun
+                      ? notebookProgress !== undefined || notebookRunDisabled
                       : liveRunDisabled || primary.slice === null
                   }
                   onClick={() =>
-                    props.runAll ? props.runAll() : void run(primary.kind, primary.slice)
+                    notebookRun ? notebookRun.run() : void run(primary.kind, primary.slice)
                   }
                 >
-                  {operation === primary.kind && !props.runAll ? (
+                  {(operation === primary.kind && !notebookRun) ||
+                  notebookProgress !== undefined ? (
                     <LoaderCircle className="animate-spin" />
                   ) : (
                     <Play />
                   )}
-                  <span className="hidden @[15rem]/python-file-actions:inline">
-                    {props.runAll
-                      ? gt("Run all")
+                  <span
+                    className={
+                      notebookRun ? undefined : "hidden @[15rem]/python-file-actions:inline"
+                    }
+                  >
+                    {notebookRun
+                      ? (notebookProgress?.label ?? notebookRun.label)
                       : primaryRunBlocked
                         ? gt("Definition", { $context: "a MATLAB function definition file" })
                         : primary.label}
@@ -1309,6 +1359,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     size="icon-xs"
                     variant="outline"
                     shape="group-end"
+                    focus={notebookRun ? "edge" : undefined}
                     disabled={runMenuDisabled}
                     aria-label={gt("Choose {language} code to run", { language: languageName })}
                   />
@@ -1317,8 +1368,16 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 <ChevronDown />
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
-                {props.runAll ? (
-                  props.runMenu
+                {notebookRun ? (
+                  <>
+                    <MenuItem
+                      disabled={notebookRun.runAllDisabled || !runtimeToolbar.canRun}
+                      onClick={notebookRun.runAll}
+                    >
+                      <T>Run all</T>
+                    </MenuItem>
+                    {notebookRun.menu}
+                  </>
                 ) : (
                   <>
                     <MenuItem
@@ -1352,6 +1411,16 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         onClick={() => void runFresh()}
                       >
                         <T>Run fresh</T>
+                      </MenuItem>
+                    ) : null}
+                    {props.contextId !== undefined && !props.sourcePending ? (
+                      <MenuItem
+                        disabled={
+                          busy || readyRuntime === null || fileRunBlocked || fileSlice === null
+                        }
+                        onClick={() => setRunSetupOpen(true)}
+                      >
+                        <T>Run with setup…</T>
                       </MenuItem>
                     ) : null}
                   </>
@@ -1392,7 +1461,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             }}
             anchor={primaryRunAnchor}
             title={gt("Use Scient-managed Python?")}
-            description={gt("{runtime} is missing scientific packages.", {
+            description={gt("{runtime} is missing Scientific Python Toolkit packages.", {
               runtime: computeRuntimeDisplayLabel(
                 preRunRuntimeChoice.current.profile,
                 languageName,
@@ -1427,6 +1496,18 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           busy={switching}
           onConfirm={() => void stopAndRunFresh()}
         />
+        {runSetupOpen ? (
+          <ResultRunSetup
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            scriptPath={props.relativePath}
+            onCancel={() => setRunSetupOpen(false)}
+            onRun={(options) => {
+              setRunSetupOpen(false);
+              void runFresh(options);
+            }}
+          />
+        ) : null}
         <AlertDialog
           open={switchTarget !== null}
           onOpenChange={(open) => {

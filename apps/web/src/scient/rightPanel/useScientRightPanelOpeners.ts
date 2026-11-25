@@ -11,6 +11,7 @@ import {
 } from "~/rightPanelStore";
 import {
   computeConsoleIsEmpty,
+  findEmptyComputeConsole,
   useComputeConsoleStore,
 } from "~/scient/compute/computeConsoleStore";
 import {
@@ -102,12 +103,13 @@ export function useScientRightPanelOpeners(input: {
   };
   const addComputeSurface = () => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    const surface = scientComputeSurface({
-      cwd: activeWorkspaceRoot,
-      contextId: createComputeContextId(),
-    });
-    runAfterPendingFileSave(surface.id, () => {
-      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    runAfterPendingFileSave(null, () => {
+      const store = useRightPanelStore.getState();
+      const panel = store.byThreadKey[scopedThreadKey(activeThreadRef)];
+      const surface =
+        findEmptyComputeConsole(panel, activeWorkspaceRoot) ??
+        scientComputeSurface({ cwd: activeWorkspaceRoot, contextId: createComputeContextId() });
+      store.openScient(activeThreadRef, surface);
     });
   };
   const openScientSourcePdf = (input: {

@@ -57,8 +57,12 @@ const scoped = Effect.fn("runFile.test.scoped")(function* (
   const started: AnalysisStartRunInput[] = [];
   const result = yield* runScientComputeFile({ path }).pipe(
     Effect.provideService(ComputeMcpGateway, {
-      readFile: () =>
-        Effect.succeed({ contents, revision: AnalysisSourceRevision.make("revision") }),
+      readFile: ({ relativePath }: { readonly relativePath: string }) =>
+        Effect.succeed({
+          relativePath,
+          contents,
+          revision: AnalysisSourceRevision.make("revision"),
+        }),
       inspectFileRuntimes: () => Effect.succeed({ runtimes }),
       subscribeFileRuns: () => Effect.succeed(Stream.empty),
       startFileRun: (input: AnalysisStartRunInput) => {
@@ -86,10 +90,12 @@ it.effect("runs a file through the same run the app starts, and reports what it 
     const { result, started } = yield* scoped([available("java")], "class A {}", "a.java");
     expect(started[0]?.runtimeId).toBe("file:java");
     expect(started[0]?.sourceRevision).toBe("revision");
+    expect(started[0]).toHaveProperty("agentThreadId", "thread-run-file");
     expect(result._tag === "Success" && result.success).toMatchObject({
       runtime: "Java 21.0.11",
       run: { status: "failed", figures: 1 },
-      wrote: ["table.csv", "chart.png"],
+      wrote: [],
+      changed: ["table.csv", "chart.png"],
     });
     expect(result._tag === "Success" && result.success.run.output).toContain("exited with code 1");
     expect(result._tag === "Success" && result.success.run.output).toContain("a.java:1: error");
@@ -127,22 +133,21 @@ it.effect("sends a shared file type to the language that is installed", () =>
   Effect.gen(function* () {
     const { started } = yield* scoped([available("gp")], "1 + 1\n", "a.gp");
     expect(started[0]?.runtimeId).toBe("file:gp");
+    const matlabSource = yield* scoped([available("octave")], "disp(42);", "a.m");
+    expect(matlabSource.started[0]?.runtimeId).toBe("file:octave");
   }),
 );
 
-it.effect("runs a sqlite3 script with sqlite3, and plain SQL not at all", () =>
+it.effect("runs a sqlite3 script with sqlite3", () =>
   Effect.gen(function* () {
     const script = yield* scoped([available("sqlite")], ".bail on\n", "a.sql");
     expect(script.started[0]?.runtimeId).toBe("file:sqlite");
-    const plain = yield* scoped([available("sqlite")], "select 1;\n", "a.sql");
-    expect(plain.started).toHaveLength(0);
-    expect(plain.result._tag).toBe("Failure");
   }),
 );
 
 it.effect("names the way forward when nothing can run a file", () =>
   Effect.gen(function* () {
-    const { result } = yield* scoped([], "print(1)\n", "a.py");
-    expect(result._tag === "Failure" && result.failure.message).toContain("scient_compute_run");
+    const { result } = yield* scoped([], "print(1)\n", "a.xyz");
+    expect(result._tag === "Failure" && result.failure.message).toContain("a.xyz");
   }),
 );

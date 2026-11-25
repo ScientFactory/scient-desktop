@@ -67,6 +67,9 @@ import {
   toolGroupSummaryIconName,
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
+// SCIENT-FORK:START — Compute group timestamps match their run rows.
+import { RelativeTime } from "../RelativeTime";
+// SCIENT-FORK:END
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
@@ -801,6 +804,9 @@ export function WorkGroupToggleTimelineRow({
       }
       // SCIENT-FORK:END
       toolIcon={row.toolIcon}
+      // SCIENT-FORK:START — Counted Compute groups share the receipt disclosure.
+      compute={row.computeGroup}
+      // SCIENT-FORK:END
       failed={row.hasFailure}
       expanded={row.expanded}
       createdAt={row.createdAt}
@@ -815,6 +821,9 @@ function WorkGroupHeader(props: {
   iconName: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean | undefined;
+  // SCIENT-FORK:START — Opt in for Compute receipts.
+  compute?: boolean | undefined;
+  // SCIENT-FORK:END
   expanded: boolean;
   createdAt: string;
   timestampFormat: TimestampFormat;
@@ -823,6 +832,9 @@ function WorkGroupHeader(props: {
   const gt = useGT();
   return (
     <WorkLogButton
+      // SCIENT-FORK:START — Compute group row shares history hover and focus.
+      surface={props.compute ? "disclosure" : undefined}
+      // SCIENT-FORK:END
       aria-label={
         props.failed ? gt("{label}, tool call failed", { label: props.label }) : props.label
       }
@@ -838,9 +850,28 @@ function WorkGroupHeader(props: {
           muted
         />
       }
-      label={<span className="block truncate">{props.label}</span>}
+      // SCIENT-FORK:START — Counted Compute rows match their individual receipts.
+      label={
+        <span
+          className={cn("block truncate", props.compute && "text-sm font-medium text-foreground")}
+        >
+          {props.label}
+        </span>
+      }
+      // SCIENT-FORK:END
       trailing={
-        <TimelineRowTimestamp createdAt={props.createdAt} timestampFormat={props.timestampFormat} />
+        // SCIENT-FORK:START — Counted Compute groups keep one relative time.
+        props.compute ? (
+          <span className="shrink-0 pe-2 text-xs text-muted-foreground tabular-nums">
+            <RelativeTime timestamp={props.createdAt} />
+          </span>
+        ) : (
+          <TimelineRowTimestamp
+            createdAt={props.createdAt}
+            timestampFormat={props.timestampFormat}
+          />
+        )
+        // SCIENT-FORK:END
       }
     />
   );

@@ -54,10 +54,17 @@ export const DataTableSort = Schema.Struct({
 });
 export type DataTableSort = typeof DataTableSort.Type;
 
+export const DataTableMinimum = Schema.Struct({
+  column: Count,
+  value: Schema.Finite,
+});
+export type DataTableMinimum = typeof DataTableMinimum.Type;
+
 export const DataTableQuery = Schema.Struct({
   offset: Count,
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: DATA_TABLE_MAX_PAGE_ROWS })),
   sort: Schema.NullOr(DataTableSort),
+  minimum: Schema.optional(DataTableMinimum),
   /** Case-insensitive text a row must contain in one of its cells. */
   search: Schema.String.check(Schema.isMaxLength(256)),
 });
@@ -73,6 +80,25 @@ export const DataTableRow = Schema.Struct({
 });
 export type DataTableRow = typeof DataTableRow.Type;
 
+const DataColumnTotals = Schema.Struct({
+  missing: Count,
+  nanCount: Schema.optional(Count),
+  distinct: Count,
+  distinctApproximate: Schema.optional(Schema.Boolean),
+  distinctLowerBound: Schema.optional(Schema.Boolean),
+  range: Schema.NullOr(Schema.Struct({ min: CellText, max: CellText })),
+  valuesClipped: Schema.optional(Schema.Boolean),
+  topTracked: Schema.optional(Schema.Boolean),
+  topApproximate: Schema.optional(Schema.Boolean),
+  top: Schema.Array(Schema.Struct({ value: CellText, count: Count })).check(Schema.isMaxLength(3)),
+});
+
+export const DataTableTotals = Schema.Struct({
+  rowCount: Count,
+  columns: Schema.Array(DataColumnTotals).check(Schema.isMaxLength(DATA_TABLE_MAX_COLUMNS)),
+});
+export type DataTableTotals = typeof DataTableTotals.Type;
+
 export const DataTablePage = Schema.Struct({
   /** The first {@link DATA_TABLE_MAX_COLUMNS} columns; `columnCount` counts them all. */
   columns: Schema.Array(DataTableColumn).check(Schema.isMaxLength(DATA_TABLE_MAX_COLUMNS)),
@@ -83,6 +109,7 @@ export const DataTablePage = Schema.Struct({
   /** Only the first `rowCount` rows of a larger source can be shown. */
   truncated: Schema.Boolean,
   offset: Count,
+  totals: Schema.optional(DataTableTotals),
   rows: Schema.Array(DataTableRow).check(Schema.isMaxLength(DATA_TABLE_MAX_PAGE_ROWS)),
 });
 export type DataTablePage = typeof DataTablePage.Type;

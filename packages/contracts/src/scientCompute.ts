@@ -1,3 +1,4 @@
+import { AnalysisRunSummary } from "@scientfactory/analysis";
 import {
   ComputeCapability,
   ComputeExecutionId,
@@ -22,6 +23,9 @@ import {
   ComputeSessionId,
   ComputeSessionOwner,
   ComputeSessionRecord,
+  ComputeNotebookBatchSummary,
+  computeNotebookBatchActivity,
+  computeNotebookCellNotRun,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
   ComputeToolkitAssessment,
@@ -38,7 +42,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { ComputeResultParameterValues, ComputeResultsRerunInput } from "./scientComputeResults.ts";
+
 export {
+  computeNotebookBatchActivity,
+  computeNotebookCellNotRun,
   ComputeExecutionActor,
   ComputeManagedToolkitChange,
   ComputeSessionOwner,
@@ -222,6 +230,19 @@ export const ComputeManagedRuntimeStatusInput = Schema.Struct({
 });
 export type ComputeManagedRuntimeStatusInput = typeof ComputeManagedRuntimeStatusInput.Type;
 
+/** A package name as an index lists it: no versions, extras, URLs or options. */
+const PythonDistributionName = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/u),
+);
+
+/** Adds a package beside a live session's Python, never into it; its next run finds it. */
+export const ComputeAddPythonLibraryInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  distribution: PythonDistributionName,
+});
+export type ComputeAddPythonLibraryInput = typeof ComputeAddPythonLibraryInput.Type;
+
 export const ComputeStartProjectSessionInput = Schema.Struct({
   cwd: ComputeCwd,
   sessionId: ComputeSessionId,
@@ -234,6 +255,8 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
       code: ComputeCode,
       source: ComputeExecutionSource,
       actor: Schema.optional(ComputeExecutionActor),
+      parameters: Schema.optional(ComputeResultParameterValues),
+      inputs: ComputeResultsRerunInput.fields.inputs,
     }),
   ),
 });
@@ -247,6 +270,7 @@ export const ComputeSubmitProjectCellsInput = Schema.Struct({
   sessionId: ComputeSessionId,
   expectedGeneration: ComputeSessionGeneration,
   path: ComputeCellText,
+  runAll: Schema.optional(Schema.Boolean),
   actor: Schema.optional(ComputeExecutionActor),
   cells: Schema.Array(
     Schema.Struct({ cellId: ComputeCellText, executionId: ComputeExecutionId, code: ComputeCode }),
@@ -302,6 +326,43 @@ export const ComputeListProjectExecutionsInput = Schema.Struct({
 });
 export type ComputeListProjectExecutionsInput = typeof ComputeListProjectExecutionsInput.Type;
 
+const ComputeRunHistoryCursor = Schema.Struct({
+  submittedAt: Schema.String,
+  executionId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+});
+
+export const ComputeRunHistoryInput = Schema.Struct({
+  cwd: ComputeCwd,
+  limit: ComputeHistoryLimit,
+  path: Schema.optional(Schema.NonEmptyString.check(Schema.isMaxLength(4096))),
+  filter: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  before: Schema.optional(ComputeRunHistoryCursor),
+  notebookBatchId: Schema.optional(ComputeExecutionId),
+  sessionId: Schema.optional(ComputeSessionId),
+  executionId: Schema.optional(ComputeExecutionId),
+});
+export type ComputeRunHistoryInput = typeof ComputeRunHistoryInput.Type;
+
+export const ComputeRunHistoryResult = Schema.Struct({
+  fileRuns: Schema.Array(AnalysisRunSummary),
+  runs: Schema.Array(
+    Schema.Struct({
+      session: ComputeSessionRecord,
+      execution: ComputeExecutionRecord,
+      notebookBatch: Schema.optional(
+        Schema.Struct({
+          ...ComputeNotebookBatchSummary.fields,
+          currentCell: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+          active: Schema.optional(ComputeExecutionRecord),
+        }),
+      ),
+    }),
+  ),
+  next: Schema.NullOr(ComputeRunHistoryCursor),
+});
+
+export type ComputeRunHistoryResult = typeof ComputeRunHistoryResult.Type;
+
 export const ComputeListProjectOutputsInput = Schema.Struct({
   cwd: ComputeCwd,
   sessionId: ComputeSessionId,
@@ -345,6 +406,8 @@ export const ComputeNotebookOutputsResult = Schema.Struct({
   executionCount: Schema.NullOr(Schema.Int),
   /** Part of this run's output was not kept, so `outputs` may be missing what it printed. */
   truncated: Schema.Boolean,
+  /** Some of what the run showed could not be read back; this copy must not replace a cell's. */
+  incomplete: Schema.optional(Schema.Boolean),
 });
 export type ComputeNotebookOutputsResult = typeof ComputeNotebookOutputsResult.Type;
 

@@ -6,10 +6,26 @@ function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
   return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />;
 }
 
-function CollapsibleTrigger({ className, ...props }: CollapsiblePrimitive.Trigger.Props) {
+// SCIENT-FORK:START — History and chat disclosures share hover, selection and keyboard focus.
+export const disclosureRowSurface = "rounded-lg hover:bg-accent data-open:bg-accent/60";
+export const disclosureRowFocus =
+  "outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
+function CollapsibleTrigger({
+  className,
+  variant,
+  ...props
+}: CollapsiblePrimitive.Trigger.Props & { variant?: "row" }) {
+  // SCIENT-FORK:END
   return (
     <CollapsiblePrimitive.Trigger
-      className={cn("cursor-pointer", className)}
+      // SCIENT-FORK:START — A row has one inset focus edge.
+      className={cn(
+        "cursor-pointer",
+        variant === "row" && `rounded-lg ${disclosureRowFocus}`,
+        className,
+      )}
+      // SCIENT-FORK:END
       data-slot="collapsible-trigger"
       {...props}
     />

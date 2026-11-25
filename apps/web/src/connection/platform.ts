@@ -845,7 +845,15 @@ const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
     // Every RPC passes through this observer; the request owns its span.
-    observe: Effect.fnUntraced(function* ({ environmentId, environmentLabel, method }) {
+    // SCIENT-FORK:START — The inline Compute startup message already informs the user.
+    observe: Effect.fnUntraced(function* ({
+      environmentId,
+      environmentLabel,
+      method,
+      suppressSlowWarning,
+    }) {
+      if (suppressSlowWarning) return Effect.void;
+      // SCIENT-FORK:END
       return yield* Effect.sync(() => {
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;

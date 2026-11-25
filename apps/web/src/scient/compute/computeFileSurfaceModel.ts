@@ -253,7 +253,7 @@ export function computeRuntimeSetupActionLabel(
   return resolve(msg("Set up {language}", { language: languageName }));
 }
 
-const SCIENTIFIC_PACKAGES_NOTE = msg("Some scientific packages are missing");
+const SCIENTIFIC_PACKAGES_NOTE = msg("Some Scientific Python Toolkit packages are missing");
 
 export function isComputeCapacityReachedError(error: unknown): boolean {
   return (

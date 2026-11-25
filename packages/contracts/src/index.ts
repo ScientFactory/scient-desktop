@@ -104,6 +104,9 @@ export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
 export * from "./scientComputeResults.ts";
+// SCIENT-FORK:START — export the portable result package contracts.
+export * from "./scientResultHandoff.ts";
+// SCIENT-FORK:END
 export * from "./scient/computeLanguages.ts";
 export * from "./scient/sourcesSettings.ts";
 export * from "./scient/computeLanguageStatus.ts";

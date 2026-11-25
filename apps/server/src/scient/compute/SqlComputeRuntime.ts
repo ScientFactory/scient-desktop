@@ -70,7 +70,7 @@ export function sqlKernelSpec(python: string, bridgePath: string): ComputeKernel
 }
 
 /** Stands for DuckDB in Scient's private Python, which is added the first time it runs. */
-const PRIVATE_DUCKDB = "scient-private-duckdb";
+export const PRIVATE_DUCKDB = "scient-private-duckdb";
 
 /** Scient-managed Python carries DuckDB; any other counts when its files show DuckDB and a kernel. */
 const mayHaveDuckdb = (context: DiscoveryContext, source: string, executable: string) => {

@@ -22,7 +22,7 @@ export interface ProjectWriteMark {
 export type ProjectWriteWindow =
   | {
       readonly healthy: true;
-      /** Figure and table files created or changed in the window, absolute. */
+      /** Paths created or changed in the window, absolute. */
       readonly files: ReadonlyArray<string>;
       /** Entries created in the window that may be folders whose files were never reported. */
       readonly created: ReadonlyArray<string>;
@@ -63,8 +63,10 @@ export const IGNORED_DIRECTORY_NAMES = [
 export const ENVIRONMENT_MARKERS = ["pyvenv.cfg", "conda-meta"] as const;
 
 const COOKIE_PREFIX = ".scient-compute-sync-";
-const COOKIE_TIMEOUT_MS = 1_000;
-const START_SYNC_ATTEMPTS = 4;
+const READ_SYNC_TIMEOUT_MS = 4_000;
+const READ_SYNC_RETRY_MS = 1_000;
+const START_COOKIE_TIMEOUT_MS = 3_000;
+const START_SYNC_ATTEMPTS = 3;
 const MAXIMUM_JOURNAL_ENTRIES = 8_192;
 const IGNORE_SEARCH_DEPTH = 4;
 const IGNORE_SEARCH_DIRECTORIES = 2_048;
@@ -80,6 +82,7 @@ interface JournalEntry {
 interface RootWatch {
   status: "starting" | "ready" | "failed";
   readonly started: Promise<void>;
+  readonly startupAbort: AbortController;
   sequence: number;
   readonly journal: JournalEntry[];
   /** Entries up to this sequence were dropped to bound memory. */
@@ -147,26 +150,51 @@ export function makeProjectWriteWatches(input: {
   };
 
   /** Ordering is per watch: once a fresh file's event arrives, every earlier one has too. */
-  const sync = async (root: string, watch: RootWatch, signal: AbortSignal): Promise<boolean> => {
-    cookieCount += 1;
-    const name = `${COOKIE_PREFIX}${String(process.pid)}-${String(cookieCount)}`;
-    const path = NodePath.join(root, name);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const seen = new Promise<boolean>((resolve) => {
+  const sync = async (
+    root: string,
+    watch: RootWatch,
+    signal: AbortSignal,
+    timeoutMs: number,
+    retryAfterMs?: number,
+  ): Promise<boolean> => {
+    if (signal.aborted) return false;
+    const { promise: seen, resolve } = Promise.withResolvers<boolean>();
+    const markers = new Map<string, Promise<boolean>>();
+    const writeMarker = () => {
+      cookieCount += 1;
+      const name = `${COOKIE_PREFIX}${String(process.pid)}-${String(cookieCount)}`;
       watch.cookies.set(name, () => resolve(true));
-      // @effect-diagnostics-next-line globalTimers:off -- the native watch is a plain-Promise adapter.
-      timer = setTimeout(() => resolve(false), COOKIE_TIMEOUT_MS);
-      signal.addEventListener("abort", () => resolve(false), { once: true });
-    });
+      const written = NodeFSP.writeFile(NodePath.join(root, name), "", { flag: "wx" }).then(
+        () => true,
+        () => false,
+      );
+      markers.set(name, written);
+      return written;
+    };
+    const onAbort = () => resolve(false);
+    // @effect-diagnostics-next-line globalTimers:off -- the native watch is a plain-Promise adapter.
+    const timer = setTimeout(onAbort, timeoutMs);
+    // Keep both markers until the window is confirmed. Removing the first too early can
+    // coalesce its creation and deletion before the native watcher delivers either event.
+    const retry =
+      retryAfterMs === undefined
+        ? undefined
+        : // @effect-diagnostics-next-line globalTimers:off -- the native watch is a plain-Promise adapter.
+          setTimeout(() => void writeMarker(), retryAfterMs);
+    signal.addEventListener("abort", onAbort, { once: true });
     try {
-      await NodeFSP.writeFile(path, "", { flag: "wx" });
-      return await seen;
-    } catch {
-      return false;
+      return (await writeMarker()) && (await seen);
     } finally {
       clearTimeout(timer);
-      watch.cookies.delete(name);
-      await NodeFSP.rm(path, { force: true }).catch(() => undefined);
+      clearTimeout(retry);
+      signal.removeEventListener("abort", onAbort);
+      await Promise.all(
+        [...markers].map(async ([name, written]) => {
+          watch.cookies.delete(name);
+          if (await written)
+            await NodeFSP.rm(NodePath.join(root, name), { force: true }).catch(() => undefined);
+        }),
+      );
     }
   };
 
@@ -177,6 +205,7 @@ export function makeProjectWriteWatches(input: {
       started: new Promise<void>((resolve) => {
         resolveStarted = resolve;
       }),
+      startupAbort: new AbortController(),
       sequence: 0,
       journal: [],
       trimmedThrough: 0,
@@ -196,11 +225,11 @@ export function makeProjectWriteWatches(input: {
       for (const event of events) {
         const name = NodePath.basename(event.path);
         if (name.startsWith(COOKIE_PREFIX)) {
-          watch.cookies.get(name)?.();
+          if (event.type !== "delete") watch.cookies.get(name)?.();
           continue;
         }
         if (event.type === "delete") continue;
-        if (OUTPUT_FILE.test(name)) record(watch, event.path, false);
+        if (OUTPUT_FILE.test(name) || !name.startsWith(".")) record(watch, event.path, false);
         // inotify adds a new folder's watch after the folder appears, so files made at once
         // inside it are never reported. Other backends watch the whole tree natively.
         if (event.type === "create" && input.platform === "linux") record(watch, event.path, true);
@@ -218,15 +247,17 @@ export function makeProjectWriteWatches(input: {
           return;
         }
         watch.unsubscribe = subscription.unsubscribe;
-        // After a burst just before subscribing, FSEvents reports dropped events, sometimes with
-        // the sync file itself, until one sync comes through clean. A folder Scient cannot write
-        // fails here.
+        // FSEvents can take several seconds to deliver a new subscription's backlog. A marker
+        // establishes the baseline even if its batch reports loss: no run has been marked yet.
+        // Any fault delivered after a run's mark still invalidates that observation window.
+        const { signal } = watch.startupAbort;
         let synced = false;
-        for (let attempt = 0; attempt < START_SYNC_ATTEMPTS && !synced; attempt += 1) {
-          const faultedAt = watch.faultedAt;
-          synced =
-            (await sync(root, watch, new AbortController().signal)) &&
-            watch.faultedAt === faultedAt;
+        for (
+          let attempt = 0;
+          attempt < START_SYNC_ATTEMPTS && !synced && !signal.aborted;
+          attempt += 1
+        ) {
+          synced = await sync(root, watch, signal, START_COOKIE_TIMEOUT_MS);
         }
         watch.status = synced ? "ready" : "failed";
       } catch {
@@ -251,9 +282,11 @@ export function makeProjectWriteWatches(input: {
       read: async (mark, signal) => {
         if (!mark.ready || watch.status !== "ready")
           return { healthy: false, reason: "watch-unavailable" };
-        const synced = await sync(root, watch, signal);
-        if (watch.faultedAt > mark.sequence || watch.trimmedThrough > mark.sequence)
-          return { healthy: false, reason: "watch-overflow" };
+        const overflowed = () =>
+          watch.faultedAt > mark.sequence || watch.trimmedThrough > mark.sequence;
+        if (overflowed()) return { healthy: false, reason: "watch-overflow" };
+        const synced = await sync(root, watch, signal, READ_SYNC_TIMEOUT_MS, READ_SYNC_RETRY_MS);
+        if (overflowed()) return { healthy: false, reason: "watch-overflow" };
         if (!synced) return { healthy: false, reason: "watch-unavailable" };
         const files = new Set<string>();
         const created = new Set<string>();
@@ -269,6 +302,7 @@ export function makeProjectWriteWatches(input: {
         watch.references -= 1;
         if (watch.references > 0) return;
         if (roots.get(root) === watch) roots.delete(root);
+        watch.startupAbort.abort();
         await watch.started;
         const unsubscribe = watch.unsubscribe;
         watch.unsubscribe = null;

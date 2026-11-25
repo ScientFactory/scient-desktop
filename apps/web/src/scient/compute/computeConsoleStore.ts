@@ -1,6 +1,9 @@
 import type { ComputeExecutionRecord } from "@t3tools/contracts";
 import { create } from "zustand";
 
+import type { ThreadRightPanelState } from "~/rightPanelStore";
+import type { ScientRightPanelSurface } from "../rightPanel/surfaces";
+
 import { getComputeContext, type ComputeContextId } from "./computeContextStore";
 
 interface ComputeConsoleState {
@@ -58,4 +61,21 @@ export function computeConsoleIsEmpty(contextId: ComputeContextId): boolean {
   const binding = getComputeContext(contextId);
   const draft = useComputeConsoleStore.getState().drafts[contextId] ?? "";
   return (binding === null || binding.sessionId === null) && draft.trim() === "";
+}
+
+export function findEmptyComputeConsole(
+  panel: Pick<ThreadRightPanelState, "surfaces" | "activeSurfaceId"> | undefined,
+  cwd: string,
+) {
+  const emptyConsoles = panel?.surfaces.filter(
+    (surface): surface is Extract<ScientRightPanelSurface, { module: "compute" }> =>
+      surface.kind === "scient" &&
+      surface.module === "compute" &&
+      surface.cwd === cwd &&
+      surface.contextId !== undefined &&
+      computeConsoleIsEmpty(surface.contextId),
+  );
+  return (
+    emptyConsoles?.find((surface) => surface.id === panel?.activeSurfaceId) ?? emptyConsoles?.at(-1)
+  );
 }

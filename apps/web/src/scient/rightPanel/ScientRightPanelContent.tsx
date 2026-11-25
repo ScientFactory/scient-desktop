@@ -45,6 +45,11 @@ const OverleafReviewPanel = lazy(() =>
     default: module.OverleafReviewPanel,
   })),
 );
+const ComputeProjectHistory = lazy(() =>
+  import("../compute/ComputeProjectHistory").then((module) => ({
+    default: module.ComputeProjectHistory,
+  })),
+);
 const ComputePanel = lazy(() =>
   import("../compute/ComputePanel").then((module) => ({
     default: module.ComputePanel,
@@ -130,18 +135,22 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     renderedRightPanelSurface.module === "compute" &&
     activeThreadRef ? (
     <Suspense fallback={null}>
-      <ComputePanel
-        key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}
-        environmentId={activeThreadRef.environmentId}
-        cwd={renderedRightPanelSurface.cwd}
-        threadRef={activeThreadRef}
-        {...(renderedRightPanelSurface.contextId === undefined
-          ? {}
-          : {
-              contextId: renderedRightPanelSurface.contextId,
-              onRetryClose: () => closeRightPanelSurface(renderedRightPanelSurface),
-            })}
-      />
+      {renderedRightPanelSurface.contextId === undefined ? (
+        <ComputeProjectHistory
+          key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}
+          cwd={renderedRightPanelSurface.cwd}
+          threadRef={activeThreadRef}
+        />
+      ) : (
+        <ComputePanel
+          key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}
+          environmentId={activeThreadRef.environmentId}
+          cwd={renderedRightPanelSurface.cwd}
+          threadRef={activeThreadRef}
+          contextId={renderedRightPanelSurface.contextId}
+          onRetryClose={() => closeRightPanelSurface(renderedRightPanelSurface)}
+        />
+      )}
     </Suspense>
   ) : renderedRightPanelSurface?.kind === "scient" &&
     renderedRightPanelSurface.module === "file" &&

@@ -123,6 +123,9 @@ function DialogPopup({
   variant = "default",
   mediaControlsPlacement = "outside",
   layout = "default",
+  // SCIENT-FORK:START — share the wide content dialog with Compute.
+  size = "default",
+  // SCIENT-FORK:END
   padding = "default",
   gap = "default",
   backdropClassName,
@@ -136,6 +139,9 @@ function DialogPopup({
   mediaControlsPlacement?: "inside" | "outside";
   /** Shared layout for large, media-like content viewers. */
   layout?: "default" | "visual";
+  // SCIENT-FORK:START — share the wide content dialog with Compute.
+  size?: "default" | "wide";
+  // SCIENT-FORK:END
   padding?: "default" | "none";
   gap?: "default" | "none";
   /** Allows feature-owned dialogs to tune the shared backdrop without replacing it. */
@@ -156,6 +162,9 @@ function DialogPopup({
           isViewer ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
           "row-start-2 text-popover-foreground",
           variant === "default" && "max-h-full max-w-lg",
+          // SCIENT-FORK:START — the wide dialog uses the viewport's 16 px gutters.
+          variant === "default" && size === "wide" && "max-w-[60rem]",
+          // SCIENT-FORK:END
           layout === "visual" &&
             "flex h-[min(84vh,56rem)] w-[min(88vw,88rem)] max-w-none flex-col overflow-hidden max-sm:h-[92vh] max-sm:w-[94vw]",
           padding === "none" && "p-0",
@@ -176,7 +185,9 @@ function DialogPopup({
           <DialogPrimitive.Close
             aria-label={gt("Close", { $context: "button, closes the dialog" })}
             className="absolute end-2 top-2"
-            render={<Button size="icon" variant="ghost" />}
+            // SCIENT-FORK:START — use the shared single-edge focus treatment on Close.
+            render={<Button size="icon" variant="ghost" focus="edge" />}
+            // SCIENT-FORK:END
           >
             <XIcon />
           </DialogPrimitive.Close>

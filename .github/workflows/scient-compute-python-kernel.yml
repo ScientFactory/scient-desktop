@@ -334,6 +334,20 @@ jobs:
           # The suite skips without SCIENT_TEST_PYTHON; a skip must not pass as a run.
           node -e 'const r = require(process.argv[1]); if (r.numPassedTests !== 1 || r.numTotalTests !== 1) { console.error("Expected exactly one Compute product case to run", r.numPassedTests, r.numTotalTests); process.exit(1); }' "$report"
 
+      - name: Check saved data views with DuckDB on Python 3.12
+        if: ${{ runner.os == 'Linux' && (matrix.python == 'both' || matrix.python == '3.12') }}
+        working-directory: apps/server
+        run: |
+          set -euo pipefail
+          duckdb_version="$(python -c 'import tomllib; from pathlib import Path; lock = tomllib.loads(Path("src/scient/compute/managed-python/uv.lock").read_text()); print(next(p["version"] for p in lock["package"] if p["name"] == "duckdb"))')"
+          python -m pip install "duckdb==${duckdb_version}"
+          DATA_VIEW_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export DATA_VIEW_TEST_PYTHON
+          report="$RUNNER_TEMP/compute-data-views.json"
+          vp test run src/scient/data/DataViews.live.test.ts \
+            --reporter=default --reporter=json --outputFile.json="$report"
+          node -e 'const r = require(process.argv[1]); if (r.numPassedTests === 0 || r.numPassedTests !== r.numTotalTests) { console.error("Expected the native data view tests to run", r.numPassedTests, r.numTotalTests); process.exit(1); }' "$report"
+
   real_languages:
     if: ${{ inputs.real_kernel }}
     name: Real R and Julia / ${{ matrix.runner }}${{ matrix.part != 'all' && format(' / {0}', matrix.part) || '' }}

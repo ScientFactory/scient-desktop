@@ -86,6 +86,9 @@ import {
   resolveMarkdownDirectionHint,
   type FixedContentDirection,
 } from "../../scient/bidi/contentDirection";
+// SCIENT-FORK:START — Compute receipts disclose directly from the work log.
+import { isComputeRunTool } from "../../scient/compute/computeToolRunProjection";
+// SCIENT-FORK:END
 import {
   forkBaselineMarkerRowAfter,
   forkBaselineMarkerVisible,
@@ -632,6 +635,7 @@ type MessagesTimelineRowContent =
       toolIcon?: WorkLogEntry["toolIcon"];
       // SCIENT-FORK:START — Scient's trace icons (scient/presentation/traceIcons.ts).
       summaryTraceIcon?: TraceIconOverride;
+      computeGroup?: true;
       // SCIENT-FORK:END
       hasFailure: boolean;
     }
@@ -2264,6 +2268,13 @@ export function deriveMessagesTimelineRows(
         });
         continue;
       }
+      // SCIENT-FORK:START — Keep provider narration and other calls out of Compute receipt groups.
+      const computeRun = (entry: WorkLogEntry) => {
+        const item = entry.projectedItem?.item;
+        return item?.type === "dynamic_tool" && isComputeRunTool(item.toolName);
+      };
+      const computeGroup = computeRun(timelineEntry.entry);
+      // SCIENT-FORK:END
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
       while (cursor < timelineEntries.length) {
@@ -2271,6 +2282,9 @@ export function deriveMessagesTimelineRows(
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
+          // SCIENT-FORK:START — A Compute group includes only Compute calls.
+          computeRun(nextEntry.entry) !== computeGroup ||
+          // SCIENT-FORK:END
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           (nextEntry.entry.itemType === "error" &&
             nextEntry.entry.toolLifecycleStatus === "failed") ||
@@ -2321,7 +2335,9 @@ export function deriveMessagesTimelineRows(
           }
         } else if (
           visibleGroupedEntries.length === 1 &&
-          workLogEntryIsToolLike(visibleGroupedEntries[0]!)
+          // SCIENT-FORK:START — A Compute receipt remains a tool row on every provider.
+          (computeGroup || workLogEntryIsToolLike(visibleGroupedEntries[0]!))
+          // SCIENT-FORK:END
         ) {
           const singleEntry = visibleGroupedEntries[0]!;
           nextRows.push({
@@ -2370,14 +2386,23 @@ export function deriveMessagesTimelineRows(
             hiddenCount: visibleGroupedEntries.length,
             expanded,
             summary:
-              singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
-                ? singleEntry.label
-                : summarizeToolGroup(visibleGroupedEntries, resolve).summary,
+              // SCIENT-FORK:START — Multiple Compute calls keep one counted disclosure.
+              computeGroup
+                ? resolve(
+                    msg("{count, plural, one {# Compute run} other {# Compute runs}}", {
+                      count: visibleGroupedEntries.length,
+                    }),
+                  )
+                : singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
+                  ? singleEntry.label
+                  : summarizeToolGroup(visibleGroupedEntries, resolve).summary,
+            // SCIENT-FORK:END
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
             // SCIENT-FORK:START
             ...(summaryTraceIcon ? { summaryTraceIcon } : {}),
+            ...(computeGroup ? { computeGroup: true as const } : {}),
             // SCIENT-FORK:END
             hasFailure:
               latestToolEntry !== undefined &&
@@ -3151,6 +3176,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summaryKind === bw.summaryKind &&
         // SCIENT-FORK:START — the summary icon can change while the summary text does not.
         a.summaryTraceIcon === bw.summaryTraceIcon &&
+        a.computeGroup === bw.computeGroup &&
         // SCIENT-FORK:END
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&

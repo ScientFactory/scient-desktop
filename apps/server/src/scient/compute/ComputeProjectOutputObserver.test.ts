@@ -33,17 +33,33 @@ const PIXEL = Buffer.from(
 type Callback = Parameters<ProjectWatchBackend["subscribe"]>[1];
 
 /** Reports only what a test emits, plus the sync files the watch writes to flush itself. */
-function scriptedBackend() {
+function scriptedBackend(startupError: Error | null = null) {
   let callback: Callback | null = null;
+  let missedSync: string | null = null;
+  let missNextSync = false;
+  const deliveredSyncs = new Set<string>();
   const backend: ProjectWatchBackend = {
     subscribe: async (directory, onEvents) => {
       callback = onEvents;
       // @effect-diagnostics-next-line globalTimers:off -- stands in for a native watch thread.
       const timer = setInterval(() => {
         void NodeFSP.readdir(directory).then((names) => {
-          for (const name of names)
-            if (name.startsWith(".scient-compute-sync-"))
-              onEvents(null, [{ path: NodePath.join(directory, name), type: "create" }]);
+          for (const name of names) {
+            if (
+              !name.startsWith(".scient-compute-sync-") ||
+              name === missedSync ||
+              deliveredSyncs.has(name)
+            )
+              continue;
+            if (missNextSync) {
+              missNextSync = false;
+              missedSync = name;
+              continue;
+            }
+            const error = deliveredSyncs.size === 0 ? startupError : null;
+            deliveredSyncs.add(name);
+            onEvents(error, [{ path: NodePath.join(directory, name), type: "create" }]);
+          }
         });
       }, 5);
       return { unsubscribe: async () => clearInterval(timer) };
@@ -51,6 +67,10 @@ function scriptedBackend() {
   };
   return {
     backend,
+    deliveredSyncCount: () => deliveredSyncs.size,
+    missNextSync: () => {
+      missNextSync = true;
+    },
     emit: (error: Error | null, paths: ReadonlyArray<string> = [], type = "create") =>
       callback?.(
         error,
@@ -175,34 +195,38 @@ async function fillLargeProject(root: string) {
   const environment = NodePath.join(root, "venv", "lib", "site-packages");
   await NodeFSP.mkdir(environment, { recursive: true });
   await NodeFSP.writeFile(NodePath.join(root, "venv", "pyvenv.cfg"), "home = /usr/bin\n");
-  for (let start = 0; start < 5_000; start += 250)
+  // On macOS, avoid queuing thousands of file closes while creating the directory entries.
+  const useLinks = HostProcess.Platform.defaultValue() === "darwin";
+  for (let start = 0; start < 5_000; start += 250) {
+    const entry = NodePath.join(environment, `module-${start}.py`);
+    await NodeFSP.writeFile(entry, "");
     await Promise.all(
-      Array.from({ length: 250 }, (_, offset) =>
-        NodeFSP.writeFile(NodePath.join(environment, `module-${start + offset}.py`), ""),
-      ),
+      Array.from({ length: 249 }, (_, offset) => {
+        const path = NodePath.join(environment, `module-${start + offset + 1}.py`);
+        return useLinks ? NodeFSP.link(entry, path) : NodeFSP.writeFile(path, "");
+      }),
     );
+  }
   await NodeFSP.mkdir(NodePath.join(root, ...Array.from({ length: 12 }, () => "nested")), {
     recursive: true,
   });
 }
 
-// Made once, ahead of the real-watch runs: creating or deleting thousands of files can make
-// FSEvents report system-wide event loss, which those runs would then rightly call partial.
-const largeProjects: string[] = [];
+// Both runs need a large environment present, so share one. Creating thousands of unrelated
+// files for each case can itself make FSEvents drop events before the watch is ready.
+let largeProject: string;
 beforeAll(async () => {
-  for (const _ of [0, 1]) {
-    const root = await makeRoot();
-    await fillLargeProject(root);
-    largeProjects.push(root);
-  }
+  largeProject = await makeRoot();
+  await fillLargeProject(largeProject);
 });
+
 afterAll(async () => {
-  for (const root of largeProjects) await NodeFSP.rm(root, { recursive: true, force: true });
+  await NodeFSP.rm(largeProject, { recursive: true, force: true });
 });
 
 describe("ComputeProjectOutputObserver", () => {
   it.live("retains figures saved twelve folders deep and beside a large environment", () =>
-    withWatch(largeProjects[0]!, (root, watch) =>
+    withWatch(largeProject, (root, watch) =>
       Effect.gen(function* () {
         const deep = NodePath.join(root, ...Array.from({ length: 12 }, () => "deeper"), "plot.svg");
         const collection = yield* runWithoutReportedLoss(
@@ -224,7 +248,7 @@ describe("ComputeProjectOutputObserver", () => {
   );
 
   it.live("says a run in a large, deep project wrote nothing when it wrote nothing", () =>
-    withWatch(largeProjects[1]!, (root, watch) =>
+    withWatch(largeProject, (root, watch) =>
       Effect.gen(function* () {
         const collection = yield* runWithoutReportedLoss(watch, Effect.void);
         yield* expectRealWatchAvailable(root, collection.capture?.coverageReason);
@@ -233,6 +257,54 @@ describe("ComputeProjectOutputObserver", () => {
         expect(collection.warnings).toEqual([]);
       }),
     ).pipe(Effect.provide(liveLayer)),
+  );
+
+  it.live(
+    "finds native writes in a small scan and uses the watcher when the scan is capped",
+    () => {
+      const scripted = scriptedBackend();
+      return withProject((root, watch) =>
+        Effect.gen(function* () {
+          const limits = { maximumBytes: 1024 * 1024, preferFileScan: true };
+          const first = yield* watch.begin;
+          yield* write(NodePath.join(root, "first.svg"));
+          const scanned = yield* watch.collect(first, limits);
+          expect(scanned.images.map((image) => image.relativePath)).toEqual(["first.svg"]);
+          expect(scanned.capture?.coverage).toBe("partial");
+
+          yield* Effect.promise(() =>
+            Promise.all(
+              Array.from({ length: 129 }, (_, index) =>
+                NodeFSP.writeFile(NodePath.join(root, `file-${index}.txt`), ""),
+              ),
+            ),
+          );
+          const second = yield* watch.begin;
+          const changed = NodePath.join(root, "watched.svg");
+          yield* write(changed);
+          scripted.emit(null, [changed]);
+          const watched = yield* watch.collect(second, limits);
+          expect(watched.images.map((image) => image.relativePath)).toEqual(["watched.svg"]);
+          expect(watched.capture?.coverage).toBe("complete");
+        }).pipe(
+          Effect.provideServiceEffect(
+            Clock.Clock,
+            Effect.map(Clock.Clock, (clock) => {
+              const now = clock.currentTimeMillisUnsafe();
+              return {
+                currentTimeMillisUnsafe: () => now,
+                currentTimeMillis: clock.currentTimeMillis,
+                currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+                currentTimeNanos: clock.currentTimeNanos,
+                monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+                monotonicTimeNanos: clock.monotonicTimeNanos,
+                sleep: (duration) => clock.sleep(duration),
+              };
+            }),
+          ),
+        ),
+      ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
+    },
   );
 
   it.live("ignores late news of a file changed before the run, and one already shown", () => {
@@ -309,6 +381,11 @@ describe("ComputeProjectOutputObserver", () => {
           `${Array.from({ length: 10 }, () => "d").join("/")}/deep.svg`,
           "figures/nested.svg",
         ]);
+        expect(collection.writtenFiles).toEqual([
+          `${Array.from({ length: 10 }, () => "d").join("/")}/deep.svg`,
+          "figures/nested.svg",
+          "notes.txt",
+        ]);
         expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
       }),
     ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
@@ -323,7 +400,11 @@ describe("ComputeProjectOutputObserver", () => {
           yield* write(NodePath.join(root, "own.svg"));
           // Writes through a handle opened in an earlier cell, or by a child process.
           yield* write(NodePath.join(root, "unseen.svg"));
-          scripted.emit(null, [NodePath.join(root, "unseen.svg")]);
+          yield* write(NodePath.join(root, "watch-only.txt"), "not attributed to runtime");
+          scripted.emit(null, [
+            NodePath.join(root, "unseen.svg"),
+            NodePath.join(root, "watch-only.txt"),
+          ]);
         }),
         { paths: [NodePath.join(root, "own.svg")] },
       ).pipe(
@@ -333,6 +414,7 @@ describe("ComputeProjectOutputObserver", () => {
               "own.svg",
               "unseen.svg",
             ]);
+            expect(collection.writtenFiles).toEqual(["own.svg"]);
             expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
           }),
         ),
@@ -429,6 +511,43 @@ describe("ComputeProjectOutputObserver", () => {
       ).pipe(Effect.provide(observerLayer(async () => scripted.backend, "linux")));
     },
   );
+
+  it.live("starts a new observation after loss reported with the startup sync", () => {
+    const scripted = scriptedBackend(new Error("Events dropped before the run"));
+    return withProject((root, watch) =>
+      Effect.gen(function* () {
+        expect(scripted.deliveredSyncCount()).toBe(1);
+        const figure = NodePath.join(root, "figure.svg");
+        const collection = yield* run(
+          watch,
+          write(figure).pipe(Effect.tap(() => Effect.sync(() => scripted.emit(null, [figure])))),
+        );
+        expect(collection.images.map((image) => image.relativePath)).toEqual(["figure.svg"]);
+        expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
+      }),
+    ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
+  });
+
+  it.live("keeps complete coverage when a later sync confirms a quiet watch", () => {
+    const scripted = scriptedBackend();
+    return withProject((root, watch) =>
+      Effect.gen(function* () {
+        const path = NodePath.join(root, "results", "nested", "plot.svg");
+        const collection = yield* run(
+          watch,
+          Effect.gen(function* () {
+            yield* write(path);
+            scripted.emit(null, [path]);
+            scripted.missNextSync();
+          }),
+        );
+        expect(collection.images.map((image) => image.relativePath)).toEqual([
+          "results/nested/plot.svg",
+        ]);
+        expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
+      }),
+    ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
+  });
 
   it.live("falls back to a scan and reports partial coverage when the watch lost events", () => {
     const scripted = scriptedBackend();

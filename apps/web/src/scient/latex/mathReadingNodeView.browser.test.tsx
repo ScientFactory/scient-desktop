@@ -17,9 +17,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
-}));
+vi.mock("~/assets/assetUrls", () => import("./latexAssetUrls.testkit"));
 const readiness = vi.hoisted(() => ({ hold: false }));
 vi.mock("./mathFieldReadiness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./mathFieldReadiness")>();

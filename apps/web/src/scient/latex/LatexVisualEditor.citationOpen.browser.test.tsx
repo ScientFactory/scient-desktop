@@ -14,9 +14,7 @@ const mocks = vi.hoisted(() => ({ readScientSources: vi.fn(), openCitation: vi.f
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
-}));
+vi.mock("~/assets/assetUrls", () => import("./latexAssetUrls.testkit"));
 vi.mock("../sources/client", () => ({ readScientSources: mocks.readScientSources }));
 vi.mock("../sources/citationNavigation", () => ({ openCitation: mocks.openCitation }));
 

@@ -1,3 +1,7 @@
+// SCIENT-FORK:START — show the retained Compute run in the tool inspector.
+import { ComputeToolActivity } from "~/scient/compute/ComputeToolActivity";
+import { isComputeRunTool } from "~/scient/compute/computeToolRunProjection";
+// SCIENT-FORK:END
 import { T, Var, useGT } from "gt-react";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
@@ -39,6 +43,9 @@ interface V2ItemInspectorProps {
   readonly onOpenToolDiff?: ((target: ToolCallDiffTarget) => void) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
+  // SCIENT-FORK:START — A Compute disclosure has one exact time in its detail.
+  readonly computeCreatedAt?: string | undefined;
+  // SCIENT-FORK:END
 }
 
 function SyntaxTokens({
@@ -398,7 +405,19 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" ? (
+      {/* SCIENT-FORK:START — Compute uses the recorded run and allowlisted output fields. */}
+      {item.type === "dynamic_tool" && isComputeRunTool(item.toolName) ? (
+        <ComputeToolActivity
+          threadRef={{ environmentId: props.environmentId, threadId: item.threadId }}
+          cwd={props.workspaceRoot ?? props.cwd}
+          createdAt={props.computeCreatedAt}
+          input={item.input}
+          output={item.output}
+          status={item.status}
+          outputPending={outputState.pending}
+          images={<ToolOutputImages {...outputState} onImageExpand={props.onImageExpand} />}
+        />
+      ) : /* SCIENT-FORK:END */ item.type === "dynamic_tool" ? (
         <ToolCallBody
           toolName={item.toolName}
           args={item.input}

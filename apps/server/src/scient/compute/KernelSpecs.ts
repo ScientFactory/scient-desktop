@@ -133,6 +133,9 @@ export function privateKernelDirectory(
  * their code keeps seeing their versions. Removing the working directory matches ipykernel's own
  * launcher: the kernel restores it, and a project file must not shadow what the kernel imports.
  */
+/** Names the folder a Python kernel adds behind the person's own packages. */
+export const PYTHON_LIBRARIES_VARIABLE = "SCIENT_PYTHON_LIBRARIES";
+
 export const PRIVATE_KERNEL_STARTER = [
   "import sys",
   "private = sys.argv.pop(1)",

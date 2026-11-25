@@ -107,7 +107,7 @@ export function computeTranscript(outputs: ReadonlyArray<ComputeOutput>): Comput
       case "diagnostic": {
         const { errorName, message, traceback } = output.diagnostic;
         const trace = terminalText(traceback.join("\n")).trim();
-        parts.push(trace.length > 0 ? trace : `${errorName}: ${message}`);
+        parts.push(trace.length > 0 ? trace : [errorName, message].filter(Boolean).join(": "));
         break;
       }
       case "image":

@@ -1,6 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off -- exercise real project containment on the host filesystem.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 
-import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
+import { normalizeKernelDiagnostic, normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 
 const CONTEXT = {
   projectRoot: "/project",
@@ -148,6 +152,10 @@ describe("python diagnostic normalization", () => {
         functionName: "<module>",
       },
     ]);
+    expect(diagnostics[0]!.traceback).toEqual([
+      "File src/model.py:22, in calculate()\n----> 2 calculate()",
+      '  File "other.py", line 44, in <module>',
+    ]);
   });
 
   it("keeps unknown, evicted, malformed and out-of-range sources readable without invented navigation", () => {
@@ -206,4 +214,87 @@ describe("python diagnostic normalization", () => {
 
     expect(diagnostics[0]!.frames).toEqual([]);
   });
+});
+
+it("keeps R syntax positions and sourced frames inside the project", () => {
+  const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "r-diagnostic-"));
+  try {
+    const projectRoot = NodePath.join(scratch, "project");
+    NodeFS.mkdirSync(projectRoot);
+    const script = NodePath.join(projectRoot, "syntax.R");
+    const helper = NodePath.join(projectRoot, "helper.R");
+    const outside = NodePath.join(scratch, "outside.R");
+    for (const file of [script, helper, outside]) NodeFS.writeFileSync(file, "code");
+    const context = { projectRoot, submittedSource: null };
+    expect(
+      normalizeKernelDiagnostic(
+        {
+          name: "",
+          value: `${script}:3:5: unexpected symbol`,
+          traceback: [],
+        },
+        context,
+        "r",
+      )[0]?.frames,
+    ).toMatchObject([{ relativePath: "syntax.R", line: 3, column: 5 }]);
+    expect(
+      normalizeKernelDiagnostic(
+        {
+          name: "",
+          value: "Error in `helper()`:\n! bad value\nat helper.R:2:3",
+          traceback: [`at ${outside}:4:1`, "at missing.R:2:3"],
+        },
+        context,
+        "r",
+      )[0],
+    ).toMatchObject({
+      message: "Error in `helper()`:\nbad value",
+      frames: [{ relativePath: "helper.R", line: 2, column: 3 }],
+    });
+  } finally {
+    NodeFS.rmSync(scratch, { force: true, recursive: true });
+  }
+});
+
+it("links Julia's function and top-level frames only to real project files", () => {
+  const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "julia-diagnostic-"));
+  try {
+    const projectRoot = NodePath.join(scratch, "project");
+    NodeFS.mkdirSync(projectRoot);
+    const file = NodePath.join(projectRoot, "analysis.jl");
+    const external = NodePath.join(scratch, "error.jl");
+    NodeFS.writeFileSync(file, 'function fail()\n  error("boom")\nend\nfail()\n');
+    NodeFS.writeFileSync(external, "");
+    const [diagnostic] = normalizeKernelDiagnostic(
+      {
+        name: "LoadError",
+        value: "boom",
+        traceback: [
+          "  @ Base ./error.jl:44",
+          `  @ Statistics ${external}:195`,
+          "  @ Main <scient-compute-source:61:1>:2",
+          "  @ <scient-compute-source:61:1>:4",
+          "  @ Main ./In[9]:1",
+          `  @ Main ${NodePath.join(projectRoot, "missing.jl")}:7`,
+          `  @ Main ${file}:3`,
+        ],
+      },
+      {
+        projectRoot,
+        submittedSource: null,
+        executionSources: new Map([
+          ["a", { relativePath: "analysis.jl", startLine: 0, lineCount: 4 }],
+        ]),
+      },
+      "julia",
+    );
+    expect(diagnostic?.frames.map(({ relativePath, line }) => [relativePath, line])).toEqual([
+      ["analysis.jl", 2],
+      ["analysis.jl", 4],
+      ["analysis.jl", 3],
+    ]);
+    expect(diagnostic?.traceback).toContain("  @ Main analysis.jl:2");
+  } finally {
+    NodeFS.rmSync(scratch, { recursive: true, force: true });
+  }
 });

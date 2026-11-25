@@ -11,9 +11,7 @@ import { isMacKeyboard } from "../keyboard/keys";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
-}));
+vi.mock("~/assets/assetUrls", () => import("./latexAssetUrls.testkit"));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { clearVisualDraft } from "./visualDrafts";

@@ -2281,7 +2281,7 @@ const make = Effect.gen(function* () {
   const cleanCheckpointRefs = Effect.fn("StorageCleanup.cleanCheckpointRefs")(function* () {
     // Forks display their source history even after its thread is deleted. Keep
     // that ancestry, including deleted intermediate forks and archived children.
-    const rows = yield* sql<{
+    const allRows = yield* sql<{
       threadId: string;
       worktreePath: string | null;
       workspaceRoot: string | null;
@@ -2289,6 +2289,7 @@ const make = Effect.gen(function* () {
       cwd: string | null;
       forkSnapshotRef: string | null;
       forkCwd: string | null;
+      pendingEffects: number;
     }>`
       WITH RECURSIVE retained_checkpoint_threads(thread_id) AS (
         SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
@@ -2303,18 +2304,23 @@ const make = Effect.gen(function* () {
         p.workspace_root AS "workspaceRoot", s.scope_id AS "scopeId",
         json_extract(s.payload_json, '$.cwd') AS cwd,
         json_extract(fork.fork_json, '$.checkpointRef') AS "forkSnapshotRef",
-        json_extract(fork.fork_json, '$.cwd') AS "forkCwd"
+        json_extract(fork.fork_json, '$.cwd') AS "forkCwd",
+        -- SCIENT-FORK: waiting refs are read in the same query that skips them.
+        EXISTS (
+          SELECT 1 FROM orchestration_v2_effect_outbox e
+          WHERE e.thread_id = t.thread_id AND e.status IN ('pending', 'running')
+        ) AS "pendingEffects"
       FROM orchestration_v2_projection_threads t
       LEFT JOIN scient_conversation_forks fork ON fork.thread_id = t.thread_id
       LEFT JOIN projection_projects p ON p.project_id = t.project_id
       LEFT JOIN orchestration_v2_projection_checkpoint_scopes s ON s.thread_id = t.thread_id
       WHERE t.deleted_at IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM retained_checkpoint_threads WHERE thread_id = t.thread_id)
-        AND NOT EXISTS (
-          SELECT 1 FROM orchestration_v2_effect_outbox e
-          WHERE e.thread_id = t.thread_id AND e.status IN ('pending', 'running')
-        )
     `.pipe(NodeSqliteClient.readOnly);
+    // SCIENT-FORK:START — a thread with pending effects keeps its refs until a completion.
+    deletedEffectsWait = allRows.some((row) => Number(row.pendingEffects) !== 0);
+    const rows = allRows.filter((row) => Number(row.pendingEffects) === 0);
+    // SCIENT-FORK:END
     // SCIENT-FORK:START — a fork's snapshot ref is pruned with its deleted thread, unless a
     // fork attempt still holds it: ForkCheckpointOwnership releases or keeps that one itself.
     // Unreadable reservations prune no snapshot at all.
@@ -2436,10 +2442,24 @@ const make = Effect.gen(function* () {
   let keptDeletedWorktrees: ReadonlyArray<string> = [];
   let deletions = 0;
   let sweptDeletions = 0;
+  // SCIENT-FORK:START — an outbox completion matters only to deletion work that waits on it.
+  // A deleted thread's checkpoint refs wait for its pending effects. A completion during a sweep
+  // may finish work that sweep already passed: it asks for one more only if that sweep found
+  // deletion work still waiting.
+  let deletedEffectsWait = true;
+  let sweeping = false;
+  let completionsDuringSweep = 0;
+  // Set to requestSweep once it exists; the worker below is built first.
+  let requestFollowUp: Effect.Effect<void> = Effect.void;
+  // SCIENT-FORK:END
   const sweep = Effect.fn("StorageCleanup.sweep")(function* (
     trigger: StorageCleanupReport["trigger"],
   ) {
     const deletionsAtStart = deletions;
+    // SCIENT-FORK:START — unknown until the ref cleanup reads it; a failed read counts as waiting.
+    deletedEffectsWait = true;
+    completionsDuringSweep = 0;
+    // SCIENT-FORK:END
     const now = yield* Clock.currentTimeMillis;
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
@@ -2567,7 +2587,23 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(
     (completion: Deferred.Deferred<StorageCleanupReport, ServerSettingsError> | undefined) =>
       (completion === undefined ? Ref.set(automaticSweepQueued, false) : Effect.void).pipe(
-        Effect.andThen(sweep(completion === undefined ? "automatic" : "manual")),
+        // SCIENT-FORK:START
+        Effect.andThen(
+          Effect.acquireUseRelease(
+            Effect.sync(() => {
+              sweeping = true;
+            }),
+            () => sweep(completion === undefined ? "automatic" : "manual"),
+            () =>
+              Effect.suspend(() => {
+                sweeping = false;
+                return completionsDuringSweep > 0 && (deletedEffectsWait || deletedWorktreeWaits)
+                  ? requestFollowUp
+                  : Effect.void;
+              }),
+          ),
+        ),
+        // SCIENT-FORK:END
         Effect.exit,
         Effect.flatMap((exit) =>
           completion === undefined
@@ -2584,6 +2620,9 @@ const make = Effect.gen(function* () {
   const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
     Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
+  // SCIENT-FORK:START
+  requestFollowUp = requestSweep;
+  // SCIENT-FORK:END
   const runNow = Effect.gen(function* () {
     const completion = yield* Deferred.make<StorageCleanupReport, ServerSettingsError>();
     yield* worker.enqueue(completion);
@@ -2619,7 +2658,20 @@ const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
     );
-    yield* forkParked(Stream.runForEach(completions, () => requestSweep));
+    // SCIENT-FORK:START — most completions belong to live threads; only waiting deletion work
+    // needs another sweep (one during a sweep is settled when that sweep ends).
+    yield* forkParked(
+      Stream.runForEach(completions, () => {
+        if (sweeping) {
+          completionsDuringSweep++;
+          return Effect.void;
+        }
+        return deletedEffectsWait || deletedWorktreeWaits || deletions !== sweptDeletions
+          ? requestSweep
+          : Effect.void;
+      }),
+    );
+    // SCIENT-FORK:END
     yield* forkParked(
       Stream.runForEach(changes, (settings) => {
         if (

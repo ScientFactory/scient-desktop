@@ -40,17 +40,42 @@ export function consoleNotebookDocument(input: {
   readonly cells: ReadonlyArray<{
     readonly code: string;
     readonly outputs: ComputeNotebookOutputsResult;
+    /** The session restarted before this command, so what came before no longer applied. */
+    readonly afterRestart?: boolean;
   }>;
 }): string {
   const document = {
-    cells: input.cells.map((cell, index) => ({
-      cell_type: "code",
-      execution_count: cell.outputs.executionCount ?? index + 1,
-      id: `console-${index + 1}`,
-      metadata: {},
-      outputs: cell.outputs.outputs,
-      source: cell.code,
-    })),
+    cells: input.cells.flatMap((cell, index) => [
+      ...(cell.afterRestart
+        ? [
+            {
+              cell_type: "markdown",
+              id: `console-restart-${index + 1}`,
+              metadata: {},
+              source: "*The session restarted here.*",
+            },
+          ]
+        : []),
+      {
+        cell_type: "code",
+        execution_count: cell.outputs.executionCount ?? index + 1,
+        id: `console-${index + 1}`,
+        metadata: {},
+        // Output that was not kept is said so, never shown as a command that printed nothing.
+        outputs:
+          cell.outputs.truncated || cell.outputs.incomplete
+            ? [
+                ...cell.outputs.outputs,
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: "Some output was not kept and is omitted here.\n",
+                },
+              ]
+            : cell.outputs.outputs,
+        source: cell.code,
+      },
+    ]),
     metadata: {
       kernelspec: {
         display_name: input.displayName,
@@ -93,14 +118,21 @@ export function makeComputeConsoleNotebook(input: {
       return yield* consoleNotebookError("Nothing has run successfully in this Console yet.");
     const cells = yield* Effect.forEach(
       runs,
-      (run) =>
+      (run, index) =>
         input
           .notebookOutputs({
             cwd: request.cwd,
             sessionId: request.sessionId,
             executionId: run.request.executionId,
           })
-          .pipe(Effect.map((outputs) => ({ code: run.request.code, outputs }))),
+          .pipe(
+            Effect.map((outputs) => ({
+              code: run.request.code,
+              outputs,
+              afterRestart:
+                index > 0 && runs[index - 1]?.request.generation !== run.request.generation,
+            })),
+          ),
       { concurrency: 4 },
     );
     const bytes = new TextEncoder().encode(

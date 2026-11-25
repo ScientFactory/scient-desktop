@@ -3,6 +3,8 @@ import type { NotebookStaleness } from "@t3tools/shared/notebookStaleness";
 import {
   ArrowDown,
   ArrowUp,
+  ChevronRight,
+  Ellipsis,
   LoaderCircle,
   MessageSquarePlus,
   Play,
@@ -19,23 +21,27 @@ import {
   useState,
   type ReactElement,
 } from "react";
-import { msg, useGT, useMessages } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { m, type MessageResolver } from "~/i18n/messages";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import {
   createScientNestedCodeEditor,
-  highlightedCodeSpans,
-  type HighlightedCodeSpan,
   type ScientNestedCodeEditor,
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
+import { useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
+import { ComputeWrittenFiles } from "~/scient/compute/ComputeWrittenFiles";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
+import { resultTime } from "~/scient/results/resultState";
 import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
 import { NOTEBOOK_MARKDOWN, NotebookCellOutputs, type NotebookPlace } from "./NotebookOutputs";
+import { NotebookCodeHeader, NotebookCodeSource, notebookCodeCardSurface } from "./NotebookCode";
 
 type Cell = NotebookCellView;
 
@@ -55,13 +61,16 @@ export interface NotebookCellHandlers {
   readonly delete: (cellId: string) => void;
   /** Opens the cell's editor with its caret there. */
   readonly edit: (cellId: string, caret: NotebookCaret) => void;
-  /** Calls back once when the cell comes near the visible area. */
-  readonly observeNear: (node: Element, onNear: () => void) => () => void;
+  /** Calls back when the cell comes near the visible area and when it leaves it. */
+  readonly observeNear: (node: Element, onChange: (near: boolean) => void) => () => void;
 }
 
 function CellEditor(props: {
   readonly cell: Cell;
   readonly language: string;
+  readonly wrapped: boolean;
+  readonly lineNumbers: boolean;
+  readonly theme: "light" | "dark";
   readonly onChange: (source: string) => void;
   readonly onRun: (advance: boolean) => void;
   readonly onEscape: () => void;
@@ -78,7 +87,12 @@ function CellEditor(props: {
     props.onChange(code);
   });
   const onEscape = useStableCallback(() => props.onEscape());
-  const initial = useRef({ code: props.cell.source, language: props.language });
+  const initial = useRef({
+    code: props.cell.source,
+    language: props.language,
+    wrapped: props.wrapped,
+    lineNumbers: props.lineNumbers,
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the CodeMirror editor into its DOM node for this cell's lifetime.
   useLayoutEffect(() => {
     if (parent.current === null) return;
@@ -87,6 +101,8 @@ function CellEditor(props: {
       code: initial.current.code,
       editable: true,
       language: initial.current.language,
+      wordWrap: initial.current.wrapped,
+      lineNumbers: initial.current.lineNumbers,
       ariaLabel: m(msg("Notebook cell")),
       onUserCodeChange: onChange,
       onEscape,
@@ -108,10 +124,22 @@ function CellEditor(props: {
     shown.current = props.cell.source;
     editor.current?.replaceExternalCode(props.cell.source, props.language);
   }, [props.cell.source, props.language]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- propagates the cell's wrap toggle into the mounted CodeMirror view.
+  useEffect(() => {
+    editor.current?.setWordWrap(props.wrapped);
+  }, [props.wrapped]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates CodeMirror's light/dark theme compartment when app appearance changes.
+  useEffect(() => {
+    editor.current?.refreshAppearance(props.theme);
+  }, [props.theme]);
   return (
     <div
       ref={parent}
-      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-[1.4]!"
+      className={
+        props.lineNumbers
+          ? "min-w-0 px-3 pt-1.5 pb-3 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-5!"
+          : "min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-[1.4]!"
+      }
       onKeyDownCapture={(event) => {
         if (event.key === "Enter" && (event.shiftKey || event.metaKey || event.ctrlKey)) {
           event.preventDefault();
@@ -170,7 +198,7 @@ function runLabel(
   resolve: MessageResolver = m,
 ): string {
   if (stale === "edited") return resolve(msg("Run · edited since it ran"));
-  if (stale === "upstream") return resolve(msg("Run · a cell above changed since it ran"));
+  if (stale === "upstream") return resolve(msg("Run · output may be out of date"));
   if (cell.run === null) return resolve(msg("Run", { $context: "verb, runs a notebook cell" }));
   const time = new Date(cell.run.at).toLocaleTimeString([], {
     hour: "2-digit",
@@ -199,8 +227,8 @@ function CellGutter(props: {
   const { cell, activity, stale } = props;
   const failed = cell.outputs.some((output) => output.outputType === "error");
   return (
-    <div className="sticky top-0 flex h-8 items-center justify-center self-start">
-      <span className="flex items-center justify-center group-focus-within/cell:hidden group-hover/cell:hidden">
+    <div className="sticky top-0 flex flex-col items-center self-start pt-1.5">
+      <span className="flex h-6 items-center justify-center group-focus-within/cell:hidden group-hover/cell:hidden">
         {activity === "running" ? (
           <LoaderCircle
             aria-label={gt("Running")}
@@ -212,7 +240,10 @@ function CellGutter(props: {
             className="size-2 rounded-full border border-muted-foreground/70"
           />
         ) : stale !== null ? (
-          <span aria-label={gt("Out of date")} className="size-2 rounded-full bg-warning" />
+          <span
+            aria-label={stale === "upstream" ? gt("Output may be out of date") : gt("Out of date")}
+            className="size-2 rounded-full bg-warning"
+          />
         ) : (
           <span
             className={cn(
@@ -224,7 +255,7 @@ function CellGutter(props: {
           </span>
         )}
       </span>
-      <span className="hidden group-focus-within/cell:inline-flex group-hover/cell:inline-flex">
+      <span className="hidden flex-col items-center gap-0.5 group-focus-within/cell:inline-flex group-hover/cell:inline-flex">
         {activity === null ? (
           <CellAction label={runLabel(cell, stale, messages)} onClick={props.onRun}>
             <Play />
@@ -237,110 +268,165 @@ function CellGutter(props: {
             <Square />
           </CellAction>
         )}
+        {cell.executionCount !== null ? (
+          <span
+            className={cn(
+              "font-mono text-[10px] leading-3.5 tabular-nums",
+              failed ? "text-destructive/80" : "text-muted-foreground/60",
+            )}
+          >
+            {cell.executionCount}
+          </span>
+        ) : null}
       </span>
     </div>
   );
 }
 
-/** Insert and arrange live in a row of their own, so no control ever sits on a cell's code. */
-function CellRow(props: {
+/** Slim hover-only insert target above a code cell, keeping prose and code tight. */
+function CellInsertStrip(props: {
+  readonly editsDisabled?: boolean | undefined;
   readonly onInsert: (type: NotebookCellType) => void;
-  readonly onAsk: (() => void) | null;
-  readonly onMove: (offset: -1 | 1) => void;
-  readonly onDelete: () => void;
 }) {
   const gt = useGT();
   return (
-    <div className="col-start-2 flex h-6.5 min-w-0 items-center justify-between gap-1">
-      <div className="group/insert flex h-full min-w-0 flex-1 items-center">
-        <span className="flex gap-0.5 opacity-0 transition-opacity group-hover/insert:opacity-100 focus-within:opacity-100">
-          <Button variant="ghost-muted" size="xs" onClick={() => props.onInsert("code")}>
-            <Plus /> {gt("Code", { $context: "inserts a code cell" })}
-          </Button>
-          <Button variant="ghost-muted" size="xs" onClick={() => props.onInsert("markdown")}>
-            <Plus /> {gt("Text", { $context: "inserts a text cell" })}
-          </Button>
-        </span>
-      </div>
+    <div className="group/insert col-start-2 flex h-4 min-w-0 items-center">
+      <span className="flex gap-0.5 opacity-0 transition-opacity group-hover/insert:opacity-100 focus-within:opacity-100">
+        <Button
+          variant="ghost-muted"
+          size="micro"
+          disabled={props.editsDisabled}
+          onClick={() => props.onInsert("code")}
+        >
+          <Plus /> {gt("Code", { $context: "inserts a code cell" })}
+        </Button>
+        <Button
+          variant="ghost-muted"
+          size="micro"
+          disabled={props.editsDisabled}
+          onClick={() => props.onInsert("markdown")}
+        >
+          <Plus /> {gt("Text", { $context: "inserts a text cell" })}
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+/** Seamless top row inside a code cell card, matching Markdown and Chat code blocks. */
+function CodeCellTopRow(props: {
+  readonly language: string;
+  readonly theme: "light" | "dark";
+  readonly wrapped: boolean;
+  readonly folded: boolean;
+  readonly onFoldChange: (folded: boolean) => void;
+  readonly onWrapChange: (wrapped: boolean) => void;
+  readonly readCode: () => string;
+  readonly editsDisabled?: boolean | undefined;
+  readonly onAsk: (() => void) | null;
+  readonly onMove: (offset: -1 | 1) => void;
+  readonly onDelete: () => void;
+  readonly menu: ReactElement | null;
+}) {
+  const gt = useGT();
+  return (
+    <NotebookCodeHeader
+      language={props.language}
+      theme={props.theme}
+      wrapped={props.wrapped}
+      onWrapChange={props.onWrapChange}
+      readCode={props.readCode}
+      folded={props.folded}
+      onFoldChange={props.onFoldChange}
+    >
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
         {props.onAsk !== null ? (
           <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
             <MessageSquarePlus />
           </CellAction>
         ) : null}
-        <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
-          <ArrowUp />
-        </CellAction>
-        <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
-          <ArrowDown />
-        </CellAction>
-        <CellAction
-          label={gt("Delete", { $context: "verb, deletes a cell" })}
-          onClick={props.onDelete}
-        >
-          <Trash2 />
-        </CellAction>
+        {props.editsDisabled ? null : (
+          <>
+            <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
+              <ArrowUp />
+            </CellAction>
+            <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
+              <ArrowDown />
+            </CellAction>
+          </>
+        )}
+        {props.menu}
+        {props.editsDisabled ? null : (
+          <CellAction
+            label={gt("Delete", { $context: "verb, deletes a cell" })}
+            onClick={props.onDelete}
+          >
+            <Trash2 />
+          </CellAction>
+        )}
+        <span aria-hidden className="mx-0.5 h-3 w-px bg-border/80" />
       </div>
-    </div>
+    </NotebookCodeHeader>
   );
 }
 
-/** Where a click landed in the code, so the editor opens with the caret there. */
-function textOffsetAt(root: HTMLElement, x: number, y: number): number | "end" {
-  const point = root.ownerDocument.caretRangeFromPoint(x, y);
-  if (point === null || !root.contains(point.startContainer)) return "end";
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let offset = 0;
-  while (walker.nextNode()) {
-    if (walker.currentNode === point.startContainer) return offset + point.startOffset;
-    offset += walker.currentNode.textContent?.length ?? 0;
-  }
-  return "end";
-}
-
-/** A cell's code without an editor. It lays out exactly like one, so opening never moves it. */
-function StaticCode(props: {
-  readonly source: string;
-  readonly language: string;
-  readonly near: boolean;
-  readonly onEdit: (offset: number | "end") => void;
+/** Insert and arrange live in a row of their own, so no control ever sits on a cell's code. */
+function CellRow(props: {
+  readonly editsDisabled?: boolean | undefined;
+  readonly onInsert: (type: NotebookCellType) => void;
+  readonly onAsk: (() => void) | null;
+  readonly onMove: (offset: -1 | 1) => void;
+  readonly onDelete: () => void;
+  readonly menu: ReactElement | null;
 }) {
-  const { source, language, near } = props;
-  const [spans, setSpans] = useState<ReadonlyArray<HighlightedCodeSpan> | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- colors arrive once the language parser has loaded.
-  useEffect(() => {
-    if (!near) return;
-    let cancelled = false;
-    void highlightedCodeSpans(source, language).then((next) => {
-      if (!cancelled) setSpans(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [language, near, source]);
+  const gt = useGT();
   return (
-    <pre
-      className="min-w-0 cursor-text py-[calc(--spacing(1)+4px)] pr-[calc(--spacing(1)+2px)] pl-[calc(--spacing(1)+6px)] font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-break-spaces"
-      onClick={(event) => {
-        if (!selectingText()) {
-          props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY));
-        }
-      }}
-    >
-      {spans === null
-        ? source
-        : spans.map((span, index) =>
-            span.className === "" ? (
-              span.text
-            ) : (
-              // oxlint-disable-next-line react/no-array-index-key -- spans are the text in order and have no identity.
-              <span key={index} className={span.className}>
-                {span.text}
-              </span>
-            ),
-          )}
-      {source === "" || source.endsWith("\n") ? "\n" : null}
-    </pre>
+    <div className="col-start-2 flex h-6.5 min-w-0 items-center justify-between gap-1">
+      <div className="group/insert flex h-full min-w-0 flex-1 items-center">
+        <span className="flex gap-0.5 opacity-0 transition-opacity group-hover/insert:opacity-100 focus-within:opacity-100">
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            disabled={props.editsDisabled}
+            onClick={() => props.onInsert("code")}
+          >
+            <Plus /> {gt("Code", { $context: "inserts a code cell" })}
+          </Button>
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            disabled={props.editsDisabled}
+            onClick={() => props.onInsert("markdown")}
+          >
+            <Plus /> {gt("Text", { $context: "inserts a text cell" })}
+          </Button>
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
+        {props.menu}
+        {props.onAsk !== null ? (
+          <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
+            <MessageSquarePlus />
+          </CellAction>
+        ) : null}
+        {props.editsDisabled ? null : (
+          <>
+            <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
+              <ArrowUp />
+            </CellAction>
+            <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
+              <ArrowDown />
+            </CellAction>
+            <CellAction
+              label={gt("Delete", { $context: "verb, deletes a cell" })}
+              onClick={props.onDelete}
+            >
+              <Trash2 />
+            </CellAction>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -363,31 +449,94 @@ export function NotebookCell(props: {
   readonly cellId: string;
   readonly language: string;
   readonly handlers: NotebookCellHandlers;
+  readonly editsDisabled?: boolean;
 }) {
   const gt = useGT();
+  const theme = useRenderedAppearance();
+  const [wrapped, setWrapped] = useCodeBlockWordWrap();
   const { controller, cellId, handlers } = props;
   const cell = useStore(controller.store, (state) => state.cells[cellId]);
   const selected = useStore(controller.store, (state) => state.selected === cellId);
-  const editing = useStore(controller.store, (state) => state.editing === cellId);
+  const editing =
+    useStore(controller.store, (state) => state.editing === cellId) && !props.editsDisabled;
   const caretRequest = useStore(controller.store, (state) =>
     state.editing === cellId ? state.caretRequest : 0,
   );
   const caret = useStore(controller.store, (state) => state.caret);
   const activity = useStore(controller.store, (state) => state.activity[cellId] ?? null);
+  const liveRun = useStore(controller.store, (state) => state.liveRuns[cellId]);
   const stale = useStore(controller.store, (state) => state.stale.get(cellId) ?? null);
   const section = useRef<HTMLElement>(null);
+  const outputsBox = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a cell mounts its editor and outputs only when it scrolls near the view.
+  /** The outputs' height when the cell left the view; a box this tall stands in for those outputs. */
+  const [farOutputs, setFarOutputs] = useState<{
+    readonly height: number;
+    readonly outputs: unknown;
+  } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a cell mounts its editor and outputs only while it is near the view.
   useEffect(() => {
     if (section.current === null) return;
-    return handlers.observeNear(section.current, () => setNear(true));
-  }, [handlers]);
+    return handlers.observeNear(section.current, (isNear) => {
+      const height = outputsBox.current?.offsetHeight;
+      if (!isNear && height !== undefined)
+        setFarOutputs({ height, outputs: controller.store.getState().cells[cellId]?.outputs });
+      setNear(isNear);
+    });
+  }, [handlers, controller, cellId]);
+  const sectionHeading = useStore(controller.store, (state) =>
+    state.sections.headingCells.has(cellId),
+  );
   if (cell === undefined) return null;
   const isCode = cell.cellType === "code";
   const isText = cell.cellType === "markdown";
+  const sourceFolded = cell.folded?.includes("source") === true && !editing;
+  const outputsFolded = cell.folded?.includes("outputs") === true;
+  const sectionFolded = cell.folded?.includes("section") === true;
   const rendered = isText && !editing && cell.source.trim() !== "";
   const live = near || selected;
+  const farOutputsHeight = farOutputs?.outputs === cell.outputs ? farOutputs.height : null;
   const language = isCode ? props.language : isText ? "markdown" : "text";
+  const onAsk =
+    handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId);
+  const cellMenu =
+    isCode || sectionHeading ? (
+      <Menu>
+        <MenuTrigger
+          render={<Button variant="ghost-muted" size="icon-xs" aria-label={gt("Cell actions")} />}
+        >
+          <Ellipsis />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {isCode ? (
+            <>
+              {cell.injectedParameters ? null : (
+                <MenuItem
+                  disabled={props.editsDisabled}
+                  onClick={() => controller.setParameterCell(cellId, !cell.parameterCell)}
+                >
+                  {cell.parameterCell ? <T>Untag parameters</T> : <T>Tag as parameters</T>}
+                </MenuItem>
+              )}
+              <MenuItem onClick={() => controller.setFold(cellId, "outputs", !outputsFolded)}>
+                {outputsFolded ? <T>Show outputs</T> : <T>Hide outputs</T>}
+              </MenuItem>
+            </>
+          ) : (
+            <MenuItem onClick={() => controller.setFold(cellId, "section", !sectionFolded)}>
+              {sectionFolded ? <T>Expand section</T> : <T>Collapse section</T>}
+            </MenuItem>
+          )}
+        </MenuPopup>
+      </Menu>
+    ) : null;
+  const producedInLiveSession =
+    liveRun !== undefined &&
+    props.place.liveSessionGeneration != null &&
+    liveRun.generation === props.place.liveSessionGeneration &&
+    cell.run?.execution === liveRun.executionId;
+  const writtenFiles = producedInLiveSession ? liveRun.writtenFiles : undefined;
+  const changedFiles = producedInLiveSession ? liveRun.changedFiles : undefined;
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
@@ -401,14 +550,21 @@ export function NotebookCell(props: {
       onFocusCapture={() => controller.select(cellId)}
       onClick={() => controller.select(cellId)}
     >
-      <CellRow
-        onInsert={(type) => handlers.insert(cellId, type)}
-        onAsk={
-          handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId)
-        }
-        onMove={(offset) => controller.move(cellId, offset)}
-        onDelete={() => handlers.delete(cellId)}
-      />
+      {isCode ? (
+        <CellInsertStrip
+          editsDisabled={props.editsDisabled}
+          onInsert={(type) => handlers.insert(cellId, type)}
+        />
+      ) : (
+        <CellRow
+          editsDisabled={props.editsDisabled}
+          onInsert={(type) => handlers.insert(cellId, type)}
+          onAsk={onAsk}
+          onMove={(offset) => controller.move(cellId, offset)}
+          onDelete={() => handlers.delete(cellId)}
+          menu={cellMenu}
+        />
+      )}
       {isCode ? (
         <CellGutter
           cell={cell}
@@ -424,15 +580,48 @@ export function NotebookCell(props: {
         <div
           data-notebook-cell-box=""
           className={cn(
-            "rounded-md border bg-background",
-            selected
-              ? "border-foreground/25"
-              : rendered
-                ? "border-transparent"
-                : "border-border/60",
+            "border transition-colors",
+            isCode ? notebookCodeCardSurface : "rounded-md bg-background",
+            editing
+              ? "border-foreground/35"
+              : selected
+                ? "border-foreground/25"
+                : rendered
+                  ? "border-transparent"
+                  : isCode
+                    ? "border-(--markdown-code-block-border) group-hover/cell:border-border"
+                    : "border-border/60",
           )}
         >
-          {rendered ? (
+          {isCode ? (
+            <CodeCellTopRow
+              language={language}
+              theme={theme}
+              wrapped={wrapped}
+              folded={sourceFolded}
+              onFoldChange={(folded) => controller.setFold(cellId, "source", folded)}
+              onWrapChange={setWrapped}
+              readCode={() => cell.source}
+              editsDisabled={props.editsDisabled}
+              onAsk={onAsk}
+              onMove={(offset) => controller.move(cellId, offset)}
+              onDelete={() => handlers.delete(cellId)}
+              menu={cellMenu}
+            />
+          ) : null}
+          {sourceFolded && isCode ? null : sourceFolded ? (
+            <div className="px-2 py-1">
+              <Button
+                variant="ghost-muted"
+                size="xs"
+                aria-expanded={false}
+                onClick={() => controller.setFold(cellId, "source", false)}
+              >
+                <ChevronRight aria-hidden className="rtl:rotate-180" />
+                <T>Show text</T>
+              </Button>
+            </div>
+          ) : rendered ? (
             <div
               className="min-h-8 cursor-text px-3 py-1"
               onClick={(event) => {
@@ -462,6 +651,9 @@ export function NotebookCell(props: {
             <CellEditor
               cell={cell}
               language={language}
+              wrapped={wrapped}
+              lineNumbers={isCode}
+              theme={theme}
               onChange={(source) => controller.setSource(cellId, source)}
               onRun={(advance) => handlers.run(cellId, advance)}
               onEscape={() => handlers.escape(cellId)}
@@ -470,22 +662,82 @@ export function NotebookCell(props: {
               caretRequest={caretRequest}
             />
           ) : (
-            <StaticCode
+            <NotebookCodeSource
               source={cell.source}
               language={language}
+              wrapped={wrapped}
+              lineNumbers={isCode}
+              theme={theme}
               near={live}
               onEdit={(offset) => handlers.edit(cellId, offset)}
             />
           )}
         </div>
-        {isCode ? (
-          <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
+        {sectionFolded && sectionHeading ? (
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            focus="edge"
+            aria-expanded={false}
+            onClick={() => controller.setFold(cellId, "section", false)}
+          >
+            <ChevronRight aria-hidden className="rtl:rotate-180" />
+            <T>Expand section</T>
+          </Button>
+        ) : null}
+        {isCode && outputsFolded && cell.outputs.length > 0 ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => controller.setFold(cellId, "outputs", false)}
+          >
+            <T>Show outputs</T>
+          </Button>
+        ) : isCode && !outputsFolded && !live && farOutputsHeight !== null ? (
+          <div style={{ height: farOutputsHeight }} />
+        ) : isCode && !outputsFolded ? (
+          <div
+            ref={outputsBox}
+            // Keeps the height the outputs had while their stored parts load again.
+            style={farOutputsHeight === null ? undefined : { minHeight: farOutputsHeight }}
+            className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}
+          >
+            {activity === null &&
+            cell.outputs.length > 0 &&
+            !producedInLiveSession &&
+            props.place.labelSavedOutputs === true ? (
+              <p className="flex flex-wrap items-center gap-x-1.5 px-3 pt-1 text-[11px] leading-4 text-muted-foreground">
+                <span>
+                  <T>Saved output</T>
+                </span>
+                {cell.run !== null ? (
+                  <>
+                    <span aria-hidden>·</span>
+                    <time dateTime={cell.run.at} className="tabular-nums">
+                      {resultTime(cell.run.at)}
+                    </time>
+                  </>
+                ) : null}
+                <span aria-hidden>·</span>
+                <span>
+                  <T>Not run in this session</T>
+                </span>
+              </p>
+            ) : null}
             <NotebookCellOutputs
               controller={controller}
               place={props.place}
               cell={cell}
               near={live}
             />
+            {activity === null && (writtenFiles?.length ?? 0) + (changedFiles?.length ?? 0) > 0 ? (
+              <ComputeWrittenFiles
+                threadRef={props.place.threadRef}
+                paths={writtenFiles}
+                changed={changedFiles}
+                className="px-3 pb-1.5"
+              />
+            ) : null}
           </div>
         ) : null}
       </div>

@@ -12,6 +12,9 @@ import {
   ComputeOutput,
   ComputeRuntimeIdentity,
   ComputeRuntimeRead,
+  ComputeRuntimeDirectoryRead,
+  ComputeRuntimeInputWrites,
+  ComputeOutsideDataPaths,
   ComputeRuntimeProfile,
   ComputeSessionActivity,
   ComputeSessionGeneration,
@@ -72,6 +75,14 @@ export const ComputeExecutionSource = Schema.Union([
     range: Schema.NullOr(ComputeSourceRange),
     /** The notebook cell this run belongs to. */
     cell: Schema.optional(ShortText),
+    notebookBatch: Schema.optional(
+      Schema.Struct({
+        id: ComputeExecutionId,
+        mode: Schema.Literals(["all", "selection"]),
+        index: Count,
+        count: Count,
+      }),
+    ),
   }),
 ]);
 export type ComputeExecutionSource = typeof ComputeExecutionSource.Type;
@@ -109,6 +120,19 @@ export const EMPTY_COMPUTE_SESSION_STORAGE: ComputeSessionStorage = {
  * Persist activeExecutionId/pendingCount as recovery evidence rather than deriving them from all
  * execution files. A recorded active execution proves something must become lost after restart.
  */
+export const ComputeNotebookBatchSummary = Schema.Struct({
+  id: ComputeExecutionId,
+  mode: Schema.Literals(["all", "selection"]),
+  count: Count,
+  failedCell: Schema.optional(Count),
+  firstFailure: Schema.optional(
+    Schema.Struct({ path: ShortText, cell: ShortText, generation: ComputeSessionGeneration }),
+  ),
+  notRun: Schema.optional(Count),
+  status: ComputeExecutionStatus,
+});
+export type ComputeNotebookBatchSummary = typeof ComputeNotebookBatchSummary.Type;
+
 export const ComputeSessionRecord = Schema.Struct({
   sessionId: ComputeSessionId,
   projectId: ComputeProjectId,
@@ -133,6 +157,7 @@ export const ComputeSessionRecord = Schema.Struct({
   status: ComputeSessionStatus,
   activity: ComputeSessionActivity,
   activeExecutionId: Schema.NullOr(ComputeExecutionId),
+  lastNotebookBatch: Schema.optional(ComputeNotebookBatchSummary),
   pendingCount: Count,
   storage: ComputeSessionStorage,
   createdAt: ObservedAt,
@@ -154,6 +179,8 @@ export const ComputeExecutionRequestRecord = Schema.Struct({
   codeHash: ContentHash,
   source: ComputeExecutionSource,
   actor: Schema.optional(ComputeExecutionActor),
+  parameters: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  inputs: Schema.optional(Schema.Array(ShortText)),
   submittedAt: ObservedAt,
   environmentFingerprint: Schema.NullOr(ComputeEnvironmentFingerprint),
 });
@@ -182,10 +209,20 @@ export const ComputeExecutionResultRecord = Schema.Struct({
   failureReason: Schema.NullOr(ShortText),
   /** The kernel's number for this run, for kernels that report one. */
   executionCount: Schema.optional(Count),
+  /** Project-relative files the runtime reported writing. */
+  writtenFiles: Schema.optional(Schema.Array(ShortText).check(Schema.isMaxLength(128))),
+  /** Project-relative files seen changing during the run, which another program may have written. */
+  changedFiles: Schema.optional(Schema.Array(ShortText).check(Schema.isMaxLength(128))),
   /** Project files the run was seen opening for reading; absent where reads are not observed. */
   reads: Schema.optional(
     Schema.Struct({
       files: Schema.Array(ComputeRuntimeRead).check(Schema.isMaxLength(1024)),
+      directories: Schema.optional(
+        Schema.Array(ComputeRuntimeDirectoryRead).check(Schema.isMaxLength(128)),
+      ),
+      inputWrites: Schema.optional(ComputeRuntimeInputWrites),
+      readsOutsideProject: Schema.optional(Count),
+      outsideDataPaths: Schema.optional(ComputeOutsideDataPaths),
       truncated: Schema.Boolean,
     }),
   ),
@@ -201,6 +238,42 @@ export const ComputeExecutionRecord = Schema.Struct({
   result: Schema.NullOr(ComputeExecutionResultRecord),
 });
 export type ComputeExecutionRecord = typeof ComputeExecutionRecord.Type;
+
+export function computeNotebookCellNotRun({ request, result }: ComputeExecutionRecord): boolean {
+  return (
+    request.source._tag === "document" &&
+    request.source.cell !== undefined &&
+    result?.status === "cancelled" &&
+    result.startedAt === null
+  );
+}
+
+export function computeNotebookBatchActivity(
+  cells: Iterable<ComputeExecutionRecord>,
+  batchId: ComputeExecutionId,
+) {
+  let currentCell = 0;
+  let active: ComputeExecutionRecord | undefined;
+  let activeIndex = -1;
+  for (const cell of cells) {
+    const {
+      request: { source },
+      result,
+    } = cell;
+    const batch = source._tag === "document" ? source.notebookBatch : undefined;
+    if (batch?.id !== batchId || result === null) continue;
+    const busy =
+      result.status === "submitting" ||
+      result.status === "running" ||
+      result.status === "interrupting";
+    if (busy || result.startedAt !== null) currentCell = Math.max(currentCell, batch.index + 1);
+    if (busy && batch.index > activeIndex) {
+      active = cell;
+      activeIndex = batch.index;
+    }
+  }
+  return { currentCell, active };
+}
 
 /**
  * What happened to a session, in the order it happened.

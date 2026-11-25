@@ -28,6 +28,7 @@ export function useComputePanelSessions(input: {
   readonly contextId: ComputeContextId | undefined;
   /** The file this surface shows, whose last session comes back when it is reopened. */
   readonly sourcePath?: string | undefined;
+  readonly refreshAfterQueueDrains?: boolean;
 }) {
   const [chosenSessionId, setChosenSessionId] = useState<string | null>(null);
   const contextBinding = useComputeContextStore((state) =>
@@ -160,7 +161,12 @@ export function useComputePanelSessions(input: {
         : [],
     )
     .join("\n");
-  const observeTerminal = useStableCallback((key: string) => {
+  const waitingForQueue =
+    input.refreshAfterQueueDrains === true &&
+    selectedSession !== null &&
+    (selectedSession.activeExecutionId !== null || selectedSession.pendingCount > 0);
+  const observeTerminal = useStableCallback((key: string, deferRefresh: boolean) => {
+    if (deferRefresh && observedTerminalRef.current !== null) return;
     const terminal = new Set(key === "" ? [] : key.split("\n"));
     const observed = observedTerminalRef.current;
     observedTerminalRef.current = terminal;
@@ -171,8 +177,8 @@ export function useComputePanelSessions(input: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes durable history and the workspace tree once after a run newly settles
   useEffect(() => {
-    observeTerminal(terminalKey);
-  }, [terminalKey, observeTerminal]);
+    observeTerminal(terminalKey, waitingForQueue);
+  }, [terminalKey, waitingForQueue, observeTerminal]);
 
   const rehydrationToken = events.data?.observedGap
     ? `${events.data.observedGap.expected}:${events.data.observedGap.received}`

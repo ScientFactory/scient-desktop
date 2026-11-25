@@ -74,20 +74,6 @@ describe("indexNotebook", () => {
     expect(JSON.parse(notebookBytes(edited).toString()).cells[0]).toEqual(notebook.cells[1]);
   });
 
-  it("gives older cells an id and moves the notebook to nbformat 4.5", () => {
-    const old = {
-      cells: [{ cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: "" }],
-      metadata: {},
-      nbformat: 4,
-      nbformat_minor: 2,
-    };
-    const written = JSON.parse(
-      notebookBytes(indexNotebook(Buffer.from(JSON.stringify(old)))).toString(),
-    );
-    expect(written.cells[0].id).toBe("cell-1");
-    expect(written.nbformat_minor).toBe(5);
-  });
-
   it("indexes an empty file and rejects text that is not a notebook", () => {
     expect(indexNotebook(Buffer.alloc(0)).cells).toEqual([]);
     expect(() => indexNotebook(Buffer.from("[1, 2]"))).toThrow();

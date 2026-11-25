@@ -14,9 +14,10 @@ import html
 import json
 import math
 import os
+import queue
 import sys
 import threading
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import duckdb
 
@@ -40,6 +41,9 @@ MAX_TABLE_JSON_BYTES = 512 * 1024
 MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
 JOIN_INTERVAL = 0.05
 
+# Finished tables waiting to be shown; the worker waits when this many are queued.
+MAX_WAITING_TABLES = 8
+
 # DDL and DML answer with a one-column acknowledgement rather than data.
 ACKNOWLEDGEMENT_COLUMNS = {"Count", "Success"}
 
@@ -53,7 +57,11 @@ def cell_value(value: Any) -> Any:
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, decimal.Decimal):
-        return float(value) if value.is_finite() else str(value)
+        # A JSON number only when its written form is this decimal; otherwise its exact digits.
+        if not value.is_finite():
+            return str(value)
+        number = float(value)
+        return number if decimal.Decimal(repr(number)) == value else str(value)
     if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, (bytes, bytearray, memoryview)):
@@ -86,12 +94,17 @@ def html_table(columns: list[str], rows: list[list[Any]], footer: Optional[str])
     return table if footer is None else f"{table}<p>{html.escape(footer)}</p>"
 
 
+def cell_text(value: Any) -> Any:
+    return str(value) if isinstance(value, decimal.Decimal) else cell_value(value)
+
+
 def table_bundle(columns: list[str], raw_rows: list[tuple[Any, ...]], truncated: bool) -> dict[str, Any]:
     rows = [[cell_value(value) for value in row] for row in raw_rows]
+    shown = [[cell_text(value) for value in row] for row in raw_rows]
     footer = f"First {MAX_ROWS} rows" if truncated else None
     bundle: dict[str, Any] = {
-        "text/plain": plain_table(columns, rows, footer),
-        "text/html": html_table(columns, rows, footer),
+        "text/plain": plain_table(columns, shown, footer),
+        "text/html": html_table(columns, shown, footer),
     }
     if len(set(columns)) == len(columns) and all(columns):
         resource = {
@@ -130,7 +143,7 @@ class ScientSqlKernel(Kernel):
         self._connection = duckdb.connect(":memory:")
         self._cancelled = threading.Event()
 
-    def _run_statements(self, code: str, results: list[Any], failure: list[BaseException]) -> None:
+    def _run_statements(self, code: str, results: "queue.Queue[Any]", failure: list[BaseException]) -> None:
         try:
             position = 0
             for statement in self._connection.extract_statements(code):
@@ -149,32 +162,49 @@ class ScientSqlKernel(Kernel):
                     ):
                         continue
                     rows = cursor.fetchmany(MAX_ROWS + 1)
-                    results.append(table_bundle(columns, rows[:MAX_ROWS], len(rows) > MAX_ROWS))
+                    results.put(table_bundle(columns, rows[:MAX_ROWS], len(rows) > MAX_ROWS))
                 except duckdb.Error as error:
                     raise StatementError(error, code.count("\n", 0, position) + 1) from error
         except BaseException as error:  # noqa: BLE001 - reported to the main thread
             failure.append(error)
 
-    def _execute(self, code: str) -> list[Any]:
-        """Run on a worker so an interrupt reaches the query without waiting for DuckDB."""
-        results: list[Any] = []
+    def _execute(self, code: str, show: Callable[[Any, bool], None]) -> None:
+        """Run on a worker so an interrupt reaches the query without waiting for DuckDB.
+
+        Each table is shown as soon as the next one finishes, so a slow or failing statement does
+        not hold back the ones before it; the last table is the cell's result.
+        """
+        results: "queue.Queue[Any]" = queue.Queue(MAX_WAITING_TABLES)
         failure: list[BaseException] = []
         self._cancelled.clear()
         worker = threading.Thread(target=self._run_statements, args=(code, results, failure))
         worker.start()
+        held: Optional[Any] = None
         try:
-            while worker.is_alive():
-                worker.join(JOIN_INTERVAL)
+            while worker.is_alive() or not results.empty():
+                try:
+                    table = results.get(timeout=JOIN_INTERVAL)
+                except queue.Empty:
+                    continue
+                if held is not None:
+                    show(held, False)
+                held = table
         except KeyboardInterrupt:
+            # Tables that finished before the interrupt are still shown, in order.
+            if held is not None:
+                show(held, False)
             # DuckDB interrupts only a running query, so keep asking until the worker stops.
             self._cancelled.set()
-            while worker.is_alive():
+            while worker.is_alive() or not results.empty():
                 self._connection.interrupt()
+                while not results.empty():
+                    show(results.get_nowait(), False)
                 worker.join(JOIN_INTERVAL)
             raise
+        if held is not None:
+            show(held, not failure)
         if failure:
             raise failure[0]
-        return results
 
     def _error(self, name: str, value: str, traceback: list[str]) -> dict[str, Any]:
         content = {"ename": name, "evalue": value, "traceback": traceback}
@@ -190,23 +220,25 @@ class ScientSqlKernel(Kernel):
         allow_stdin: bool = False,
         **_kwargs: Any,
     ) -> dict[str, Any]:
+        def show(bundle: Any, last: bool) -> None:
+            if silent:
+                return
+            self.send_response(
+                self.iopub_socket,
+                "execute_result" if last else "display_data",
+                {"data": bundle, "metadata": {}}
+                | ({"execution_count": self.execution_count} if last else {}),
+            )
+
         try:
-            results = self._execute(code) if code.strip() else []
+            if code.strip():
+                self._execute(code, show)
         except KeyboardInterrupt:
             return self._error("KeyboardInterrupt", "Query interrupted", [])
         except StatementError as error:
             return self._error(type(error.error).__name__, str(error.error), [f"line {error.line}"])
         except duckdb.Error as error:
             return self._error(type(error).__name__, str(error), [])
-        if not silent:
-            for index, bundle in enumerate(results):
-                last = index == len(results) - 1
-                self.send_response(
-                    self.iopub_socket,
-                    "execute_result" if last else "display_data",
-                    {"data": bundle, "metadata": {}}
-                    | ({"execution_count": self.execution_count} if last else {}),
-                )
         return {
             "status": "ok",
             "execution_count": self.execution_count,

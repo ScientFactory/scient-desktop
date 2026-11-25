@@ -190,8 +190,14 @@ import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as ServerSettings from "./serverSettings.ts";
 // SCIENT-FORK:START — config subscriptions must not call unrelated Scient capabilities.
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as ScientificRunServices from "./scient/analysis/ScientificRunServices.ts";
+import { ExecutionProcess } from "./scient/execution/LocalExecutionProcess.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
+import * as DataViews from "./scient/data/DataViews.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
+// SCIENT-FORK:START — capture notebook jobs in the shared route test services.
+import { NotebookRunJobs } from "./scient/notebook/NotebookRunJobs.ts";
+// SCIENT-FORK:END
 import * as ComputeResults from "./scient/results/ComputeResults.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
@@ -861,14 +867,20 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+// SCIENT-FORK:START — dependencies for the production scientific run services.
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
-const layerUnusedConfigRpcServices = Layer.mergeAll(
+const layerUnusedConfigRpcDependencies = Layer.mergeAll(
+  // SCIENT-FORK:END
   Layer.mock(TranscriptionJobs)({}),
   // SCIENT-FORK:START — unexpected access fails through Layer.mock.
   Layer.mock(AnalysisService.AnalysisService)({}),
   Layer.mock(ComputeSessionService.ComputeSessionService)({ runtimeDescriptors: [] }),
   Layer.mock(DataTables.DataTables)({}),
+  Layer.mock(DataViews.DataViews)({}),
   Layer.mock(NotebookStore.NotebookStore)({}),
+  // SCIENT-FORK:START — fresh notebook RPCs share a server-lifetime owner.
+  Layer.mock(NotebookRunJobs)({}),
+  // SCIENT-FORK:END
   Layer.mock(ComputeResults.ComputeResults)({}),
   Layer.mock(ScientificRuntimePreferences)({}),
   Layer.mock(ConversationExportService)({}),
@@ -986,6 +998,13 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
   FeatureFlags.layerTest(),
 );
+
+// SCIENT-FORK:START — supply the same scientific run services as the production routes.
+const layerUnusedConfigRpcServices = ScientificRunServices.layer.pipe(
+  Layer.provide(Layer.mock(ExecutionProcess)({})),
+  Layer.provideMerge(layerUnusedConfigRpcDependencies),
+);
+// SCIENT-FORK:END
 
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
@@ -2898,8 +2917,9 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       },
     } as unknown as ProviderInstance;
     const dependencies = Layer.mergeAll(
-      layerUnusedConfigRpcServices,
-      Layer.fresh(layerConfigSources),
+      // SCIENT-FORK:START — build the shared scientific services with this test's config.
+      layerUnusedConfigRpcServices.pipe(Layer.provideMerge(Layer.fresh(layerConfigSources))),
+      // SCIENT-FORK:END
       Layer.mock(ExternalLauncher.ExternalLauncher)({}),
       Layer.mock(ProviderRegistry.ProviderRegistry)({}),
       Layer.mock(UsageLimitSources.UsageLimitSources)({}),

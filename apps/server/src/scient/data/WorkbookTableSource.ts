@@ -395,11 +395,15 @@ export function workbookTableSource(sheet: WorkbookSheet): TableSource {
     columns,
     rowCount: rows.length,
     truncated: sheet.truncated,
-    readRows: async (indices, columnLimit) =>
+    readRows: async (indices, columnLimit, _signal, profile) =>
       indices.map((index) =>
         Array.from({ length: Math.min(columnLimit, width) }, (_, column) => {
           const value = rows[index]![column];
-          return value == null ? null : dataTableCellText(value);
+          return value == null || (profile && value === "")
+            ? null
+            : profile
+              ? value
+              : dataTableCellText(value);
         }),
       ),
     sortKeys: async (column): Promise<SortKeys> => {

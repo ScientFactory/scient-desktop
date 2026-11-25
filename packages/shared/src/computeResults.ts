@@ -1,4 +1,4 @@
-import type { ComputeResultResolution } from "@t3tools/contracts";
+import type { ComputeResultResolution, ComputeResultSummary } from "@t3tools/contracts";
 
 /**
  * Manuscript references to linked results: `[0.72](scient-result:<revision>/values.json#/hr)` for a
@@ -7,6 +7,7 @@ import type { ComputeResultResolution } from "@t3tools/contracts";
  */
 export const RESULT_PROTOCOL = "scient-result:";
 export const RESULTS_FOLDER_VARIABLE = "SCIENT_RESULTS_DIR";
+export const RESULTS_PARAMETERS_VARIABLE = "SCIENT_PARAMETERS";
 
 const REVISION = /^r[0-9a-z]{12}$/u;
 const MAX_TARGET_LENGTH = 4096;
@@ -105,19 +106,9 @@ export type MarkdownResultReference = ResultTarget &
     | { readonly kind: "table"; readonly caption: string }
   ) & { readonly start: number; readonly end: number };
 
-/**
- * A caption to start from: `event-rates.png` → `Event rates`. A name such as `table1` says nothing
- * a numbered caption does not, so those name the script instead: `Results of analysis.py`.
- */
-export function resultCaption(output: string, scriptPath: string): string {
-  const words = (output.split("/").at(-1) ?? output)
-    .replace(/\.[^.]+$/u, "")
-    .replace(/[-_]+/gu, " ")
-    .replace(/(?<=[a-z])(?=[0-9])/gu, " ")
-    .trim();
-  if (words === "" || /^(?:table|tab|fig|figure|plot|chart)\s*\d*$/iu.test(words))
-    return `Results of ${scriptPath.split("/").at(-1) ?? scriptPath}`;
-  return words.charAt(0).toUpperCase() + words.slice(1);
+export function resultCaption(output: string): string {
+  const file = output.split("/").at(-1) ?? output;
+  return file.replace(/\.[^.]+$/u, "") || file;
 }
 
 /** What a caption line holds before its link: `Table: ` (Pandoc also reads a bare `: `). */
@@ -234,6 +225,7 @@ function fencedRanges(source: string): ReadonlyArray<readonly [number, number]> 
 }
 
 type JsonLeaf = { readonly pointer: string; readonly value: string };
+type ComparableJsonLeaf = JsonLeaf & { readonly numeric: boolean };
 
 const MAX_VALUES = 500;
 const MAX_VALUE_LENGTH = 2000;
@@ -243,47 +235,103 @@ const MAX_VALUE_LENGTH = 2000;
  * Null when the text is not JSON.
  */
 export function readResultValues(text: string): ReadonlyArray<JsonLeaf> | null {
-  let root: unknown;
+  return (
+    readValueLeaves(text, MAX_VALUES)?.map(({ pointer, value }) => ({ pointer, value })) ?? null
+  );
+}
+
+/** A values file parsed once, for looking up many pointers in it. */
+export type ParsedResultValues = { readonly root: unknown };
+
+export function parseResultValues(text: string): ParsedResultValues | null {
   try {
-    root = JSON.parse(text, (_key, value, context?: { readonly source?: string }) =>
-      typeof value === "number" && typeof context?.source === "string"
-        ? new LiteralNumber(context.source)
-        : value,
-    );
+    return {
+      root: JSON.parse(text, (_key, value, context?: { readonly source?: string }) =>
+        typeof value === "number" && typeof context?.source === "string"
+          ? new LiteralNumber(context.source)
+          : value,
+      ),
+    };
   } catch {
     return null;
   }
-  const leaves: JsonLeaf[] = [];
-  const visit = (node: unknown, keys: ReadonlyArray<string>) => {
-    if (leaves.length >= MAX_VALUES) return;
-    if (typeof node === "string" || node instanceof LiteralNumber) {
-      const value = typeof node === "string" ? node : node.source;
-      // A value reads inline in a sentence; a line break would split the paragraph.
-      if (keys.length > 0 && value.length <= MAX_VALUE_LENGTH && !/[\r\n]/u.test(value))
-        leaves.push({ pointer: resultPointer(keys), value });
-      return;
+}
+
+function resultLeaf(node: unknown, keys: ReadonlyArray<string>): ComparableJsonLeaf | undefined {
+  if (typeof node !== "string" && !(node instanceof LiteralNumber)) return undefined;
+  const value = typeof node === "string" ? node : node.source;
+  // A value reads inline in a sentence; a line break would split the paragraph.
+  return keys.length > 0 && value.length <= MAX_VALUE_LENGTH && !/[\r\n]/u.test(value)
+    ? { pointer: resultPointer(keys), value, numeric: typeof node !== "string" }
+    : undefined;
+}
+
+function resultChildren(node: unknown): Record<string, unknown> {
+  return node !== null && typeof node === "object" && !(node instanceof LiteralNumber)
+    ? (node as Record<string, unknown>)
+    : {};
+}
+
+/** Pair values at the same path without building a second copy of all the leaves. */
+export function* pairedResultValues(from: string, to: string) {
+  function* visit(
+    left: unknown,
+    right: unknown,
+    keys: ReadonlyArray<string>,
+  ): Generator<{
+    from: ComparableJsonLeaf | undefined;
+    to: ComparableJsonLeaf | undefined;
+  }> {
+    const fromLeaf = resultLeaf(left, keys);
+    const toLeaf = resultLeaf(right, keys);
+    if (fromLeaf !== undefined || toLeaf !== undefined) yield { from: fromLeaf, to: toLeaf };
+    const a = resultChildren(left);
+    const b = resultChildren(right);
+    for (const key of [...new Set([...Object.keys(a), ...Object.keys(b)])].sort()) {
+      yield* visit(
+        Object.hasOwn(a, key) ? a[key] : undefined,
+        Object.hasOwn(b, key) ? b[key] : undefined,
+        [...keys, key],
+      );
     }
-    if (node === null || typeof node !== "object") return;
-    for (const [key, child] of Array.isArray(node)
-      ? node.map((child, index) => [String(index), child] as const)
-      : Object.entries(node))
+  }
+
+  yield* visit(parseResultValues(from)?.root, parseResultValues(to)?.root, []);
+}
+
+function readValueLeaves(text: string, limit: number): ReadonlyArray<ComparableJsonLeaf> | null {
+  const parsed = parseResultValues(text);
+  if (parsed === null) return null;
+  const leaves: ComparableJsonLeaf[] = [];
+  const visit = (node: unknown, keys: ReadonlyArray<string>) => {
+    if (leaves.length >= limit) return;
+    const leaf = resultLeaf(node, keys);
+    if (leaf !== undefined) leaves.push(leaf);
+    for (const [key, child] of Object.entries(resultChildren(node))) {
+      if (leaves.length >= limit) break;
       visit(child, [...keys, key]);
+    }
   };
-  visit(root, []);
+  visit(parsed.root, []);
   return leaves;
 }
 
-export function resultValueAt(text: string, pointer: string): string | null {
-  const keys = JSON.stringify(pointerKeys(pointer));
-  return (
-    readResultValues(text)?.find((leaf) => JSON.stringify(pointerKeys(leaf.pointer)) === keys)
-      ?.value ?? null
-  );
+/** The value at a pointer, found directly however many values come before it. */
+export function resultValueIn(values: ParsedResultValues, pointer: string): string | null {
+  const keys = pointerKeys(pointer);
+  let node = values.root;
+  for (const key of keys) {
+    const children = resultChildren(node);
+    if (!Object.hasOwn(children, key)) return null;
+    node = children[key];
+  }
+  return resultLeaf(node, keys)?.value ?? null;
 }
 
 /** What the reader must act on first; a figure counts as present when the revision has it. */
 export type ResultReferenceState =
   | "current"
+  | "incomplete"
   | "newer"
   | "stale"
   | "edited"
@@ -302,6 +350,27 @@ const sameRows = (
       row.every((cell, column) => cell.trim() === right[index]![column]!.trim()),
   );
 
+export function resultSourceChanged(summary: ComputeResultSummary): boolean {
+  return summary.causes.some(
+    ({ kind }) => kind !== "lockfile-changed" && kind !== "script-unconfirmed",
+  );
+}
+
+export function resultInputCoverageIncomplete(summary: ComputeResultSummary): boolean {
+  return summary.inputsTruncated || summary.inputCoverageIncomplete === true;
+}
+
+export function resultFreshnessIncomplete(summary: ComputeResultSummary): boolean {
+  return (
+    resultInputCoverageIncomplete(summary) ||
+    summary.causes.some(({ kind }) => kind === "script-unconfirmed")
+  );
+}
+
+export function resultEnvironmentMayDiffer(summary: ComputeResultSummary): boolean {
+  return summary.causes.some(({ kind }) => kind === "lockfile-changed");
+}
+
 export function resultReferenceState(
   reference:
     | { readonly kind: "value"; readonly text: string }
@@ -318,7 +387,7 @@ export function resultReferenceState(
         ? resolution.figure
         : resolution.table != null;
   if (!present) return "missing";
-  if (resolution.summary.causes.length > 0) return "stale";
+  if (resultSourceChanged(resolution.summary)) return "stale";
   if (reference.kind === "value" && reference.text !== resolution.value) return "edited";
   if (
     reference.kind === "table" &&
@@ -328,7 +397,7 @@ export function resultReferenceState(
   )
     return "edited";
   if (resultHasNewer(reference, resolution)) return "newer";
-  return "current";
+  return resultFreshnessIncomplete(resolution.summary) ? "incomplete" : "current";
 }
 
 export function resultHasNewer(

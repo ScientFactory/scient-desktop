@@ -259,10 +259,15 @@ export const AnalysisRunStorage = Schema.Struct({
 });
 export type AnalysisRunStorage = typeof AnalysisRunStorage.Type;
 
+const AnalysisAgentThread = Schema.optional(Identifier);
+
 const AnalysisRunBase = Schema.Struct({
   contractVersion: Schema.Literal(ANALYSIS_CONTRACT_VERSION),
   projectId: Identifier,
   action: AnalysisRunAction,
+  agentThreadId: AnalysisAgentThread,
+  parameters: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  inputs: Schema.optional(Schema.Array(PathString)),
   runtime: AnalysisRuntimeProfile,
   source: AnalysisRunSource,
   phase: AnalysisRunPhase.pipe(Schema.withDecodingDefaultKey(Effect.succeed("finished"))),

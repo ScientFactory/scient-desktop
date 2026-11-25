@@ -11,7 +11,8 @@ import {
   readResultValues,
   resultPointer,
   resultReferenceState,
-  resultValueAt,
+  parseResultValues,
+  resultValueIn,
 } from "./computeResults.ts";
 
 const revision = "r0123456789ab";
@@ -51,6 +52,11 @@ describe("linked result references", () => {
     expect(source.slice(references[0]!.start, references[0]!.end)).toBe(value);
   });
 
+  const resultValueAt = (text: string, pointer: string) => {
+    const values = parseResultValues(text);
+    return values === null ? null : resultValueIn(values, pointer);
+  };
+
   it("reads numbers as written, so formatting chosen in the analysis survives", () => {
     const text = '{"hr": 0.720, "n": 1204, "ci": ["0.61", 0.85], "fit": {"ok": true}}';
     expect(readResultValues(text)).toEqual([
@@ -61,6 +67,11 @@ describe("linked result references", () => {
     ]);
     expect(resultValueAt(text, "/hr")).toBe("0.720");
     expect(resultValueAt(text, "/fit/ok")).toBeNull();
+    const crowded = {
+      ...Object.fromEntries([...Array(600).keys()].map((n) => [`v${n}`, n])),
+      hr: 0.72,
+    };
+    expect(resultValueAt(JSON.stringify(crowded), "/hr")).toBe("0.72");
     expect(readResultValues("not json")).toBeNull();
     // A value inside a sentence cannot hold a paragraph break.
     expect(readResultValues('{"note": "a\\n\\nb"}')).toEqual([]);
@@ -84,6 +95,7 @@ describe("linked result references", () => {
     ];
     const resolved = (
       table: ReadonlyArray<ReadonlyArray<string>> | null,
+      causes: Extract<ComputeResultResolution, { _tag: "resolved" }>["summary"]["causes"] = [],
     ): ComputeResultResolution => ({
       _tag: "resolved",
       summary: {
@@ -95,7 +107,7 @@ describe("linked result references", () => {
         inputTracking: "observed",
         inputs: [],
         inputsTruncated: false,
-        causes: [],
+        causes,
       },
       value: null,
       figure: false,
@@ -103,6 +115,26 @@ describe("linked result references", () => {
       newer: null,
     });
     expect(resultReferenceState({ kind: "table", rows }, resolved(rows))).toBe("current");
+    const recorded = resolved(rows);
+    if (recorded._tag !== "resolved") throw new Error("Expected a recorded result");
+    expect(
+      resultReferenceState(
+        { kind: "table", rows },
+        {
+          ...recorded,
+          summary: { ...recorded.summary, inputsTruncated: true },
+        },
+      ),
+    ).toBe("incomplete");
+    expect(
+      resultReferenceState(
+        { kind: "table", rows },
+        {
+          ...recorded,
+          summary: { ...recorded.summary, inputCoverageIncomplete: true },
+        },
+      ),
+    ).toBe("incomplete");
     expect(
       resultReferenceState(
         {
@@ -115,6 +147,16 @@ describe("linked result references", () => {
         resolved(rows),
       ),
     ).toBe("edited");
+    const lockfile = { kind: "lockfile-changed", path: "uv.lock" } as const;
+    expect(resultReferenceState({ kind: "table", rows }, resolved(rows, [lockfile]))).toBe(
+      "current",
+    );
+    expect(
+      resultReferenceState(
+        { kind: "table", rows },
+        resolved(rows, [lockfile, { kind: "input-changed", path: "cohort.csv" }]),
+      ),
+    ).toBe("stale");
     expect(resultReferenceState({ kind: "table", rows: null }, resolved(rows))).toBe("current");
     expect(resultReferenceState({ kind: "table", rows }, resolved(null))).toBe("missing");
   });

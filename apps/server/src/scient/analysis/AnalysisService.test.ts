@@ -147,6 +147,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
   const startedRuns = yield* Queue.unbounded<ExecutionRunId>();
   const processExits = new Map<ExecutionRunId, Deferred.Deferred<number>>();
   const processStartCount = yield* Ref.make(0);
+  const processParameters = new Map<ExecutionRunId, string>();
   const processPort: ExecutionProcessPort = {
     start: (request) =>
       Effect.gen(function* () {
@@ -154,6 +155,9 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
         const exitCode = yield* Deferred.make<number>();
         if (onProcessClose !== undefined) yield* Effect.addFinalizer(() => onProcessClose);
         processExits.set(request.runId, exitCode);
+        if (request.environment?.SCIENT_PARAMETERS !== undefined) {
+          processParameters.set(request.runId, request.environment.SCIENT_PARAMETERS);
+        }
         yield* Queue.offer(startedRuns, request.runId);
         const text = printed?.(request.executable) ?? "";
         return {
@@ -212,6 +216,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     analysisLayer,
     localStoreLayer,
     processStartCount,
+    processParameters,
     processExits,
     projectId,
     projectRoot,
@@ -952,9 +957,17 @@ describe("analysis service coordination", () => {
           sourceRevision,
           runtimeId,
           runId: ExecutionRunId.make("owned-batch"),
+          parameters: { threshold: "0.7" },
+          inputs: ["analysis.m"],
         };
         const first = yield* service.startRun(input);
         yield* Queue.take(harness.startedRuns);
+        expect(harness.processParameters.get(input.runId)).toBe('{"threshold":0.7}');
+        expect(first).toMatchObject({ parameters: input.parameters, inputs: input.inputs });
+        expect(
+          (yield* Effect.flip(service.startRun({ ...input, parameters: { threshold: "0.8" } })))
+            .reason,
+        ).toBe("run-already-active");
         expect((yield* service.startRun(input)).receipt.runId).toBe(first.receipt.runId);
         const stopped = yield* service.cancelRun({
           cwd: harness.projectRoot,

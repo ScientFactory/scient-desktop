@@ -147,6 +147,9 @@ function MenuItem({
   inset,
   active = false,
   density = "default",
+  // SCIENT-FORK:START — choice rows can keep a single keyboard focus edge.
+  focus,
+  // SCIENT-FORK:END
   size = "default",
   variant = "default",
   ...props
@@ -154,6 +157,9 @@ function MenuItem({
   inset?: boolean;
   active?: boolean;
   density?: "default" | "touch";
+  // SCIENT-FORK:START — choice rows can keep a single keyboard focus edge.
+  focus?: "edge";
+  // SCIENT-FORK:END
   size?: "default" | "compact";
   variant?: "default" | "destructive" | "ghost" | "selected" | "grid-cell";
 }) {
@@ -172,6 +178,10 @@ function MenuItem({
           "size-4 min-h-0 gap-0 rounded-[3px] border border-border/80 bg-background p-0 data-highlighted:outline-2 data-highlighted:outline-ring data-highlighted:-outline-offset-2 data-active:border-muted-foreground/55 data-active:bg-accent sm:min-h-0",
         size === "compact" && "min-h-6 py-0 text-sm sm:min-h-6",
         density === "touch" && "min-h-10 sm:min-h-10",
+        // SCIENT-FORK:START — choice rows can keep a single keyboard focus edge.
+        focus === "edge" &&
+          "focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring",
+        // SCIENT-FORK:END
         className,
       )}
       data-active={active || undefined}

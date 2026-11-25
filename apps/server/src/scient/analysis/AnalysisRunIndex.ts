@@ -58,11 +58,10 @@ export class AnalysisRunIndexError extends Schema.TaggedError<AnalysisRunIndexEr
 ) {}
 const isAnalysisRunIndexError = Schema.is(AnalysisRunIndexError);
 
-function cursorFor(run: AnalysisRunSummaryType): string {
-  return NodeBuffer.Buffer.from(
-    encodeCursorJson({ startedAt: run.receipt.startedAt, runId: run.receipt.runId }),
-    "utf8",
-  ).toString("base64url");
+export function analysisRunHistoryCursor(startedAt: string, runId: string): string {
+  return NodeBuffer.Buffer.from(encodeCursorJson({ startedAt, runId }), "utf8").toString(
+    "base64url",
+  );
 }
 
 function decodeCursor(
@@ -396,7 +395,13 @@ const make = Effect.gen(function* () {
       return {
         runs: decoded,
         hasMore,
-        nextCursor: hasMore && decoded.length > 0 ? cursorFor(decoded[decoded.length - 1]!) : null,
+        nextCursor:
+          hasMore && decoded.length > 0
+            ? analysisRunHistoryCursor(
+                decoded[decoded.length - 1]!.receipt.startedAt,
+                decoded[decoded.length - 1]!.receipt.runId,
+              )
+            : null,
       } satisfies AnalysisListRunsResult;
     },
     (effect) =>

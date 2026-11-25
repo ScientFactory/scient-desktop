@@ -135,10 +135,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.agentFeedbackAnswerRequest]: "agentFeedback",
   [WS_METHODS.guestShareCreate]: "guest-share",
-  // SCIENT-FORK: thread rooms.
+  // SCIENT-FORK:START — thread room invites and presence.
   [WS_METHODS.threadRoomInvite]: "thread-room",
   [WS_METHODS.threadRoomInviteLink]: "thread-room",
   [WS_METHODS.threadRoomPresence]: "thread-room",
+  // SCIENT-FORK:END
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
   // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
@@ -316,6 +317,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computeManagedRuntimeStatus]: "compute",
   [WS_METHODS.computeManageRuntime]: "compute",
   [WS_METHODS.computeCancelManagedRuntime]: "compute",
+  [WS_METHODS.computeAddPythonLibrary]: "compute",
   [WS_METHODS.computeStartSession]: "compute",
   [WS_METHODS.computeListSessions]: "compute",
   [WS_METHODS.computeGetSession]: "compute",
@@ -325,25 +327,58 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computeCancelExecution]: "compute",
   [WS_METHODS.computeInterruptSession]: "compute",
   [WS_METHODS.computeListExecutions]: "compute",
+  // SCIENT-FORK:START — group project history with Compute.
+  [WS_METHODS.computeRunHistory]: "compute",
+  // SCIENT-FORK:END
   [WS_METHODS.computeListOutputs]: "compute",
   [WS_METHODS.computeInspectVariables]: "compute",
   [WS_METHODS.computeReadTable]: "compute",
   [WS_METHODS.dataReadFileTable]: "filesystem",
+  // SCIENT-FORK:START — label data profile and saved view RPCs by their aggregate.
+  [WS_METHODS.dataProfileFile]: "filesystem",
+  [WS_METHODS.dataViewRevision]: "filesystem",
+  [WS_METHODS.dataReadView]: "filesystem",
+  [WS_METHODS.dataProfileView]: "filesystem",
+  [WS_METHODS.dataSaveView]: "filesystem",
+  [WS_METHODS.dataMaterializeView]: "filesystem",
+  [WS_METHODS.dataProfileVariable]: "compute",
+  // SCIENT-FORK:END
   [WS_METHODS.computeSaveOutput]: "compute",
   [WS_METHODS.computeSaveConsoleNotebook]: "compute",
+  // SCIENT-FORK:START — linked results use the Compute RPC aggregate.
   [WS_METHODS.computeResultsResolve]: "compute",
   [WS_METHODS.computeResultsList]: "compute",
+  [WS_METHODS.computeResultsSetup]: "compute",
+  [WS_METHODS.computeResultsHistory]: "compute",
+  [WS_METHODS.computeResultsCompare]: "compute",
+  [WS_METHODS.computeResultsPreview]: "compute",
+  [WS_METHODS.computeResultsPublication]: "compute",
+  [WS_METHODS.computeResultsAttemptOutput]: "compute",
   [WS_METHODS.computeResultsPlaceFigure]: "compute",
   [WS_METHODS.computeResultsRerun]: "compute",
   [WS_METHODS.computeResultsPlaceLatex]: "compute",
   [WS_METHODS.computeResultsPlacements]: "compute",
   [WS_METHODS.computeResultsUpdateFiles]: "compute",
   [WS_METHODS.computeResultsUndoUpdate]: "compute",
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — register result package operations.
+  [WS_METHODS.computeResultsHandoffChoices]: "compute",
+  [WS_METHODS.computeResultsExport]: "compute",
+  [WS_METHODS.computeResultsExportProgress]: "compute",
+  [WS_METHODS.computeResultsVerify]: "compute",
+  [WS_METHODS.computeResultsCancelVerification]: "compute",
+  // SCIENT-FORK:END
   [WS_METHODS.computeSubmitCells]: "compute",
   [WS_METHODS.notebookRead]: "filesystem",
   [WS_METHODS.notebookReadOutput]: "filesystem",
   [WS_METHODS.notebookEdit]: "filesystem",
   [WS_METHODS.notebookRecordRun]: "filesystem",
+  // SCIENT-FORK:START — fresh notebooks submit work and read its status.
+  [WS_METHODS.notebookFreshStart]: "compute",
+  [WS_METHODS.notebookFreshStatus]: "compute",
+  [WS_METHODS.subscribeNotebookFreshRun]: "compute",
+  [WS_METHODS.notebookFreshStop]: "compute",
+  // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: "subscribe",
   [WS_METHODS.subscribeComputeActiveWork]: "subscribe",
   [WS_METHODS.skillsList]: "skills",

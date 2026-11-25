@@ -34,9 +34,10 @@ export class AttachmentReservationReconciliation extends Context.Reference<Recon
 ) {}
 
 const decodeReservation = Schema.decodeEffect(Schema.fromJsonString(ReadyAttachmentReservation));
-export const reconcileReservationsBestEffort = Effect.fn(
-  "AttachmentReservations.reconcileBestEffort",
-)(function* (ids?: ReadonlyArray<string>, captured?: ReconciliationOperations) {
+const reconcileBestEffort = Effect.fn("AttachmentReservations.reconcileBestEffort")(function* (
+  ids?: ReadonlyArray<string>,
+  captured?: ReconciliationOperations,
+) {
   const service = captured ?? (yield* AttachmentReservationReconciliation);
   yield* service
     .reconcile(ids)
@@ -46,6 +47,11 @@ export const reconcileReservationsBestEffort = Effect.fn(
       ),
     );
 });
+/** Most stored events carry no attachment: an empty list (not an omitted one) is no work. */
+export const reconcileReservationsBestEffort = (
+  ids?: ReadonlyArray<string>,
+  captured?: ReconciliationOperations,
+) => (ids?.length === 0 ? Effect.void : reconcileBestEffort(ids, captured));
 
 export const layer = Layer.effect(
   AttachmentReservationReconciliation,

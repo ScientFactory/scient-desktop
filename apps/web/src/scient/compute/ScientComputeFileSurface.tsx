@@ -30,6 +30,7 @@ import { ResizeSeparator } from "~/scient/layout/ResizeSeparator";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
+import { useComputeRunHistory } from "./useComputeRunHistory";
 import { ComputePanel } from "./ComputePanel";
 import { ComputeResultPicker } from "./ComputeResultPicker";
 import {
@@ -344,7 +345,16 @@ function ComputeFileSurfaceContent(
     (session) => session.owner?._tag === "file" && session.owner.path === props.relativePath,
   );
   // There is nothing to switch to until the file has a result.
-  const showViews = view !== "code" || props.hasRun === true || hasSession || hadSession === true;
+  const fileHistory = useComputeRunHistory(
+    props.environmentId,
+    props.language.runOnly ? null : { cwd: props.cwd, path: props.relativePath, limit: 200 },
+  );
+  const hasAgentRuns = fileHistory.runs.some(
+    ({ execution }) => execution.request.actor !== undefined,
+  );
+  const [showSessionRuns, setShowSessionRuns] = useState(false);
+  const showViews =
+    view !== "code" || props.hasRun === true || hasSession || hadSession === true || hasAgentRuns;
   // A file with runs but no session, such as MATLAB reopened, has only those runs to show.
   const onlyRuns = props.hasRun === true && !hasSession && hadSession !== true;
   const [preferredResultsView, setPreferredResultsView] =
@@ -457,6 +467,16 @@ function ComputeFileSurfaceContent(
               </button>
             ))}
           </div>
+        ) : null}
+        {(showingBatch || onlyRuns) && hasAgentRuns && view !== "code" ? (
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            aria-pressed={showSessionRuns}
+            onClick={() => setShowSessionRuns((current) => !current)}
+          >
+            <T>Session runs</T>
+          </Button>
         ) : null}
         {view === "split" && !narrow ? (
           <div
@@ -618,7 +638,7 @@ function ComputeFileSurfaceContent(
                 {...separatorHandlers}
               />
             ) : null}
-            {(showingBatch || onlyRuns) && props.batch !== undefined ? (
+            {(showingBatch || onlyRuns) && !showSessionRuns && props.batch !== undefined ? (
               <ComputeBatchResults
                 key={resultsContextId}
                 model={props.batch}
@@ -638,7 +658,7 @@ function ComputeFileSurfaceContent(
                 threadRef={props.threadRef}
                 sourcePath={props.relativePath}
                 sourceRunUnavailableReason={sourceRunUnavailableReason}
-                contextId={resultsContextId}
+                contextId={showSessionRuns ? props.contextId : resultsContextId}
                 focusExecutionId={focusExecution?.executionId ?? null}
                 onFocusConsumed={handleFocusConsumed}
                 onRunSource={handleEmptyResultsRun}

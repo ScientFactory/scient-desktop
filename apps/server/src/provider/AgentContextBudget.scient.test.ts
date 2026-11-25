@@ -26,6 +26,7 @@ it("Scient agent context matches the committed budget", () => {
     claudeSystemAppendBytes: _claude,
     codexAdditionalContextBytes: _codex,
     mcpToolListJsonBytes: _tools,
+    eagerComputeToolListJsonBytes: _eagerCompute,
     ...own
   } = budget;
   const measured = {

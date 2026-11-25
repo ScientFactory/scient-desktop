@@ -13,6 +13,8 @@ export interface RuntimeProbeCache<A, E = ComputeRuntimeError> {
   /** Records a success under another name for the same runtime. */
   readonly alias: (key: string, from: string) => void;
   readonly clear: () => void;
+  /** Like `clear`, for one key. */
+  readonly forget: (key: string) => void;
 }
 
 /**
@@ -31,6 +33,9 @@ export function makeRuntimeProbeCache<A, E = ComputeRuntimeError>(
   const permits = Semaphore.makeUnsafe(options.concurrency ?? 4);
   const entries = new Map<string, { readonly exit: Exit.Exit<A, E>; readonly at: number }>();
   const inFlight = new Map<string, Deferred.Deferred<A, E>>();
+  /** A refresh starts a new generation: probes begun before it neither answer nor fill it. */
+  let generation = 0;
+  const keyGenerations = new Map<string, number>();
 
   const fresh = (key: string, now: number) => {
     const entry = entries.get(key);
@@ -55,14 +60,20 @@ export function makeRuntimeProbeCache<A, E = ComputeRuntimeError>(
       return yield* Exit.hasInterrupts(shared) ? get(key, probe) : shared;
     }
     const deferred = Deferred.makeUnsafe<A, E>();
+    const started = generation;
+    const startedForKey = keyGenerations.get(key) ?? 0;
     inFlight.set(key, deferred);
     return yield* permits
       .withPermits(1)(probe)
       .pipe(
         Effect.onExit((exit) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             if (inFlight.get(key) === deferred) inFlight.delete(key);
-            if (!Exit.hasInterrupts(exit)) entries.set(key, { exit, at: now });
+            // Freshness counts from the answer, not from when the probe was asked for.
+            const at = yield* Clock.currentTimeMillis;
+            const current =
+              started === generation && startedForKey === (keyGenerations.get(key) ?? 0);
+            if (!Exit.hasInterrupts(exit) && current) entries.set(key, { exit, at });
             Deferred.doneUnsafe(deferred, exit);
           }),
         ),
@@ -79,6 +90,15 @@ export function makeRuntimeProbeCache<A, E = ComputeRuntimeError>(
       const entry = entries.get(from);
       if (entry !== undefined && key !== from) entries.set(key, entry);
     },
-    clear: () => entries.clear(),
+    clear: () => {
+      generation += 1;
+      entries.clear();
+      inFlight.clear();
+    },
+    forget: (key) => {
+      keyGenerations.set(key, (keyGenerations.get(key) ?? 0) + 1);
+      entries.delete(key);
+      inFlight.delete(key);
+    },
   };
 }

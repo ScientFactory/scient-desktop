@@ -267,6 +267,8 @@ export const ComputeCapability = Schema.Literals([
   "variables",
   "tables",
   "stdin",
+  /** Scient can add a missing package beside the runtime, for a live session's next run. */
+  "packages",
 ]);
 export type ComputeCapability = typeof ComputeCapability.Type;
 
@@ -331,6 +333,21 @@ export const ComputeRuntimeRead = Schema.Struct({
 });
 export type ComputeRuntimeRead = typeof ComputeRuntimeRead.Type;
 
+export const ComputeRuntimeDirectoryRead = Schema.Struct({
+  path: Schema.String.check(Schema.isMaxLength(4096)),
+  sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+});
+
+/** Observed writes that can also be read by a different cell of the same fresh run. */
+export const ComputeRuntimeInputWrites = Schema.Array(
+  Schema.String.check(Schema.isMaxLength(4096)),
+).check(Schema.isMaxLength(1024));
+
+/** Display paths for data read outside the project, with the runtime's home shortened to ~. */
+export const ComputeOutsideDataPaths = Schema.Array(
+  Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096)),
+).check(Schema.isMaxLength(64));
+
 /**
  * Files a runtime saw one execution write, at any depth. They add to what the server watched, for
  * it to authorize and read; they never prove the run wrote nothing else.
@@ -339,7 +356,13 @@ export const ComputeRuntimeWriteReport = Schema.Struct({
   paths: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(Schema.isMaxLength(256)),
   /** Project files opened for reading, with their state when opened; Python kernels only. */
   reads: Schema.optional(Schema.Array(ComputeRuntimeRead).check(Schema.isMaxLength(1024))),
+  inputWrites: Schema.optional(ComputeRuntimeInputWrites),
   readsTruncated: Schema.optional(Schema.Boolean),
+  directoryReads: Schema.optional(
+    Schema.Array(ComputeRuntimeDirectoryRead).check(Schema.isMaxLength(128)),
+  ),
+  readsOutsideProject: Schema.optional(Count),
+  outsideDataPaths: Schema.optional(ComputeOutsideDataPaths),
 });
 export type ComputeRuntimeWriteReport = typeof ComputeRuntimeWriteReport.Type;
 
@@ -348,10 +371,22 @@ export type ComputeRuntimeWriteReport = typeof ComputeRuntimeWriteReport.Type;
  * image/resources before appending references. Keep language errors raw for adapter normalization
  * with their original sequence/time; transports cannot infer language diagnostics.
  */
+export const ComputeRuntimePackageEvidence = Schema.Struct({
+  packages: Schema.Array(
+    Schema.Struct({
+      name: Schema.String.check(Schema.isMaxLength(4096)),
+      version: Schema.String.check(Schema.isMaxLength(4096)),
+    }),
+  ).check(Schema.isMaxLength(4000)),
+  packagesTruncated: Schema.optional(Schema.Boolean),
+});
+export type ComputeRuntimePackageEvidence = typeof ComputeRuntimePackageEvidence.Type;
+
 export const ComputeTransportEvent = Schema.Union([
   Schema.TaggedStruct("ready", {
     runtime: ComputeRuntimeIdentity,
     capabilities: Schema.Array(ComputeCapability),
+    packageEvidence: Schema.optional(ComputeRuntimePackageEvidence),
   }),
   Schema.TaggedStruct("accepted", {
     requestId: ComputeRequestId,
@@ -504,6 +539,7 @@ export interface ComputeTableRequest {
   readonly expectedGeneration: ComputeSessionGeneration;
   readonly name: string;
   readonly query: DataTableQuery;
+  readonly profile?: boolean;
 }
 
 /**

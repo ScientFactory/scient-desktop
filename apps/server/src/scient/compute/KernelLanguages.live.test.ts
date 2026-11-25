@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- gated integration test runs real R, Julia and DuckDB kernels.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
@@ -16,6 +17,7 @@ import {
   nextComputeSessionGeneration,
   type ComputeChannel,
   type ComputeLaunchPlan,
+  type ComputeExecuteSourceContext,
   type ComputeSessionGeneration,
   type ComputeTransport,
   type ComputeTransportEvent,
@@ -40,6 +42,7 @@ import { JULIA_KERNEL_LANGUAGE } from "./JuliaComputeRuntime.ts";
 import { makeKernelRuntimeBinding, type KernelLanguage } from "./KernelComputeRuntime.ts";
 import { pythonRuntimeBinding } from "./PythonComputeRuntime.ts";
 import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
+import { normalizeKernelDiagnostic } from "./PythonDiagnostic.ts";
 import { R_KERNEL_LANGUAGE } from "./RComputeRuntime.ts";
 import { SQL_LANGUAGE_ID, makeSqlRuntimeBinding, sqlKernelSpec } from "./SqlComputeRuntime.ts";
 
@@ -148,9 +151,15 @@ const execute = Effect.fn("KernelLanguages.execute")(function* (
   session: Session,
   code: string,
   generation = INITIAL_COMPUTE_SESSION_GENERATION,
+  sourceContext?: ComputeExecuteSourceContext,
 ) {
   const requestId = ComputeRequestId.make(`request-${++requests}`);
-  yield* session.channel.execute({ requestId, expectedGeneration: generation, code });
+  yield* session.channel.execute({
+    requestId,
+    expectedGeneration: generation,
+    code,
+    ...(sourceContext === undefined ? {} : { sourceContext }),
+  });
   const observed: ComputeTransportEvent[] = [];
   for (;;) {
     const event = yield* Queue.take(session.events);
@@ -300,11 +309,56 @@ const inspectVariables = (session: Session, expectedGeneration: ComputeSessionGe
 
 describe.runIf(enabled)("kernel language integration", () => {
   it.live.runIf(hasR)(
-    "runs R through IRkernel with plots, errors, interrupt and restart",
+    "runs R with plots, saved-file source links, interrupt and restart",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { session } = yield* kernelSession(R_KERNEL_LANGUAGE, makeProject());
+          const project = NodePath.join(makeProject(), "long-project-folder-".repeat(7));
+          NodeFS.mkdirSync(NodePath.join(project, "compute"), { recursive: true });
+          const { session } = yield* kernelSession(R_KERNEL_LANGUAGE, project);
+          const root = project;
+          const checkRFrames = Effect.fn("KernelLanguages.checkRFrames")(function* (
+            file: string,
+            code: string,
+          ) {
+            NodeFS.writeFileSync(NodePath.join(root, file), code);
+            const failed = yield* execute(session, code, INITIAL_COMPUTE_SESSION_GENERATION, {
+              kind: "file",
+              filePath: file,
+              saved: true,
+              sourceBytesHash: NodeCrypto.createHash("sha256").update(code).digest("hex"),
+            });
+            const error = errorOf(failed);
+            expect(error).toBeDefined();
+            expect(completion(failed)).toMatchObject({ outcome: "failed" });
+            return normalizeKernelDiagnostic(
+              error!,
+              { projectRoot: root, submittedSource: null },
+              "r",
+            )[0]!;
+          });
+          const syntax = yield* checkRFrames(
+            "compute/syntax_err.R",
+            "x <- 1\ny <- 2\nz <- (x + y\nprint(z)\n",
+          );
+          expect(syntax.frames, JSON.stringify(syntax)).toContainEqual(
+            expect.objectContaining({ relativePath: "compute/syntax_err.R", line: 4, column: 1 }),
+          );
+          expect(syntax.message).toContain("compute/syntax_err.R:4:1: unexpected symbol");
+          expect(syntax.traceback).toEqual([]);
+          NodeFS.writeFileSync(
+            NodePath.join(root, "helper.R"),
+            "helper <- function(x) {\n  stop('bad value')\n}\n",
+          );
+          const sourced = yield* checkRFrames("main.R", "source('helper.R')\nhelper(42)\n");
+          expect(sourced.frames, JSON.stringify(sourced)).toContainEqual(
+            expect.objectContaining({ relativePath: "helper.R", line: 2 }),
+          );
+          expect(sourced.traceback).toContain("at helper.R:2:3");
+          expect(sourced.traceback.join("\n")).not.toMatch(/withCallingHandlers|handleSimpleError/);
+          expect(sourced.traceback.join("\n")).not.toContain(root);
+          expect(sourced.message).toContain("bad value");
+          expect(sourced.message).not.toMatch(/^\s*!/m);
           expect(text(yield* execute(session, "x <- 41 + 1\nprint(x)"))).toContain("[1] 42");
           const failed = yield* execute(session, 'stop("boom")');
           expect(errorOf(failed)?.value).toContain("boom");

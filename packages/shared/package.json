@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./savedDataView": {
+      "types": "./src/savedDataView.ts",
+      "import": "./src/savedDataView.ts"
+    },
+    "./notebookParameters": {
+      "types": "./src/notebookParameters.ts",
+      "import": "./src/notebookParameters.ts"
+    },
     "./scientOwnedProcessTree": {
       "types": "./src/scientOwnedProcessTree.ts",
       "import": "./src/scientOwnedProcessTree.ts"

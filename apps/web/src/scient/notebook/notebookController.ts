@@ -4,6 +4,7 @@ import type {
   NotebookCellView,
   NotebookEdit,
   NotebookEditResult,
+  NotebookFold,
   NotebookOutputJson,
   NotebookOutputView,
   NotebookRecordRunInput,
@@ -14,10 +15,12 @@ import { msg } from "gt-react";
 import { createStore } from "zustand/vanilla";
 
 import { m } from "~/i18n/messages";
+import { randomUUID } from "~/lib/utils";
 
 import {
   notebookCellRun,
   notebookCodeHash,
+  notebookHeadings,
   staleNotebookCells,
   type NotebookStaleness,
 } from "@t3tools/shared/notebookStaleness";
@@ -29,8 +32,16 @@ export type NotebookCaret = number | "start" | "end" | { readonly x: number; rea
 /** The server calls a controller needs; `null` from any of them means the call failed. */
 export interface NotebookTransport {
   readonly read: (knownRevision: string | undefined) => Promise<NotebookView | null | "failed">;
-  readonly readOutput: (cellId: string, index: number) => Promise<NotebookOutputJson | null>;
-  readonly edit: (edits: ReadonlyArray<NotebookEdit>) => Promise<NotebookEditResult | null>;
+  readonly readOutput: (
+    cellId: string,
+    index: number,
+    token: string | undefined,
+  ) => Promise<NotebookOutputJson | null>;
+  readonly edit: (input: {
+    readonly edits: ReadonlyArray<NotebookEdit>;
+    readonly requestId?: string;
+    readonly durable?: boolean;
+  }) => Promise<NotebookEditResult | null>;
   readonly recordRun: (
     input: Omit<NotebookRecordRunInput, "cwd" | "path">,
   ) => Promise<NotebookRecordRunResult | null>;
@@ -41,6 +52,9 @@ export interface NotebookTransport {
 export interface NotebookLiveRun {
   readonly sessionId: string;
   readonly executionId: string;
+  readonly generation: number;
+  readonly writtenFiles?: ReadonlyArray<string> | undefined;
+  readonly changedFiles?: ReadonlyArray<string> | undefined;
 }
 
 export interface NotebookState {
@@ -48,6 +62,7 @@ export interface NotebookState {
   readonly language: string;
   readonly order: ReadonlyArray<string>;
   readonly cells: Readonly<Record<string, NotebookCellView>>;
+  readonly sections: ReturnType<typeof notebookSections>;
   readonly stale: ReadonlyMap<string, NotebookStaleness>;
   readonly activity: Readonly<Record<string, NotebookCellActivity>>;
   readonly liveRuns: Readonly<Record<string, NotebookLiveRun>>;
@@ -63,11 +78,12 @@ export interface NotebookState {
 const SOURCE_SEND_DELAY_MS = 150;
 const STALE_DELAY_MS = 200;
 const SAVE_RETRY_MS = 3000;
+/** Once typing has paused this long, the editor asks whether the notebook reached the disk. */
+const SETTLE_DELAY_MS = 1500;
+const MAX_LOADED_OUTPUTS = 64;
 
-let generatedIds = 0;
 function newCellId(): string {
-  generatedIds += 1;
-  return `${Date.now().toString(36)}${generatedIds.toString(36)}`.slice(-12);
+  return randomUUID();
 }
 
 function emptyCell(id: string, cellType: NotebookCellType, source: string): NotebookCellView {
@@ -82,6 +98,30 @@ function emptyCell(id: string, cellType: NotebookCellType, source: string): Note
   };
 }
 
+function notebookSections(state: Pick<NotebookState, "order" | "cells">) {
+  const headings: Array<ReturnType<typeof notebookHeadings>[number] & { cellId: string }> = [];
+  const hidden = new Map<string, ReadonlyArray<string>>();
+  const collapsed: Array<{ cellId: string; level: number }> = [];
+  for (const cellId of state.order) {
+    const cell = state.cells[cellId];
+    const cellHeadings = cell?.cellType === "markdown" ? notebookHeadings(cell.source) : [];
+    const first = cellHeadings[0];
+    if (first !== undefined) {
+      while ((collapsed.at(-1)?.level ?? 0) >= first.level) collapsed.pop();
+      headings.push(...cellHeadings.map((heading) => ({ ...heading, cellId })));
+    }
+    if (collapsed.length > 0)
+      hidden.set(
+        cellId,
+        collapsed.map((section) => section.cellId),
+      );
+    if (first !== undefined && cell?.folded?.includes("section")) {
+      collapsed.push({ cellId, level: first.level });
+    }
+  }
+  return { headings, hidden, headingCells: new Set(headings.map((heading) => heading.cellId)) };
+}
+
 /**
  * One open notebook in the page. It holds the cells outside React, so typing in one cell
  * re-renders that cell alone, and it sends every change to the server, which owns the file.
@@ -93,6 +133,7 @@ export function createNotebookController(transport: NotebookTransport) {
     order: [],
     cells: {},
     stale: new Map(),
+    sections: { headings: [], hidden: new Map(), headingCells: new Set() },
     activity: {},
     liveRuns: {},
     selected: null,
@@ -103,8 +144,22 @@ export function createNotebookController(transport: NotebookTransport) {
   let revision: string | undefined;
   let seenFileRevision: string | undefined;
   let queue: NotebookEdit[] = [];
+  /** The batch on its way. It goes again, unchanged and under its ID, until it is answered. */
+  let inflight: {
+    readonly requestId: string;
+    readonly edits: ReadonlyArray<NotebookEdit>;
+    readonly sources: Map<string, string>;
+  } | null = null;
   let sending: Promise<void> | null = null;
   let failing = false;
+  let refusals = 0;
+  /** Showing another writer's text and keeping this person's in a copy; no run meanwhile. */
+  let recovering: Promise<void> | null = null;
+  /** Edits the server has that it has not yet said are on disk. */
+  let unsettled = false;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The server's save problem last shown, so one problem is reported once. */
+  let shownSaveProblem: string | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let sourceTimer: ReturnType<typeof setTimeout> | undefined;
   let staleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,6 +170,8 @@ export function createNotebookController(transport: NotebookTransport) {
   let serverSources = new Map<string, string>();
   /** Cells someone else changed while this person typed. Their text stays until it is kept. */
   const refused = new Set<string>();
+  /** The latest text typed into a refused cell, which recovery keeps in a copy. */
+  const drafts = new Map<string, NotebookCellView>();
   let reloadWanted = false;
 
   const orderedCells = (state: NotebookState) =>
@@ -122,6 +179,12 @@ export function createNotebookController(transport: NotebookTransport) {
       const cell = state.cells[id];
       return cell === undefined ? [] : [cell];
     });
+  const refreshSections = () => {
+    store.setState({ sections: notebookSections(store.getState()) });
+  };
+  store.subscribe((state, previous) => {
+    if (state.order !== previous.order) refreshSections();
+  });
   const refreshStale = () => {
     store.setState({ stale: staleNotebookCells(orderedCells(store.getState())) });
   };
@@ -130,43 +193,92 @@ export function createNotebookController(transport: NotebookTransport) {
     staleTimer = setTimeout(refreshStale, STALE_DELAY_MS);
   };
 
+  const showSaveProblem = (problem: string | undefined) => {
+    if (problem !== undefined && problem !== shownSaveProblem) {
+      transport.onError(m(msg("This notebook could not be saved. Trying again.")));
+    }
+    shownSaveProblem = problem;
+  };
+  /** Asks the server to save now, and shows whether that worked. */
+  const settle = async () => {
+    clearTimeout(settleTimer);
+    if (!unsettled || sending !== null || inflight !== null || queue.length > 0) return;
+    unsettled = false;
+    const result = await transport.edit({ edits: [], durable: true });
+    if (result !== null) showSaveProblem(result.saveProblem);
+    // Asked again until the server answers that the notebook is on disk.
+    if (result === null || result.saveProblem !== undefined) {
+      unsettled = true;
+      settleTimer = setTimeout(() => void settle(), SAVE_RETRY_MS);
+    }
+  };
   const send = async () => {
-    while (queue.length > 0) {
-      const edits = queue.filter((edit) => edit._tag !== "set-source" || !refused.has(edit.cellId));
-      queue = [];
-      const sources = new Map(serverSources);
-      const sent = edits.map((edit) => {
-        if (edit._tag === "insert") sources.set(edit.cellId, notebookCodeHash(edit.source));
-        if (edit._tag !== "set-source") return edit;
-        const base = sources.get(edit.cellId);
-        sources.set(edit.cellId, notebookCodeHash(edit.source));
-        return base === undefined ? edit : { ...edit, base };
+    clearTimeout(settleTimer);
+    while (inflight !== null || queue.length > 0) {
+      if (inflight === null) {
+        const edits = queue.filter(
+          (edit) => edit._tag !== "set-source" || !refused.has(edit.cellId),
+        );
+        queue = [];
+        const sources = new Map(serverSources);
+        const sent = edits.map((edit) => {
+          if (edit._tag === "insert") sources.set(edit.cellId, notebookCodeHash(edit.source));
+          if (edit._tag !== "set-source") return edit;
+          const base = sources.get(edit.cellId);
+          sources.set(edit.cellId, notebookCodeHash(edit.source));
+          return base === undefined ? edit : { ...edit, base };
+        });
+        inflight = { requestId: randomUUID(), edits: sent, sources };
+      }
+      const result = await transport.edit({
+        edits: inflight.edits,
+        requestId: inflight.requestId,
       });
-      const result = await transport.edit(sent);
       if (result === null) {
-        // What was typed stays on screen and in the queue, and goes out when the server answers.
-        queue = [...edits, ...queue];
+        // What was typed stays on screen, and the same batch goes again when the server answers.
         if (!failing) transport.onError(m(msg("This notebook could not be saved. Trying again.")));
         failing = true;
         retryTimer = setTimeout(() => void startSending(), SAVE_RETRY_MS);
         return;
       }
       failing = false;
+      unsettled = true;
+      showSaveProblem(result.saveProblem);
       revision = result.revision;
-      serverSources = sources;
+      serverSources = inflight.sources;
+      inflight = null;
+      if (result.refused.length > 0) refusals += 1;
+      // What was typed when the server refused it is kept from now on, whatever arrives next.
+      for (const cellId of result.refused) {
+        const typed = store.getState().cells[cellId];
+        if (typed !== undefined && !drafts.has(cellId)) drafts.set(cellId, typed);
+      }
+      if ((result.expired?.length ?? 0) > 0) {
+        // An undo the server could no longer do: show the notebook as it is, and run nothing first.
+        refusals += 1;
+        revision = undefined;
+        reloadWanted = true;
+      }
       for (const cellId of result.refused) refused.add(cellId);
     }
+    settleTimer = setTimeout(() => void settle(), SETTLE_DELAY_MS);
   };
   /** Shows what the other writer did, and keeps what this person typed in a new cell below it. */
-  const keepRefusedText = async () => {
-    const before = store.getState();
+  const keepRefusedText = async (): Promise<void> => {
+    // The other writer's text is read once nothing of this person's is still on its way; what
+    // this person typed is taken as it stands just before that read, typing since included.
+    revision = undefined;
+    let before = store.getState();
+    while (!(await load())) {
+      await new Promise((resolve) => setTimeout(resolve, SAVE_RETRY_MS));
+      before = store.getState();
+    }
     const kept = [...refused].flatMap((id) => {
-      const cell = before.cells[id];
+      const cell = drafts.get(id) ?? before.cells[id];
       return cell === undefined ? [] : [{ cell, at: before.order.indexOf(id) }];
     });
     refused.clear();
-    revision = undefined;
-    await load();
+    drafts.clear();
     let editing: string | null = null;
     for (const { cell, at } of kept) {
       const { order } = store.getState();
@@ -184,9 +296,14 @@ export function createNotebookController(transport: NotebookTransport) {
   const startSending = (): Promise<void> => {
     sending ??= send().finally(() => {
       sending = null;
-      if (refused.size > 0) void keepRefusedText();
+      if (refused.size > 0 && recovering === null)
+        recovering = keepRefusedText().finally(() => {
+          recovering = null;
+        });
       else if (reloadWanted && queue.length === 0) {
         reloadWanted = false;
+        // An edit's reply may already count the change this read is for.
+        revision = undefined;
         void load();
       }
     });
@@ -196,13 +313,18 @@ export function createNotebookController(transport: NotebookTransport) {
     queue.push(edit);
     void startSending();
   };
-  /** Everything typed so far reaches the server. A run must never miss the last keystroke. */
-  const saveIsFailing = () => failing;
-  const flush = async () => {
+  /**
+   * Sends everything typed so far, and says whether the server has it all.
+   * A run must never miss the last keystroke.
+   */
+  const flush = async (): Promise<boolean> => {
     clearTimeout(sourceTimer);
     clearTimeout(retryTimer);
+    const refusedBefore = refusals;
     await startSending();
-    while (queue.length > 0 && !saveIsFailing()) await startSending();
+    while ((queue.length > 0 || inflight !== null) && !failing) await startSending();
+    if (recovering !== null) return false;
+    return !failing && queue.length === 0 && inflight === null && refusals === refusedBefore;
   };
 
   const update = (cellId: string, change: (cell: NotebookCellView) => NotebookCellView) => {
@@ -211,24 +333,28 @@ export function createNotebookController(transport: NotebookTransport) {
     if (cell !== undefined) store.setState({ cells: { ...state.cells, [cellId]: change(cell) } });
   };
 
-  async function load() {
+  /** Reads the notebook, unless text is on its way; says whether the page now shows the file. */
+  async function load(): Promise<boolean> {
     // Text still on its way must not be replaced, so the newer file is read once it has gone.
-    const typing = () => queue.length > 0 || sending !== null;
+    const typing = () => queue.length > 0 || inflight !== null || sending !== null;
     if (typing()) {
       reloadWanted = true;
-      return;
+      return false;
     }
     const view = await transport.read(revision);
     if (view === "failed") {
       store.setState((state) => (state.order.length === 0 ? { status: "failed" } : state));
-      return;
+      return false;
     }
-    if (view === null) return;
+    if (view === null) return true;
     if (typing()) {
       reloadWanted = true;
-      return;
+      return false;
     }
+    showSaveProblem(view.saveProblem);
     revision = view.revision;
+    // Outputs loaded for the cells this replaces may belong to another version of them.
+    outputs.clear();
     serverSources = new Map(view.cells.map((cell) => [cell.id, notebookCodeHash(cell.source)]));
     store.setState({
       status: "ready",
@@ -237,6 +363,7 @@ export function createNotebookController(transport: NotebookTransport) {
       cells: Object.fromEntries(view.cells.map((cell) => [cell.id, cell])),
     });
     refreshStale();
+    return true;
   }
 
   const insert = (position: number, cellType: NotebookCellType, source = ""): string => {
@@ -264,9 +391,47 @@ export function createNotebookController(transport: NotebookTransport) {
       void load();
     },
     flush,
+    reload: () => {
+      void load();
+    },
     insert,
+    setParameterCell: (cellId: string, enabled: boolean) => {
+      const state = store.getState();
+      store.setState({
+        cells: Object.fromEntries(
+          state.order.flatMap((id) => {
+            const cell = state.cells[id];
+            if (cell === undefined) return [];
+            if (id === cellId || (enabled && cell.parameterCell)) {
+              return [[id, { ...cell, parameterCell: id === cellId && enabled }]];
+            }
+            return [[id, cell]];
+          }),
+        ),
+      });
+      enqueue({ _tag: "set-parameters", cellId, enabled });
+      revision = undefined;
+      reloadWanted = true;
+    },
+    setFold: (cellId: string, part: NotebookFold, folded: boolean) => {
+      update(cellId, (cell) => ({
+        ...cell,
+        folded: [
+          ...(cell.folded ?? []).filter((entry) => entry !== part),
+          ...(folded ? [part] : []),
+        ],
+      }));
+      if (part === "section") refreshSections();
+      if (part === "source" && folded && store.getState().editing === cellId) {
+        store.setState({ editing: null });
+      }
+      enqueue({ _tag: "set-fold", cellId, part, folded });
+    },
     setSource: (cellId: string, source: string) => {
       update(cellId, (cell) => ({ ...cell, source }));
+      const typed = store.getState().cells[cellId];
+      if (refused.has(cellId) && typed !== undefined) drafts.set(cellId, typed);
+      if (store.getState().cells[cellId]?.cellType === "markdown") refreshSections();
       const last = queue.at(-1);
       if (last?._tag === "set-source" && last.cellId === cellId) {
         queue[queue.length - 1] = { ...last, source };
@@ -288,6 +453,10 @@ export function createNotebookController(transport: NotebookTransport) {
       enqueue({ _tag: "delete", cellId });
       scheduleStale();
       return { after: state.order[at - 1] ?? null };
+    },
+    /** Undo can no longer bring this cell back, so its copy here goes. */
+    forgetRemoved: (cellId: string) => {
+      removed.delete(cellId);
     },
     restore: (cellId: string, after: string | null) => {
       const cell = removed.get(cellId);
@@ -314,6 +483,7 @@ export function createNotebookController(transport: NotebookTransport) {
     },
     convert: (cellId: string, cellType: NotebookCellType) => {
       update(cellId, (cell) => ({ ...emptyCell(cell.id, cellType, cell.source) }));
+      refreshSections();
       enqueue({ _tag: "convert", cellId, cellType });
       scheduleStale();
     },
@@ -332,20 +502,32 @@ export function createNotebookController(transport: NotebookTransport) {
     /** A large stored output, once, the first time its cell comes on screen. */
     readOutput: (cellId: string, index: number, output: NotebookOutputView) => {
       if (output.json !== null) return Promise.resolve<string | null>(output.json);
-      const run = store.getState().cells[cellId]?.run?.execution ?? "";
-      const key = `${cellId}:${index}:${run}`;
+      const key = `${cellId}:${index}:${output.token ?? ""}`;
       const existing = outputs.get(key);
       if (existing !== undefined) return existing;
-      const loading = transport.readOutput(cellId, index).then((result) => result?.json ?? null);
+      const loading = transport.readOutput(cellId, index, output.token).then((result) => {
+        // A failed read is tried again next time; outputs that changed are shown from a fresh read.
+        if (result?.json == null) outputs.delete(key);
+        if (result?.stale) {
+          revision = undefined;
+          void load();
+        }
+        return result?.json ?? null;
+      });
       outputs.set(key, loading);
+      // Only recent outputs stay decoded; one scrolled back to is read again.
+      if (outputs.size > MAX_LOADED_OUTPUTS) outputs.delete(outputs.keys().next().value ?? "");
       return loading;
     },
     /** Each submitted cell durably expects its run, so its result survives a reload. */
     expectRuns: (runs: ReadonlyArray<{ readonly cellId: string; readonly execution: string }>) => {
+      const cells = { ...store.getState().cells };
       for (const { cellId, execution } of runs) {
-        update(cellId, (cell) => ({ ...cell, pendingExecution: execution }));
+        const cell = cells[cellId];
+        if (cell !== undefined) cells[cellId] = { ...cell, pendingExecution: execution };
         queue.push({ _tag: "expect-run", cellId, execution });
       }
+      store.setState({ cells });
       void startSending();
     },
     /** Follows the session's runs: what each cell is doing, and results it has not recorded. */
@@ -355,8 +537,24 @@ export function createNotebookController(transport: NotebookTransport) {
       const liveRuns: Record<string, NotebookLiveRun> = {};
       const toRecord: Array<{ cellId: string; execution: ComputeExecutionRecord }> = [];
       for (const [cellId, execution] of runs) {
-        const { executionId, sessionId } = execution.request;
-        liveRuns[cellId] = { sessionId, executionId };
+        const { executionId, sessionId, generation } = execution.request;
+        const writtenFiles = execution.result?.writtenFiles;
+        const changedFiles = execution.result?.changedFiles;
+        const prior = state.liveRuns[cellId];
+        liveRuns[cellId] =
+          prior?.executionId === executionId &&
+          prior.sessionId === sessionId &&
+          prior.generation === generation &&
+          prior.writtenFiles === writtenFiles &&
+          prior.changedFiles === changedFiles
+            ? prior
+            : {
+                sessionId,
+                executionId,
+                generation,
+                ...(writtenFiles === undefined ? {} : { writtenFiles }),
+                ...(changedFiles === undefined ? {} : { changedFiles }),
+              };
         const status = execution.result?.status;
         if (status === undefined || status === "queued" || status === "submitting") {
           activity[cellId] = "queued";
@@ -420,7 +618,7 @@ export function createNotebookController(transport: NotebookTransport) {
     stopEditing: () => store.setState({ editing: null }),
     dispose: () => {
       clearTimeout(staleTimer);
-      void flush();
+      void flush().then(settle);
     },
   };
   return controller;

@@ -1,7 +1,14 @@
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
-import { ComputeSessionId, type ComputeSessionRecord } from "@t3tools/contracts";
+import { LoaderCircle, Play } from "lucide-react";
+import {
+  ComputeExecutionId,
+  ComputeSessionId,
+  type ComputeExecutionRecord,
+  type ComputeSessionRecord,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
@@ -9,12 +16,113 @@ import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { managedDependencyRuntime } from "./computeDependencyRecovery";
+import { reportComputeFailure } from "./ComputeSessionControls";
 import { replaceComputeContextSession } from "./computeContextCoordinator";
 import {
   getComputeContext,
   useComputeContextStore,
   type ComputeContextId,
 } from "./computeContextStore";
+
+/** Submits a failed run's own code again in its session; the caller follows it like any run. */
+export function useComputeRunAgain(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly onSubmitted: (executionId: ComputeExecutionId) => void;
+}) {
+  const gt = useGT();
+  const submit = useAtomCommand(computeEnvironment.submitExecution, { reportFailure: false });
+  return async (session: ComputeSessionRecord, execution: ComputeExecutionRecord) => {
+    const executionId = ComputeExecutionId.make(randomUUID());
+    const result = await submit({
+      environmentId: input.environmentId,
+      input: {
+        cwd: input.cwd,
+        sessionId: session.sessionId,
+        executionId,
+        expectedGeneration: session.generation,
+        code: execution.request.code,
+        source: execution.request.source,
+      },
+    });
+    if (result._tag === "Failure") return reportComputeFailure(gt("Unable to run again"), result);
+    input.onSubmitted(executionId);
+  };
+}
+
+/** What an error row can do about a missing dependency, given by the surface that owns the run. */
+export interface ComputeDependencyRecoveryPlace {
+  readonly contextId: ComputeContextId;
+  readonly onSettled: () => void;
+  /** Runs the failed code again in the same session: the run's code, or a notebook's cell. */
+  readonly runAgain?: (() => void) | undefined;
+  /** The same code has since run successfully, so there is nothing left to fix. */
+  readonly resolved?: boolean | undefined;
+}
+
+/**
+ * Adds a reviewed package beside the session's Python, never into it, then offers to run the
+ * failed code again in the same place. The session keeps its variables, so nothing restarts.
+ */
+export function ComputeAddPackageAction(props: {
+  readonly contextId: ComputeContextId;
+  readonly sessionId: ComputeSessionId;
+  readonly distribution: string;
+  readonly runAgain?: (() => void) | undefined;
+}) {
+  const gt = useGT();
+  const [state, setState] = useState<"idle" | "adding" | "added" | "ran">("idle");
+  const addLibrary = useAtomCommand(computeEnvironment.addPythonLibrary, { reportFailure: false });
+
+  const add = async () => {
+    const owner = getComputeContext(props.contextId);
+    if (!owner || state !== "idle") return;
+    setState("adding");
+    const result = await addLibrary({
+      environmentId: owner.environmentId,
+      input: { cwd: owner.cwd, sessionId: props.sessionId, distribution: props.distribution },
+    });
+    if (result._tag === "Success") return setState("added");
+    setState("idle");
+    const cause = squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "error",
+      title: gt("Unable to add {name}", { name: props.distribution }),
+      description:
+        cause instanceof Error ? cause.message : gt("Check your connection and try again."),
+    });
+  };
+
+  if (state === "ran") return null;
+  if (state === "added")
+    return props.runAgain === undefined ? (
+      <span className="text-[11px] text-muted-foreground">
+        <T>
+          Added <Var>{props.distribution}</Var>. Run again to use it.
+        </T>
+      </span>
+    ) : (
+      <Button
+        size="xs"
+        variant="outline"
+        onClick={() => {
+          setState("ran");
+          props.runAgain?.();
+        }}
+      >
+        <Play />
+        <T>Run again</T>
+      </Button>
+    );
+  return (
+    <Button size="xs" variant="outline" disabled={state === "adding"} onClick={() => void add()}>
+      {state === "adding" ? <LoaderCircle className="animate-spin" /> : null}
+      <T>
+        Add <Var>{props.distribution}</Var>
+      </T>
+    </Button>
+  );
+}
 
 /** One click replaces this tab's session with managed Python; never an installer or a retry. */
 export function ComputeDependencyRecoveryAction(props: {
