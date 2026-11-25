@@ -104,6 +104,8 @@ export const make = Effect.gen(function* () {
                 userId: input.userId,
                 environmentId,
                 managedEndpointNamespace: config.managedEndpointNamespace,
+                // The account is going, so its hosts' connectors are dropped rather than waited out.
+                forceDisconnect: true,
               }).pipe(
                 Effect.provideContext(unlinkServices),
                 Effect.mapError(fail("unlink-environment")),
