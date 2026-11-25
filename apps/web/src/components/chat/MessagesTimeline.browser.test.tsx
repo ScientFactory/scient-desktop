@@ -893,10 +893,12 @@ describe("MessagesTimeline messages", () => {
     // opening is observed from the child's positioning receipt instead.
     const base = baseProps();
     const childPositioned = Promise.withResolvers<void>();
+    const parentPositioned = Promise.withResolvers<void>();
     const props = {
       ...base,
       onPositionedThreadKeyChange: (key: string | null) => {
         if (key === base.routeThreadKey) childPositioned.resolve();
+        if (key === `${base.routeThreadKey}-parent`) parentPositioned.resolve();
       },
     };
     // SCIENT-FORK:END
@@ -925,6 +927,24 @@ describe("MessagesTimeline messages", () => {
     viewport.addEventListener("scroll", () =>
       shortfalls.push(Math.round(end() - viewport.scrollTop)),
     );
+    // SCIENT-FORK:START — until the parent is positioned, every committed change and every scroll:
+    // once the parent's rows are shown the timeline is transparent or at its end, never showing
+    // the parent's top first.
+    const transparent = () => {
+      for (let node: Element | null = viewport; node; node = node.parentElement)
+        if (getComputedStyle(node).opacity === "0") return true;
+      return false;
+    };
+    const shownAwayFromEnd: number[] = [];
+    const sample = () => {
+      if (!screen.container.textContent?.includes("Parent turn") || transparent()) return;
+      const shortfall = Math.round(end() - viewport.scrollTop);
+      if (shortfall > 1) shownAwayFromEnd.push(shortfall);
+    };
+    const commits = new MutationObserver(sample);
+    commits.observe(screen.container, { subtree: true, childList: true, attributes: true });
+    viewport.addEventListener("scroll", sample);
+    // SCIENT-FORK:END
 
     // A working parent's footer (queued turns, its subagents) is taller than the child's.
     await screen.rerender(
@@ -946,6 +966,13 @@ describe("MessagesTimeline messages", () => {
     });
 
     expect(shortfalls).toEqual(shortfalls.map(() => 0));
+    // SCIENT-FORK:START
+    await parentPositioned.promise;
+    await vi.waitFor(() => expect(transparent()).toBe(false));
+    commits.disconnect();
+    viewport.removeEventListener("scroll", sample);
+    expect(shownAwayFromEnd).toEqual([]);
+    // SCIENT-FORK:END
   });
 
   it("puts rows back in item order soon after a continuous scroll stops", async () => {

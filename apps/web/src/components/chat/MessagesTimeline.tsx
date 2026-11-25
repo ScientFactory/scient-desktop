@@ -187,6 +187,9 @@ function timelineListStateFor(identity: string): {
   };
 }
 
+// SCIENT-FORK: the longest an opening at the end stays hidden waiting for its restore
+// (about the restore's own settle budget, useTimelinePositionRestore.ts).
+const OPENING_REVEAL_FALLBACK_MS = 1000;
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
@@ -1042,6 +1045,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows.length > 0 &&
     !positionHistoryLoading &&
     !waitingForReadingHistory;
+  // An opening at the end scrolls a frame or more after the new rows commit, so the list would
+  // first paint at the previous thread's offset (usually its top). It stays transparent until
+  // positioned (still laid out, readable and focusable, like a fork landing); a restore that never
+  // reports (no list or viewport yet) is shown anyway.
+  const openingAtEnd =
+    restoreReady &&
+    citationRequest === null &&
+    !(anchorMessageId !== null && !rememberedPosition) &&
+    !rememberedPosition?.followingPromptId &&
+    restoreRowIndex < 0;
+  const [openingShownKey, setOpeningShownKey] = useState<string | null>(null);
+  const hiddenForOpening = openingAtEnd && openingShownKey !== listIdentityKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bounds how long an opening at the end stays hidden if its restore never reports positioned
+  useEffect(() => {
+    if (!hiddenForOpening) return;
+    const timer = window.setTimeout(
+      () => setOpeningShownKey(listIdentityKey),
+      OPENING_REVEAL_FALLBACK_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [hiddenForOpening, listIdentityKey]);
   // SCIENT-FORK:END
 
   // Z: syncs LegendList's scroll position with which thread it shows. The list
@@ -1981,7 +2005,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {activityAnnouncer}
       <MarkdownFindContext value={findActive}>
         <TimelineRowActivityCtx value={activityState}>
-          <div className="scient-reading-ui h-full min-h-0">
+          <div
+            // SCIENT-FORK: transparent until an opening at the end is positioned.
+            className={cn("scient-reading-ui h-full min-h-0", hiddenForOpening && "opacity-0")}
+            data-timeline-opening={hiddenForOpening ? "positioning" : undefined}
+          >
             <TooltipScrollDismissArea
               ref={attachTimelineViewportElement}
               className="relative h-full min-h-0"
