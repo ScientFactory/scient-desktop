@@ -1268,6 +1268,8 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
       ...start,
       "read-tree",
       "ls-files",
+      // SCIENT-FORK: Scient's size limit reads what changed first.
+      ...SCIENT_SIZE_CHECK,
       "add",
       "write-tree",
       ...end,
@@ -1278,6 +1280,8 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
       "diff-tree",
       "check-ignore",
       "cat-file",
+      // SCIENT-FORK: Scient's size limit reads what changed first.
+      ...SCIENT_SIZE_CHECK,
       "add",
       "write-tree",
       "diff-tree",
@@ -2636,7 +2640,7 @@ it.effect.each(["missing", "invalid"] as const)(
 );
 
 // SCIENT-FORK: the changed-file size check.
-const SCIENT_SIZE_CHECK = ["rev-parse", "status"];
+const SCIENT_SIZE_CHECK = ["status"];
 
 const captureRecordingGitCommands = Effect.fn("test.captureRecordingGitCommands")(function* (
   cwd: string,
@@ -2745,7 +2749,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "rev-parse",
         "read-tree",
         "ls-files",
-        // SCIENT-FORK:START
+        // SCIENT-FORK:START — without a parsed top level the size check reads it itself.
+        "rev-parse",
         ...SCIENT_SIZE_CHECK,
         // SCIENT-FORK:END
         "add",

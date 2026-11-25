@@ -1270,7 +1270,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   });
   const captureIndexes = CheckpointCaptureIndex.make(execute, fileSystem, path);
 
-  type CaptureInput = VcsDriver.VcsCaptureCheckpointInput & { readonly rebuildIndex?: true };
+  type CaptureInput = VcsDriver.VcsCaptureCheckpointInput & {
+    readonly rebuildIndex?: true;
+    // SCIENT-FORK: a rebuild after a stale index keeps the first attempt's deadline.
+    readonly captureStartedAt?: number;
+  };
   // Annotated: the body captures submodules through `checkpoints`, which closes the inference loop.
   const capture: {
     readonly once: (
@@ -1282,8 +1286,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   } = {
     once: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input: CaptureInput) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
-      // SCIENT-FORK: submodule captures below share this capture's deadline.
-      const captureStartedAt = yield* Clock.currentTimeMillis;
+      // SCIENT-FORK: submodule captures below, and a rebuild, share this capture's deadline.
+      const captureStartedAt = input.captureStartedAt ?? (yield* Clock.currentTimeMillis);
       // git add rejects a pathspec naming an ignored folder, and skips that folder anyway.
       const exclusionPathspecs = excludedPathspecs(
         input.excludePaths === undefined || input.excludePaths.length === 0
@@ -1706,8 +1710,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        // SCIENT-FORK: very large changed files stay out of checkpoints.
-        yield* checkCheckpointSize(input.cwd, commitEnv);
+        // SCIENT-FORK:START — very large changed files stay out of checkpoints. A kept index Git
+        // cannot read is stale, as when staging fails: the capture rebuilds it.
+        yield* checkCheckpointSize(input.cwd, commitEnv, topLevel).pipe(
+          Effect.catchTags({
+            VcsProcessExitError: (error) =>
+              previousTree === undefined
+                ? Effect.fail(error)
+                : Effect.fail(new CheckpointCaptureIndex.StaleCaptureIndex()),
+          }),
+        );
+        // SCIENT-FORK:END
 
         const stageFiles = (exclusions: ReadonlyArray<string>, ignoreErrors = false) =>
           execute({
@@ -2145,7 +2158,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }).pipe(
         Effect.ensuring(cleanupTempIndex),
         // SCIENT-FORK: one deadline for the whole capture.
-        boundCheckpointCapture(operation, input.cwd),
+        boundCheckpointCapture(
+          operation,
+          input.cwd,
+          remainingCheckpointCaptureMs(captureStartedAt, yield* Clock.currentTimeMillis),
+        ),
       );
 
       // The tree records only each submodule's HEAD, so submodules keep their own ref.
@@ -2222,13 +2239,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     // A kept index that turns out stale costs one more capture, rebuilt as before.
     captureCheckpoint: (input) =>
-      capture.once(input).pipe(
-        Effect.catchTags({
-          StaleCaptureIndex: () => capture.once({ ...input, rebuildIndex: true }),
-        }),
-        // Without a kept index nothing can be stale.
-        Effect.catchTags({ StaleCaptureIndex: (error) => Effect.die(error) }),
+      // SCIENT-FORK:START — both attempts share one capture deadline.
+      Effect.flatMap(Clock.currentTimeMillis, (captureStartedAt) =>
+        capture.once({ ...input, captureStartedAt }).pipe(
+          Effect.catchTags({
+            StaleCaptureIndex: () =>
+              capture.once({ ...input, rebuildIndex: true, captureStartedAt }),
+          }),
+          // Without a kept index nothing can be stale.
+          Effect.catchTags({ StaleCaptureIndex: (error) => Effect.die(error) }),
+        ),
       ),
+    // SCIENT-FORK:END
 
     resolveCleanHead: Effect.fn("GitVcsDriver.checkpoints.resolveCleanHead")(function* (cwd) {
       // One status reads both, so a moving HEAD cannot pair one commit with another's cleanliness.

@@ -273,12 +273,10 @@ const encodeCanvas: EncodeCanvas = async (canvas, colorSpace, quality, mimeType)
   return encodeCanvasOnThisThread(canvas, colorSpace, quality, mimeType);
 };
 
-const COMPOSER_THUMBNAIL_SIZES = {
-  square: { width: 256, height: 256 },
-  // The 208x112 snapshot tile at retina density and 2x app zoom.
-  snapshot: { width: 832, height: 448 },
-} as const;
-export type ComposerImageThumbnailMode = keyof typeof COMPOSER_THUMBNAIL_SIZES;
+// Square tiles are imageCanvas's renderThumbnail; this bounds the 208x112 snapshot tile at
+// retina density and 2x app zoom.
+const SNAPSHOT_THUMBNAIL_SIZE = { width: 832, height: 448 } as const;
+export type ComposerImageThumbnailMode = "square" | "snapshot";
 const composerThumbnails = new WeakMap<
   File,
   Partial<Record<ComposerImageThumbnailMode, Promise<string | null>>>
@@ -390,7 +388,7 @@ async function renderComposerImageThumbnailFromBitmap(
       return blob ? await readFileAsDataUrl(blob) : null;
     }
     if (bitmap.width <= 0 || bitmap.height <= 0) return null;
-    const bounds = COMPOSER_THUMBNAIL_SIZES[mode];
+    const bounds = SNAPSHOT_THUMBNAIL_SIZE;
     const scale = Math.min(1, bounds.width / bitmap.width, bounds.height / bitmap.height);
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));

@@ -1788,6 +1788,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           "config",
           "diff-tree",
           "cat-file",
+          // SCIENT-FORK: Scient's size limit reads what changed first.
+          "status",
           "add",
           "write-tree",
           "diff-tree",
