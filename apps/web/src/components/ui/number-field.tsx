@@ -11,7 +11,7 @@ export function NumberField({
   ...props
 }: NumberFieldPrimitive.Root.Props & {
   size?: "sm" | "default" | "lg";
-  /** `compact`: a narrow boxed number between two borderless minus and plus buttons, in one row. */
+  /** `compact`: a narrow boxed number between two borderless minus and plus buttons, in one row, styled like toolbar buttons. */
   variant?: "default" | "compact";
 }): React.ReactElement {
   const generatedId = React.useId();
@@ -54,7 +54,7 @@ export function NumberFieldDecrement({
   return (
     <NumberFieldPrimitive.Decrement
       className={cn(
-        "relative flex shrink-0 cursor-pointer items-center justify-center in-data-[variant=compact]:rounded-md in-data-[variant=compact]:px-2 in-data-[variant=compact]:py-1.5 rounded-s-[calc(var(--control-radius)-1px)] in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:bg-accent",
+        "relative flex shrink-0 cursor-pointer items-center justify-center in-data-[variant=compact]:h-6.5 in-data-[variant=compact]:w-5 in-data-[variant=compact]:rounded-md in-data-[variant=compact]:p-0! in-data-[variant=compact]:text-muted-foreground in-data-[variant=compact]:hover:text-foreground in-data-[variant=compact]:[&_svg]:size-3! rounded-s-[calc(var(--control-radius)-1px)] in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:bg-accent",
         className,
       )}
       data-slot="number-field-decrement"
@@ -72,7 +72,7 @@ export function NumberFieldIncrement({
   return (
     <NumberFieldPrimitive.Increment
       className={cn(
-        "relative flex shrink-0 cursor-pointer items-center justify-center in-data-[variant=compact]:rounded-md in-data-[variant=compact]:px-2 in-data-[variant=compact]:py-1.5 rounded-e-[calc(var(--control-radius)-1px)] in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:bg-accent",
+        "relative flex shrink-0 cursor-pointer items-center justify-center in-data-[variant=compact]:h-6.5 in-data-[variant=compact]:w-5 in-data-[variant=compact]:rounded-md in-data-[variant=compact]:p-0! in-data-[variant=compact]:text-muted-foreground in-data-[variant=compact]:hover:text-foreground in-data-[variant=compact]:[&_svg]:size-3! rounded-e-[calc(var(--control-radius)-1px)] in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:bg-accent",
         className,
       )}
       data-slot="number-field-increment"
@@ -90,7 +90,7 @@ export function NumberFieldInput({
   return (
     <NumberFieldPrimitive.Input
       className={cn(
-        "in-data-[variant=compact]:w-12 in-data-[variant=compact]:grow-0 in-data-[variant=compact]:rounded-md in-data-[variant=compact]:border in-data-[variant=compact]:border-input in-data-[variant=compact]:px-1 h-8.5 in-data-[size=lg]:h-9.5 in-data-[size=sm]:h-7.5 w-full min-w-0 grow bg-transparent in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] text-center tabular-nums in-data-[size=lg]:leading-9.5 in-data-[size=sm]:leading-7.5 leading-8.5 outline-none [transition:background-color_5000000s_ease-in-out_0s] sm:h-7.5 sm:in-data-[size=lg]:h-8.5 sm:in-data-[size=sm]:h-6.5 sm:in-data-[size=lg]:leading-8.5 sm:in-data-[size=sm]:leading-8.5 sm:leading-7.5",
+        "in-data-[variant=compact]:w-10 in-data-[variant=compact]:grow-0 in-data-[variant=compact]:rounded-md in-data-[variant=compact]:border in-data-[variant=compact]:border-input in-data-[variant=compact]:px-1 h-8.5 in-data-[size=lg]:h-9.5 in-data-[size=sm]:h-7.5 w-full min-w-0 grow bg-transparent in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] text-center tabular-nums in-data-[size=lg]:leading-9.5 in-data-[size=sm]:leading-7.5 leading-8.5 outline-none [transition:background-color_5000000s_ease-in-out_0s] sm:h-7.5 sm:in-data-[size=lg]:h-8.5 sm:in-data-[size=sm]:h-6.5 sm:in-data-[size=lg]:leading-8.5 sm:in-data-[size=sm]:leading-8.5 sm:leading-7.5",
         className,
       )}
       data-slot="number-field-input"

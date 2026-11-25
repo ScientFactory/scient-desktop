@@ -542,6 +542,68 @@ describe("formatting menu focus", () => {
     await stillOpen();
   });
 
+  it("keeps the selection toolbar's size panel open after a font choice and after Enter in the size field", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const { view, controller } = await fixture(_fixture, "Say hello now.\n");
+    await act(() =>
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 5, 10))),
+    );
+    const sizeButton = await vi.waitFor(() => {
+      const button = document.body.querySelector<HTMLButtonElement>(
+        '[role="toolbar"][aria-label="Text formatting"] button[aria-label="Font and size"]',
+      );
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    await act(() => sizeButton.click());
+    const panelButton = await vi.waitFor(() => {
+      const button = [
+        ...document.body.querySelectorAll<HTMLButtonElement>("button[aria-expanded]"),
+      ].find((candidate) => candidate.textContent?.includes("Default font"));
+      expect(button).toBeDefined();
+      return button!;
+    });
+    await act(() => panelButton.click());
+    const georgia = await vi.waitFor(() => {
+      const option = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+        (candidate) => candidate.textContent?.startsWith("Georgia"),
+      );
+      expect(option).toBeDefined();
+      return option!;
+    });
+    await act(() => georgia.click());
+    await vi.waitFor(() =>
+      expect(controller.session.session.draftSource).toBe(
+        `Say <span style="font-family:'Georgia'">hello</span> now.\n`,
+      ),
+    );
+    // The editor never takes focus back, so the panel and its font list stay open.
+    expect(view.hasFocus()).toBe(false);
+    expect(document.body.contains(georgia)).toBe(true);
+    expect(georgia.closest("[data-closed]")).toBeNull();
+
+    const input = document.body.querySelector<HTMLInputElement>("[data-font-size-input]")!;
+    // The popup sits outside the test viewport: the value goes through React's input setter,
+    // then Enter is sent to the field as the browser would.
+    await act(() => {
+      input.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "20");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() =>
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(controller.session.session.draftSource).toContain("font-size:20pt"),
+    );
+    expect(document.body.contains(input)).toBe(true);
+    expect(input.closest("[data-closed]")).toBeNull();
+  });
+
   it("shows understated LTR shortcut hints without changing action names", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

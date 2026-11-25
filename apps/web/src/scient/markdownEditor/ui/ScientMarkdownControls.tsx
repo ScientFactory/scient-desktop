@@ -123,7 +123,6 @@ import {
   DockOverflowRow,
   MenuRow,
   dockButtonClass,
-  DockPanelCloseContext,
   type DockGroup,
 } from "../../writing/dockChrome";
 import { ScientFindBar } from "../../writing/ScientFindBar";
@@ -375,7 +374,7 @@ function FormattingMenuItems({
         aria-keyshortcuts={scientMarkdownShortcut("clearFormatting").ariaKeyShortcuts}
       >
         <MenuRow
-          icon={<RemoveFormatting />}
+          icon={<RemoveFormatting className="size-4 text-muted-foreground" />}
           label={gt("Clear formatting")}
           shortcut={scientMarkdownShortcut("clearFormatting")}
         />
@@ -399,9 +398,9 @@ function MarkdownFontControls({
       familyMixed={snapshot.fontFamilyMixed}
       sizeMixed={snapshot.fontSizeMixed}
       disabled={!snapshot.editable}
-      onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
+      onFamily={(family) => controller.applyFontCommand(`font-family-${family ?? "default"}`)}
       onSize={(size) =>
-        controller.execute(size === null ? "font-size-default" : `font-size-${size}`)
+        controller.applyFontCommand(size === null ? "font-size-default" : `font-size-${size}`)
       }
       onStep={(steps) => controller.stepFontSize(steps)}
     />
@@ -426,10 +425,6 @@ function FontSizeButton({
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the toolbar freeze if the button unmounts while its panel is open
   useEffect(() => () => onOpenChange(false), [onOpenChange]);
-  const close = () => {
-    setOpen(false);
-    controller.focus();
-  };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -444,9 +439,7 @@ function FontSizeButton({
         }
       />
       <PopoverPopup side="bottom" padding="none" data-keybinding-capture="">
-        <DockPanelCloseContext value={close}>
-          <MarkdownFontControls controller={controller} snapshot={snapshot} />
-        </DockPanelCloseContext>
+        <MarkdownFontControls controller={controller} snapshot={snapshot} />
       </PopoverPopup>
     </Popover>
   );

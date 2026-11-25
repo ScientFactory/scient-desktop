@@ -97,6 +97,7 @@ function caretWord(editor: Editor): { from: number; to: number } | null {
 /**
  * Runs a font change on the selection; at a caret it covers the word around it, as in Word,
  * and the caret stays where it was. Between words the change stays with the typing marks.
+ * Focus is left where it is, so the Font / Size panel stays open after a choice.
  */
 function runFontChange(
   editor: Editor,
@@ -104,7 +105,7 @@ function runFontChange(
 ): boolean {
   const { selection } = editor.state;
   const word = caretWord(editor);
-  const chain = editor.chain().focus();
+  const chain = editor.chain();
   if (word === null) return change(chain).run();
   return change(chain.setTextSelection(word)).setTextSelection(selection.from).run();
 }
@@ -152,7 +153,6 @@ export function stepLatexFontSize(
   const sizeMarks = ["latexFontSize", ...NAMED_SIZES.map((name) => `latexSize_${name}`)];
   return editor
     .chain()
-    .focus()
     .command(({ tr }) => {
       for (const range of ranges) {
         const runs: FontRun[] = [];

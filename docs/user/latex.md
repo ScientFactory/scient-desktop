@@ -226,8 +226,8 @@ creating another.
 
 In Visual, **Text > Font / Size** works as in the Markdown editor: a size in
 points from 1 to 100 (field, minus and plus buttons) and a font from a
-searchable list. At a caret the change applies to the word under it. Enter in the
-size field closes the panel; a selection that mixes sizes or fonts leaves the
+searchable list. At a caret the change applies to the word under it. The panel
+stays open after a choice, so another can be tried; a selection that mixes sizes or fonts leaves the
 field empty, and the buttons move each word by 1 pt. A click in the size field
 lists common sizes; **Cmd+Shift+.** and **Cmd+Shift+,** (Ctrl on Windows and Linux,
 keys named by their position on a US keyboard) step the size as the buttons do. Unlike Markdown,
