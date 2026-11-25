@@ -331,9 +331,10 @@ jobs:
         with:
           path: ${{ runner.temp }}/scient-speech-probe
           key: speech-probe-v1-${{ hashFiles('apps/server/src/speech/catalog.json', 'apps/server/src/speech-packaging-probe.ts') }}
-      # The background install's own limit, counted from when it started: it is normally done
-      # before this step begins. If it is not done in 10 minutes, or its process is gone without
-      # a result, this fails with the stage it reached and what it was running. No retry.
+      # A bound on waiting for the background install, not a time limit on the install: it is
+      # normally done before this step begins, and a result it has written is accepted whenever
+      # it finished. If there is still no result 10 minutes after it started, or its process is
+      # gone without one, this fails with the stage it reached and what it was running. No retry.
       - name: Finish installing 0.6.21
         shell: pwsh
         timeout-minutes: 11
