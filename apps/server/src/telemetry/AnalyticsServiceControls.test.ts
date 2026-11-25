@@ -78,16 +78,16 @@ it.layer(NodeServices.layer)("ScientAnalytics controls", (it) => {
       factory.mockReset().mockImplementation(() => active.runtime);
       const { analytics: service } = yield* ScientAnalytics.make;
       const owners = [
-        { source: "openai", ownerId: "a".repeat(64) },
-        { source: "claude", ownerId: "b".repeat(64) },
+        { source: "connect", ownerId: "a".repeat(64) },
+        { source: "device", ownerId: "b".repeat(64) },
       ] as const;
       yield* service.recordOwners(owners, "server");
       yield* service.recordOwners(owners, "server");
       assert.deepEqual(
         active.properties.filter((_, index) => active.recorded[index] === "install.owner_observed"),
         [
-          { ownerSource: "openai", ownerId: "a".repeat(64), observedBy: "server" },
-          { ownerSource: "claude", ownerId: "b".repeat(64), observedBy: "server" },
+          { ownerSource: "connect", ownerId: "a".repeat(64), observedBy: "server" },
+          { ownerSource: "device", ownerId: "b".repeat(64), observedBy: "server" },
         ],
       );
     }).pipe(Effect.provide(testLayer())),

@@ -191,6 +191,15 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
+// A floating preview over the lower half of a narrow chat covers the timeline's last rows,
+// so the end must scroll them above it as it does for the composer.
+function resolveTimelineEndInset(composerInset: number, canvas: ReturnType<typeof useChatCanvas>) {
+  const frame = canvas?.layout.overlapsChat ? canvas.layout.frame : null;
+  const height = canvas?.container.height ?? 0;
+  if (!frame || frame.y + frame.height / 2 < height / 2) return composerInset;
+  return Math.max(composerInset, Math.ceil(height - frame.y));
+}
+
 function TimelineListFooter({
   composerInset,
   onGrow,
@@ -478,7 +487,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
-  contentInsetEndAdjustment,
+  contentInsetEndAdjustment: composerInsetEnd,
   // SCIENT-FORK:START — placement in flight, the send follow and releasing unused reserved room.
   timelinePositioningPending = false,
   readingFollowPromptId = null,
@@ -506,6 +515,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:END
 }: MessagesTimelineProps) {
   const gt = useGT();
+  const canvas = useChatCanvas();
+  const contentInsetEndAdjustment = resolveTimelineEndInset(composerInsetEnd, canvas);
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   // Find open at the opening is part of the snapshot: opening find later
@@ -1697,7 +1708,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     </>
   );
 
-  const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
   // SCIENT-FORK:START — the answer follow and idle end keeping (at the reading end, measured now:
   // the bookkeeping's record trails a scroll by a frame) own the view where they apply. A width

@@ -28,9 +28,6 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../../hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn() }),
 }));
-vi.mock("gt-react", async (importOriginal) =>
-  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
-);
 
 import { ScientAgentAccounts } from "./ScientAgentAccounts";
 

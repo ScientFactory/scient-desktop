@@ -57,6 +57,8 @@ const makeCatalog = (state: CatalogState) =>
             },
       ),
     resolve: () => Effect.die("unused resolve"),
+    refreshIndex: () => Effect.die("unused refreshIndex"),
+    invalidateIndex: () => Effect.die("unused invalidateIndex"),
     uninstallManagedBinary: (input) =>
       Effect.sync(() => {
         state.uninstallCalls += 1;

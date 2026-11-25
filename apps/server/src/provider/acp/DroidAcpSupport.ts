@@ -646,10 +646,10 @@ const configureDroidModelAndEffort = Effect.fn("DroidAcpSupport.configureDroidMo
       return { configured: requestedEffort, applied: reported };
     return yield* (
       replaced ??
-        new EffectAcpErrors.AcpRequestError({
-          code: -32602,
-          errorMessage: `Droid did not retain the requested reasoning effort "${requestedEffort}". The runtime reported "${reported ?? "unknown"}"; the prompt was not sent.`,
-        })
+      new EffectAcpErrors.AcpRequestError({
+        code: -32602,
+        errorMessage: `Droid did not retain the requested reasoning effort "${requestedEffort}". The runtime reported "${reported ?? "unknown"}"; the prompt was not sent.`,
+      })
     );
   },
 );

@@ -222,6 +222,7 @@ function startWithMissingWorktree(
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getConversationFork: () => Effect.succeed(null),
+          getForkSourceRunIds: () => Effect.succeed(projection.runs.map((run) => run.id)),
           getThreadRecords: () => {
             projectionReadCount += 1;
             return Effect.succeed(projection);
@@ -1507,6 +1508,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getConversationFork: () => Effect.succeed(null),
+          getForkSourceRunIds: () => Effect.succeed(parentRecords.runs.map((run) => run.id)),
           getThreadRecords,
           getTurnStartContext,
           getRuntimeRecoveryProjection,

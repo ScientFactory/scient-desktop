@@ -6616,6 +6616,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.provideService(Path.Path, path),
     );
 
+  // Outlives sessions: idle release reopens one every few minutes. A connected server is forgotten,
+  // so losing its sign-in later is announced again.
+  const announcedMcpSignIns = new Set<string>();
+  const mcpSignInKey = (nativeThreadId: string, server: string) =>
+    `${nativeThreadId}\u0000${server}`;
+
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
@@ -7175,8 +7181,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
         });
-        // Only a turn's first API request is startup; later ones are the model at work.
-        const requestedTurns = new WeakSet<ActiveClaudeTurnContext>();
+        // Only a process's first API request is startup; a reused process is already connected.
+        const requestedQueries = new WeakSet<ClaudeAgentSdkQuerySession>();
         let connectingTurn: ActiveClaudeTurnContext | undefined;
 
         const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
@@ -9796,8 +9802,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         // SCIENT-FORK:END
 
-        // Keyed by native thread and server: one notice per server for as long as the session runs.
-        const announcedMcpSignIns = new Set<string>();
         /** Claude reports a server that needs a sign-in only in its status, which settles after start. */
         const announceMcpSignIns = Effect.fn("ClaudeAdapterV2.announceMcpSignIns")(function* (
           liveQuery: ClaudeLiveQueryContext,
@@ -9819,6 +9823,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           for (const status of statuses) {
+            const key = mcpSignInKey(liveQuery.nativeThreadId, status.name);
+            if (status.status === "connected") announcedMcpSignIns.delete(key);
             // Every claude.ai connector the user never connected reports this too.
             if (
               status.status !== "needs-auth" ||
@@ -9827,7 +9833,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               continue;
             }
-            const key = `${liveQuery.nativeThreadId}\u0000${status.name}`;
             if (announcedMcpSignIns.has(key)) continue;
             announcedMcpSignIns.add(key);
             const nativeItemId = `mcp-sign-in:${context.providerTurnId}:${status.name}`;
@@ -12140,9 +12145,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (
                 message.type === "system" &&
                 message.subtype === "status" &&
-                !requestedTurns.has(context)
+                !requestedQueries.has(input.query)
               ) {
-                requestedTurns.add(context);
+                requestedQueries.add(input.query);
                 connectingTurn = context;
                 yield* reportStartupPhase("connecting");
               }
@@ -14782,7 +14787,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ),
               ),
             );
-            // The SDK spawns the CLI per turn, so only the open waits for a provider update.
+            // The SDK spawns the CLI when a query opens, so only the open waits for a provider update.
             const { program, querySession } = yield* (
               adapterOptions.installationGate === undefined
                 ? openQueryRuntime
@@ -14937,6 +14942,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       context.claudeCodeVersion = message.claude_code_version;
                     }
                     if (message.type === "system" && message.subtype === "init") {
+                      for (const server of message.mcp_servers ?? []) {
+                        if (server.status === "connected") {
+                          announcedMcpSignIns.delete(
+                            mcpSignInKey(context.nativeThreadId, server.name),
+                          );
+                        }
+                      }
                       // Recorded frames from older CLIs can omit the list.
                       const initServers = message.mcp_servers ?? [];
                       context.checkMcpSignIns = initServers.some(

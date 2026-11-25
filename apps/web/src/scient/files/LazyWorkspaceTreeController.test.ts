@@ -303,7 +303,8 @@ describe("LazyWorkspaceTreeController", () => {
       expect(item.isExpanded()).toBe(false);
     }
     harness.model.setSearch("components");
-    expect(harness.model.getSearchMatchingPaths()).toEqual([
+    // @pierre/trees 1.0 lists file matches before their folder; the order is the library's.
+    expect(harness.model.getSearchMatchingPaths().toSorted()).toEqual([
       "src/components/",
       "src/components/Composer.tsx",
     ]);

@@ -430,22 +430,20 @@ describe("adding what another Library holds", () => {
       });
       await checked.promise;
       // Enqueue before resuming Undo, without yielding to a filesystem path lookup first.
-      const changing = withScientFileLock(
-        NodePath.join(scenario.libraryRoot, "library.lock"),
-        () =>
-          addition === "member"
-            ? changeScientSourceCollectionMembers({
-                root: library,
-                collectionId,
-                add: [workOf(model, "mine").sourceId],
-                actor: "user",
-              })
-            : createScientSourceCollection({
-                root: library,
-                name: "Added child",
-                parentCollectionId: collectionId,
-                actor: "user",
-              }),
+      const changing = withScientFileLock(NodePath.join(scenario.libraryRoot, "library.lock"), () =>
+        addition === "member"
+          ? changeScientSourceCollectionMembers({
+              root: library,
+              collectionId,
+              add: [workOf(model, "mine").sourceId],
+              actor: "user",
+            })
+          : createScientSourceCollection({
+              root: library,
+              name: "Added child",
+              parentCollectionId: collectionId,
+              actor: "user",
+            }),
       );
       resume.resolve();
       const [undone, changed] = await Promise.all([undoing, changing]);

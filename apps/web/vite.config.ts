@@ -13,10 +13,7 @@ import * as Hash from "effect/Hash";
 import pkg from "./package.json" with { type: "json" };
 import pdfjsPkg from "pdfjs-dist/package.json" with { type: "json" };
 
-import {
-  DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
-  DEV_PROXIED_PATH_PREFIXES,
-} from "@t3tools/shared/devProxy";
+import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
@@ -199,6 +196,13 @@ const browserTestProject = {
         // position starts hovered. test/browserSetup.ts parks it off the page before each test.
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
+        },
+        // A press held across a render: userEvent only offers whole clicks.
+        pointerDown: async ({ page }) => {
+          await page.mouse.down();
+        },
+        pointerUp: async ({ page }) => {
+          await page.mouse.up();
         },
         // SCIENT-FORK:START — SCIENT_TEST_CPU_THROTTLE (test/scientCpuThrottle.ts).
         applyCpuThrottle,
@@ -520,7 +524,9 @@ export default defineConfig(({ command, mode }) => {
                 prefix,
                 {
                   target: devProxyTarget,
-                  changeOrigin: !DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES.has(prefix),
+                  // Keep the client's Host: OAuth metadata, cookie Origin checks and DPoP proofs
+                  // all compare against the URL the client used.
+                  changeOrigin: false,
                   ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
                 },
               ]),

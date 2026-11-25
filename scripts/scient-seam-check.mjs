@@ -21,7 +21,7 @@ function git(cwd, args, env = process.env) {
     cwd,
     env,
     encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
+    maxBuffer: 256 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
 }

@@ -45,6 +45,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
+  readEnvironmentScopeDenied: (environmentId: string) => !state.granted.has(environmentId),
 }));
 vi.mock("../state/entities", () => ({
   readEnvironmentServerConfigLoaded: () => true,
@@ -154,6 +155,8 @@ vi.mock("../scient/conversationExport/menu", () => ({
   handleConversationExportMenuAction: () => false,
 }));
 vi.mock("../state/use-orchestration-command", () => ({
+  // Settle and snooze queue offline: allowed until the host has answered without the scope.
+  threadTriagePermitted: (environmentId: string) => state.granted.has(environmentId),
   useOrchestrationCommand: () => async () => {
     recordEffect("metadata");
     return AsyncResult.success(undefined);

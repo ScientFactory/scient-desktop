@@ -716,5 +716,12 @@
     "rules": ["bare-t3"],
     "kind": "api-name",
     "reason": "`T3` is the global API the workflow runtime gives every workflow script."
+  },
+  {
+    "path": "docs/user/workflows.md",
+    "line": "const { workflow, ask, tags, Issue } = T3;",
+    "rules": ["bare-t3"],
+    "kind": "api-name",
+    "reason": "`T3` is the global API the workflow runtime gives every workflow script."
   }
 ]

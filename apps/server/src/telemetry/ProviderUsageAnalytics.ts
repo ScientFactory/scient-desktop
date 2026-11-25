@@ -77,8 +77,8 @@ export interface RunSettledReport {
 }
 
 type Properties = Readonly<Record<string, unknown>>;
-/** Maps a native model id to the name analytics reports. */
-export type ModelLabeler = (model: string) => string;
+/** Maps a driver's native model id to the name analytics reports. */
+export type ModelLabeler = (driver: string, model: string) => string;
 
 const TERMINAL_STATUSES: ReadonlySet<OrchestrationV2ProviderTurn["status"]> = new Set([
   "completed",
@@ -134,7 +134,7 @@ function selectedServiceTier(selection: ModelSelection): string | undefined {
  */
 function modelObservation(
   models: ReadonlyArray<ReadonlyArray<string> | undefined>,
-  label: ModelLabeler,
+  label: (model: string) => string,
 ): Properties {
   const distinct = new Set(models.flatMap((entry) => entry ?? []));
   if (distinct.size > 1) return { mixedModels: true };
@@ -146,7 +146,7 @@ function modelObservation(
 
 function selectionProperties(
   context: ProviderTurnAnalyticsContext | undefined,
-  label: ModelLabeler,
+  label: (model: string) => string,
 ) {
   const selection = context?.modelSelection;
   return defined({
@@ -183,10 +183,11 @@ function counters(usage: TurnTokenUsage | undefined): Properties {
 
 export function providerTurnProperties(
   report: ProviderTurnReport,
-  label: ModelLabeler,
+  labeler: ModelLabeler,
 ): Properties {
   const { providerTurn, context } = report;
   const usage = providerTurn.turnTokenUsage;
+  const label = (model: string) => labeler(report.driver, model);
   return defined({
     reportVersion: REPORT_VERSION,
     provider: report.driver,
@@ -315,13 +316,15 @@ export class RequestUsageLedger {
     });
   }
 
-  settle(report: RunSettledReport, label: ModelLabeler): Properties | undefined {
+  settle(report: RunSettledReport, labeler: ModelLabeler): Properties | undefined {
     if (this.settled.has(report.runId)) return undefined;
     this.settled.add(report.runId);
     evictOldest(this.settled);
     const entry = this.open.get(report.runId);
     this.open.delete(report.runId);
     if (entry === undefined) return undefined;
+    const provider = entry.driver ?? "unknown";
+    const label = (model: string) => labeler(provider, model);
 
     const turns = [...entry.turns.values()];
     const root = turns.filter((turn) => !turn.child);
@@ -351,7 +354,7 @@ export class RequestUsageLedger {
 
     return defined({
       reportVersion: REPORT_VERSION,
-      provider: entry.driver ?? "unknown",
+      provider,
       requestKind: requestKind(entry.context?.origin),
       restartContinuation: entry.context?.restartContinuation === true ? true : undefined,
       terminalStatus: report.status,
@@ -434,7 +437,7 @@ export const layer = Layer.effect(
     const labeler = Effect.map(
       registry.getProviders,
       (providers): ModelLabeler =>
-        (model) =>
+        (_driver, model) =>
           // SCIENT-FORK: the agent's own name for a model outside the vendor catalogs.
           reportedModelLabel(providers, model),
     );

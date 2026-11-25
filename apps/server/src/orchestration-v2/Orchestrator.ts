@@ -10250,6 +10250,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               sourceProjection,
               sourceRun,
               boundedContextSources,
+              projection.thread,
             ).pipe(
               Effect.mapError(
                 (cause) =>
@@ -10308,7 +10309,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? []
         : yield* Effect.gen(function* () {
             const inherited = sideChatWithoutSource
-              ? yield* readForkHistoryItems(projectionStore, sourceProjection, null)
+              ? yield* readForkHistoryItems(
+                  projectionStore,
+                  sourceProjection,
+                  null,
+                  projection.thread,
+                )
               : [];
             if (sideChatParentRunIds.length === 0) return inherited;
             const { turnItems } = yield* projectionStore.getThreadRecords(
@@ -14394,10 +14400,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (Option.isNone(session) || session.value.hasPendingBackgroundWorkForThread === undefined) {
         return false;
       }
-      return yield* session.value
-        .hasPendingBackgroundWorkForThread(providerThread)
-        // A failed probe cannot confirm that the work ended.
-        .pipe(Effect.catchCause(() => Effect.succeed(true)));
+      return yield* (
+        session.value
+          .hasPendingBackgroundWorkForThread(providerThread)
+          // A failed probe cannot confirm that the work ended.
+          .pipe(Effect.catchCause(() => Effect.succeed(true)))
+      );
     });
     for (const item of pendingBackgroundTurnItems({
       turnItems: input.projection.turnItems,
@@ -19412,14 +19420,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.threadId,
           Effect.gen(function* () {
             // Hold intake closed until descendants stop and this thread's Stop commits.
-            yield* input
-              .stopDescendants((command) =>
-                commandThreadId(command) === input.command.threadId
-                  ? dispatchWithReceiptEffect(command)
-                  : dispatchWithReceipt(command),
-              )
-              // SCIENT-FORK: Stop on this thread's own tasks runs under the lock held here.
-              .pipe(Effect.provideService(SubagentParentLockHeld, command.threadId));
+            yield* (
+              input
+                .stopDescendants((command) =>
+                  commandThreadId(command) === input.command.threadId
+                    ? dispatchWithReceiptEffect(command)
+                    : dispatchWithReceipt(command),
+                )
+                // SCIENT-FORK: Stop on this thread's own tasks runs under the lock held here.
+                .pipe(Effect.provideService(SubagentParentLockHeld, command.threadId))
+            );
             const child = yield* projectionStore
               .getThreadRecords(
                 command.threadId,

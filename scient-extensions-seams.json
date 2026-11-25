@@ -286,9 +286,9 @@
       "purpose": "T3's \"use in another app (MCP)\" palette action lists \"connector\" as a search word; Scient only hides the action without cloud public config. Not part of Scient Extensions."
     },
     {
-      "path": "patches/@cursor__sdk@1.4.2.patch",
+      "path": "patches/@cursor__sdk@1.5.0.patch",
       "anchor": "createLocalExecutor",
-      "purpose": "T3's patch to Cursor's bundled SDK (attribution follows cli-config.json); Cursor's minified code names its own connectors. Not part of Scient Extensions."
+      "purpose": "T3's patch to Cursor's bundled SDK; Cursor's minified code names its own connectors. Not part of Scient Extensions."
     },
     {
       "path": "apps/web/src/components/mcp/mcpApps.ts",

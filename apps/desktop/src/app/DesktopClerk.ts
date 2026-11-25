@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -25,7 +26,6 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 // SCIENT-FORK:START clerk-sign-in-return
 import { createClerkBridgeWithSignInReturn } from "./ClerkSignInReturn.ts";
 // SCIENT-FORK:END clerk-sign-in-return
@@ -93,13 +93,9 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
+function createDesktopClerkBridge(tokenDirectory: string, isDevelopment: boolean) {
   return createClerkBridge({
-    storage: openClerkTokenStorage(
-      stateDir,
-      (directory) => storage({ path: directory }),
-      userDataPath,
-    ),
+    storage: storage({ path: tokenDirectory }),
     manageSingleInstanceLock: false,
     passkeys: true,
     renderer: {
@@ -114,6 +110,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
   const shell = yield* ElectronShell.ElectronShell;
+  const path = yield* Path.Path;
 
   // SCIENT-FORK:START - resolve the established profile before acquiring its lock.
   const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
@@ -154,7 +151,10 @@ export const make = Effect.gen(function* () {
         // SCIENT-FORK:START clerk-sign-in-return
         createClerkBridgeWithSignInReturn(
           () =>
-            createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
+            createDesktopClerkBridge(
+              path.resolve(environment.stateDir, "clerk"),
+              environment.isDevelopment,
+            ),
           {
             scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
             host: ElectronProtocol.DESKTOP_HOST,

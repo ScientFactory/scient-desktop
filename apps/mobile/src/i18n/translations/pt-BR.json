@@ -26,6 +26,7 @@
   "986b0873f913a840": "A política de {organization} não permite tarefas de webhook.",
   "eebc538e25b09fe2": "A política de {organization} não permite importar cookies do navegador.",
   "7642a133db05f164": "A política de {organization} não permite abrir os servidores locais desta máquina em outros dispositivos.",
+  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos.",
   "39f6771b49f9b3b6": "Usar padrão",
   "45bb0e90e1c42046": "Quando você voltar",
   "d8fa0a55446bbb0d": "Antes de o cache expirar (beta)",
@@ -1997,6 +1998,7 @@
   "4d1f68ef069c7a0b": "Nova aba",
   "9c149c8c50e58e4c": "Atualizar ambientes",
   "068c199f56ee5679": "Entre na sua conta do Scient para configurar o {product}.",
+  "7994b54a6e7de1df": "Helps the Scient team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About > Diagnostics.",
   "a1b125c5ff7c2dd3": "Não mostrar novamente",
   "e9663b46ba7b2a88": "Isso exclui sua conta do Scient e remove seus computadores vinculados do Scient Connect. Isso não pode ser desfeito.",
   "0e6ccfe153623728": "Você entrou com a Apple, então a Apple pede que você confirme uma vez. Isso também remove o Scient da sua Conta Apple.",
@@ -2068,6 +2070,9 @@
   "782a518513f0777a": "Ativar {environment}",
   "a35685d9ad9de747": "Carregando ambientes na nuvem vinculados.",
   "91ca3ba7b2f9d6b6": "Nenhum outro ambiente na nuvem vinculado.",
+  "89bf40eb2503b6c5": "Novo dispositivo conectado a {environment}",
+  "2b8083750a2b2674": "{device} connected through {product}. If this was not you, remove it in Settings → Access in Scient on that computer.",
+  "39ac2b37536d575d": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in Scient on that computer.",
   "190165d4fad2f072": "A solicitação não está mais aguardando",
   "c403db0535205f50": "Ela expirou ou foi respondida em outro lugar.",
   "4e3abf0ba32ed1d6": "A solicitação ainda está aguardando. Tente novamente.",
@@ -2246,6 +2251,8 @@
   "f4a6fe781a07f2aa": "Copiar relatório de falha",
   "13c5214251f7d058": "Relatórios de falhas",
   "b3f6c24b0bf18cfb": "Enviar relatórios de falhas",
+  "18c30aa94d0a807f": "Diagnóstico de conexão",
+  "3a4443007dbbac86": "When the app connects to a computer through {product}, it sends the Scient team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
   "93eb8ae0bf209025": "Lendo log de falhas…",
   "4429ccae147b2b2f": "Cole o relatório em uma issue do GitHub. Ele contém a versão do app, a mensagem de erro do JavaScript e a pilha de componentes. As mensagens de erro podem citar valores do app, então revise antes de compartilhar.",
   "07e753548805a84e": "Quando o app trava ou encontra um erro, ele envia a mensagem de erro, o stack trace, a versão do app e o modelo e a versão do sistema do dispositivo para a equipe do Scient. Cada inicialização também envia os tempos de inicialização. Os relatórios levam um ID aleatório desta instalação.",
@@ -2641,6 +2648,7 @@
   "1e726fbe61076269": "Alargar painel",
   "4af8c6ef39e00592": "Estreitar painel",
   "54940a3e03ca7fc7": "{width} pontos de largura",
+  "eb287395a09cd288": "Enviar traces de conexão",
   "b1043ff2793170eb": "O projeto já existe",
   "34d24b23043908f5": "{title} ainda está arquivado. Tente novamente mais tarde.",
   "cc5e0eb3b8d438e5": "Projeto não adicionado",
@@ -4389,6 +4397,21 @@
     },
     " foi fechado"
   ],
+  "796b81c4875c4feb": [
+    "O app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um servidor ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " mais recente neste ambiente. Atualize o servidor para usá-lo."
+  ],
   "705cf2b2ee4e0e42": [
     "O app ",
     {
@@ -5013,6 +5036,7 @@
   "306a6f95ad9d52f7": "Não enviadas",
   "11276ab6c58b7a25": "Abre o rascunho no editor de nova tarefa. Deslize para a esquerda para descartar.",
   "99950f3a28d425fa": "Envia quando o ambiente se reconectar. Abre a tarefa para edição. Deslize para a esquerda para excluir.",
+  "d71048f4fb9cf44a": "Aguardando sincronização",
   "0a260c7744afd0be": "Aguardando",
   "ad78fae7d373cf21": "Trabalhando",
   "be451f475c514b37": "Dispensar notificação de despertar",
@@ -5441,12 +5465,15 @@
   "f25af5332ffc3734": "Nada aguarda você.",
   "c3f0119b8d6231f8": "Nada em execução.",
   "33028dfc1229eaa6": "Nenhuma execução ainda.",
+  "e4d1316c85ed7066": "Nenhuma pergunta desse tipo aguarda você.",
   "156ff7b625287a1e": "Ocultar puladas",
   "69b985b97ab45e6b": "Mostrar puladas ({count})",
   "8f6589c9e0ac5d4e": "Nenhum ambiente conectado",
   "744127f8dfad7d22": "Conecte um ambiente para ver as execuções de workflow dele.",
   "b9aae2f7cdb1a379": "Nenhuma execução de workflow ainda",
   "ace8fc1c643cf9f6": "Um workflow reúne agentes, código, agendamentos e perguntas para você em uma única execução que sobrevive a reinicializações. Escreva um no seu computador, em Workflows e depois Definições.",
+  "fc9c3a00cfc18b55": "Todos os tipos",
+  "45a94c724845ec1d": "Outras",
   "fceb81aa6685fb47": "Chats",
   "86798f07ba2d7f4d": "Pesquisar issues",
   "484cd83bb303bab8": "Pesquisar pull requests",

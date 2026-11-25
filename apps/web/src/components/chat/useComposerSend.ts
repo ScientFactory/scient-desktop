@@ -151,6 +151,7 @@ import { countPreparingComposerImages, holdComposerSend } from "./preparingCompo
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
+import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -1302,6 +1303,24 @@ export function useComposerSend(input: ComposerSendInput) {
           );
           return;
         }
+        // A project may set its worktrees up with its own commands, which run only once a person
+        // has approved their text. Asking takes as long as the user does, so the draft is compared
+        // across it like any other wait before a send.
+        // SCIENT-FORK:START — the send holds sendInFlightRef; a projectless draft has no layout.
+        if (activeProject && (baseBranchForWorktree || multipleModelSelections !== null)) {
+          const layoutApproval = await ensureWorktreeLayoutApproved({
+            environmentId,
+            projectId: activeProject.id,
+            projectTitle: activeProject.title,
+          });
+          if (layoutApproval.status === "cancelled") return;
+          if (layoutApproval.status === "blocked") {
+            setThreadError(threadIdForSend, layoutApproval.message);
+            return;
+          }
+          assertCurrentDraft();
+        }
+        // SCIENT-FORK:END
 
         // Records bind attachments by the id each side knows: the local id for the optimistic
         // row, the upload id (or local id on the data-URL path) on the wire; the server

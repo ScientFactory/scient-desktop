@@ -60,6 +60,7 @@ import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
+import * as CheckpointCaptureIndex from "./vcs/checkpointCaptureIndex.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { annexedAdminDir, isLinkedWorktree, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
@@ -1441,10 +1442,12 @@ const make = Effect.gen(function* () {
       );
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
     }
-    const scratchRoot = yield* fs
-      // SCIENT-FORK: Scient's configured No project root.
-      .realPath(ServerConfig.scratchWorkspaceRoot(config, path))
-      .pipe(Effect.orElseSucceed(() => null));
+    const scratchRoot = yield* (
+      fs
+        // SCIENT-FORK: Scient's configured No project root.
+        .realPath(ServerConfig.scratchWorkspaceRoot(config, path))
+        .pipe(Effect.orElseSucceed(() => null))
+    );
     // Nothing can bring a scratch folder's files back, so these hold whatever the retention says.
     const scratchKeepReason = Effect.fn("StorageCleanup.scratchKeepReason")(function* (
       folder: string,
@@ -1895,7 +1898,7 @@ const make = Effect.gen(function* () {
                 root: taskFolder.root,
                 force: false,
                 forget: deleted,
-                projectCommands: TaskFolders.linkRunsProjectCommands(thread.linkOrigin),
+                projectCommands: TaskFolders.projectCommandsForLink(thread.linkOrigin),
                 inspect: (checkout) =>
                   worktreeAdminDir(checkout.worktreePath).pipe(
                     Effect.map((adminDir) => adminDirs.set(checkout.worktreePath, adminDir)),
@@ -2400,8 +2403,9 @@ const make = Effect.gen(function* () {
         ),
       );
     }
-    for (const { cwd, prefixes, snapshots } of repositories.values()) {
+    for (const [commonDir, { cwd, prefixes, snapshots }] of repositories) {
       yield* Effect.gen(function* () {
+        yield* CheckpointCaptureIndex.removeForScopes(fs, path, commonDir, prefixes);
         const result = yield* git.execute({
           operation: "StorageCleanup.listCheckpointRefs",
           cwd,

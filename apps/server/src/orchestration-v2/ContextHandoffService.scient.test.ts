@@ -59,6 +59,7 @@ const readBounded = (scheduledTaskId?: string) => {
   return ContextHandoffService.readPortableForkItems(
     {
       getForkHistoryItems: () => Effect.die("A bounded read keeps bodies out of memory."),
+      getForkSourceRunIds: () => Effect.die("A Scient fork records no run membership."),
       getThreadRecords: () =>
         Effect.succeed({ turnItems: [prompt("run:fresh", scheduledTaskId)] }) as never,
       getContextHistoryCandidates: () =>
@@ -71,6 +72,7 @@ const readBounded = (scheduledTaskId?: string) => {
     source,
     source.runs[1]!,
     true,
+    source.thread,
   ).pipe(Effect.map((items) => items.map((item) => item.id)));
 };
 

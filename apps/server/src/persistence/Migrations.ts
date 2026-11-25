@@ -158,6 +158,12 @@ import Migration0113 from "./Migrations/113_IssueTrackerAccounts.ts";
 import Migration0114 from "./Migrations/114_Workflows.ts";
 // T3's migration 111 follows Scient's immutable migration sequence.
 import Migration0115 from "./Migrations/115_SupersededRunAttemptIndex.ts";
+// T3's migrations 112-116 follow Scient's immutable migration sequence.
+import Migration0116 from "./Migrations/116_LayoutCommandApprovals.ts";
+import Migration0117 from "./Migrations/117_WorkflowSkippedRuns.ts";
+import Migration0118 from "./Migrations/118_WorkflowRunIndexes.ts";
+import Migration0119 from "./Migrations/119_WorkflowRunTags.ts";
+import Migration0120 from "./Migrations/120_ForkHistoryMembership.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -313,6 +319,12 @@ export const migrationEntries = [
   [114, "Workflows", Migration0114],
   // T3's migration 111 follows Scient's immutable migration sequence.
   [115, "SupersededRunAttemptIndex", Migration0115],
+  // T3's migrations 112-116 follow Scient's immutable migration sequence.
+  [116, "LayoutCommandApprovals", Migration0116],
+  [117, "WorkflowSkippedRuns", Migration0117],
+  [118, "WorkflowRunIndexes", Migration0118],
+  [119, "WorkflowRunTags", Migration0119],
+  [120, "ForkHistoryMembership", Migration0120],
   // SCIENT-FORK:END
 ] as const;
 

@@ -62,20 +62,22 @@ const handlers = {
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;
       const source = yield* pageSource(input);
-      const { png, ...preview } = yield* htmlRender
-        .preview({ ...source, width: input.width, appearance: input.appearance })
-        // SCIENT-FORK:START — analytics keeps each refusal's own reason; a browser still unpacking
-        // after the wait is told apart from one still downloading.
-        .pipe(
-          Effect.tapError((error) =>
-            noteToolFailureClass(
-              error._tag === "PreviewBrowserInstallingError" && error.unpacking
-                ? "preview_browser_unpacking"
-                : error._tag,
+      const { png, ...preview } = yield* (
+        htmlRender
+          .preview({ ...source, width: input.width, appearance: input.appearance })
+          // SCIENT-FORK:START — analytics keeps each refusal's own reason; a browser still unpacking
+          // after the wait is told apart from one still downloading.
+          .pipe(
+            Effect.tapError((error) =>
+              noteToolFailureClass(
+                error._tag === "PreviewBrowserInstallingError" && error.unpacking
+                  ? "preview_browser_unpacking"
+                  : error._tag,
+              ),
             ),
-          ),
-          Effect.mapError(toFailure),
-        );
+            Effect.mapError(toFailure),
+          )
+      );
       // SCIENT-FORK:END
       return {
         ...preview,
@@ -94,13 +96,20 @@ const handlers = {
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "html_render");
       const htmlRender = yield* HtmlRender.HtmlRender;
       const source = yield* pageSource(input);
-      const reference = yield* htmlRender
-        .publish({ ...source, threadId: thread.threadId, title: input.title, height: input.height })
-        // SCIENT-FORK:START — analytics keeps each refusal's own reason.
-        .pipe(
-          Effect.tapError((error) => noteToolFailureClass(error._tag)),
-          Effect.mapError(toFailure),
-        );
+      const reference = yield* (
+        htmlRender
+          .publish({
+            ...source,
+            threadId: thread.threadId,
+            title: input.title,
+            height: input.height,
+          })
+          // SCIENT-FORK:START — analytics keeps each refusal's own reason.
+          .pipe(
+            Effect.tapError((error) => noteToolFailureClass(error._tag)),
+            Effect.mapError(toFailure),
+          )
+      );
       // SCIENT-FORK:END
       return {
         htmlRender: reference,

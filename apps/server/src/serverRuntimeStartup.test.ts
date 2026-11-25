@@ -56,6 +56,7 @@ import { ServerActivation } from "./serverActivation.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { CLOUD_LINKED_USER_ID } from "./cloud/config.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -422,6 +423,7 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-heartbeat-" });
+    // Provider account files are not owners; only the linked Connect account is.
     yield* fs.writeFileString(
       `${homeDirectory}/.claude.json`,
       '{"userID":"machine","oauthAccount":{"accountUuid":"claude-person"}}',
@@ -453,7 +455,10 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
             countThreads: () => Effect.succeed(84),
           }),
           Layer.mock(ServerSecretStore.ServerSecretStore)({
-            get: () => Effect.succeedNone,
+            get: (name) =>
+              name === CLOUD_LINKED_USER_ID
+                ? Effect.succeedSome(new TextEncoder().encode("connect-person"))
+                : Effect.succeedNone,
           }),
         ),
       ),
@@ -464,7 +469,7 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
     ]);
     assert.deepStrictEqual(owners, [
       {
-        owners: [{ source: "claude", ownerId: hashTelemetryId("claude-person") }],
+        owners: [{ source: "connect", ownerId: hashTelemetryId("connect-person") }],
         observedBy: "server",
       },
     ]);

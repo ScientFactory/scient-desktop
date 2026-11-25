@@ -392,6 +392,12 @@ when the thread settles** enabled in Settings > Projects > Actions. You can also
 that action so Scient can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
 
+You can settle or snooze a thread while its environment is offline. The thread shows
+**Pending** (**Waiting to sync** on mobile), and the change is sent when the environment
+reconnects. Undo, Un-settle, or Wake before then cancels it. If the thread changed there in
+the meantime, the environment's state wins and your change is dropped. A thread with a
+pending settle cannot be snoozed until it syncs.
+
 If reordering is unavailable for one environment, update the Scient server
 running there using the version guidance shown in the app. Older servers can still pin and unpin
 threads, but do not understand synced ordering;

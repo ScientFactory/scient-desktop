@@ -70,6 +70,43 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
+const GREASE_CHARS = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+const GREASE_VERSIONS = ["8", "99", "24"];
+
+/**
+ * The low-entropy User-Agent client hints the renderer sends on fetches. Mirrors Chromium's
+ * GenerateBrandVersionList with no embedder brand, as Electron builds it.
+ */
+export const lowEntropyClientHints = (
+  chromeVersion: string,
+  platform: NodeJS.Platform,
+): Record<string, string> => {
+  const major = Number.parseInt(chromeVersion, 10);
+  const grease = `"Not${GREASE_CHARS[major % 11]}A${GREASE_CHARS[(major + 1) % 11]}Brand";v="${GREASE_VERSIONS[major % 3]}"`;
+  const chromium = `"Chromium";v="${major}"`;
+  return {
+    "sec-ch-ua": major % 2 === 0 ? `${grease}, ${chromium}` : `${chromium}, ${grease}`,
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": `"${platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : "Linux"}"`,
+  };
+};
+
+const isPotentiallyTrustworthy = (rawUrl: string): boolean => {
+  try {
+    const { protocol, hostname } = new URL(rawUrl);
+    if (protocol === "https:") return true;
+    return (
+      protocol === "http:" &&
+      (hostname === "localhost" ||
+        hostname.endsWith(".localhost") ||
+        hostname === "[::1]" ||
+        /^127\.\d+\.\d+\.\d+$/.test(hostname))
+    );
+  } catch {
+    return false;
+  }
+};
+
 const MAX_PROMPT_URL_LENGTH = 300;
 
 const truncateForPrompt = (text: string): string =>
@@ -614,7 +651,15 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           if (persistent) keepSessionCookies(browserSession);
           // SCIENT-FORK:END
           // SCIENT-FORK:START — Scient Browser: sites that refuse Electron open normally.
-          matchSiteBrowserIdentity(browserSession);
+          const clientHints = lowEntropyClientHints(process.versions.chrome, platform);
+          // Electron adds client hints to subresources only; sites that compare them across a session reject navigations without them.
+          matchSiteBrowserIdentity(browserSession, ({ url, resourceType, requestHeaders }) =>
+            (resourceType === "mainFrame" || resourceType === "subFrame") &&
+            !Object.keys(requestHeaders).some((name) => name.toLowerCase() === "sec-ch-ua") &&
+            isPotentiallyTrustworthy(url)
+              ? clientHints
+              : undefined,
+          );
           // SCIENT-FORK:END
           // Location and clipboard decisions are remembered separately for each origin.
           const permissionDecisions = {
@@ -691,7 +736,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
           // SCIENT-FORK: Electron allows one header listener per session. Scient's site identity
-          // above already drops the Electron token for every site, Teams included.
+          // above already drops the Electron token for every site, Teams included, and adds
+          // the navigation client hints.
           return browserSession;
         },
         catch: (cause) =>

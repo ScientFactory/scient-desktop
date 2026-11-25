@@ -163,6 +163,8 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as LayoutCommandApprovals from "./workspace/LayoutCommandApprovals.ts";
+import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as TaskFolderStore from "./workspace/TaskFolderStore.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
@@ -707,6 +709,8 @@ const layerTaskFolders = TaskFolders.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       TaskFolderStore.layer,
+      LayoutCommandApprovals.layer,
+      ManagedPolicy.layer,
       ProjectStore.layer,
       ProjectionStoreV2.layer,
       VcsProcess.layer,
@@ -882,7 +886,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // pipe's 20 arguments. One hub, which the feeders above and the workflow store inside the
   // runtime publish to.
   Layer.provideMerge(
-    Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, layerTaskFolders, MilestoneHub.layer),
+    Layer.mergeAll(
+      ProjectStore.layer,
+      ThreadSearch.layer,
+      layerTaskFolders,
+      LayoutCommandApprovalWrites.layer,
+      MilestoneHub.layer,
+    ),
   ),
   // One step for these: `pipe` takes at most 20, and Scient's layers fill the rest.
   // The theme layer sits above the settings it writes when a theme is applied.
