@@ -497,16 +497,21 @@ async function selectWordWithoutJumping(
     )
     .toBe("visible");
   const sourceHit = wordPosition(container.shadowRoot!, word);
+  // Source already holds the word from Visual; a caret first means only the double-click selects it.
+  const caret = selection![0]!.start;
+  state.source().setSelections([{ start: caret, end: caret, direction: "forward" }]);
+  await vi.waitFor(() => expect(state.source().getViewState().selections?.[0]?.end).toEqual(caret));
   state.sourceSelections.mockClear();
   await userEvent.dblClick(sourceHit.element, { position: sourceHit.position });
   await vi.waitFor(() => {
-    expect(state.sourceSelections).toHaveBeenCalled();
+    const reported = state.sourceSelections.mock.lastCall?.[0];
     const selected = state.source().getViewState().selections?.[0];
-    expect(selected).toBeDefined();
-    if (!selected) throw new Error("The Source owner did not acknowledge its native selection.");
-    expect(
-      source.slice(sourceOffset(source, selected.start), sourceOffset(source, selected.end)),
-    ).toBe(word);
+    if (!reported || !selected)
+      throw new Error("The Source owner did not acknowledge its native selection.");
+    for (const range of [reported, selected])
+      expect(source.slice(sourceOffset(source, range.start), sourceOffset(source, range.end))).toBe(
+        word,
+      );
   });
   const manuallySelected = state.source().getViewState().selections;
   await clickVisualPane(state.visual);

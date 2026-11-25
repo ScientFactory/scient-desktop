@@ -66,6 +66,15 @@ once, under AGENTS.md.
 
 ## Fixed
 
+`Extensions.browser.test.tsx` › Detail pages › reaches the agents card and the limited agent's
+reason with Tab and Enter failed twice on 11-25, both in Web 12: PR runs 45598823053 and
+45673791119. In both the Agents card was open and its OpenCode tile mounted, but focus was still
+on the "Works with" button. The fault was in the test. After Enter, Base UI moves focus into the
+card on the next animation frame, and the test read focus right after Enter returned. It now
+waits for focus to reach the OpenCode tile and for its reason to open. Holding that frame until
+Enter returned reproduced the CI failure 5 of 5 times; the new waits passed 5 of 5 under the same
+hold and 40 of 40 without it.
+
 `latexSplitTemplates.browser.test.tsx` › template 28 (and once 26-table): native word selection
 updates Source without jumping, then survives pane handoff failed four times on 11-25, all in Web 2: PR runs
 45598823053 and 45644482305, queue run 45659224374, and
@@ -76,8 +85,10 @@ by 50 ms every 50 ms while a browser action is pending. ProseMirror's 20 ms focu
 then restore its old caret before Chromium delivered the double-click's `selectionchange`.
 Forcing that tick reproduced it in both the main and the table editor. The gesture now runs on
 the browser's own clock. At `SCIENT_TEST_CPU_THROTTLE=6` the word-selection cases lost the selection in 1 of 63
-runs before (the CI signature) and in none of 99 after; one of those 99 hit the 30 s test
-limit while the machine was busy, and per-round timings showed no slowdown from the change.
+runs before (the CI signature) and in none of 99 after. Separately, one of those 99 hit the
+30 s test limit while the machine was busy; round timings varied both ways, so they show no
+clear slowdown. The Source handoff now starts from a caret, so only the double-click in Source
+can select the word there.
 
 The Windows voice qualification (Windows packaging › Installer and native runtime ›
 Transcribe with the installed voice runtime) timed out eight times from 2026-11-09 to 11-19

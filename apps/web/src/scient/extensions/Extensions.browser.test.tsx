@@ -2363,9 +2363,11 @@ describe("Detail pages", () => {
     const card = agentsCard()!;
     expect(card).not.toBeNull();
     expect(trigger.getAttribute("aria-controls")).toBe(card.id);
-    // Focus moves into the card, onto the limited agent, which tells why.
-    expect(document.activeElement).toBe(buttonIn(card, `OpenCode: ${OPENCODE_REASON}`));
-    expect(reasonTooltip()).not.toBeNull();
+    // Focus moves into the card, onto the limited agent, which tells why. The card moves focus on
+    // the next frame, which can come after Enter has returned.
+    const limited = buttonIn(card, `OpenCode: ${OPENCODE_REASON}`)!;
+    await expect.element(page.elementLocator(limited)).toHaveFocus();
+    await vi.waitFor(() => expect(reasonTooltip()).not.toBeNull());
     await userEvent.keyboard("{Escape}");
     await userEvent.keyboard("{Escape}");
     expect(agentsCard()).toBeNull();
