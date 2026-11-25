@@ -32,7 +32,16 @@ import {
 } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { listScientSourceRecords, scientSourceStoreInternals } from "./store.ts";
-import { assertSafeIdentifier, atomicWriteJson, snapshot } from "./storeFiles.ts";
+import {
+  assertSafeIdentifier,
+  atomicWriteJson,
+  extraFields,
+  formatJson,
+  isJsonObject,
+  type JsonObject,
+  snapshot,
+  sortedExtra,
+} from "./storeFiles.ts";
 import {
   scientReviewPossibleDuplicates,
   scientReviewRecordIds,
@@ -92,8 +101,6 @@ const SnapshotFileHeader = Schema.Struct({
 const decodeSnapshotHeader = Schema.decodeUnknownSync(SnapshotFileHeader);
 const decodeWork = Schema.decodeUnknownSync(ScientReviewWork);
 
-type JsonObject = Readonly<Record<string, unknown>>;
-
 interface StoredWork {
   readonly work: ScientReviewWork;
   /** Fields a newer Scient wrote, kept on every rewrite. */
@@ -110,22 +117,6 @@ interface SnapshotDocument {
 const EMPTY_DOCUMENT: SnapshotDocument = { entries: new Map(), extra: {}, text: null };
 const WORK_FIELDS = Object.keys(ScientReviewWork.fields);
 const FILE_FIELDS = Object.keys(SnapshotFileHeader.fields);
-
-const isJsonObject = (value: unknown): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-function extraFields(value: unknown, known: ReadonlyArray<string>): JsonObject {
-  if (!isJsonObject(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.includes(key)));
-}
-
-function sortedExtra(extra: JsonObject): JsonObject {
-  return Object.fromEntries(
-    Object.keys(extra)
-      .toSorted()
-      .map((key) => [key, extra[key]]),
-  );
-}
 
 const codeUnitOrder = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
@@ -189,8 +180,6 @@ function shardDirectory(folder: ScientReviewFolder, name: string): string {
 function shardOf(sourceId: string): string {
   return NodeCrypto.createHash("sha256").update(sourceId).digest("hex").slice(0, 1);
 }
-
-const formatJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 type SnapshotRead = SnapshotDocument | { readonly broken: true };
 

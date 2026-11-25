@@ -1160,21 +1160,28 @@ interface PlannedBulkFields {
  * meanwhile. `beforeWrite` runs once per round with every write it plans; if it fails, none is
  * written. `uncertain` means the write failed part way, so it may have landed.
  */
+type BulkFieldsComputed =
+  | { readonly next: BulkFields; readonly conflicts?: ReadonlyArray<string> }
+  | "stale";
+
 async function updateBulkFields(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceIds: ReadonlyArray<string>;
   readonly actor: ScientSourceActor;
-  /** `revision` is the one the computed fields would replace. */
+  /**
+   * `revision` is the one the computed fields would replace. "stale": what the fields were judged
+   * by is newer than `revision`, so the source is read and computed again.
+   */
   readonly compute: (
     sourceId: string,
     current: BulkFields,
     revision: number,
-  ) => { readonly next: BulkFields; readonly conflicts?: ReadonlyArray<string> };
+  ) => Promise<BulkFieldsComputed> | BulkFieldsComputed;
   readonly beforeWrite?: (planned: ReadonlyArray<PlannedBulkFields>) => Promise<void>;
 }): Promise<ReadonlyArray<BulkFieldsUpdate>> {
   const results = new Map<string, BulkFieldsUpdate>();
   let remaining = input.sourceIds;
-  // One retry covers an edit that lands between the read and the write.
+  // One retry covers an edit that lands between the read and the write, or during the plan.
   for (let attempt = 0; attempt < 2 && remaining.length > 0; attempt += 1) {
     const planned: Array<
       PlannedBulkFields & {
@@ -1182,6 +1189,7 @@ async function updateBulkFields(input: {
         readonly conflicts: ReadonlyArray<string>;
       }
     > = [];
+    const replan: string[] = [];
     for (const sourceId of remaining) {
       const record = await readScientSourceRecord(input.root, sourceId);
       if (!record) {
@@ -1192,11 +1200,12 @@ async function updateBulkFields(input: {
         continue;
       }
       const current = normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record));
-      const { next: fields, conflicts = [] } = input.compute(
-        sourceId,
-        bulkFields(current),
-        record.revision,
-      );
+      const computed = await input.compute(sourceId, bulkFields(current), record.revision);
+      if (computed === "stale") {
+        replan.push(sourceId);
+        continue;
+      }
+      const { next: fields, conflicts = [] } = computed;
       const next = normalizeScientSourceEditableMetadata({ ...current, ...fields });
       if (editableMetadataEquals(current, next)) {
         results.set(sourceId, {
@@ -1214,8 +1223,8 @@ async function updateBulkFields(input: {
         conflicts,
       });
     }
-    remaining = [];
-    if (planned.length === 0) break;
+    remaining = replan;
+    if (planned.length === 0) continue;
     try {
       await input.beforeWrite?.(
         planned.map(({ sourceId, before, after, revision }) => ({
@@ -1303,7 +1312,7 @@ async function updateBulkFields(input: {
         conflicts,
       });
     }
-    remaining = retry;
+    remaining = [...replan, ...retry];
   }
   for (const sourceId of remaining) {
     results.set(sourceId, {
@@ -1903,10 +1912,8 @@ async function undoBulkUpdate(input: {
     const open = [...receiptSources.entries()].filter(([, entry]) => entry.undoneAt === undefined);
     const known = new Map<number, Awaited<ReturnType<typeof updateBulkFields>>[number]>();
     const toWrite: Array<readonly [number, BulkReceiptSource]> = [];
-    const revisionNow = new Map<string, number>();
     for (const [index, entry] of open) {
       const record = await readScientSourceRecord(paths.location, entry.sourceId);
-      if (record) revisionNow.set(entry.sourceId, record.revision);
       const settled = record
         ? settledSource(
             entry,
@@ -1924,35 +1931,32 @@ async function undoBulkUpdate(input: {
       }
     }
     const indexBySource = new Map(toWrite.map(([index, entry]) => [entry.sourceId, index]));
-    // A tag the paper gained or lost after the bulk edit, or a type it was given, is someone's
-    // later decision: Undo leaves it. Read from the paper's versions; when one in between is
-    // no longer kept, or the edit's own revision is not known, the edit's values all stay.
-    const later = new Map<
-      string,
-      { readonly tags: ReadonlySet<string>; readonly type: boolean } | "unknown"
-    >();
-    for (const [, entry] of toWrite) {
-      if (entry.revision === undefined) {
-        later.set(entry.sourceId, "unknown");
-        continue;
-      }
-      if (revisionNow.get(entry.sourceId) === entry.revision + 1) continue;
+    // A tag or type changed after the bulk edit is someone's later decision: Undo leaves it. Read
+    // up to the revision Undo replaces, so a save meanwhile only makes the write stale and it is
+    // planned again; an unkept version in between, or an unknown edit revision, keeps them all.
+    type Later = { readonly tags: ReadonlySet<string>; readonly type: boolean } | "unknown";
+    const laterAt = async (
+      entry: BulkReceiptSource,
+      revision: number,
+    ): Promise<Later | "stale" | null> => {
+      if (entry.revision === undefined) return "unknown";
+      if (revision === entry.revision + 1) return null;
       const since = await readScientSourceRecordsAfter(
         paths.location,
         entry.sourceId,
         entry.revision + 1,
       );
-      if (!since) {
-        later.set(entry.sourceId, "unknown");
-        continue;
-      }
+      if (!since) return "unknown";
+      // Read after a newer save: judging `revision` by it could keep the edit with no write left
+      // to go stale, so the plan is made again.
+      if (since.at(-1)!.revision !== revision) return "stale";
       const path = [
         entry.after,
         ...since.map((record) =>
           bulkFields(normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record))),
         ),
       ];
-      later.set(entry.sourceId, {
+      return {
         tags: changedTagKeys(path.map((fields) => fields.tags)),
         type: path.some(
           (fields, index) =>
@@ -1960,8 +1964,8 @@ async function undoBulkUpdate(input: {
             (fields.type !== path[index - 1]!.type ||
               fields.customType !== path[index - 1]!.customType),
         ),
-      });
-    }
+      };
+    };
     // Sources Undo will leave partly as they are; said in the write that announces the restore,
     // so a retry after a stop still knows.
     const keeping = new Set<string>();
@@ -1969,7 +1973,7 @@ async function undoBulkUpdate(input: {
       root: paths.location,
       sourceIds: toWrite.map(([, entry]) => entry.sourceId),
       actor: input.actor,
-      compute: (sourceId, current, revision) => {
+      compute: async (sourceId, current, revision) => {
         const { before, after } = receipt.sources[indexBySource.get(sourceId)!]!;
         const typeChanged = before.type !== after.type || before.customType !== after.customType;
         const beforeKeys = new Set(before.tags.map(scientSourceTagKey));
@@ -1978,9 +1982,8 @@ async function undoBulkUpdate(input: {
         const removed = before.tags.filter((tag) => !afterKeys.has(scientSourceTagKey(tag)));
         const isType = (fields: BulkFields) =>
           current.type === fields.type && current.customType === fields.customType;
-        // Evidence read for another revision says nothing about this one: an edit that landed
-        // since is treated as a later decision on everything the bulk edit touched.
-        const since = revision === revisionNow.get(sourceId) ? later.get(sourceId) : "unknown";
+        const since = await laterAt(receipt.sources[indexBySource.get(sourceId)!]!, revision);
+        if (since === "stale") return "stale";
         const typeDecidedSince = since === "unknown" || since?.type === true;
         const typeKept = typeChanged && !isType(before) && (typeDecidedSince || !isType(after));
         const decidedSince = (tag: string) =>

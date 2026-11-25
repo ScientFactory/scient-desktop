@@ -26,6 +26,7 @@ import { markScientLibrarySourcesDistinct, mergeScientLibraryDuplicates } from "
 import {
   abandonScientPreMoveRestore,
   finishScientPreMoveRestore,
+  hasScientPreMoveArchive,
   restoreScientPreMoveArchive,
   sealScientPreMoveArchive,
   type ScientPreMoveArchiveRestore,
@@ -79,9 +80,12 @@ import {
   scientSourceStoreInternals,
 } from "./store.ts";
 import {
+  absolute,
   assertSafeIdentifier,
   atomicWriteJson,
   ensureDirectory,
+  formatJson,
+  hashFile,
   isNodeError,
   replaceFileAtomically,
   snapshot,
@@ -289,8 +293,6 @@ const now = () => new Date().toISOString();
 const newId = (prefix: string) => `${prefix}_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
 const sha256Of = (bytes: Buffer | string) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-const formatJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-const absolute = (base: string, relative: string) => NodePath.join(base, ...relative.split("/"));
 
 function crash(ctx: MoveContext, point: NonNullable<ScientLibraryMoveFaults["crashAt"]>): void {
   if (ctx.faults.crashAt === point) throw new ScientLibraryMoveCrash(point);
@@ -359,7 +361,8 @@ async function exists(filePath: string): Promise<boolean> {
   );
 }
 
-async function hashFile(filePath: string): Promise<string | null> {
+/** `hashFile` for a regular file only; null for a link or anything else. */
+async function hashRegularFile(filePath: string): Promise<string | null> {
   try {
     const stats = await NodeFSP.lstat(filePath);
     if (!stats.isFile() || stats.isSymbolicLink()) return null;
@@ -367,9 +370,7 @@ async function hashFile(filePath: string): Promise<string | null> {
     if (isNodeError(error, "ENOENT")) return null;
     throw error;
   }
-  const digest = NodeCrypto.createHash("sha256");
-  for await (const chunk of NodeFS.createReadStream(filePath)) digest.update(chunk as Buffer);
-  return digest.digest("hex");
+  return hashFile(filePath);
 }
 
 /** Regular files under a folder, slash-separated and relative to it. Links are never followed. */
@@ -998,9 +999,9 @@ async function copyByHash(
   destination: string,
   expectedSha256: string | null,
 ): Promise<"copied" | "present" | "damaged" | "different"> {
-  const existing = await hashFile(destination);
+  const existing = await hashRegularFile(destination);
   if (existing !== null) {
-    if (existing === (expectedSha256 ?? (await hashFile(source)))) return "present";
+    if (existing === (expectedSha256 ?? (await hashRegularFile(source)))) return "present";
     const cutShort = await isCutShortCopyOf(destination, source);
     if (expectedSha256) {
       if (!cutShort) throw new DamagedPdfCopy("The library holds a damaged copy of a PDF.");
@@ -1020,7 +1021,7 @@ async function copyByHash(
     } finally {
       await handle.close();
     }
-    const copied = await hashFile(temporary);
+    const copied = await hashRegularFile(temporary);
     if (expectedSha256 && copied !== expectedSha256) return "damaged";
     if (existing !== null) {
       // The path is never without a file: other projects may be reading it.
@@ -1340,8 +1341,8 @@ async function backUpFile(ctx: MoveContext, run: number, relative: string, bytes
 async function inBackup(ctx: MoveContext, run: number, relative: string, sha256: string) {
   const destination = absolute(backupDirectory(ctx, run), relative);
   return (
-    (await hashFile(destination)) === sha256 ||
-    (await hashFile(`${destination}.~${sha256.slice(0, 12)}`)) === sha256
+    (await hashRegularFile(destination)) === sha256 ||
+    (await hashRegularFile(`${destination}.~${sha256.slice(0, 12)}`)) === sha256
   );
 }
 
@@ -1362,7 +1363,9 @@ async function verifyAndBackUp(
   ctx.progress("verifying", 0, total);
   // Each item counts once its check or backup has finished, skipped ones included.
   for (const sha256 of journal.pdfs) {
-    const copied = await hashFile(NodePath.join(files.files, sha256.slice(0, 2), `${sha256}.pdf`));
+    const copied = await hashRegularFile(
+      NodePath.join(files.files, sha256.slice(0, 2), `${sha256}.pdf`),
+    );
     if (copied !== sha256) throw new Error("A PDF copied into the library does not verify.");
     step();
   }
@@ -1387,7 +1390,7 @@ async function verifyAndBackUp(
     if (!bytes) return;
     // Full text the library holds byte for byte needs no backup; any other text does.
     const text = TEXT_FILE.exec(file);
-    if (text && (await hashFile(libraryTextPath(ctx, text))) === sha256Of(bytes)) return;
+    if (text && (await hashRegularFile(libraryTextPath(ctx, text))) === sha256Of(bytes)) return;
     await backUpFile(ctx, journal.run, `sources/${file}`, bytes);
   };
   for (const file of v1.files) {
@@ -1905,7 +1908,7 @@ async function publishArtifact(
       }
       break;
   }
-  return (await hashFile(destination)) === artifact.stagedSha256 ? "published" : "stale";
+  return (await hashRegularFile(destination)) === artifact.stagedSha256 ? "published" : "stale";
 }
 
 /**
@@ -1952,7 +1955,7 @@ async function counterpartVerifies(
   relative: string,
 ): Promise<boolean> {
   const filePath = absolute(ctx.root, relative);
-  const sha256 = await hashFile(filePath);
+  const sha256 = await hashRegularFile(filePath);
   if (sha256 === null) return true;
   if (relative.startsWith(`${PROJECT_ANNOTATIONS_DIRECTORY}/`)) {
     const hash = /([0-9a-f]{64})\.json$/u.exec(relative)![1]!;
@@ -1967,13 +1970,14 @@ async function counterpartVerifies(
   const pdf = PDF_FILE.exec(file);
   if (pdf && journal.pdfs.includes(pdf[2]!)) {
     return (
-      (await hashFile(NodePath.join(libraryFiles(ctx).files, pdf[1]!, `${pdf[2]!}.pdf`))) === pdf[2]
+      (await hashRegularFile(NodePath.join(libraryFiles(ctx).files, pdf[1]!, `${pdf[2]!}.pdf`))) ===
+      pdf[2]
     );
   }
   // Full text verifies by its own bytes in the library, or else by its backup copy below.
   const text = TEXT_FILE.exec(file);
   if (text) {
-    if ((await hashFile(libraryTextPath(ctx, text))) === sha256) return true;
+    if ((await hashRegularFile(libraryTextPath(ctx, text))) === sha256) return true;
     // The library's text may have changed since step 3 compared it; keep these bytes first.
     const bytes = await readRegularFile(filePath);
     if (bytes) await backUpFile(ctx, journal.run, `sources/${file}`, bytes);
@@ -1989,7 +1993,10 @@ async function counterpartVerifies(
     }
   }
   const artifact = journal.artifacts.find((entry) => entry.v1Path === relative);
-  if (artifact && (await hashFile(absolute(ctx.root, artifact.path))) === artifact.stagedSha256) {
+  if (
+    artifact &&
+    (await hashRegularFile(absolute(ctx.root, artifact.path))) === artifact.stagedSha256
+  ) {
     return true;
   }
   return inBackup(ctx, journal.run, `sources/${file}`, sha256);
@@ -2852,6 +2859,8 @@ export async function restoreScientProjectPreMoveArchive(input: {
     }),
   );
 }
+
+export { hasScientPreMoveArchive };
 
 /** Abandons a restore that stopped part way: the next move takes in what it already put back. */
 export async function abandonScientProjectPreMoveRestore(input: {

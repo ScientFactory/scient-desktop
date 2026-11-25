@@ -311,15 +311,31 @@ describe("reference file import", () => {
     expect(await listScientSourceRecords(library)).toEqual(records);
   });
 
-  it("continues a large file with sparse entries by their identity, without duplicates", async () => {
+  it("stages at most 500 entries of a reference file per import", async () => {
     const root = await project();
     const text = Array.from(
       { length: 501 },
       (_, index) => `@misc{k${index}, title = {Entry ${index}}}`,
     ).join("\n");
-    const input = { root, fileName: "large.bib", text, actor: "user" as const };
+    const begun = await beginBibliographyFileImport({
+      root,
+      operationId: "file_import_limit",
+      fileName: "large.bib",
+      text,
+      actor: "user",
+    });
+    expect(begun.report).toMatchObject({ importCount: 500, remaining: 1 });
+  });
+
+  it("continues a large file with sparse entries by their identity, without duplicates", async () => {
+    const root = await project();
+    const text = Array.from(
+      { length: 6 },
+      (_, index) => `@misc{k${index}, title = {Entry ${index}}}`,
+    ).join("\n");
+    const input = { root, fileName: "large.bib", text, actor: "user" as const, batchLimit: 5 };
     const first = await importBibliographyFile({ ...input, operationId: "file_import_large_1" });
-    expect(first.report).toMatchObject({ importCount: 500, remaining: 1 });
+    expect(first.report).toMatchObject({ importCount: 5, remaining: 1 });
 
     const second = await beginBibliographyFileImport({
       ...input,
@@ -328,13 +344,13 @@ describe("reference file import", () => {
     // New entries come first; works already here fill the room left, the rest are counted.
     expect(second.report).toMatchObject({
       importCount: 1,
-      presentCount: 499,
+      presentCount: 4,
       alreadyInLibrary: 1,
       remaining: 0,
     });
     const staged = await readScientSourceStagedFileImport(root, "file_import_large_2");
-    expect(staged?.candidates[0]?.citationKey).toBe("k500");
-    expect(staged?.candidates).toHaveLength(500);
+    expect(staged?.candidates[0]?.citationKey).toBe("k5");
+    expect(staged?.candidates).toHaveLength(5);
     const continued = await importBibliographyFile({
       ...input,
       operationId: "file_import_large_2",
@@ -346,8 +362,8 @@ describe("reference file import", () => {
     const again = await importScientSource({ root, operationId: "file_import_large_3", candidate });
     expect(again.outcome).toBe("duplicate");
     const records = await listScientSourceRecords(root);
-    expect(new Set(records.map((record) => record.citationKey)).size).toBe(501);
-    expect(records).toHaveLength(501);
+    expect(new Set(records.map((record) => record.citationKey)).size).toBe(6);
+    expect(records).toHaveLength(6);
   });
 
   it("returns the same operation for a repeated request and discards the stage on cancel", async () => {

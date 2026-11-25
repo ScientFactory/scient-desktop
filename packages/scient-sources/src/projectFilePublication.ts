@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
+import { isNodeError } from "./storeFiles.ts";
 
 export type ScientProjectFilePublication =
   | { readonly outcome: "written" }
@@ -19,10 +20,6 @@ export type ScientProjectFilePublication =
 export const scientProjectFilePublicationHooks: {
   beforeReplace: ((filePath: string) => Promise<void>) | null;
 } = { beforeReplace: null };
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
-}
 
 /** Hard links are missing on the volume: EPERM or ENOTSUP, and EISDIR from Windows on FAT and exFAT. */
 function linkUnsupported(error: unknown): boolean {

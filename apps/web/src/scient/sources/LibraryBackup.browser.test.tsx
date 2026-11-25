@@ -121,13 +121,7 @@ describe("backing up the Library from the panel", () => {
       root: "/project",
       change: { action: "back-up-library", inFolder: "/Users/ada/Backups" },
     });
-    await expect
-      .element(
-        screen.getByText(
-          "Backing up the Library: 10 of 40 files. Changes to the Library wait until it finishes.",
-        ),
-      )
-      .toBeVisible();
+    await expect.element(screen.getByText("Backing up the Library: 10 of 40 files.")).toBeVisible();
 
     await advanceTestClock(signal, 1_000);
     await expectEnding(
@@ -158,16 +152,12 @@ describe("backing up the Library from the panel", () => {
     expect(endingsShown(screen)).toBe(0);
 
     await userEvent.click(screen.getByRole("button", { name: "Back up" }));
-    await expect
-      .element(
-        screen.getByText("Backing up the Library. Changes to the Library wait until it finishes."),
-      )
-      .toBeVisible();
+    await expect.element(screen.getByText("Backing up the Library.")).toBeVisible();
     await advanceTestClock(signal, 1_000);
     await expectEnding(screen, "The Library was not backed up", failed.reason);
   });
 
-  it("keeps asking after a read fails, also the first one, and names what the backup lacks", async ({
+  it("keeps asking after a read fails, also the first one, waiting longer, and names what the backup lacks", async ({
     signal,
   }) => {
     using _timers = fakeTimers();
@@ -183,21 +173,51 @@ describe("backing up the Library from the panel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Back up" }));
     // The first read after starting failed: the line shows anyway and the next read is made.
-    await expect
-      .element(
-        screen.getByText("Backing up the Library. Changes to the Library wait until it finishes."),
-      )
-      .toBeVisible();
+    await expect.element(screen.getByText("Backing up the Library.")).toBeVisible();
+    // After a failed read the next waits twice as long.
+    await advanceTestClock(signal, 1_000);
+    expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(2);
     await advanceTestClock(signal, 1_000);
     await expect.element(screen.getByText(/1 of 4 files/u)).toBeVisible();
     await advanceTestClock(signal, 1_000);
     expect(endingsShown(screen)).toBe(0);
-    await advanceTestClock(signal, 1_000);
+    await advanceTestClock(signal, 2_000);
     await expectEnding(
       screen,
       "Library backed up",
       "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700. One project has not finished moving into or out of the Library. Keep that project folder too: some of its sources may be only there. 2 entries that are not files were not copied; the backup's README lists them.",
     );
+  });
+
+  it("says a second backup asked for while one runs started nothing, and gives it no result", async ({
+    signal,
+  }) => {
+    using _timers = fakeTimers();
+    const running: ScientSourcesBackupStatus = { state: "running", done: 1, total: 4 };
+    setup([{ state: "none" }, running, running, done]);
+    const ended: LibraryCopyEnding[] = [];
+    await using screen = await render(
+      <Harness
+        onEnded={(ending) => {
+          ended.push(ending);
+          return true;
+        }}
+      />,
+      { router: false },
+    );
+    await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "Back up" }));
+    await expect.element(screen.getByText(/1 of 4 files/u)).toBeVisible();
+
+    mocks.organizeScientSources.mockResolvedValueOnce({ outcome: "backup-running" });
+    await userEvent.click(screen.getByRole("button", { name: "Back up" }));
+    await vi.waitFor(() => expect(ended).toHaveLength(1));
+    expect(ended[0]).toMatchObject({ title: "An earlier backup is still running", failed: true });
+
+    await advanceTestClock(signal, 1_000);
+    await vi.waitFor(() => expect(ended).toHaveLength(2));
+    // The first request's result slot gets the backup's ending.
+    expect(ended[1]).toMatchObject({ title: "Library backed up", operationId: "op-backup" });
   });
 
   it("says how a backup ended after a switch to another project", async ({ signal }) => {
@@ -239,9 +259,7 @@ describe("backing up the Library from the panel", () => {
       root: "/project",
       change: { action: "prepare", fromFolder: "/Users/ada/Backups/One" },
     });
-    await expect
-      .element(screen.getByText("Checking and copying the backup. The Library is not changed yet."))
-      .toBeVisible();
+    await expect.element(screen.getByText("Checking and copying the backup.")).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
     await advanceTestClock(signal, 1_000);
     await expect.element(screen.getByText(/3 of 40 files/u)).toBeVisible();
@@ -253,7 +271,7 @@ describe("backing up the Library from the panel", () => {
     await expect
       .element(
         screen.getByText(
-          `The backup of ${day} is ready: 1,204 sources and 980 PDFs. It replaces this Library the next time Scient starts. If this Library holds anything, it is kept in a folder beside the restored one.`,
+          `The backup of ${day} is ready: 1,204 sources and 980 PDFs. It replaces this Library when Scient restarts.`,
         ),
       )
       .toBeVisible();
@@ -288,7 +306,7 @@ describe("backing up the Library from the panel", () => {
     await expectEnding(
       screen,
       "Library restored from the backup",
-      `1,204 sources and 980 PDFs from the backup of ${day}. Project folders were not changed. The Library that was here (4 sources) is kept in /state/scient/library.replaced-restore_1`,
+      `1,204 sources and 980 PDFs from the backup of ${day}. The Library that was here (4 sources) is kept in /state/scient/library.replaced-restore_1`,
     );
     // Another project's panel in the same window reads the same answer and stays quiet.
     await userEvent.click(screen.getByRole("button", { name: "Other project" }));
@@ -369,9 +387,6 @@ describe("backing up the Library from the panel", () => {
     await expect
       .element(screen.getByText(/^The Library that was replaced on .* is ready to come back/u))
       .toBeVisible();
-    await expect
-      .element(screen.getByText(/this Library is then kept in a folder beside it/u))
-      .toBeVisible();
     // Cancel names the restore this window shows, so one chosen elsewhere since is not dropped.
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(mocks.changeLibraryRestore).toHaveBeenCalledWith(environmentId, {
@@ -395,10 +410,7 @@ describe("backing up the Library from the panel", () => {
     );
     await using screen = await render(<Harness />, { router: false });
     await expect
-      .element(screen.getByText(/is part way through restoring the backup of/u))
-      .toBeVisible();
-    await expect
-      .element(screen.getByText(/Quit Scient and open it again to finish/u))
+      .element(screen.getByText(/^Restoring the backup of .* Restart Scient to finish\.$/u))
       .toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
@@ -481,11 +493,7 @@ describe("backing up the Library from the panel", () => {
       change: { action: "add-from-library", fromFolder: "/Users/ada/Backups/One" },
     });
     await expect
-      .element(
-        screen.getByText(
-          "Adding sources from the other Library: 40 of 312 done. Nothing that is in this Library is changed.",
-        ),
-      )
+      .element(screen.getByText("Adding sources from the other Library: 40 of 312 done."))
       .toBeVisible();
     await advanceTestClock(signal, 1_000);
     await expectEnding(

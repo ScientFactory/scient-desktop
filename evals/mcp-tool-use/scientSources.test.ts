@@ -22,6 +22,8 @@ interface Seen {
     readonly revision: number;
     readonly title: string | null;
     readonly tags?: ReadonlyArray<string>;
+    /** A Trash listing's removal, which a permanent deletion names. */
+    readonly removalId?: string;
   }>;
   readonly recentChanges?: ReadonlyArray<{
     readonly tagsAdded?: ReadonlyArray<string>;
@@ -194,8 +196,10 @@ const SCRIPTS: Readonly<
           },
           () => [list({ inTrash: true })],
           (seen) => {
-            const { sourceId, revision } = titled(seen, "Hippocampal");
-            return [tool("remove")({ sourceId, expectedRevision: revision, permanent: true })];
+            const { sourceId, revision, removalId } = titled(seen, "Hippocampal");
+            return [
+              tool("remove")({ sourceId, expectedRevision: revision, permanent: true, removalId }),
+            ];
           },
           () => "Deleted.",
         ],

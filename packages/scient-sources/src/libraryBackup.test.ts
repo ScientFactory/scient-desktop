@@ -5,23 +5,23 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import {
   backUpScientLibrary,
   checkScientLibraryBackup,
+  scientLibraryBackupEntries,
+  scientLibraryBackupLeavesOut,
   type ScientLibraryBackupManifest,
 } from "./libraryBackup.ts";
 import { withScientFileLock } from "./libraryLock.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
-import {
-  deleteScientSourcesPermanently,
-  importScientSource,
-  listScientSourceRecords,
-  removeScientSource,
-} from "./store.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import { importScientSource, listScientSourceRecords, removeScientSource } from "./store.ts";
+import { emptyScientSourceTrash, sourceCandidate } from "./testing/sourceFixtures.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const fixtures: string[] = [];
 const TEMPORARY_ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -321,28 +321,88 @@ describe("backing up the Library", () => {
     });
   });
 
-  it("keeps a PDF that is deleted for good while the backup runs", async () => {
+  it("lets a change run while it copies, and is the Library as it was at one moment", async () => {
     const { root, library, destination, removed } = await fixture();
-    // The deletion is another caller's: it starts once the first file is copied and has to
-    // wait for the backup to finish. (Started from the callback it would be the backup's own.)
-    let copying!: () => void;
-    const firstFileCopied = new Promise<void>((resolve) => {
-      copying = resolve;
+    // Another caller's deletion starts once the first file is copied. The backup waits for it
+    // before asking for the Library's lock: a deletion that waited for the backup never ends.
+    let deletion: Promise<unknown> | undefined;
+    const result = await backUpScientLibrary({
+      library,
+      destination,
+      onProgress: () => {
+        deletion ??= emptyScientSourceTrash(library);
+      },
+      faults: { beforeLibraryLock: async () => void (await deletion) },
     });
-    const deletion = firstFileCopied.then(() => deleteScientSourcesPermanently({ root: library }));
-    const result = await backUpScientLibrary({ library, destination, onProgress: () => copying() });
-    await deletion;
     if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
 
     expect(await NodeFSP.readdir(NodePath.join(root, "trash"))).toHaveLength(1);
-    expect(result.counts).toMatchObject({ trashed: 2, pdfs: 2 });
-    expect(
-      await NodeFSP.readFile(
-        NodePath.join(result.path, "library", "trash", `${removed.sourceId}.json`),
-        "utf8",
+    expect(result.counts).toMatchObject({ trashed: 1, pdfs: 1 });
+    await expect(
+      NodeFSP.stat(NodePath.join(result.path, "library", "trash", `${removed.sourceId}.json`)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await filesIn(NodePath.join(result.path, "library"))).toEqual(
+      (await scientLibraryBackupEntries(root)).files.filter(
+        (path) => !scientLibraryBackupLeavesOut(path),
       ),
-    ).toContain("Soil carbon budgets");
+    );
     expect(await checkScientLibraryBackup(result.path)).toMatchObject({ outcome: "complete" });
+  });
+
+  it("leaves out a file removed while it was being copied", async () => {
+    const { root, library, destination, removed } = await fixture();
+    const entry = NodePath.join(root, "trash", `${removed.sourceId}.json`);
+    const { lstat } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    // The Trash is emptied after the copy saw the entry and before it opened it.
+    using _removal = vi.spyOn(NodeFSP, "lstat").mockImplementation((async (
+      path: Parameters<typeof lstat>[0],
+      options?: Parameters<typeof lstat>[1],
+    ) => {
+      const stats = await lstat(path, options);
+      if (path === entry) await NodeFSP.rm(entry);
+      return stats;
+    }) as typeof lstat);
+    const result = await backUpScientLibrary({ library, destination });
+    if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
+
+    expect(result.counts.trashed).toBe(1);
+    expect(await checkScientLibraryBackup(result.path)).toMatchObject({ outcome: "complete" });
+  });
+
+  it("removes the folders stopped backups left, and only those", async () => {
+    const { library, destination } = await fixture();
+    const partial = (id: string) =>
+      NodePath.join(destination, `.scient-library-backup-backup_${id.repeat(32)}.partial`);
+    const lock = (id: string) =>
+      NodePath.join(destination, `.scient-library-backup-backup_${id.repeat(32)}.lock`);
+    for (const id of ["a", "b", "c", "d"]) {
+      await NodeFSP.mkdir(partial(id));
+      await NodeFSP.writeFile(NodePath.join(partial(id), "README.md"), "partial");
+    }
+    // a: its backup stopped, lock free. b: still running. c: unlocked, a day old. d: unlocked, new.
+    await withScientFileLock(lock("a"), async () => undefined);
+    // 2026-01-01, long before this test runs.
+    await NodeFSP.utimes(partial("c"), 1_767_225_600, 1_767_225_600);
+    let release!: () => void;
+    const running = withScientFileLock(
+      lock("b"),
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    try {
+      const result = await backUpScientLibrary({ library, destination });
+      expect(result.outcome).toBe("backed-up");
+    } finally {
+      release();
+      await running;
+    }
+    const left = (await NodeFSP.readdir(destination)).filter((name) => name.startsWith("."));
+    expect(left.toSorted()).toEqual(
+      [
+        NodePath.basename(lock("b")),
+        NodePath.basename(partial("b")),
+        NodePath.basename(partial("d")),
+      ].toSorted(),
+    );
   });
 
   it("answers busy when a project began moving after the backup listed the projects", async () => {

@@ -20,7 +20,7 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "./libraryMerge.ts";
-import { readScientDisplacedCopies } from "./projectDisplacedCopies.ts";
+import { readScientDisplacedCopies } from "./testing/displacedCopies.ts";
 import {
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
@@ -31,14 +31,17 @@ import {
 import { editableMetadataFromRecord } from "./editable.ts";
 import {
   attachScientSourcePdf,
-  deleteScientSourcesPermanently,
   importScientSource,
   listScientSourceRecords,
   readScientSourceRecord,
   removeScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import {
+  deleteFromTrashForGood,
+  emptyScientSourceTrash,
+  sourceCandidate,
+} from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -135,7 +138,7 @@ describe("resolving a copied project's sources", () => {
       sourceId: alternate.sourceId,
       expectedRevision: alternate.revision,
     });
-    await deleteScientSourcesPermanently({ root: collaborator });
+    await emptyScientSourceTrash(collaborator);
 
     expect(await resolveFresh("third")).toEqual({
       kind: "unresolved",
@@ -629,7 +632,7 @@ describe("records the Library holds apart from a source", () => {
     // Deleted for good: this key's ID is the other computer's, so its copy is left alone and
     // stays incomplete; the fuller managed entry is still kept.
     await trash(library, hydrated.sourceId);
-    await deleteScientSourcesPermanently({ root: library, sourceIds: [hydrated.sourceId] });
+    await deleteFromTrashForGood(library, [hydrated.sourceId]);
     const [read] = await listScientProjectPinnedWorks({ projectRoot: project, library });
     expect(read).toMatchObject({ from: "snapshot", incompleteSnapshot: true });
     expect(await refreshed()).not.toHaveProperty("work.pages");

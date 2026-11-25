@@ -278,17 +278,9 @@ export function UniversityCrest({
           />
         }
       >
-        <span className="relative">
-          <UniversityIcon site={domainOf(first)} className="size-5" />
-          {waiting ? (
-            <span
-              aria-hidden
-              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500"
-            />
-          ) : null}
-        </span>
+        <UniversityIcon site={domainOf(first)} className="size-5" />
         {waiting && canWrite ? (
-          <span className="@max-[22rem]:hidden">
+          <span className="@max-[28rem]:hidden">
             <T>Sign in</T>
           </span>
         ) : null}

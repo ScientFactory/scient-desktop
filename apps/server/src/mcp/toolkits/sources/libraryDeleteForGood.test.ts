@@ -215,6 +215,7 @@ describe("deleting a cited source for good", () => {
           sourceId: gone.sourceId,
           expectedRevision: gone.revision,
           permanent: true,
+          removalId: trash.entries[0]!.removalId,
         }),
         fixture,
       );

@@ -22,6 +22,8 @@ import {
 } from "./ZoteroItems.ts";
 
 const MAX_PAGE_SIZE = 100;
+/** Zotero takes at most 50 keys in one `itemKey` filter. */
+const ZOTERO_KEYS_PER_REQUEST = 50;
 const MAX_ZOTERO_COLLECTIONS = 10_000;
 const MAX_ZOTERO_SCOPED_BROWSE_ITEMS = 10_000;
 
@@ -71,6 +73,72 @@ async function getJson(transport: ZoteroTransport, path: string) {
 function totalResults(response: ZoteroResponse, fallback: number): number {
   const reported = Number.parseInt(response.headers["total-results"] ?? String(fallback), 10);
   return Number.isFinite(reported) && reported >= 0 ? reported : fallback;
+}
+
+function libraryVersionOf(response: ZoteroResponse): number | null {
+  const version = Number(response.headers["last-modified-version"] ?? Number.NaN);
+  return Number.isSafeInteger(version) && version >= 0 ? version : null;
+}
+
+/** The library's version now, from a listing; null when Zotero does not say. */
+export async function readZoteroLibraryVersion(transport: ZoteroTransport): Promise<number | null> {
+  const { response } = await getJson(transport, "/items?format=json&limit=1");
+  return libraryVersionOf(response);
+}
+
+/**
+ * The keys of the items changed, trashed or deleted after a library version, and the library's
+ * version as Zotero answered; null when the answer is not the one zotero.org documents.
+ */
+export async function readZoteroChangesSince(
+  transport: ZoteroTransport,
+  since: number,
+): Promise<{ readonly libraryVersion: number; readonly keys: ReadonlySet<string> } | null> {
+  const parameters = new URLSearchParams({
+    format: "versions",
+    since: String(since),
+    includeTrashed: "1",
+  });
+  const changed = await getJson(transport, `/items?${parameters.toString()}`);
+  const deleted = await getJson(transport, `/deleted?since=${since}`);
+  const libraryVersion = libraryVersionOf(changed.response);
+  const versions = changed.value;
+  const gone = (deleted.value as { readonly items?: unknown } | null)?.items;
+  if (
+    libraryVersion === null ||
+    typeof versions !== "object" ||
+    versions === null ||
+    Array.isArray(versions) ||
+    !Array.isArray(gone)
+  ) {
+    return null;
+  }
+  const keys = [...Object.keys(versions), ...gone];
+  return keys.every((key) => typeof key === "string" && ZOTERO_ITEM_KEY_PATTERN.test(key))
+    ? { libraryVersion, keys: new Set(keys as ReadonlyArray<string>) }
+    : null;
+}
+
+/** Each item's parent key, null for a top-level item; an item Zotero no longer has is absent. */
+export async function readZoteroParents(
+  transport: ZoteroTransport,
+  keys: ReadonlyArray<string>,
+): Promise<ReadonlyMap<string, string | null>> {
+  const parents = new Map<string, string | null>();
+  for (let index = 0; index < keys.length; index += ZOTERO_KEYS_PER_REQUEST) {
+    const parameters = new URLSearchParams({
+      format: "json",
+      itemKey: keys.slice(index, index + ZOTERO_KEYS_PER_REQUEST).join(","),
+      includeTrashed: "1",
+      limit: String(ZOTERO_KEYS_PER_REQUEST),
+    });
+    const { value } = await getJson(transport, `/items?${parameters.toString()}`);
+    for (const item of decodeZoteroRawItems(value)) {
+      const parent = item.data.parentItem;
+      parents.set(item.key, typeof parent === "string" ? parent : null);
+    }
+  }
+  return parents;
 }
 
 /** Every collection of the library, with the library it is in. */
@@ -222,21 +290,27 @@ export async function listZoteroLibraryWith(
       hasMore: start + items.length < allItems.length,
     };
   }
-  const page = await readItemPage(transport, {
-    path: scopePath(input.scope),
-    query: input.query,
-    start,
-    limit,
-  });
+  const path = scopePath(input.scope);
+  const page = await readItemPage(transport, { path, query: input.query, start, limit });
   const items = importableZoteroItems(page.rawItems).map(toCandidate);
   return {
     scope: input.scope,
     items,
     start,
     nextStart: start + page.rawItems.length,
-    total: page.total,
+    total:
+      start === 0 && !input.query.trim()
+        ? Math.max(0, page.total - (await countStandaloneNotes(transport, path)))
+        : page.total,
     hasMore: start + page.rawItems.length < page.total,
   };
+}
+
+/** Zotero's count of a scope's items holds its standalone notes, which an import passes by. */
+async function countStandaloneNotes(transport: ZoteroTransport, path: string): Promise<number> {
+  const parameters = new URLSearchParams({ format: "json", itemType: "note", limit: "1" });
+  const { response } = await getJson(transport, `${path}?${parameters.toString()}`);
+  return totalResults(response, 0);
 }
 
 /** How many references one import of a scope may reach, over all its parts. */

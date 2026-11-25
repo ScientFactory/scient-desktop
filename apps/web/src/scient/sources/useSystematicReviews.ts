@@ -17,19 +17,9 @@ import {
   readSystematicReviewConflicts,
   readSystematicReviews,
 } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
-
-const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
-
-// Outside the hook: the React Compiler does not compile try/finally.
-async function settle<A>(work: () => Promise<A>, settled: () => void): Promise<A> {
-  try {
-    return await work();
-  } finally {
-    settled();
-  }
-}
+import { settleAfter } from "./settleAfter";
 
 /** What was open, so opening a source from a review and coming back returns to the same place. */
 const lastPlace = new Map<
@@ -73,11 +63,11 @@ export function useSystematicReviews(input: {
         setList(next);
         setError(null);
       })
-      .catch((cause: unknown) => setError(message(cause)));
+      .catch((cause: unknown) => setError(sourcesErrorMessage(cause)));
   const reloadDetail = (id: string) =>
     readSystematicReview(input.environmentId, { root: input.root, reviewId: id })
       .then((next) => setResult(next))
-      .catch((cause: unknown) => setError(message(cause)));
+      .catch((cause: unknown) => setError(sourcesErrorMessage(cause)));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the project's reviews, and the one left open, from the environment server when the view opens
   useEffect(() => {
@@ -88,7 +78,7 @@ export function useSystematicReviews(input: {
         if (current) setList(next);
       })
       .catch((cause: unknown) => {
-        if (current) setError(message(cause));
+        if (current) setError(sourcesErrorMessage(cause));
       });
     if (openId) {
       void readSystematicReview(input.environmentId, { root: input.root, reviewId: openId })
@@ -107,13 +97,17 @@ export function useSystematicReviews(input: {
     failureTitle: string,
   ): Promise<ScientSystematicReviewChangeResult | null> => {
     setPending(true);
-    return settle(
+    return settleAfter(
       async () => {
         const result = await changeSystematicReview(input.environmentId, {
           root: input.root,
           change: action,
         }).catch((cause: unknown) => {
-          toastManager.add({ type: "error", title: failureTitle, description: message(cause) });
+          toastManager.add({
+            type: "error",
+            title: failureTitle,
+            description: sourcesErrorMessage(cause),
+          });
           return null;
         });
         if (result?.message) {
@@ -134,14 +128,18 @@ export function useSystematicReviews(input: {
     failureTitle: string,
   ) => {
     setPending(true);
-    return settle(
+    return settleAfter(
       async () => {
         const changed = await changeSystematicReviewConflict(input.environmentId, {
           root: input.root,
           reviewId: id,
           change: conflict,
         }).catch((cause: unknown) => {
-          toastManager.add({ type: "error", title: failureTitle, description: message(cause) });
+          toastManager.add({
+            type: "error",
+            title: failureTitle,
+            description: sourcesErrorMessage(cause),
+          });
           return null;
         });
         await Promise.all([reloadList(), id === reviewId ? reloadDetail(id) : null]);

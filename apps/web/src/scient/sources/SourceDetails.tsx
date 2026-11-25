@@ -12,8 +12,6 @@ import {
 } from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
-  AlertCircle,
-  AlertTriangle,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -59,7 +57,6 @@ import {
   PopoverDescription,
   PopoverPopup,
   PopoverTitle,
-  PopoverTrigger,
 } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
@@ -68,18 +65,19 @@ import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToC
 import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import {
   LIBRARY_LABELS,
   libraryCopyLabel,
   libraryCopyProblemLabel,
   type ReadingStateChange,
 } from "./libraryLabels";
-import { agentVerificationLabel, fileNameTitleLabel } from "./sourceLabels";
+import { whenLabel } from "./dayLabel";
+import { agentVerificationLabel } from "./sourceLabels";
 import { pdfVersionLabel } from "./sourcePdfVersion";
 import { KeptCopies } from "./KeptCopies";
 import { SourceEditorialStatus } from "./SourceEditorialStatus";
-import { verificationProblemLabel } from "./sourceLifecycleLabels";
+import { missingDetailsLabel, verificationProblemLabel } from "./sourceLifecycleLabels";
 import { SourceReference } from "./SourceReference";
 import type { CitationStyleProject } from "./useProjectCitationStyle";
 import { useSourceNoteControls, type SourceNoteSaveContext } from "./SourceNote";
@@ -176,10 +174,7 @@ function doiUrl(value: string): string {
 
 function importedLabel(record: SourceRecord, resolve: MessageResolver): string {
   const fromZotero = record.externalReferences.some((reference) => reference.system === "zotero");
-  const date = new Date(record.importedAt);
-  const formattedDate = Number.isNaN(date.getTime())
-    ? null
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+  const formattedDate = whenLabel(record.importedAt, resolve);
   const sourceLabel =
     record.origin?.actor === "agent"
       ? resolve(msg("Added by agent"))
@@ -557,17 +552,11 @@ function MetadataRefreshConfirmation(props: {
         role="alertdialog"
       >
         <div className="p-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="size-4 shrink-0 text-amber-600" />
-            <PopoverTitle>
-              <T>Refresh metadata?</T>
-            </PopoverTitle>
-          </div>
+          <PopoverTitle>
+            <T>Refresh metadata?</T>
+          </PopoverTitle>
           <PopoverDescription className="mt-1.5" size="compact">
-            <T>
-              Scient will replace matching metadata fields using this source’s PDF and identifiers.
-              Manual edits to those fields may be lost. The PDF stays unchanged.
-            </T>
+            <T>Edited fields may be replaced.</T>
           </PopoverDescription>
           {error ? (
             <p className="mt-2 text-xs text-destructive" role="alert">
@@ -846,13 +835,15 @@ export function SourceDetails(props: {
     field: "personalNote",
     readOnly: readOnly || !library?.canSavePersonalNote,
     heading: m(LIBRARY_LABELS.myNote),
-    help: m(LIBRARY_LABELS.myNoteHelp),
     onSave: library?.onSavePersonalNote ?? props.onSaveNote,
   });
   // A session without the Library write grant never gets the key, so it never sees "My note".
   const showsPersonalNote = library !== undefined && "personalNote" in record;
   const publication = publicationLocation(record);
-  const fileNameTitle = fileNameTitleLabel(record, m);
+  const missing = missingDetailsLabel(
+    props.diagnostics.map((diagnostic) => diagnostic.field),
+    m,
+  );
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
@@ -1109,7 +1100,7 @@ export function SourceDetails(props: {
                     toastManager.add({
                       type: "error",
                       title: gt("Source could not be moved to Trash"),
-                      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                      description: sourcesErrorMessage(cause),
                     });
                   });
                 }}
@@ -1125,44 +1116,12 @@ export function SourceDetails(props: {
       <ScrollArea className="min-h-0 flex-1">
         <article className={`${SOURCES_COLUMN} space-y-6 p-4`}>
           <header className="space-y-2">
-            <div className="relative w-fit">
-              <Badge variant="secondary">{sourceTypeLabel(record, m)}</Badge>
-              {props.diagnostics.length > 0 ? (
-                <Popover>
-                  <ScientTooltip
-                    content={`Metadata needs review: ${props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}`}
-                    className="max-w-72"
-                  >
-                    <PopoverTrigger
-                      render={
-                        <button
-                          type="button"
-                          className="absolute -end-6 top-1/2 -translate-y-1/2 rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
-                          aria-label={gt("Metadata needs review")}
-                        >
-                          <AlertCircle className="size-4" aria-hidden />
-                        </button>
-                      }
-                    />
-                  </ScientTooltip>
-                  <PopoverPopup side="bottom" align="start" className="max-w-72">
-                    <PopoverTitle>
-                      <T>Metadata needs review</T>
-                    </PopoverTitle>
-                    <PopoverDescription>
-                      {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-                    </PopoverDescription>
-                  </PopoverPopup>
-                </Popover>
-              ) : null}
-            </div>
+            <Badge variant="secondary">{sourceTypeLabel(record, m)}</Badge>
             <h2 className="text-lg font-semibold leading-snug">
               {record.title ?? gt("Untitled source")}
             </h2>
             <p className="text-sm text-muted-foreground">{creatorsLabel(record, m)}</p>
-            {fileNameTitle ? (
-              <p className="text-xs text-muted-foreground">{fileNameTitle}</p>
-            ) : null}
+            {missing ? <p className="text-xs text-muted-foreground">{missing}</p> : null}
             <SourceEditorialStatus status={record.editorialStatus} />
             <div className="flex flex-wrap items-center gap-1 empty:hidden">
               {library ? (

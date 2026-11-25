@@ -327,6 +327,8 @@ export async function citePinnedSources(
   options: { readonly resolveIdentifiers: ResolveIdentifierBatch },
 ): Promise<LibraryCitationResult> {
   const notFound: string[] = [];
+  // The Library ID each request was pinned as: a merged ID names the record it was merged into.
+  const pinnedAs = new Map<string, string>();
   for (const wanted of input.sources) {
     const lower = citationKeyComparisonValue(wanted);
     const pins = await readScientProjectPins(input.root);
@@ -353,6 +355,7 @@ export async function citePinnedSources(
         })
       : null;
     if (!pinned || pinned.outcome === "not-found") notFound.push(wanted);
+    else if (sourceId) pinnedAs.set(wanted, sourceId);
   }
   const bibliography = await syncPinnedBibliography({
     root: input.root,
@@ -382,6 +385,7 @@ export async function citePinnedSources(
         citationKeyComparisonValue(pin.citationKey) === lower ||
         (resolution.kind === "resolved" &&
           (resolution.sourceId === wanted ||
+            resolution.sourceId === pinnedAs.get(wanted) ||
             citationKeyComparisonValue(records.get(resolution.sourceId)?.citationKey ?? "") ===
               lower)),
     );

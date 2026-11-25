@@ -38,9 +38,7 @@ describe("library labels", () => {
         removeSnapshotsHelp(count),
         goneFromComputerLabel(count),
       ]),
-      ...(["project", "library", undefined] as const).flatMap((listed) =>
-        Object.values(emptySourcesLabel(listed)),
-      ),
+      ...(["project", "library", undefined] as const).map((listed) => emptySourcesLabel(listed)),
       sourcePinLabel({ pinned: true }, "library"),
       sourcePinLabel({ pinned: true, fromSnapshot: true }, "project"),
     ];

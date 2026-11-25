@@ -17,6 +17,92 @@ type SourceMetadata = Pick<
   "creators" | "identifiers" | "issuedYear" | "title"
 > & { readonly more?: Readonly<Record<string, string>> };
 
+const referenceKey = (reference: ScientSourceRecord["externalReferences"][number]) =>
+  `ref:${reference.system}\0${reference.libraryId}\0${reference.itemKey}`;
+
+const recordKeys = new WeakMap<ScientSourceRecord, ReadonlyArray<string>>();
+
+/** Every key by which intake can match a record; a match without a shared key does not exist. */
+function intakeKeysOf(record: ScientSourceRecord): ReadonlyArray<string> {
+  const known = recordKeys.get(record);
+  if (known) return known;
+  const metadataKey = sourceMetadataKey(record);
+  const keys = [
+    ...new Set([
+      `sid:${record.sourceId}`,
+      ...record.externalReferences.map(referenceKey),
+      ...record.identifiers.flatMap((identifier) => {
+        const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+        return key ? [`id:${key}`] : [];
+      }),
+      ...[...bookIsbns(record)].map((isbn) => `isbn:${isbn}`),
+      ...record.attachments.flatMap((attachment) =>
+        attachment.sha256 ? [`pdf:${attachment.sha256}`] : [],
+      ),
+      ...(metadataKey === null ? [] : [`meta:${metadataKey}`]),
+    ]),
+  ];
+  recordKeys.set(record, keys);
+  return keys;
+}
+
+interface IntakeIndex {
+  readonly byKey: Map<string, ScientSourceRecord[]>;
+  /** Order in the list the index was made for: the matching rules take the first match. */
+  readonly rank: Map<ScientSourceRecord, number>;
+  first: number;
+}
+
+/** By list: a list of records is not changed once read, and a list gone takes its index. */
+const intakeIndexes = new WeakMap<ReadonlyArray<ScientSourceRecord>, IntakeIndex>();
+
+function indexRecord(index: IntakeIndex, record: ScientSourceRecord, rank: number) {
+  index.rank.set(record, rank);
+  for (const key of intakeKeysOf(record)) {
+    const sharing = index.byKey.get(key);
+    if (sharing) sharing.push(record);
+    else index.byKey.set(key, [record]);
+  }
+}
+
+function intakeIndexOf(records: ReadonlyArray<ScientSourceRecord>): IntakeIndex {
+  const known = intakeIndexes.get(records);
+  if (known) return known;
+  const index: IntakeIndex = { byKey: new Map(), rank: new Map(), first: 0 };
+  for (const [rank, record] of records.entries()) indexRecord(index, record, rank);
+  intakeIndexes.set(records, index);
+  return index;
+}
+
+/** The records with any of the keys, in their order in `records`. */
+function recordsSharingKeys(
+  records: ReadonlyArray<ScientSourceRecord>,
+  keys: ReadonlyArray<string>,
+): ReadonlyArray<ScientSourceRecord> {
+  const index = intakeIndexOf(records);
+  const found = new Set<ScientSourceRecord>();
+  for (const key of keys) for (const record of index.byKey.get(key) ?? []) found.add(record);
+  return [...found].toSorted((left, right) => index.rank.get(left)! - index.rank.get(right)!);
+}
+
+/**
+ * Hands the index of `previous` to `next` when `next` is `previous` with one record put first,
+ * as an import's next item sees it, instead of indexing the whole Library again.
+ */
+export function carryScientSourceIntakeIndex(
+  previous: ReadonlyArray<ScientSourceRecord>,
+  next: ReadonlyArray<ScientSourceRecord>,
+): void {
+  const index = intakeIndexes.get(previous);
+  const [added] = next;
+  if (!index || !added || next.length !== previous.length + 1 || index.rank.has(added)) return;
+  for (const [offset, record] of previous.entries()) if (next[offset + 1] !== record) return;
+  intakeIndexes.delete(previous);
+  index.first -= 1;
+  indexRecord(index, added, index.first);
+  intakeIndexes.set(next, index);
+}
+
 /** Ends the move's merge line when some merges kept different values; the Library offers Review. */
 export const SCIENT_LIBRARY_MERGES_TO_REVIEW = "kept different values: Review.";
 
@@ -30,7 +116,12 @@ export function assessSourceMetadataDuplicate(input: {
       return key ? [key] : [];
     }),
   );
-  const identifierMatches = input.existing.filter((record) =>
+  const metadataKey = sourceMetadataKey(input.source);
+  const existing = recordsSharingKeys(input.existing, [
+    ...[...identifiers].map((key) => `id:${key}`),
+    ...(metadataKey === null ? [] : [`meta:${metadataKey}`]),
+  ]);
+  const identifierMatches = existing.filter((record) =>
     record.identifiers.some((identifier) => {
       const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
       return key !== null && identifiers.has(key);
@@ -44,10 +135,9 @@ export function assessSourceMetadataDuplicate(input: {
     };
   }
 
-  const metadataKey = sourceMetadataKey(input.source);
   if (metadataKey !== null) {
     // Another edition or version of the same title is another source.
-    const metadataMatches = input.existing.filter(
+    const metadataMatches = existing.filter(
       (record) =>
         sourceMetadataKey(record) === metadataKey && !sourceEditionsDiffer(record, input.source),
     );
@@ -128,7 +218,14 @@ export function assessSourceDuplicate(input: {
   const isbns = bookIsbns(candidate);
   const matches: Array<{ readonly record: ScientSourceRecord; readonly kind: StrongMatchKind }> =
     [];
-  for (const record of input.existing) {
+  const sharingKeys = recordsSharingKeys(input.existing, [
+    ...candidate.externalReferences.map(referenceKey),
+    ...[...ownKeys].map((key) => `id:${key}`),
+    ...[...isbns].map((isbn) => `isbn:${isbn}`),
+    ...(input.pdfSha256 ? [`pdf:${input.pdfSha256}`] : []),
+    ...[input.sourceId, input.acceptedSourceId].flatMap((id) => (id ? [`sid:${id}`] : [])),
+  ]);
+  for (const record of sharingKeys) {
     const kind: StrongMatchKind | null = candidate.externalReferences.some((candidateReference) =>
       record.externalReferences.some(
         (reference) =>
@@ -186,7 +283,7 @@ export function assessSourceDuplicate(input: {
           ? "This source was already imported from the same origin."
           : reused.kind === "same-identifier"
             ? "A source with the same persistent identifier already exists."
-            : "The same PDF content already exists in this project.",
+            : "The same PDF content already exists.",
     };
   }
   if (assessed.length > 0) {

@@ -1,6 +1,8 @@
 import type { ScientSourcesRecentChange } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { m } from "~/i18n/messages";
+
 import {
   recentChangeBy,
   recentChangeDetail,
@@ -72,8 +74,11 @@ describe("the words of a recent change", () => {
 
   it("names both papers of a merge and keeps who ran an automatic one", () => {
     expect(recentChangeSentence(merge)).toBe("Merged “Untitled source” into “Sleep and memory”");
-    expect(recentChangeBy(merge)).toBe("You · automatic merge");
-    expect(recentChangeBy({ ...merge, automatic: false, by: "agent" })).toBe("Agent");
+    const sameDay = new Date(new Date(at).getTime() + 60_000);
+    expect(recentChangeBy(merge, m, sameDay)).toMatch(/^Automatic merge · Today, /u);
+    expect(recentChangeBy({ ...merge, automatic: false, by: "agent" }, m, sameDay)).toMatch(
+      /^Agent · Today, /u,
+    );
     expect(recentChangeState({ ...merge, undo: "merged-source-gone" })).toMatch(
       /^Can no longer be undone/u,
     );

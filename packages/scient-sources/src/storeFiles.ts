@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Shared filesystem rules of the project and library stores.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -17,8 +18,43 @@ export function assertSafeIdentifier(value: string, label: string): void {
   }
 }
 
-function formatJson(value: unknown): string {
+export function formatJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+/** A slash-separated path under `base`, in this platform's form. */
+export const absolute = (base: string, relative: string) =>
+  NodePath.join(base, ...relative.split("/"));
+
+/** The file's SHA-256, or null when it is not there. */
+export async function hashFile(filePath: string): Promise<string | null> {
+  const hash = NodeCrypto.createHash("sha256");
+  try {
+    for await (const chunk of NodeFS.createReadStream(filePath)) hash.update(chunk as Buffer);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return null;
+    throw error;
+  }
+  return hash.digest("hex");
+}
+
+export type JsonObject = Readonly<Record<string, unknown>>;
+
+export const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The fields of a JSON object that this version does not know, kept as they were. */
+export function extraFields(value: unknown, known: ReadonlyArray<string>): JsonObject {
+  if (!isJsonObject(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.includes(key)));
+}
+
+export function sortedExtra(extra: JsonObject): JsonObject {
+  return Object.fromEntries(
+    Object.keys(extra)
+      .toSorted()
+      .map((key) => [key, extra[key]]),
+  );
 }
 
 function boundedJson(value: unknown, maximumBytes: number, label: string): string {

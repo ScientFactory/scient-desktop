@@ -24,6 +24,7 @@ import {
   deleteTrashedScientSource,
   detachScientSourcePdf,
   importScientSource,
+  inspectScientLibrarySources,
   inspectScientSources,
   listScientSourceRecords,
   listScientSourceRevisions,
@@ -38,7 +39,13 @@ import {
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
-import { SCIENT_SOURCE_HISTORY_DIRECTORY, sourceCandidate } from "./testing/sourceFixtures.ts";
+import {
+  deleteFromTrashForGood,
+  emptyScientSourceTrash,
+  SCIENT_SOURCE_HISTORY_DIRECTORY,
+  sourceCandidate,
+  trashRemovalId,
+} from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -230,41 +237,42 @@ describe("Scient source trash", () => {
       });
     }
 
-    await expect(
-      deleteScientSourcesPermanently({ root, sourceIds: [removedOwn.sourceId] }),
-    ).resolves.toEqual({ deletedSourceIds: [removedOwn.sourceId], removedFileCount: 1 });
-    await expect(
-      NodeFSP.stat(sourceAttachmentAbsolutePath(root, removedOwn.attachments[0]!)),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(
-      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, detached.attachments[0]!), "utf8"),
-    ).resolves.toBe("%PDF-1.7\ndetached\n");
+    // A saved version keeps no PDF: the detached one goes with the chosen source's own.
+    await expect(deleteFromTrashForGood(root, [removedOwn.sourceId])).resolves.toEqual({
+      outcome: "deleted",
+      deletedSourceIds: [removedOwn.sourceId],
+      removedFileCount: 2,
+    });
+    for (const attachment of [removedOwn.attachments[0]!, detached.attachments[0]!]) {
+      await expect(
+        NodeFSP.stat(sourceAttachmentAbsolutePath(root, attachment)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
     await expect(
       NodeFSP.stat(NodePath.join(root, SCIENT_SOURCE_HISTORY_DIRECTORY, removedOwn.sourceId)),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    for (const filePath of Object.values(removedMaterial.paths)) {
-      await expect(NodeFSP.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+    for (const material of [removedMaterial, detachedMaterial]) {
+      for (const filePath of Object.values(material.paths)) {
+        await expect(NodeFSP.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
     }
-    expect(await readScientSourceFullText(root, detachedMaterial.text.sha256)).toEqual(
-      detachedMaterial.text,
-    );
-    await expect(NodeFSP.readFile(detachedMaterial.paths.annotations, "utf8")).resolves.toBe(
-      detachedMaterial.annotations,
-    );
 
-    await expect(deleteScientSourcesPermanently({ root })).resolves.toEqual({
+    const orphan = NodePath.join(
+      root,
+      ".scient/sources/files/sha256/ab",
+      `ab${"0".repeat(62)}.pdf`,
+    );
+    await NodeFSP.mkdir(NodePath.dirname(orphan), { recursive: true });
+    await NodeFSP.writeFile(orphan, "%PDF-1.7\norphan\n", "utf8");
+    await expect(emptyScientSourceTrash(root)).resolves.toEqual({
+      outcome: "deleted",
       deletedSourceIds: [removedShared.sourceId],
       removedFileCount: 1,
     });
-    await expect(
-      NodeFSP.stat(sourceAttachmentAbsolutePath(root, detached.attachments[0]!)),
-    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(NodeFSP.stat(orphan)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(
       NodeFSP.readFile(sourceAttachmentAbsolutePath(root, kept.attachments[0]!), "utf8"),
     ).resolves.toBe("%PDF-1.7\nshared\n");
-    for (const filePath of Object.values(detachedMaterial.paths)) {
-      await expect(NodeFSP.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
-    }
     expect(await readScientSourceFullText(root, keptMaterial.text.sha256)).toEqual(
       keptMaterial.text,
     );
@@ -274,7 +282,7 @@ describe("Scient source trash", () => {
   });
 
   it.each(["named", "revision-checked"] as const)(
-    "%s deletion collects only the chosen sources' PDFs and leaves unrelated history restorable",
+    "%s deletion collects every PDF no live or trashed source attaches",
     async (deletion) => {
       const libraryRoot = NodePath.join(await project(), "library");
       await ensureScientLibrary(libraryRoot);
@@ -315,7 +323,6 @@ describe("Scient source trash", () => {
         await addPdfMaterial(root, exclusivePdf),
       ];
       const sharedMaterial = [
-        unrelatedMaterial,
         await addPdfMaterial(root, live.attachments[0]!),
         await addPdfMaterial(root, trashed.attachments[0]!),
       ];
@@ -336,38 +343,34 @@ describe("Scient source trash", () => {
           expectedRevision: record.revision,
         });
       }
+      const removalId = await trashRemovalId(root, removed.sourceId);
       for (const retry of [false, true]) {
         const deleted =
           deletion === "named"
-            ? await deleteScientSourcesPermanently({
-                root: scientLibraryLocation(libraryRoot),
-                sourceIds: [removed.sourceId],
-              })
-            : await deleteTrashedScientSource({
-                root: scientLibraryLocation(libraryRoot),
-                sourceId: removed.sourceId,
-                expectedRevision: removed.revision,
-              });
+            ? await deleteScientSourcesPermanently({ root, removalIds: [removalId] })
+            : await deleteTrashedScientSource({ root, sourceId: removed.sourceId, removalId });
         if (retry) {
           expect(deleted).toEqual(
             deletion === "named"
-              ? { deletedSourceIds: [], removedFileCount: 0 }
+              ? { outcome: "deleted", deletedSourceIds: [], removedFileCount: 0 }
               : { outcome: "not-found", sourceId: removed.sourceId },
           );
         } else {
-          expect(deleted).toMatchObject({ removedFileCount: 2 });
+          expect(deleted).toMatchObject({ removedFileCount: 3 });
         }
       }
-      await expect(deleteScientSourcesPermanently({ root, sourceIds: [] })).resolves.toEqual({
+      await expect(deleteFromTrashForGood(root, [])).resolves.toEqual({
+        outcome: "deleted",
         deletedSourceIds: [],
         removedFileCount: 0,
       });
-      for (const attachment of [historicalPdf, exclusivePdf]) {
+      // Another source's saved version names the unrelated PDF, which keeps it no longer.
+      for (const attachment of [historicalPdf, exclusivePdf, unrelated.attachments[0]!]) {
         await expect(
           NodeFSP.stat(sourceAttachmentAbsolutePath(root, attachment)),
         ).rejects.toMatchObject({ code: "ENOENT" });
       }
-      for (const material of exclusiveMaterial) {
+      for (const material of [...exclusiveMaterial, unrelatedMaterial]) {
         for (const filePath of Object.values(material.paths)) {
           await expect(NodeFSP.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
         }
@@ -380,23 +383,7 @@ describe("Scient source trash", () => {
           NodeFSP.readFile(sourceAttachmentAbsolutePath(root, record.attachments[0]!), "utf8"),
         ).resolves.toBe(bytes);
       }
-      const reverted = await revertScientSource({
-        root: scientLibraryLocation(libraryRoot),
-        sourceId: unrelated.sourceId,
-        expectedRevision: detached.record!.revision,
-        toRevision: unrelated.revision,
-      });
-      expect(reverted).toMatchObject({
-        outcome: "reverted",
-        missingAttachmentCount: 0,
-        record: { attachments: unrelated.attachments },
-      });
-      await expect(
-        NodeFSP.readFile(
-          sourceAttachmentAbsolutePath(root, reverted.record.attachments[0]!),
-          "utf8",
-        ),
-      ).resolves.toBe("%PDF-1.7\nunrelated\n");
+      expect(detached.record!.attachments).toEqual([]);
       for (const material of sharedMaterial) {
         expect(await readScientSourceFullText(root, material.text.sha256)).toEqual(material.text);
         await expect(NodeFSP.readFile(material.paths.annotations, "utf8")).resolves.toBe(
@@ -406,28 +393,12 @@ describe("Scient source trash", () => {
     },
   );
 
-  it("collects retained PDFs of merged copies but preserves another source's retained PDF", async () => {
+  it("collects the PDFs of merged copies with the paper they joined", async () => {
     const libraryRoot = NodePath.join(await project(), "library");
     await ensureScientLibrary(libraryRoot);
     const root = scientLibraryLocation(libraryRoot);
-    const kept = await add(root, "A", "10.1000/a", "shared-history");
-    const keptMaterial = await addPdfMaterial(root, kept.attachments[0]!);
-    await detachScientSourcePdf({
-      root,
-      sourceId: kept.sourceId,
-      attachmentId: kept.attachments[0]!.attachmentId,
-      expectedRevision: kept.revision,
-    });
-    let survivor = await add(root, "B", "10.1000/b");
-    survivor = (
-      await attachScientSourcePdf({
-        root,
-        sourceId: survivor.sourceId,
-        expectedRevision: survivor.revision,
-        pdfPath: sourceAttachmentAbsolutePath(root, kept.attachments[0]!),
-      })
-    ).record;
-    const copy = await add(root, "C", "10.1000/c", "merged-exclusive-history");
+    const survivor = await add(root, "B", "10.1000/b");
+    const copy = await add(root, "C", "10.1000/c", "merged-exclusive");
     const copyMaterial = await addPdfMaterial(root, copy.attachments[0]!);
     await detachScientSourcePdf({
       root,
@@ -450,25 +421,16 @@ describe("Scient source trash", () => {
       deleteTrashedScientSource({
         root,
         sourceId: survivor.sourceId,
-        expectedRevision: merged.survivor.revision,
+        removalId: await trashRemovalId(root, survivor.sourceId),
       }),
     ).resolves.toMatchObject({ outcome: "deleted", removedFileCount: 1 });
     await expect(
       NodeFSP.stat(sourceAttachmentAbsolutePath(root, copy.attachments[0]!)),
     ).rejects.toMatchObject({ code: "ENOENT" });
     expect((await listScientSourceTrash(root)).entries).toEqual([]);
-    await expect(
-      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, kept.attachments[0]!), "utf8"),
-    ).resolves.toBe("%PDF-1.7\nshared-history\n");
     for (const filePath of Object.values(copyMaterial.paths)) {
       await expect(NodeFSP.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
     }
-    expect(await readScientSourceFullText(root, keptMaterial.text.sha256)).toEqual(
-      keptMaterial.text,
-    );
-    await expect(NodeFSP.readFile(keptMaterial.paths.annotations, "utf8")).resolves.toBe(
-      keptMaterial.annotations,
-    );
   });
 
   it.each([
@@ -503,9 +465,9 @@ describe("Scient source trash", () => {
         sourceId: record.sourceId,
         expectedRevision: record.revision,
       });
-      await expect(
-        deleteScientSourcesPermanently({ root, sourceIds: [record.sourceId] }),
-      ).resolves.toMatchObject({ removedFileCount: materialKind === "pdf" ? 0 : 1 });
+      await expect(deleteFromTrashForGood(root, [record.sourceId])).resolves.toMatchObject({
+        removedFileCount: materialKind === "pdf" ? 0 : 1,
+      });
       await expect(NodeFSP.readFile(outsideFile, "utf8")).resolves.toBe(bytes);
       expect((await NodeFSP.lstat(unsafePath)).isSymbolicLink()).toBe(true);
       if (materialKind === "pdf") {
@@ -539,12 +501,11 @@ describe("Scient source trash", () => {
           ? await deleteTrashedScientSource({
               root,
               sourceId: removed.sourceId,
-              expectedRevision: removed.revision,
+              removalId: await trashRemovalId(root, removed.sourceId),
             })
-          : await deleteScientSourcesPermanently({
-              root,
-              ...(deletion === "named" ? { sourceIds: [removed.sourceId] } : {}),
-            });
+          : deletion === "named"
+            ? await deleteFromTrashForGood(root, [removed.sourceId])
+            : await emptyScientSourceTrash(root);
       expect(deleted).toMatchObject({ removedFileCount: 0 });
       await expect(
         NodeFSP.readFile(sourceAttachmentAbsolutePath(root, removed.attachments[0]!), "utf8"),
@@ -552,93 +513,6 @@ describe("Scient source trash", () => {
     },
   );
 
-  it.each([
-    ["malformed", "live"],
-    ["malformed", "trash"],
-    ["symlinked", "live"],
-    ["symlinked", "trash"],
-  ] as const)(
-    "keeps PDF material when another %s retained revision belongs to a %s source",
-    async (damage, remainingHome) => {
-      const libraryRoot = NodePath.join(await project(), "library");
-      await ensureScientLibrary(libraryRoot);
-      const root = scientLibraryLocation(libraryRoot);
-      const kept = await add(root, "A", "10.1000/a", "historic-shared");
-      const material = await addPdfMaterial(root, kept.attachments[0]!);
-      const detached = await detachScientSourcePdf({
-        root,
-        sourceId: kept.sourceId,
-        attachmentId: kept.attachments[0]!.attachmentId,
-        expectedRevision: kept.revision,
-      });
-      let current = detached.record!;
-      if (remainingHome === "trash") {
-        await removeScientSource({
-          root,
-          sourceId: kept.sourceId,
-          expectedRevision: current.revision,
-        });
-      }
-      const added = await add(root, "B", "10.1000/b");
-      const removed = (
-        await attachScientSourcePdf({
-          root,
-          sourceId: added.sourceId,
-          expectedRevision: added.revision,
-          pdfPath: sourceAttachmentAbsolutePath(root, kept.attachments[0]!),
-        })
-      ).record;
-      await removeScientSource({
-        root,
-        sourceId: removed.sourceId,
-        expectedRevision: removed.revision,
-      });
-      const historyPath = NodePath.join(libraryRoot, "history", kept.sourceId, "1.json");
-      const historyBytes = await NodeFSP.readFile(historyPath, "utf8");
-      if (damage === "malformed") {
-        await NodeFSP.writeFile(historyPath, "{ not json", "utf8");
-      } else {
-        const outside = NodePath.join(libraryRoot, "outside-history.json");
-        await NodeFSP.rename(historyPath, outside);
-        await NodeFSP.symlink(outside, historyPath);
-      }
-      const deleted =
-        remainingHome === "live"
-          ? await deleteTrashedScientSource({
-              root,
-              sourceId: removed.sourceId,
-              expectedRevision: removed.revision,
-            })
-          : await deleteScientSourcesPermanently({ root, sourceIds: [removed.sourceId] });
-      expect(deleted).toMatchObject({ removedFileCount: 0 });
-      await expect(
-        NodeFSP.readFile(sourceAttachmentAbsolutePath(root, kept.attachments[0]!), "utf8"),
-      ).resolves.toBe("%PDF-1.7\nhistoric-shared\n");
-      expect(await readScientSourceFullText(root, material.text.sha256)).toEqual(material.text);
-      await expect(NodeFSP.readFile(material.paths.annotations, "utf8")).resolves.toBe(
-        material.annotations,
-      );
-      if (damage === "symlinked") await NodeFSP.unlink(historyPath);
-      await NodeFSP.writeFile(historyPath, historyBytes, "utf8");
-      if (remainingHome === "trash") {
-        const restored = await restoreScientSource({ root, sourceId: kept.sourceId });
-        expect(restored.outcome).toBe("restored");
-        current = restored.record!;
-      }
-      await expect(
-        revertScientSource({
-          root,
-          sourceId: kept.sourceId,
-          expectedRevision: current.revision,
-          toRevision: 1,
-        }),
-      ).resolves.toMatchObject({
-        outcome: "reverted",
-        missingAttachmentCount: 0,
-        record: { attachments: kept.attachments },
-      });
-    },
-  );
   it("never follows a symlinked record, reports it and keeps every PDF", async () => {
     const root = await project();
     const linked = await add(root, "A", "10.1000/a", "linked");
@@ -659,7 +533,8 @@ describe("Scient source trash", () => {
         message: "The entry is not a safe regular file.",
       },
     ]);
-    await expect(deleteScientSourcesPermanently({ root })).resolves.toEqual({
+    await expect(emptyScientSourceTrash(root)).resolves.toEqual({
+      outcome: "deleted",
       deletedSourceIds: [removed.sourceId],
       removedFileCount: 0,
     });
@@ -668,11 +543,295 @@ describe("Scient source trash", () => {
     ).resolves.toBe("%PDF-1.7\nlinked\n");
   });
 
-  it("deletes one trashed source only at the revision the request saw", async () => {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- collection-time skip: POSIX folder permissions.
+  it.skipIf(NodeOS.platform() === "win32")(
+    "finishes a permanent deletion that stopped before its history was gone",
+    async () => {
+      const libraryRoot = NodePath.join(await project(), "library");
+      await ensureScientLibrary(libraryRoot);
+      const root = scientLibraryLocation(libraryRoot);
+      const record = await add(root, "A", "10.1000/a", "own");
+      const edited = await updateScientSourceNote({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        note: "A kept version.",
+      });
+      await removeScientSource({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: edited.record.revision,
+      });
+      const history = NodePath.join(libraryRoot, "history", record.sourceId);
+      await NodeFSP.chmod(history, 0o500);
+      try {
+        await expect(deleteFromTrashForGood(root, [record.sourceId])).rejects.toMatchObject({
+          code: "EACCES",
+        });
+      } finally {
+        await NodeFSP.chmod(history, 0o700);
+      }
+      // Begun, so neither listed nor restorable; the next deletion of anything finishes it.
+      expect((await listScientSourceTrash(root)).entries).toEqual([]);
+      await expect(restoreScientSource({ root, sourceId: record.sourceId })).resolves.toMatchObject(
+        { outcome: "not-found" },
+      );
+      await expect(deleteFromTrashForGood(root, [])).resolves.toEqual({
+        outcome: "deleted",
+        deletedSourceIds: [record.sourceId],
+        removedFileCount: 1,
+      });
+      await expect(NodeFSP.stat(history)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        NodeFSP.stat(NodePath.join(libraryRoot, "trash", `${record.sourceId}.json`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        NodeFSP.stat(sourceAttachmentAbsolutePath(root, record.attachments[0]!)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- collection-time skip: POSIX folder permissions.
+  it.skipIf(NodeOS.platform() === "win32").each(["the same request", "another paper's deletion"])(
+    "collects a history-only PDF when %s finishes a stopped permanent deletion",
+    async (finisher) => {
+      const libraryRoot = NodePath.join(await project(), "library");
+      await ensureScientLibrary(libraryRoot);
+      const root = scientLibraryLocation(libraryRoot);
+      const record = await add(root, "A", "10.1000/a", "history-only");
+      const other = await add(root, "B", "10.1000/b");
+      const detached = await detachScientSourcePdf({
+        root,
+        sourceId: record.sourceId,
+        attachmentId: record.attachments[0]!.attachmentId,
+        expectedRevision: record.revision,
+      });
+      for (const [sourceId, expectedRevision] of [
+        [record.sourceId, detached.record!.revision],
+        [other.sourceId, other.revision],
+      ] as const) {
+        await removeScientSource({ root, sourceId, expectedRevision });
+      }
+      const removalId = await trashRemovalId(root, record.sourceId);
+      const pdf = sourceAttachmentAbsolutePath(root, record.attachments[0]!);
+      // Collection stops after the history is gone: the PDF is now named nowhere on disk.
+      const files = NodePath.dirname(pdf);
+      await NodeFSP.chmod(files, 0o300);
+      try {
+        await expect(
+          deleteTrashedScientSource({ root, sourceId: record.sourceId, removalId }),
+        ).rejects.toMatchObject({ code: "EACCES" });
+      } finally {
+        await NodeFSP.chmod(files, 0o700);
+      }
+      await expect(
+        NodeFSP.stat(NodePath.join(libraryRoot, "history", record.sourceId)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+
+      await expect(
+        finisher === "the same request"
+          ? deleteTrashedScientSource({ root, sourceId: record.sourceId, removalId })
+          : deleteTrashedScientSource({
+              root,
+              sourceId: other.sourceId,
+              removalId: await trashRemovalId(root, other.sourceId),
+            }),
+      ).resolves.toMatchObject({ outcome: "deleted", removedFileCount: 1 });
+      await expect(NodeFSP.stat(pdf)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("keeps a re-import of a paper deleted for good out of that deletion", async () => {
+    const libraryRoot = NodePath.join(await project(), "library");
+    await ensureScientLibrary(libraryRoot);
+    const root = scientLibraryLocation(libraryRoot);
+    const first = await add(root, "A", "10.1000/a", "first");
+    await removeScientSource({ root, sourceId: first.sourceId, expectedRevision: first.revision });
+    await expect(
+      deleteTrashedScientSource({
+        root,
+        sourceId: first.sourceId,
+        removalId: await trashRemovalId(root, first.sourceId),
+      }),
+    ).resolves.toMatchObject({ outcome: "deleted" });
+
+    // The person imports the same paper again; it takes the same ID beside the old marker.
+    const again = await add(root, "A", "10.1000/a", "again");
+    expect(again.sourceId).toBe(first.sourceId);
+    const unrelated = await add(root, "B", "10.1000/b");
+    for (const { sourceId, revision } of [again, unrelated]) {
+      await removeScientSource({ root, sourceId, expectedRevision: revision });
+    }
+    expect((await listScientSourceTrash(root)).entries.map((entry) => entry.sourceId)).toContain(
+      again.sourceId,
+    );
+    await expect(
+      deleteTrashedScientSource({
+        root,
+        sourceId: unrelated.sourceId,
+        removalId: await trashRemovalId(root, unrelated.sourceId),
+      }),
+    ).resolves.toMatchObject({ outcome: "deleted" });
+    await expect(restoreScientSource({ root, sourceId: again.sourceId })).resolves.toMatchObject({
+      outcome: "restored",
+    });
+    await expect(
+      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, again.attachments[0]!), "utf8"),
+    ).resolves.toBe("%PDF-1.7\nagain\n");
+  });
+
+  it("never lets a request to delete one removal reach a later copy of the paper", async () => {
+    const libraryRoot = NodePath.join(await project(), "library");
+    await ensureScientLibrary(libraryRoot);
+    const root = scientLibraryLocation(libraryRoot);
+    const first = await add(root, "A", "10.1000/a", "first");
+    await removeScientSource({ root, sourceId: first.sourceId, expectedRevision: first.revision });
+    const confirmed = (await listScientSourceTrash(root)).entries[0]!.removalId;
+    await expect(
+      deleteTrashedScientSource({ root, sourceId: first.sourceId, removalId: confirmed }),
+    ).resolves.toMatchObject({ outcome: "deleted" });
+
+    // Imported again, it has the same ID and revision 1, and is moved to the Trash.
+    const again = await add(root, "A", "10.1000/a", "again");
+    expect([again.sourceId, again.revision]).toEqual([first.sourceId, first.revision]);
+    await removeScientSource({ root, sourceId: again.sourceId, expectedRevision: again.revision });
+    // The first request arrives again, as a delayed agent call or a second click would.
+    await expect(
+      deleteTrashedScientSource({ root, sourceId: first.sourceId, removalId: confirmed }),
+    ).resolves.toMatchObject({ outcome: "stale" });
+    await expect(
+      deleteScientSourcesPermanently({ root, removalIds: [confirmed] }),
+    ).resolves.toMatchObject({ deletedSourceIds: [] });
+    expect((await listScientSourceTrash(root)).entries.map((entry) => entry.sourceId)).toEqual([
+      again.sourceId,
+    ]);
+    await expect(
+      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, again.attachments[0]!), "utf8"),
+    ).resolves.toBe("%PDF-1.7\nagain\n");
+  });
+
+  it
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- collection-time skip: POSIX folder permissions.
+    .skipIf(NodeOS.platform() === "win32")
+    .each(["its PDF folder cannot be read", "its cleanup note cannot be written"])(
+    "keeps a deletion for good that stops because %s finishable",
+    async (stop) => {
+      const libraryRoot = NodePath.join(await project(), "library");
+      await ensureScientLibrary(libraryRoot);
+      const root = scientLibraryLocation(libraryRoot);
+      const record = await add(root, "A", "10.1000/a", "own");
+      await removeScientSource({ root, sourceId: record.sourceId, expectedRevision: 1 });
+      const shown = await listScientSourceTrash(root);
+      const pdf = sourceAttachmentAbsolutePath(root, record.attachments[0]!);
+      const blocked =
+        stop === "its PDF folder cannot be read"
+          ? { folder: NodePath.dirname(pdf), mode: 0o300 }
+          : { folder: NodePath.join(libraryRoot, "collected"), mode: 0o500 };
+      await NodeFSP.mkdir(blocked.folder, { recursive: true });
+      await NodeFSP.chmod(blocked.folder, blocked.mode);
+      try {
+        await expect(
+          deleteScientSourcesPermanently({ root, trashRevision: shown.revision! }),
+        ).rejects.toMatchObject({ code: "EACCES" });
+      } finally {
+        await NodeFSP.chmod(blocked.folder, 0o700);
+      }
+      // Not listed, but the overview still leads to the Trash, which offers to finish it.
+      const after = await listScientSourceTrash(root);
+      expect(after).toMatchObject({ entries: [], unfinished: [shown.entries[0]!.removalId] });
+      const overview = await inspectScientLibrarySources(root);
+      expect(overview).toMatchObject({ unfinishedDeletions: 1 });
+      expect(overview).not.toHaveProperty("trashedCount");
+      await expect(NodeFSP.readFile(pdf, "utf8")).resolves.toBe("%PDF-1.7\nown\n");
+      await expect(
+        deleteScientSourcesPermanently({ root, removalIds: after.unfinished! }),
+      ).resolves.toMatchObject({ deletedSourceIds: [record.sourceId], removedFileCount: 1 });
+      await expect(NodeFSP.stat(pdf)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await listScientSourceTrash(root)).not.toHaveProperty("unfinished");
+      expect(await inspectScientLibrarySources(root)).not.toHaveProperty("unfinishedDeletions");
+    },
+  );
+
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- collection-time skip: POSIX folder permissions.
+  it.skipIf(NodeOS.platform() === "win32")(
+    "removes a collected PDF's text and highlights at a later deletion when they could not go",
+    async () => {
+      const root = await project();
+      const record = await add(root, "A", "10.1000/a", "own");
+      const other = await add(root, "B", "10.1000/b");
+      const material = await addPdfMaterial(root, record.attachments[0]!);
+      for (const { sourceId, revision } of [record, other]) {
+        await removeScientSource({ root, sourceId, expectedRevision: revision });
+      }
+      const highlights = NodePath.dirname(material.paths.annotations);
+      await NodeFSP.chmod(highlights, 0o500);
+      try {
+        await expect(deleteFromTrashForGood(root, [record.sourceId])).resolves.toMatchObject({
+          removedFileCount: 1,
+        });
+      } finally {
+        await NodeFSP.chmod(highlights, 0o700);
+      }
+      await expect(
+        NodeFSP.stat(sourceAttachmentAbsolutePath(root, record.attachments[0]!)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(NodeFSP.readFile(material.paths.annotations, "utf8")).resolves.toBe(
+        material.annotations,
+      );
+
+      // Any later deletion, even one with nothing new to collect, finishes the removal.
+      await deleteFromTrashForGood(root, [other.sourceId]);
+      for (const filePath of Object.values(material.paths)) {
+        await expect(NodeFSP.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      await expect(
+        NodeFSP.stat(NodePath.join(root, ".scient/sources/collected")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("empties the trash only while it is the listing the person was shown", async () => {
+    const root = await project();
+    const shown = await add(root, "A", "10.1000/a", "a");
+    const later = await add(root, "B", "10.1000/b", "b");
+    await removeScientSource({ root, sourceId: shown.sourceId, expectedRevision: 1 });
+    const listing = await listScientSourceTrash(root);
+    const changed = { outcome: "changed", deletedSourceIds: [], removedFileCount: 0 };
+
+    // Another window trashes a paper after the confirmation opened.
+    await removeScientSource({ root, sourceId: later.sourceId, expectedRevision: 1 });
+    await expect(
+      deleteScientSourcesPermanently({ root, trashRevision: listing.revision! }),
+    ).resolves.toEqual(changed);
+    await expect(deleteScientSourcesPermanently({ root })).resolves.toEqual(changed);
+    // The same entries again, but one was restored and trashed in between.
+    const reread = await listScientSourceTrash(root);
+    const restored = await restoreScientSource({ root, sourceId: later.sourceId });
+    await removeScientSource({
+      root,
+      sourceId: later.sourceId,
+      expectedRevision: restored.record!.revision,
+    });
+    await expect(
+      deleteScientSourcesPermanently({ root, trashRevision: reread.revision! }),
+    ).resolves.toEqual(changed);
+    expect((await listScientSourceTrash(root)).entries.map((entry) => entry.sourceId)).toEqual([
+      later.sourceId,
+      shown.sourceId,
+    ]);
+
+    await expect(emptyScientSourceTrash(root)).resolves.toMatchObject({
+      outcome: "deleted",
+      removedFileCount: 2,
+    });
+    expect((await listScientSourceTrash(root)).entries).toEqual([]);
+  });
+
+  it("deletes one trashed source only for the removal the request saw", async () => {
     const root = await project();
     const record = await add(root, "A", "10.1000/a", "a");
     await removeScientSource({ root, sourceId: record.sourceId, expectedRevision: 1 });
-    const seen = (await listScientSourceTrash(root)).entries[0]!.revision;
+    const seen = (await listScientSourceTrash(root)).entries[0]!.removalId;
     // Between the request and its deletion: restore, edit and remove again.
     const restored = await restoreScientSource({ root, sourceId: record.sourceId });
     const edited = await retitle(root, restored.record!, "Newer title");
@@ -683,7 +842,7 @@ describe("Scient source trash", () => {
     });
 
     await expect(
-      deleteTrashedScientSource({ root, sourceId: record.sourceId, expectedRevision: seen }),
+      deleteTrashedScientSource({ root, sourceId: record.sourceId, removalId: seen }),
     ).resolves.toEqual({ outcome: "stale", sourceId: record.sourceId, revision: edited.revision });
     expect((await listScientSourceTrash(root)).entries).toMatchObject([
       { sourceId: record.sourceId, revision: edited.revision, title: "Newer title" },
@@ -710,7 +869,6 @@ describe("Scient source revisions", () => {
     expect(reverted).toMatchObject({
       outcome: "reverted",
       record: { revision: 3, title: "Work A", updatedBy: "agent", importedAt: record.importedAt },
-      missingAttachmentCount: 0,
     });
     expect(await listScientSourceRevisions(root, record.sourceId)).toMatchObject([
       { revision: 3, savedBy: "agent", changes: ["title"], current: true },
@@ -748,45 +906,55 @@ describe("Scient source revisions", () => {
     expect(reverted.record.citationKey).toBe("lovelace2026work");
   });
 
-  it("brings a detached PDF back until the trash is emptied", async () => {
+  it("restores an earlier version's details and keeps My note and the current PDFs", async () => {
     const root = await project();
     const record = await add(root, "A", "10.1000/a", "a");
+    const retitled = await retitle(root, record, "A wrong title");
+    const noted = await updateScientSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: retitled.revision,
+      note: "Read for the methods section.",
+    });
+    const pdfPath = NodePath.join(root, "late.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nlate\n", "utf8");
+    const attached = await attachScientSourcePdf({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: noted.record.revision,
+      pdfPath,
+    });
     const detached = await detachScientSourcePdf({
       root,
       sourceId: record.sourceId,
       attachmentId: record.attachments[0]!.attachmentId,
-      expectedRevision: 1,
+      expectedRevision: attached.record.revision,
     });
+    const now = detached.record!;
+    expect(now.attachments.map((attachment) => attachment.sha256)).toEqual([
+      attached.record.attachments.at(-1)!.sha256,
+    ]);
+
     const back = await revertScientSource({
       root,
       sourceId: record.sourceId,
-      expectedRevision: detached.record!.revision,
+      expectedRevision: now.revision,
       toRevision: 1,
     });
-    expect(back).toMatchObject({ outcome: "reverted", missingAttachmentCount: 0 });
-    expect(back.record.attachments).toEqual(record.attachments);
-
-    const again = await detachScientSourcePdf({
-      root,
-      sourceId: record.sourceId,
-      attachmentId: record.attachments[0]!.attachmentId,
-      expectedRevision: back.record.revision,
+    expect(back).toMatchObject({
+      outcome: "reverted",
+      record: { title: "Work A", note: "Read for the methods section." },
     });
-    const other = await add(root, "B", "10.1000/b");
-    await removeScientSource({ root, sourceId: other.sourceId, expectedRevision: 1 });
-    await deleteScientSourcesPermanently({ root });
+    expect(back.record.attachments).toEqual(now.attachments);
+    // A version that differs only in My note or PDFs is already the current details.
     await expect(
       revertScientSource({
         root,
         sourceId: record.sourceId,
-        expectedRevision: again.record!.revision,
+        expectedRevision: back.record.revision,
         toRevision: 1,
       }),
-    ).resolves.toMatchObject({
-      outcome: "unchanged",
-      record: { attachments: [] },
-      missingAttachmentCount: 1,
-    });
+    ).resolves.toMatchObject({ outcome: "unchanged" });
   });
 
   it("refuses a revert that would duplicate another source's identifier", async () => {
@@ -858,32 +1026,5 @@ describe("Scient source listing", () => {
     await expect(readScientSourceRecord(root, record.sourceId)).resolves.toMatchObject({
       sourceId: record.sourceId,
     });
-  });
-
-  it("attaches after a revert without losing the restored PDF", async () => {
-    const root = await project();
-    const record = await add(root, "A", "10.1000/a");
-    const pdfPath = NodePath.join(root, "late.pdf");
-    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nlate\n", "utf8");
-    const attached = await attachScientSourcePdf({
-      root,
-      sourceId: record.sourceId,
-      expectedRevision: 1,
-      pdfPath,
-    });
-    const reverted = await revertScientSource({
-      root,
-      sourceId: record.sourceId,
-      expectedRevision: attached.record.revision,
-      toRevision: 1,
-    });
-    expect(reverted.record.attachments).toEqual([]);
-    const forward = await revertScientSource({
-      root,
-      sourceId: record.sourceId,
-      expectedRevision: reverted.record.revision,
-      toRevision: attached.record.revision,
-    });
-    expect(forward.record.attachments).toEqual(attached.record.attachments);
   });
 });

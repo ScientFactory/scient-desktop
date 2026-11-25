@@ -13,7 +13,7 @@ import {
 } from "../../components/ui/command";
 import { Dialog, DialogPopup, DialogTitle } from "../../components/ui/dialog";
 import { readCitationStyles, setCitationStyle } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import {
   publishProjectCitationStyle,
@@ -58,7 +58,7 @@ export function CitationStylePicker(props: {
               setSearch({
                 query,
                 results: [],
-                message: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                message: sourcesErrorMessage(cause),
               });
             }
           },
@@ -83,7 +83,7 @@ export function CitationStylePicker(props: {
       if (result.error === null) props.onClose();
       else setError(result.error);
     } catch (cause) {
-      setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+      setError(sourcesErrorMessage(cause));
     }
     setPending(false);
   };

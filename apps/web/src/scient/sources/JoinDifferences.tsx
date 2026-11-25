@@ -20,7 +20,7 @@ import {
 } from "../../components/ui/dialog";
 import { randomUUID } from "../../lib/utils";
 import { organizeScientSources, readScientSourceRecentChanges } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import {
   JOIN_DIFFERENCES_LABELS,
   differencesAway,
@@ -35,8 +35,6 @@ import { settleAfter } from "./settleAfter";
 import { Sides } from "./Sides";
 
 type Take = Extract<ScientSourcesLibraryOrganizeAction, { action: "take-from-library" }>["take"];
-
-const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 interface Page {
   readonly offset: number;
@@ -102,7 +100,7 @@ export function JoinDifferencesDialog(props: {
     } catch (cause) {
       // An answer to an older request leaves the newer one's state alone.
       if (asked !== latest.current) return;
-      setError(errorMessage(cause));
+      setError(sourcesErrorMessage(cause));
       setLoading(false);
     }
   });
@@ -142,7 +140,7 @@ export function JoinDifferencesDialog(props: {
           });
           setNotice(takeProblem(result.outcome));
         } catch (cause) {
-          setNotice(errorMessage(cause));
+          setNotice(sourcesErrorMessage(cause));
         }
         await props.onChanged().catch(() => undefined);
         // The page the row is on is read again; a row elsewhere that this changed is refused

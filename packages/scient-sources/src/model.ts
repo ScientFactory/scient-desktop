@@ -224,6 +224,8 @@ export const ScientSourceRecord = Schema.Struct({
     Schema.Array(NonEmptyString).check(Schema.isMaxLength(64)),
   ),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  /** Revisions from this one to the record's own changed only its note in one session; not kept. */
+  noteOnlySince: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
@@ -393,6 +395,11 @@ export const ScientSourceZoteroSync = Schema.Struct({
   annotationLibraryId: Schema.optionalKey(NonEmptyString),
   itemKey: NonEmptyString,
   itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /**
+   * zotero.org's library version before the last read that left nothing open: while nothing of
+   * the item changes after it, a refresh may pass the item by. Absent for Zotero on this computer.
+   */
+  libraryVersion: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   syncedAt: NonEmptyString,
   metadata: ScientSourceEditableMetadata,
   /** The text Scient last wrote into the source's note from Zotero's notes. */
@@ -537,6 +544,8 @@ export const ScientSourceTrashEntry = Schema.Struct({
   formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
   projectId: Schema.optionalKey(NonEmptyString),
+  /** Unique to this removal; a request to delete it for good names it. Older entries lack it. */
+  removalId: Schema.optionalKey(NonEmptyString),
   removedAt: NonEmptyString,
   removedBy: ScientSourceActor,
   record: ScientSourceRecord,
@@ -549,6 +558,7 @@ export type ScientSourceTrashEntry = typeof ScientSourceTrashEntry.Type;
 
 export const ScientSourceTrashSummary = Schema.Struct({
   sourceId: NonEmptyString,
+  removalId: NonEmptyString,
   revision: ScientSourceRecord.fields.revision,
   type: ScientSourceType,
   title: NullableText,
@@ -571,6 +581,10 @@ export type ScientSourceStoreIssue = typeof ScientSourceStoreIssue.Type;
 export const ScientSourceTrashListing = Schema.Struct({
   entries: Schema.Array(ScientSourceTrashSummary),
   issues: Schema.Array(ScientSourceStoreIssue),
+  /** Names exactly these entries at these revisions; emptying the Trash sends it back. */
+  revision: Schema.optionalKey(NonEmptyString),
+  /** Removal IDs of deletions for good that stopped part way; no longer listed or restorable. */
+  unfinished: Schema.optionalKey(Schema.Array(NonEmptyString)),
 });
 export type ScientSourceTrashListing = typeof ScientSourceTrashListing.Type;
 
@@ -867,6 +881,8 @@ export const ScientSourceRestoreResult = Schema.Struct({
 export type ScientSourceRestoreResult = typeof ScientSourceRestoreResult.Type;
 
 export const ScientSourcePermanentDeletionResult = Schema.Struct({
+  /** `changed`: the Trash is no longer the listing the request named, so nothing was deleted. */
+  outcome: Schema.Literals(["deleted", "changed"]),
   deletedSourceIds: Schema.Array(NonEmptyString),
   removedFileCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
@@ -885,8 +901,6 @@ export type ScientSourceRevisionSummary = typeof ScientSourceRevisionSummary.Typ
 export const ScientSourceRevertResult = Schema.Struct({
   outcome: Schema.Literals(["reverted", "unchanged", "stale", "not-found", "duplicate"]),
   record: ScientSourceRecord,
-  /** PDFs of the earlier revision whose files were already deleted when the trash was emptied. */
-  missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   matchingSourceIds: Schema.Array(NonEmptyString),
 });
 export type ScientSourceRevertResult = typeof ScientSourceRevertResult.Type;
@@ -1053,6 +1067,8 @@ export const ScientSourcesOverview = Schema.Struct({
   /** Record files that could not be read; the rest of the Library still lists. */
   unreadableRecords: Schema.optionalKey(Schema.Array(ScientSourceStoreIssue)),
   trashedCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Deletions for good that stopped part way; the Trash offers to finish them. */
+  unfinishedDeletions: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 export type ScientSourcesOverview = typeof ScientSourcesOverview.Type;
 

@@ -254,6 +254,51 @@ describe("Scient source model", () => {
     },
   );
 
+  it("checks each entry against the records that share a key with it, not every record", () => {
+    let reads = 0;
+    const counted = (index: number, doi: string, title = `Study number ${index}`) => {
+      const value = record({
+        sourceId: `source_${index}`,
+        title,
+        identifiers: [{ scheme: "doi", value: doi }],
+        externalReferences: [],
+      });
+      const { identifiers } = value;
+      return Object.defineProperty(value, "identifiers", {
+        get: () => {
+          reads += 1;
+          return identifiers;
+        },
+      });
+    };
+    const existing = Array.from({ length: 2_000 }, (_, index) =>
+      index === 10 || index === 1_500
+        ? counted(index, "10.1000/shared", "Shared work")
+        : counted(index, `10.1000/${index}`),
+    );
+    const entry = (index: number, doi: string, title = `Study number ${index}`) => ({
+      ...candidate,
+      sourceKey: `entry-${index}`,
+      title,
+      identifiers: [{ scheme: "doi", value: doi }],
+      externalReferences: [],
+    });
+    for (let index = 0; index < 100; index += 1) {
+      expect(
+        assessSourceDuplicate({ candidate: entry(5_000 + index, `10.1000/new-${index}`), existing })
+          .kind,
+      ).toBe("new");
+    }
+    expect(assessSourceDuplicate({ candidate: entry(700, "10.1000/700"), existing })).toMatchObject(
+      { kind: "same-identifier", matchingSourceIds: ["source_700"] },
+    );
+    // Two records share the identifier: neither is taken, and both are named in list order.
+    expect(
+      assessSourceDuplicate({ candidate: entry(1, "10.1000/shared", "Shared work"), existing }),
+    ).toMatchObject({ kind: "new", matchingSourceIds: ["source_10", "source_1500"] });
+    expect(reads).toBeLessThan(existing.length * 4);
+  });
+
   it("prefers exact Zotero origin over weaker duplicate signals", () => {
     expect(assessSourceDuplicate({ candidate, existing: [record()] })).toMatchObject({
       kind: "same-origin",

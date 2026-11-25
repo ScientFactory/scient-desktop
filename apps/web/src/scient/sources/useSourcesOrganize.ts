@@ -31,7 +31,7 @@ import {
   type BulkUndoPart,
 } from "./bulkParts";
 import { bulkUpdateScientSources, organizeScientSources } from "./client";
-import { isLostAnswerError, scientSourcesErrorMessage } from "./errorMessage";
+import { isLostAnswerError, sourcesErrorMessage } from "./errorMessage";
 import type { ReadingStateFilter } from "./libraryLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
 
@@ -39,8 +39,6 @@ import { useCanChangeLibrary } from "./sourcesCommands";
 type SourcesListFilter = {
   readonly [Key in Exclude<keyof ScientSourceFilter, "text">]?: ScientSourceFilter[Key] | undefined;
 };
-
-const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
 
 /** A selection larger than one request, sent in parts; only changing parts can be stopped. */
 interface SourcesBulkProgress {
@@ -96,7 +94,11 @@ async function runOrganizeWork<A>(input: {
     await input.refresh().catch(() => undefined);
     return result;
   } catch (cause) {
-    toastManager.add({ type: "error", title: input.failureTitle, description: message(cause) });
+    toastManager.add({
+      type: "error",
+      title: input.failureTitle,
+      description: sourcesErrorMessage(cause),
+    });
     return null;
   } finally {
     input.inFlight.current -= 1;
@@ -323,7 +325,7 @@ export function useSourcesOrganize(input: {
       m(msg("Changes were not undone")),
     );
     if (!outcome) return;
-    const announcement = undoPartsAnnouncement(outcome, message);
+    const announcement = undoPartsAnnouncement(outcome, sourcesErrorMessage);
     if (!announcement) return;
     const { retry } = outcome;
     const id = toastManager.add({
@@ -370,7 +372,7 @@ export function useSourcesOrganize(input: {
       outcome,
       changed: sum.changed,
       failureTitle,
-      message,
+      message: sourcesErrorMessage,
       problem: bulkResultSummary(sum.result),
     });
     if (announcement) {
@@ -434,7 +436,7 @@ export function useSourcesOrganize(input: {
     const outcome = await runInParts("changing", total, work, m(msg("Collection was not created")));
     if (!outcome) return null;
     const announcement = outcome.filled
-      ? collectionPartsAnnouncement({ outcome: outcome.filled, name, message })
+      ? collectionPartsAnnouncement({ outcome: outcome.filled, name, message: sourcesErrorMessage })
       : null;
     if (announcement) toastManager.add(announcement);
     return outcome.created.collection ?? null;
@@ -488,7 +490,6 @@ export function useSourcesOrganize(input: {
     undoBulkEdit: (parts: ReadonlyArray<BulkUndoPart>) =>
       parts.length === 1 ? undoBulk(parts[0]!.batchId) : undoInParts(parts),
     filter: listFilter,
-    fullFilter,
     filterActive: !scientSourceFilterIsEmpty(listFilter),
     reading: current.reading,
     readingFilterActive: Boolean(current.reading.unread || current.reading.starred),

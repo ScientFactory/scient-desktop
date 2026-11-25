@@ -30,6 +30,8 @@ import {
   deleteScientSourcesPermanently,
   importScientSource,
   listScientSourceRecords,
+  listScientSourceTrash,
+  readScientSourceTrashEntries,
   removeScientSource,
   restoreScientSource,
   updateScientSourceMetadata,
@@ -43,7 +45,7 @@ import {
   type Step,
   type StepFacts,
 } from "./libraryModel.ts";
-import { sourceCandidate } from "./sourceFixtures.ts";
+import { sourceCandidate, trashRemovalId } from "./sourceFixtures.ts";
 
 /** A Library and three projects in one folder, all at fixed paths so a snapshot can be put back. */
 export interface Scenario {
@@ -205,7 +207,16 @@ export async function runStep(scenario: Scenario, model: Model, step: Step): Pro
       return {};
     }
     case "deleteForGood": {
-      await deleteScientSourcesPermanently({ root: library, sourceIds: [idOf(step.work)] });
+      const sourceId = idOf(step.work);
+      const trashed = await readScientSourceTrashEntries(library);
+      const { unfinished = [] } = await listScientSourceTrash(library);
+      // A deletion a crash stopped is finished as the Trash offers it: by its removal.
+      await deleteScientSourcesPermanently({
+        root: library,
+        removalIds: trashed.some((entry) => entry.sourceId === sourceId)
+          ? [await trashRemovalId(library, sourceId)]
+          : unfinished,
+      });
       return {};
     }
     case "pin": {

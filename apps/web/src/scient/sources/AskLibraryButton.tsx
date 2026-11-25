@@ -9,7 +9,7 @@ import { askLibraryInsertion } from "./askLibrary";
 
 /**
  * Puts the Library question at the start of the chat draft and the caret in the composer; it
- * never sends. Its label hides when an `@container` ancestor is narrower than 24rem.
+ * never sends. Its label hides when an `@container` ancestor is narrower than 32rem.
  */
 export function AskLibraryButton() {
   const gt = useGT();
@@ -34,7 +34,7 @@ export function AskLibraryButton() {
   const button = (
     <Button size="xs" variant="ghost" aria-label={label} disabled={composer === null} onClick={ask}>
       <MessageCircleQuestionIcon />
-      <span className="@max-[24rem]:hidden">{label}</span>
+      <span className="@max-[32rem]:hidden">{label}</span>
     </Button>
   );
   return (

@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { editableMetadataFromRecord } from "./editable.ts";
 import { mergeScientLibrarySources, undoScientLibraryMerge } from "./libraryMerge.ts";
-import { readScientDisplacedCopies } from "./projectDisplacedCopies.ts";
+import { readScientDisplacedCopies } from "./testing/displacedCopies.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import {
   changeScientLibraryReview,

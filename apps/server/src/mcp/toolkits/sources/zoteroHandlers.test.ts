@@ -123,6 +123,42 @@ describe("Zotero agent tools", () => {
     }),
   );
 
+  it.effect("takes a collection with its subcollections, as the panel does", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(project);
+      const filed = (key: string, title: string, collection: string) =>
+        [
+          key,
+          {
+            item: zoteroItem(key, { title, abstractNote: "A.", collections: [collection] }),
+            children: [],
+          },
+        ] as const;
+      const local = fakeZoteroTransport({
+        items: new Map([
+          filed("ABCD2345", "In the collection", "TOPC2345"),
+          filed("EFGH2345", "In a subcollection", "SUBC2345"),
+          filed("JKLM2345", "Elsewhere", "OTHR2345"),
+        ]),
+        collections: [
+          { key: "TOPC2345", name: "Thesis" },
+          { key: "SUBC2345", name: "Chapter 1", parent: "TOPC2345" },
+          { key: "OTHR2345", name: "Teaching" },
+        ],
+      });
+      const run = inProject(root, { local, inspectLocal: ready });
+
+      const browse = yield* run(browseZoteroForInvocation({ collectionKey: "TOPC2345" }));
+      const imported = yield* run(importZoteroForInvocation({ collectionKey: "TOPC2345" }));
+
+      expect(browse.items.map((item) => item.title).toSorted()).toEqual([
+        "In a subcollection",
+        "In the collection",
+      ]);
+      expect(imported).toMatchObject({ imported: 2, failed: 0 });
+    }),
+  );
+
   it.effect("tells the agent what Zotero holds that the import did not bring", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(project);

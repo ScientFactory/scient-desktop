@@ -33,7 +33,6 @@ import { finishScientLibraryRestore, prepareScientLibraryRestore } from "./libra
 import { pinScientLibrarySource } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
-  deleteScientSourcesPermanently,
   detachScientSourcePdf,
   importScientSource,
   listScientSourceRecords,
@@ -56,7 +55,7 @@ import {
 } from "./testing/libraryModel.ts";
 import { checkLibraryRules } from "./testing/libraryRules.ts";
 import { createScenario, libraryOf, runStep, type Scenario } from "./testing/librarySteps.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import { emptyScientSourceTrash, sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const roots: string[] = [];
 
@@ -683,7 +682,7 @@ describe("adding what another Library holds", () => {
       expectedRevision: here.revision,
       actor: "user",
     });
-    await deleteScientSourcesPermanently({ root: ours.library });
+    await emptyScientSourceTrash(ours.library);
     expect(await join()).toMatchObject({ outcome: "joined", added: 0, removedHere: 1 });
     expect(await readScientSourceRecord(ours.library, there.sourceId)).toBeNull();
   });

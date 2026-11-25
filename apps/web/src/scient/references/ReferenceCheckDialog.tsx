@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { readLocalApi } from "../../localApi";
-import { scientSourcesErrorMessage } from "../sources/errorMessage";
+import { sourcesErrorMessage } from "../sources/errorMessage";
 import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { checkReferences, readReferenceDocuments, resolveReferences } from "./client";
 import { findingGroups, referenceCheckSummary, targetLabel } from "./referenceCheckModel";
@@ -39,8 +39,6 @@ type RowState =
   | { readonly kind: "busy" }
   | { readonly kind: "fixed" }
   | { readonly kind: "failed"; readonly message: string };
-
-const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 /**
  * Library header ▸ Check references, and the Markdown, LaTeX and Word document menus. Checks
@@ -87,7 +85,7 @@ export function ReferenceCheckDialog(props: {
           setRows(new Map());
           setIgnored(new Map());
         } catch (cause) {
-          setError(errorMessage(cause));
+          setError(sourcesErrorMessage(cause));
         }
       },
       () => setRunning(false),
@@ -129,7 +127,7 @@ export function ReferenceCheckDialog(props: {
         );
       }
     } catch (cause) {
-      const message = errorMessage(cause);
+      const message = sourcesErrorMessage(cause);
       for (const finding of fixable) setRow(finding.findingId, { kind: "failed", message });
     }
   };
@@ -145,7 +143,7 @@ export function ReferenceCheckDialog(props: {
       setIgnored((current) => new Map(current).set(finding.findingId, ignore));
       setRow(finding.findingId, { kind: "idle" });
     } catch (cause) {
-      setRow(finding.findingId, { kind: "failed", message: errorMessage(cause) });
+      setRow(finding.findingId, { kind: "failed", message: sourcesErrorMessage(cause) });
     }
   };
 

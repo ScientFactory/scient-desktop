@@ -6,6 +6,7 @@ import type {
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
+import { dayLabel } from "./dayLabel";
 
 export const JOIN_DIFFERENCES_LABELS = {
   open: msg("Show differences"),
@@ -22,13 +23,6 @@ export const JOIN_DIFFERENCES_LABELS = {
   untitled: msg("Untitled source"),
 } as const;
 
-const day = (iso: string) => {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
-};
-
 /** The other Library, as a short name for column heads and sentences. */
 export function otherLibraryName(
   listed: ScientSourcesJoinDifferences,
@@ -36,7 +30,7 @@ export function otherLibraryName(
 ): string {
   if (listed.from === "replaced") return resolve(msg("The Library a restore replaced"));
   return listed.backupCreatedAt
-    ? resolve(msg("Backup of {day}", { day: day(listed.backupCreatedAt) }))
+    ? resolve(msg("Backup of {day}", { day: dayLabel(listed.backupCreatedAt) }))
     : resolve(msg("The backup"));
 }
 
@@ -49,8 +43,8 @@ export function differencesIntro(
     listed.from === "replaced" ? "replaced" : listed.backupCreatedAt ? "dated" : "backup";
   return resolve(
     msg(
-      "{kind, select, replaced {These papers of the Library a restore replaced} dated {These papers of the backup of {day}} other {These papers of the backup}} were not added, because this Library has them or may have them. Nothing here was changed. Where the other version has something this one lacks, take it one thing at a time: a note or a PDF makes a new version of the paper, and a paper added separately can be moved to the Trash.",
-      { kind, day: listed.backupCreatedAt ? day(listed.backupCreatedAt) : "" },
+      "{kind, select, replaced {These papers of the Library a restore replaced} dated {These papers of the backup of {day}} other {These papers of the backup}} were not added: this Library has them or may have them.",
+      { kind, day: listed.backupCreatedAt ? dayLabel(listed.backupCreatedAt) : "" },
     ),
   );
 }
@@ -62,7 +56,7 @@ export function differencesAway(
 ): string {
   return resolve(
     msg(
-      "The other Library's folder cannot be read now, or is no longer the one that was read ({folder}), so its versions cannot be shown or taken. The list below is what was recorded when the sources were added.",
+      "The other Library's folder cannot be read now ({folder}). This is what was recorded when the sources were added.",
       { folder: listed.folder },
     ),
   );
