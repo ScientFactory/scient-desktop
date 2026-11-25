@@ -23,6 +23,7 @@ import {
 import {
   moveScientProjectBackIntoProject,
   readScientLibraryMoveState,
+  hasScientPreMoveArchive,
   restoreScientProjectPreMoveArchive,
   runScientLibraryMove,
   scientLibraryMoveInternals,
@@ -72,6 +73,7 @@ import {
   updateSourceImportOperationItem,
   writeScientSourceZoteroSync,
 } from "./store.ts";
+import { trashRemovalId } from "./testing/sourceFixtures.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { organizeScientSources } from "./collections.ts";
 import { changeScientSystematicReview } from "./systematicReviewStore.ts";
@@ -1395,7 +1397,7 @@ describe("the library lock during a move", () => {
           await deleteTrashedScientSource({
             root: library,
             sourceId: a.sourceId,
-            expectedRevision: record.revision,
+            removalId: await trashRemovalId(library, a.sourceId),
           }),
         ).toMatchObject({ outcome: "deleted" });
       }
@@ -1635,6 +1637,7 @@ describe("the sealed copy from before the move", () => {
     await NodeFSP.cp(project, oldCopy, { recursive: true });
     const highlightPath = NodePath.join(".scient/annotations/v1", `${sha256}.json`);
     const highlights = await NodeFSP.readFile(NodePath.join(oldCopy, highlightPath));
+    expect(await hasScientPreMoveArchive(project)).toBe(false);
     await move(library, project);
     const record = (await readScientSourceRecord(library, a.sourceId))!;
     await removeScientSource({
@@ -1645,7 +1648,7 @@ describe("the sealed copy from before the move", () => {
     await deleteTrashedScientSource({
       root: library,
       sourceId: record.sourceId,
-      expectedRevision: record.revision,
+      removalId: await trashRemovalId(library, record.sourceId),
     });
     const { journal } = await move(library, oldCopy);
     expect(journal!.annotations).not.toContain(sha256);
@@ -1658,6 +1661,8 @@ describe("the sealed copy from before the move", () => {
     const elsewhere = NodePath.join(base, "elsewhere");
     await NodeFSP.cp(oldCopy, elsewhere, { recursive: true });
     await NodeFSP.rm(NodePath.join(elsewhere, ".scient/annotations"), { recursive: true });
+    // The copy travels with the project folder: another computer offers Recover too.
+    expect(await hasScientPreMoveArchive(elsewhere)).toBe(true);
     expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
       outcome: "restored",
     });

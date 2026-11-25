@@ -16,7 +16,6 @@ import {
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
   decodePersistedScientSourceRecord,
-  deleteScientSourcesPermanently,
   detachScientSourcePdf,
   importScientSource,
   importScientSourceOperationItem,
@@ -40,6 +39,7 @@ import {
   updateScientSourceNote,
 } from "./store.ts";
 import {
+  emptyScientSourceTrash,
   SCIENT_SOURCE_HISTORY_DIRECTORY,
   SCIENT_SOURCE_OPERATIONS_DIRECTORY,
   SCIENT_SOURCE_RECEIPTS_DIRECTORY,
@@ -389,7 +389,8 @@ describe("Scient source store", () => {
         expectedRevision: record.revision,
       }),
     ).resolves.toMatchObject({ outcome: "removed", restorable: true });
-    await expect(deleteScientSourcesPermanently({ root })).resolves.toEqual({
+    await expect(emptyScientSourceTrash(root)).resolves.toEqual({
+      outcome: "deleted",
       deletedSourceIds: [record.sourceId],
       removedFileCount: 0,
     });
@@ -1120,7 +1121,7 @@ describe("Scient source store", () => {
         },
         pdfPath,
       }),
-    ).rejects.toThrow("damaged source PDF");
+    ).rejects.toThrow("damaged copy of this PDF");
   });
 
   it("persists resumable progress and an immutable cancellation receipt", async () => {
@@ -1289,6 +1290,233 @@ describe("Scient source store", () => {
         itemKeys: ["GHI789"],
       }),
     ).resolves.toMatchObject({ state: "running" });
+  });
+
+  it.each(["project", "library"] as const)(
+    "never lets a damaged %s import operation hide the Library or block a new import",
+    async (kind) => {
+      const root = await fixture();
+      if (kind === "project") await initializeScientProject({ root });
+      else await ensureScientLibrary(root);
+      const location = kind === "project" ? root : scientLibraryLocation(root);
+      const paths = await scientSourceStoreInternals.sourceStorePaths(location);
+      const inspect = () =>
+        kind === "project"
+          ? inspectScientSources(root)
+          : inspectScientLibrarySources(scientLibraryLocation(root));
+      const start = (itemKey: string) =>
+        createSourceImportOperation({
+          root: location,
+          operationId: NodeCrypto.randomUUID(),
+          adapter: "zotero",
+          itemKeys: [itemKey],
+        });
+      const damage = (operationId: string) =>
+        NodeFSP.writeFile(NodePath.join(paths.operations, `${operationId}.json`), "{", "utf8");
+
+      const past = await start("ABC123");
+      await updateSourceImportOperationItem({
+        root: location,
+        operationId: past.operationId,
+        itemKey: "ABC123",
+        state: "skipped",
+      });
+      await damage(past.operationId);
+      await expect(inspect()).resolves.toMatchObject({ activeOperation: null });
+      const running = await start("DEF456");
+      await expect(start("GHI789")).rejects.toThrow("already running");
+
+      // A damaged running import can never continue, so it no longer holds the one slot.
+      await damage(running.operationId);
+      await expect(inspect()).resolves.toMatchObject({ activeOperation: null });
+      const next = await start("GHI789");
+      await expect(inspect()).resolves.toMatchObject({
+        activeOperation: { operationId: next.operationId },
+      });
+      await expect(
+        NodeFSP.readFile(NodePath.join(paths.operations, `${running.operationId}.json`), "utf8"),
+      ).resolves.toBe("{");
+    },
+  );
+
+  it("finds the running import of a store written before the active pointer, once", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const paths = await scientSourceStoreInternals.sourceStorePaths(root);
+    const running = await createSourceImportOperation({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      adapter: "zotero",
+      itemKeys: ["ABC123"],
+    });
+    const pointer = NodePath.join(paths.operations, "active");
+    await NodeFSP.rm(pointer);
+    await NodeFSP.writeFile(NodePath.join(paths.operations, "op_damaged.json"), "{", "utf8");
+
+    await expect(inspectScientSources(root)).resolves.toMatchObject({
+      activeOperation: { operationId: running.operationId },
+    });
+    await expect(NodeFSP.stat(pointer)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      createSourceImportOperation({
+        root,
+        operationId: NodeCrypto.randomUUID(),
+        adapter: "zotero",
+        itemKeys: ["DEF456"],
+      }),
+    ).rejects.toThrow("already running");
+    expect(JSON.parse(await NodeFSP.readFile(pointer, "utf8"))).toEqual({
+      operationId: running.operationId,
+      alone: true,
+    });
+  });
+
+  it("still finds an older running import of a store written before the pointer", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const paths = await scientSourceStoreInternals.sourceStorePaths(root);
+    const pointer = NodePath.join(paths.operations, "active");
+    const start = (itemKey: string) =>
+      createSourceImportOperation({
+        root,
+        operationId: NodeCrypto.randomUUID(),
+        adapter: "zotero",
+        itemKeys: [itemKey],
+      });
+    // Earlier versions let "try again" run one import while another was still running.
+    const older = await start("ABC123");
+    const olderPath = NodePath.join(paths.operations, `${older.operationId}.json`);
+    await NodeFSP.writeFile(
+      olderPath,
+      JSON.stringify({ ...older, updatedAt: "2026-01-01T00:00:00.000Z" }),
+      "utf8",
+    );
+    await NodeFSP.writeFile(pointer, JSON.stringify({ operationId: null, alone: true }), "utf8");
+    const newer = await start("DEF456");
+    await NodeFSP.rm(pointer);
+
+    await expect(start("GHI789")).rejects.toThrow("already running");
+    await cancelSourceImportOperation(root, newer.operationId);
+    await expect(inspectScientSources(root)).resolves.toMatchObject({
+      activeOperation: { operationId: older.operationId },
+    });
+    await expect(start("GHI789")).rejects.toThrow("already running");
+    await cancelSourceImportOperation(root, older.operationId);
+    const next = await start("GHI789");
+    await expect(inspectScientSources(root)).resolves.toMatchObject({
+      activeOperation: { operationId: next.operationId },
+    });
+  });
+
+  it("finds an older running import after the import an older version's pointer names ends", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const paths = await scientSourceStoreInternals.sourceStorePaths(root);
+    const pointer = NodePath.join(paths.operations, "active");
+    const start = (itemKey: string) =>
+      createSourceImportOperation({
+        root,
+        operationId: NodeCrypto.randomUUID(),
+        adapter: "zotero",
+        itemKeys: [itemKey],
+      });
+    const older = await start("ABC123");
+    await NodeFSP.writeFile(pointer, JSON.stringify({ operationId: null, alone: true }), "utf8");
+    const newer = await start("DEF456");
+    // The pointer an older version wrote names only the newest running import.
+    await NodeFSP.writeFile(pointer, JSON.stringify({ operationId: newer.operationId }), "utf8");
+
+    await cancelSourceImportOperation(root, newer.operationId);
+    await expect(inspectScientSources(root)).resolves.toMatchObject({
+      activeOperation: { operationId: older.operationId },
+    });
+    await expect(start("GHI789")).rejects.toThrow("already running");
+  });
+
+  it("runs failed items again however many legacy imports are still running", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const paths = await scientSourceStoreInternals.sourceStorePaths(root);
+    const template = await createSourceImportOperation({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      adapter: "zotero",
+      itemKeys: ["ABC123"],
+    });
+    for (let index = 0; index < 110; index += 1) {
+      const operationId = NodeCrypto.randomUUID();
+      await NodeFSP.writeFile(
+        NodePath.join(paths.operations, `${operationId}.json`),
+        JSON.stringify({ ...template, operationId, updatedAt: "2026-01-01T00:00:00.000Z" }),
+        "utf8",
+      );
+    }
+    await NodeFSP.rm(NodePath.join(paths.operations, "active"));
+    const newest = await createSourceImportOperation({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      adapter: "zotero",
+      itemKeys: ["DEF456", "GHI789"],
+    }).catch(() => null);
+    expect(newest).toBeNull();
+    await updateSourceImportOperationItem({
+      root,
+      operationId: template.operationId,
+      itemKey: "ABC123",
+      state: "failed",
+      message: "Provider unavailable.",
+    });
+    // Settled, so the newest of the 110 left is active now; retrying it must not fail.
+    const active = (await inspectScientSources(root)).activeOperation!;
+    await NodeFSP.writeFile(
+      NodePath.join(paths.operations, `${active.operationId}.json`),
+      JSON.stringify({
+        ...active,
+        items: [
+          { ...active.items[0]!, state: "failed", message: "Provider unavailable." },
+          { ...active.items[0]!, itemKey: "DEF456" },
+        ],
+        updatedAt: "2026-11-25T12:00:00.000Z",
+      }),
+      "utf8",
+    );
+    await expect(
+      retryFailedSourceImportOperationItems(root, active.operationId, ["ABC123"]),
+    ).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("refuses to run failed items again while another import runs", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const failed = await createSourceImportOperation({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      adapter: "zotero",
+      itemKeys: ["ABC123"],
+    });
+    await updateSourceImportOperationItem({
+      root,
+      operationId: failed.operationId,
+      itemKey: "ABC123",
+      state: "failed",
+      message: "Provider unavailable.",
+    });
+    const other = await createSourceImportOperation({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      adapter: "zotero",
+      itemKeys: ["DEF456"],
+    });
+    await expect(
+      retryFailedSourceImportOperationItems(root, failed.operationId, ["ABC123"]),
+    ).rejects.toThrow("already running");
+    await cancelSourceImportOperation(root, other.operationId);
+    await expect(
+      retryFailedSourceImportOperationItems(root, failed.operationId, ["ABC123"]),
+    ).resolves.toMatchObject({ state: "running" });
+    await expect(inspectScientSources(root)).resolves.toMatchObject({
+      activeOperation: { operationId: failed.operationId },
+    });
   });
 
   it("finalizes a fully processed operation with a completed receipt", async () => {

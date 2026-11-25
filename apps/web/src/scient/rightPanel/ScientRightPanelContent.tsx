@@ -62,6 +62,8 @@ export interface ScientRightPanelContentProps {
   readonly activeThreadRef: ScopedThreadRef;
   readonly activeThread: { readonly environmentId: EnvironmentId } | null | undefined;
   readonly activeProject: { readonly title: string } | null | undefined;
+  /** No project is open: the thread runs in the scratch folder. */
+  readonly activeProjectIsScratch?: boolean;
   readonly activeWorkspaceRoot: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -217,6 +219,7 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
         threadId={activeThreadRef.threadId}
         root={activeWorkspaceRoot}
         projectTitle={activeProject.title}
+        scratch={input.activeProjectIsScratch === true}
         onOpenPdf={openScientSourcePdf}
         onOpenFile={(path, line) => input.openFileSourceSurface(path, line)}
       />

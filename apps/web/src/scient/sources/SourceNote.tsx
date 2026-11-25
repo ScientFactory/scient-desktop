@@ -85,6 +85,12 @@ export interface SourceNoteSaveContext {
   readonly session: string;
 }
 
+/** What every note save sends: the note it replaces, and the session that keeps one version. */
+export const sourceNoteSaveCheck = (context: SourceNoteSaveContext) => ({
+  expectedNote: context.base,
+  noteSession: context.session,
+});
+
 type SourceNoteSave = (
   note: string | null,
   expectedRevision: number,
@@ -458,7 +464,8 @@ function SourceNoteEditor(props: {
     <LexicalComposer initialConfig={initialConfig}>
       <div
         className={cn(
-          "relative w-full cursor-text rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground",
+          // A visible edge at rest: an empty note reads as a place to type, not as plain text.
+          "relative w-full cursor-text rounded-md border border-border px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground",
           props.fillAvailableSpace ? "min-h-0 flex-1" : "h-20",
           props.className,
         )}
@@ -717,7 +724,6 @@ export function useSourceNoteControls(props: {
   readonly storage?: "source" | "pin";
   /** A personal Library names each of a source's two notes; elsewhere the heading is "Notes". */
   readonly heading?: string;
-  readonly help?: string;
   readonly onSave: SourceNoteSave;
   /** Earlier versions of a project note, restorable from the section. */
   readonly history?: ScientSourceDetailResult["projectNoteHistory"];
@@ -727,7 +733,6 @@ export function useSourceNoteControls(props: {
   const headingId =
     props.field === "personalNote" ? "source-my-note-heading" : "source-note-heading";
   const heading = props.heading ?? "Notes";
-  const help = props.help ? <p className="text-xs text-muted-foreground">{props.help}</p> : null;
   const quickNoteEditorRef = useRef<SourceNoteEditorHandle>(null);
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
   const [activeFormats, setActiveFormats] = useState<SourceNoteFormats>(EMPTY_SOURCE_NOTE_FORMATS);
@@ -827,7 +832,6 @@ export function useSourceNoteControls(props: {
             {heading}
           </h3>
           <NotePreview value={note.draft} />
-          {help}
         </section>
       ) : null
     ) : (
@@ -841,7 +845,6 @@ export function useSourceNoteControls(props: {
           ) : null}
         </div>
         <InlineNoteEditor note={note} {...(props.heading ? { label: props.heading } : {})} />
-        {help}
         <NoteError error={note.error} />
         <NoteConflict note={note} />
       </section>

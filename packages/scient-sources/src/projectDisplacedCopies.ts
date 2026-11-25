@@ -324,19 +324,6 @@ async function writeVerifiedJson(
   }
 }
 
-export async function readScientDisplacedCopies(
-  root: string,
-  holder: ScientDisplacedHolder,
-): Promise<ReadonlyArray<ScientDisplacedCopy>> {
-  const canonicalRoot = await NodeFSP.realpath(root);
-  const filePath = displacedPath(canonicalRoot, holder);
-  const dirId = await verifiedDirectory(canonicalRoot, NodePath.dirname(filePath));
-  if (!dirId) return [];
-  const read = await readVerifiedFile(canonicalRoot, filePath, dirId);
-  if (read.kind === "missing") return [];
-  return decodeDisplacedFile(JSON.parse(read.text)).copies;
-}
-
 type DisplacedHolderKind = "citation-key" | "review";
 
 export type ScientDisplacedCopyInProject = ScientDisplacedCopy & {
@@ -472,3 +459,11 @@ export async function keepScientDisplacedCopies(
   if (kept.length === before) return;
   await writeVerifiedJson(canonicalRoot, filePath, dirId, { formatVersion: 1, copies: kept });
 }
+
+/** For tests: one holder's file, read and verified as every reader does. */
+export const scientDisplacedCopyInternals = {
+  displacedPath,
+  verifiedDirectory,
+  readVerifiedFile,
+  decodeDisplacedFile,
+};

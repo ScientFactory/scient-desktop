@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import type { EnvironmentId, ScientSourcesOrganizeResult } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
@@ -12,7 +12,8 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { organizeScientSources } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { whenLabel } from "./dayLabel";
+import { sourcesErrorMessage } from "./errorMessage";
 import { settleAfter } from "./settleAfter";
 
 type Imports = NonNullable<ScientSourcesOrganizeResult["packageImports"]>;
@@ -30,6 +31,7 @@ export function PackageImportsDialog(props: {
   readonly onClose: () => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const [imports, setImports] = useState<Imports | null>(null);
   const [diagnostics, setDiagnostics] = useState<ReadonlyArray<string>>([]);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function PackageImportsDialog(props: {
         }
       })
       .catch((cause: unknown) => {
-        if (active) setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+        if (active) setError(sourcesErrorMessage(cause));
       });
     return () => {
       active = false;
@@ -73,7 +75,7 @@ export function PackageImportsDialog(props: {
           setImports(listed.packageImports ?? []);
           setDiagnostics(listed.packageImportDiagnostics ?? []);
         } catch (cause) {
-          setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+          setError(sourcesErrorMessage(cause));
         }
       },
       () => setWorking(false),
@@ -134,7 +136,7 @@ export function PackageImportsDialog(props: {
                     <div className="min-w-0">
                       <p className="break-words font-medium">{entry.packageTitle}</p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(entry.importedAt).toLocaleString()}
+                        {whenLabel(entry.importedAt, m)}
                       </p>
                     </div>
                     {entry.canUndo && props.canChange ? (
@@ -149,10 +151,7 @@ export function PackageImportsDialog(props: {
                     ) : entry.canUndo ? null : (
                       <span className="text-xs text-muted-foreground">
                         <T>
-                          Undone{" "}
-                          <Var>
-                            {entry.undoneAt ? new Date(entry.undoneAt).toLocaleString() : ""}
-                          </Var>
+                          Undone <Var>{entry.undoneAt ? whenLabel(entry.undoneAt, m) : ""}</Var>
                         </T>
                       </span>
                     )}

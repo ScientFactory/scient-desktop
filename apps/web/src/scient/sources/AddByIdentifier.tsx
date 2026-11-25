@@ -14,7 +14,6 @@ import { useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogPanel,
@@ -24,7 +23,7 @@ import {
 import { Textarea } from "../../components/ui/textarea";
 import { addScientSourcesByIdentifier } from "./client";
 import { useCanChangeLibrary } from "./sourcesCommands";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import { settleAfter } from "./settleAfter";
 import type { SourcesResultContent } from "./sourcesFeedback";
 
@@ -132,7 +131,7 @@ export function AddByIdentifier(props: {
               .join("\n"),
           );
         } catch (cause) {
-          setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+          setError(sourcesErrorMessage(cause));
         }
       },
       () => setAdding(false),
@@ -152,14 +151,11 @@ export function AddByIdentifier(props: {
           <DialogTitle>
             <T>Add by identifier</T>
           </DialogTitle>
-          <DialogDescription>
-            <T>Paste DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Each becomes one source.</T>
-          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <Textarea
             aria-label={gt("Identifiers to add")}
-            placeholder="10.1038/nature14539"
+            placeholder={gt("DOIs, PMIDs, arXiv IDs or ISBNs, one per line")}
             rows={4}
             size="sm"
             value={text}

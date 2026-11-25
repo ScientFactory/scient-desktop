@@ -38,6 +38,9 @@ import { toastManager } from "../../components/ui/toast";
 import { useComposerHandleContext } from "../../composerHandleContext";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { restoreScientSource } from "./client";
+import { sourcesErrorMessage } from "./errorMessage";
+import { settleInBatches } from "./settleInBatches";
+import { restoreProblem } from "./sourceLifecycleLabels";
 import { collectionIndent, orderedCollections } from "./collectionTree";
 import { compareSourcesInsertion } from "./compareSources";
 import {
@@ -61,11 +64,26 @@ export function announceSourcesMovedToTrash(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly sourceIds: ReadonlyArray<string>;
+  /** Sources that changed while the person worked, so were left where they were. */
   readonly notRemoved: number;
+  /** Removals that failed, and why the first did. */
+  readonly failed?: { readonly count: number; readonly reason: string };
   /** On a personal Library: how many of the moved sources other projects also have. */
   readonly alsoElsewhere?: number;
   readonly onRestored: () => Promise<unknown>;
 }) {
+  if (input.failed) {
+    toastManager.add({
+      type: "error",
+      title: resolveMessage(
+        msg(
+          "{count, plural, =1 {1 source could not be moved to Trash} other {{count} sources could not be moved to Trash}}",
+          { count: input.failed.count },
+        ),
+      ),
+      description: input.failed.reason,
+    });
+  }
   if (input.notRemoved > 0) {
     toastManager.add({
       type: "warning",
@@ -95,7 +113,8 @@ export function announceSourcesMovedToTrash(input: {
       children: resolveMessage(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {
         toastManager.close(id);
-        void restoreAll(input).then(input.onRestored);
+        // The restores' own answers say what came back; the list read after them is the list's.
+        void restoreAll(input).then(() => void input.onRestored().catch(() => undefined));
       },
     },
   });
@@ -106,24 +125,29 @@ async function restoreAll(input: {
   readonly root: string;
   readonly sourceIds: ReadonlyArray<string>;
 }) {
-  let failed = 0;
-  for (const sourceId of input.sourceIds) {
-    const restored = await restoreScientSource(input.environmentId, {
-      root: input.root,
-      sourceId,
-    }).catch(() => null);
-    if (restored?.outcome !== "restored") failed += 1;
-  }
-  if (failed > 0) {
+  const settled = await settleInBatches(input.sourceIds, (sourceId) =>
+    restoreScientSource(input.environmentId, { root: input.root, sourceId }),
+  );
+  const failed = settled.filter(
+    (answer) => answer.status === "rejected" || answer.value.outcome !== "restored",
+  );
+  if (failed.length > 0) {
+    const first = failed[0]!;
+    const reason =
+      first.status === "rejected"
+        ? sourcesErrorMessage(first.reason)
+        : (restoreProblem(first.value) ?? null);
     toastManager.add({
       type: "error",
       title: resolveMessage(
         msg(
           "{count, plural, =1 {1 source was not restored} other {{count} sources were not restored}}",
-          { count: failed },
+          { count: failed.length },
         ),
       ),
-      description: resolveMessage(msg("Open the Trash to restore it.")),
+      description: [reason, resolveMessage(msg("Open the Trash to restore it."))]
+        .filter(Boolean)
+        .join(" "),
     });
   }
 }
@@ -213,9 +237,10 @@ export interface SourcesBulkLibrary {
     sourceIds: ReadonlyArray<string>,
     change: ReadingStateChange,
   ) => Promise<void>;
-  readonly onAddToProject: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
+  /** Absent where no project is open. */
+  readonly onAddToProject?: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
   /** Resolves false when the person cancelled a confirmation; the selection then stays. */
-  readonly onRemoveFromProject: (records: ReadonlyArray<SourceSummary>) => Promise<boolean>;
+  readonly onRemoveFromProject?: (records: ReadonlyArray<SourceSummary>) => Promise<boolean>;
 }
 
 /** Replaces the search row while sources are selected. */
@@ -230,6 +255,8 @@ export function SourcesBulkBar(props: {
   const m = useMessages();
   const gt = useGT();
   const { organize, library } = props;
+  const addToProject = library?.listed === "library" ? library.onAddToProject : undefined;
+  const removeFromProject = library?.listed === "project" ? library.onRemoveFromProject : undefined;
   const { progress } = organize;
   const [removing, setRemoving] = useState(false);
   const selected = props.records.filter((record) => organize.selection.has(record.sourceId));
@@ -302,13 +329,13 @@ export function SourcesBulkBar(props: {
             : null}
         </span>
         <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:-order-1 @max-[30rem]/bulk:basis-full">
-          {library?.listed === "library" && notInProject.length > 0 ? (
+          {addToProject && notInProject.length > 0 ? (
             <Button
               type="button"
               size="xs"
               variant="ghost"
               disabled={busy}
-              onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
+              onClick={() => runOnSelection(() => addToProject(notInProject))}
             >
               <FolderPlus />
               {m(LIBRARY_LABELS.addToProject)}
@@ -438,7 +465,7 @@ export function SourcesBulkBar(props: {
               </MenuPopup>
             </Menu>
           ) : null}
-          {library?.listed === "project" ? (
+          {removeFromProject ? (
             <ScientTooltip content={m(LIBRARY_LABELS.removeFromProject)}>
               <Button
                 type="button"
@@ -448,7 +475,7 @@ export function SourcesBulkBar(props: {
                 disabled={busy || count === 0}
                 onClick={() => {
                   setRemoving(true);
-                  void library.onRemoveFromProject(selected).then((ran) => {
+                  void removeFromProject(selected).then((ran) => {
                     setRemoving(false);
                     if (ran) organize.clearSelection();
                   });

@@ -10,10 +10,11 @@ import { toastManager } from "../../components/ui/toast";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { m } from "~/i18n/messages";
 import { organizeScientSources, readLibraryMoveStatus } from "./client";
-import { isLostAnswerError, scientSourcesErrorMessage } from "./errorMessage";
+import { isLostAnswerError, sourcesErrorMessage } from "./errorMessage";
 import { libraryMoveCanGoBack, libraryMoveLine, libraryMoveRunning } from "./libraryMoveStatus";
 import { onLibraryWriteSettled } from "./libraryWrites";
 import { sourcesCommands, useCanRunSourcesCommand } from "./sourcesCommands";
+import { settleAfter } from "./settleAfter";
 
 const ASK_AGAIN_MS = 1_000;
 const ASK_AFTER_FAILURE_MS = 5_000;
@@ -21,17 +22,6 @@ const ASK_AFTER_FAILURE_MS = 5_000;
 const ASK_WHILE_WAITING_MS = 10_000;
 // A move back with a lost answer may still be waiting for its turn: two minutes of checks.
 const UNCONFIRMED_CHECKS = 24;
-
-const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
-
-// Outside the hook: the React Compiler does not compile try/finally.
-async function settle<A>(work: () => Promise<A>, settled: () => void): Promise<A> {
-  try {
-    return await work();
-  } finally {
-    settled();
-  }
-}
 
 const oneCheckLess = <A extends { readonly checksLeft: number }>(pending: A): A | null =>
   pending.checksLeft > 1 ? { ...pending, checksLeft: pending.checksLeft - 1 } : null;
@@ -139,14 +129,14 @@ export function useLibraryMoveStatus(input: {
       toastManager.add({
         type: "error",
         title: m(msg("The summary was not dismissed")),
-        description: message(cause),
+        description: sourcesErrorMessage(cause),
       });
     });
 
   // Any change runs a failed move again; this one does nothing else. The line shows the result.
   const retry = () => {
     setRetrying(true);
-    void settle(
+    void settleAfter(
       () =>
         organizeScientSources(input.environmentId, {
           root: input.root,
@@ -163,7 +153,7 @@ export function useLibraryMoveStatus(input: {
 
   const moveBack = () => {
     setMovingBack(true);
-    return settle(
+    return settleAfter(
       async () => {
         await organizeScientSources(input.environmentId, {
           root: input.root,
@@ -192,7 +182,7 @@ export function useLibraryMoveStatus(input: {
           toastManager.add({
             type: "error",
             title: m(msg("The Library was not moved back")),
-            description: message(cause),
+            description: sourcesErrorMessage(cause),
           });
         });
         onStoreChanged();

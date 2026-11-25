@@ -58,7 +58,6 @@ import {
 } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
-  deleteScientSourcesPermanently,
   importScientSource,
   listScientSourceRecords,
   listScientSourceTrash,
@@ -69,6 +68,7 @@ import {
   updateScientSourceMetadata,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
+import { emptyScientSourceTrash } from "./testing/sourceFixtures.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 
@@ -486,7 +486,7 @@ describe("importing a project package", () => {
         sourceId: imported.sourceId,
         expectedRevision: imported.revision,
       });
-      await deleteScientSourcesPermanently({ root: theirs });
+      await emptyScientSourceTrash(theirs);
       let liveId: string | undefined;
       if (state === "reimported") {
         expect(await importInto(received, theirs, handoff)).toMatchObject({

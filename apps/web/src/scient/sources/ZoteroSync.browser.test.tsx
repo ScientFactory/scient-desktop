@@ -111,6 +111,26 @@ describe("Refresh from Zotero", () => {
     ]);
   });
 
+  it("shows the sources a refresh changed before a later batch failed", async () => {
+    const { onChanged } = setup();
+    mocks.refreshZoteroSources
+      .mockReset()
+      .mockResolvedValueOnce({
+        connection: "local",
+        items: [{ ...conflicted, outcome: "updated", changedFields: ["title"], conflicts: [] }],
+        total: 2,
+        next: "source_a",
+      })
+      .mockRejectedValueOnce(new Error("Zotero is busy. Try again in a minute."));
+    await using _screen = await render(<Harness onChanged={onChanged} allLibrary />, {
+      router: false,
+    });
+
+    await page.getByRole("button", { name: "Start" }).click();
+
+    await expect.poll(() => onChanged.mock.calls.length).toBe(1);
+  });
+
   it("does not say everything matches when a source could not be refreshed", async () => {
     const { onChanged } = setup();
     const message = "This Zotero library's owner could not be verified. No source was refreshed.";

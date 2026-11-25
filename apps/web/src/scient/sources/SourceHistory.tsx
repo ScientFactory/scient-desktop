@@ -10,7 +10,6 @@ import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
-  DialogDescription,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -19,13 +18,25 @@ import {
 import { toastManager } from "../../components/ui/toast";
 import { readScientSourceRevisions, revertScientSource } from "./client";
 import { useCanChangeLibrary } from "./sourcesCommands";
-import { scientSourcesErrorMessage } from "./errorMessage";
-import { changedFieldsLabel, revisionLabel } from "./sourceLifecycleLabels";
+import { sourcesErrorMessage } from "./errorMessage";
+import { byLine } from "./dayLabel";
+import { changedFieldsLabel } from "./sourceLifecycleLabels";
 import { settleAfter } from "./settleAfter";
 
 type Revision = ScientSourceRevisionsResult["revisions"][number];
 
-const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
+/** What a restore keeps as it is now (the server's `revertScientSource`). */
+const KEPT_BY_RESTORE = new Set(["note", "attachments", "citationKey"]);
+
+/**
+ * A version that changed only what a restore keeps brings nothing back; the version before it
+ * restores the same details.
+ */
+function restoreBringsBack(revision: Revision): boolean {
+  return (
+    revision.changes.length === 0 || revision.changes.some((field) => !KEPT_BY_RESTORE.has(field))
+  );
+}
 
 /**
  * Kept versions of one source; restoring one saves it as the newest version. Mount it keyed by
@@ -52,7 +63,7 @@ export function SourceHistoryDialog(props: {
     let current = true;
     void readScientSourceRevisions(environmentId, { root, sourceId }).then(
       (result) => current && setRevisions(result.revisions),
-      (cause: unknown) => current && setProblem(errorMessage(cause)),
+      (cause: unknown) => current && setProblem(sourcesErrorMessage(cause)),
     );
     return () => {
       current = false;
@@ -92,19 +103,9 @@ export function SourceHistoryDialog(props: {
               result.outcome === "unchanged"
                 ? gt("Already this version")
                 : gt("Earlier version restored"),
-            ...(result.missingAttachmentCount > 0
-              ? {
-                  description:
-                    result.missingAttachmentCount === 1
-                      ? gt("Its PDF was deleted when the trash was emptied.")
-                      : gt("{count} of its PDFs were deleted when the trash was emptied.", {
-                          count: result.missingAttachmentCount,
-                        }),
-                }
-              : {}),
           });
         } catch (cause) {
-          setProblem(errorMessage(cause));
+          setProblem(sourcesErrorMessage(cause));
         }
       },
       () => setPending(null),
@@ -123,9 +124,6 @@ export function SourceHistoryDialog(props: {
           <DialogTitle>
             <T context="a source's earlier versions">History</T>
           </DialogTitle>
-          <DialogDescription>
-            <T>Restoring a version saves it as the newest one, so nothing is lost.</T>
-          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {problem ? (
@@ -142,7 +140,9 @@ export function SourceHistoryDialog(props: {
               {revisions.map((revision) => (
                 <li key={revision.revision} className="flex items-center gap-3 py-2">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm">{revisionLabel(revision, m)}</div>
+                    <div className="truncate text-sm">
+                      {byLine(revision.savedBy, revision.savedAt, m)}
+                    </div>
                     {revision.changes.length > 0 ? (
                       <div className="truncate text-xs text-muted-foreground">
                         {changedFieldsLabel(revision.changes, m)}
@@ -153,7 +153,7 @@ export function SourceHistoryDialog(props: {
                     <span className="text-xs text-muted-foreground">
                       {gt("Current", { $context: "the newest version of a source" })}
                     </span>
-                  ) : (
+                  ) : restoreBringsBack(revision) ? (
                     <Button
                       size="xs"
                       variant="ghost"
@@ -165,7 +165,7 @@ export function SourceHistoryDialog(props: {
                       ) : null}
                       {gt("Restore", { $context: "verb, restores an earlier version" })}
                     </Button>
-                  )}
+                  ) : null}
                 </li>
               ))}
             </ul>

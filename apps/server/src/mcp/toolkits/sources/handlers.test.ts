@@ -793,12 +793,18 @@ describe("Scient Sources MCP handlers", () => {
         removeScientSourceForInvocation({ sourceId: "source_kept", expectedRevision: 4 }),
         context,
       );
+      const [trashed] = (yield* provideContext(
+        listScientSourcesForInvocation({ inTrash: true }),
+        context,
+      )).records;
+      expect(trashed).toMatchObject({ sourceId: "source_kept", removalId: expect.any(String) });
       expect(
         yield* provideContext(
           removeScientSourceForInvocation({
             sourceId: "source_kept",
-            expectedRevision: 3,
+            expectedRevision: 4,
             permanent: true,
+            removalId: "an-earlier-removal",
           }),
           context,
         ),
@@ -809,6 +815,7 @@ describe("Scient Sources MCP handlers", () => {
             sourceId: "source_kept",
             expectedRevision: 4,
             permanent: true,
+            removalId: trashed!.removalId!,
           }),
           context,
         ),

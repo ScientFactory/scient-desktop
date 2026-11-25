@@ -12,9 +12,11 @@ import { BibliographyImportReport } from "./bibliography/index.ts";
 import {
   assessSourceDuplicate,
   assessSourceMetadataDuplicate,
+  carryScientSourceIntakeIndex,
   sourceMetadataMatchIndex,
   type ScientSourceIntakeExclusions,
 } from "./duplicates.ts";
+import { refreshFolderIndex, type FolderIndex, type IndexedFile } from "./folderIndex.ts";
 import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
@@ -117,7 +119,6 @@ const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const COPY_CHUNK_BYTES = 1024 * 1024;
 const MAX_STAGED_MATERIAL_BYTES = 2 * 1024 * 1024;
 const operationLocks = new Map<string, Promise<unknown>>();
-const activeOperationIds = new Map<string, string>();
 const operationRecordSnapshots = new Map<
   string,
   {
@@ -384,9 +385,6 @@ function operationCacheKey(paths: SourceStorePaths, operationId: string): string
 }
 
 function clearOperationCaches(paths: SourceStorePaths, operationId: string): void {
-  if (activeOperationIds.get(paths.root) === operationId) {
-    activeOperationIds.delete(paths.root);
-  }
   operationRecordSnapshots.delete(operationCacheKey(paths, operationId));
 }
 
@@ -490,6 +488,12 @@ function assertStorableSourceType(type: unknown): void {
   }
 }
 
+/** A revision written after `current` is kept, so no unkept note saves lead up to it. */
+function keptRevision(record: ScientSourceRecord): ScientSourceRecord {
+  const { noteOnlySince: _noteOnlySince, ...kept } = record;
+  return kept;
+}
+
 async function persistSourceRevision(
   paths: SourceStorePaths,
   current: ScientSourceRecord,
@@ -497,7 +501,11 @@ async function persistSourceRevision(
 ): Promise<void> {
   assertStorableSourceType(next.type);
   await preserveSourceRevision(paths, current);
-  await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
+  await atomicWriteJson(
+    sourceRecordPath(paths, current.sourceId),
+    keptRevision(next),
+    MAX_RECORD_BYTES,
+  );
   await pruneSourceHistory(paths, current.sourceId);
 }
 
@@ -537,6 +545,10 @@ interface MetadataUpdate {
   readonly allowPossibleMetadataMatch?: boolean;
   readonly allowExistingValidationIssues?: boolean;
   readonly actor?: ScientSourceActor;
+  /** Written in the same revision as the details, when they change. */
+  readonly note?: string | null;
+  readonly externalReferences?: ReadonlyArray<ScientSourceExternalReference>;
+  readonly attachments?: ReadonlyArray<ScientSourceAttachment>;
 }
 
 /**
@@ -553,6 +565,10 @@ async function applyMetadataUpdate(
     ) => Promise<ReadonlyArray<ScientSourceRecord>>;
     readonly others: (sourceId: string) => Promise<ReadonlyArray<ScientSourceRecord>>;
   },
+  persist: (current: ScientSourceRecord, next: ScientSourceRecord) => Promise<void> = async (
+    current,
+    next,
+  ) => persistSourceRevision(paths, current, next),
 ): Promise<ScientSourceMetadataUpdateResult> {
   assertSafeIdentifier(input.sourceId, "Source ID");
   const normalized = normalizeScientSourceEditableMetadata(input.metadata);
@@ -624,10 +640,16 @@ async function applyMetadataUpdate(
   } = applied;
   // A verification or retraction check vouches only for the identifiers it checked.
   const updated = identifiersChanged ? unverified : applied;
-  const next = input.fieldProvenance
-    ? { ...updated, fieldProvenance: [...input.fieldProvenance] }
-    : updated;
-  await persistSourceRevision(paths, current, next);
+  const next = {
+    ...updated,
+    ...(input.fieldProvenance ? { fieldProvenance: [...input.fieldProvenance] } : {}),
+    ...(input.note !== undefined ? { note: normalizeScientSourceNote(input.note) } : {}),
+    ...(input.externalReferences ? { externalReferences: [...input.externalReferences] } : {}),
+    ...(input.attachments?.length
+      ? { attachments: [...current.attachments, ...input.attachments] }
+      : {}),
+  };
+  await persist(current, next);
   return { outcome: "updated", record: next, duplicate, validationIssues };
 }
 
@@ -783,6 +805,19 @@ function normalizeScientSourceNote(value: string | null): string | null {
   return normalized.trim() ? normalized : null;
 }
 
+/** One editor's autosaves of a note within this window are one version. */
+const NOTE_SESSION_WINDOW_MS = 10 * 60 * 1000;
+/** Per source, the editing session that wrote its current revision, and when that began. */
+const noteSessions = new Map<
+  string,
+  {
+    readonly session: string;
+    readonly revision: number;
+    readonly updatedAt: string;
+    readonly since: number;
+  }
+>();
+
 export async function updateScientSourceNote(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
@@ -790,6 +825,8 @@ export async function updateScientSourceNote(input: {
   readonly note: string | null;
   readonly expectedNote?: string | null;
   readonly actor?: ScientSourceActor;
+  /** An editor's autosave session: its saves within ten minutes update one version in place. */
+  readonly session?: string;
 }): Promise<ScientSourceNoteUpdateResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -809,14 +846,42 @@ export async function updateScientSourceNote(input: {
       return { outcome: "stale", record: current };
     }
 
+    const key = `${paths.root}\0${input.sourceId}`;
+    const known = noteSessions.get(key);
+    const now = Date.now();
+    // Nothing else wrote a revision since this session's last save, and none was kept of it.
+    const continuing =
+      input.session !== undefined &&
+      known?.session === input.session &&
+      known.revision === current.revision &&
+      known.updatedAt === current.updatedAt &&
+      now - known.since < NOTE_SESSION_WINDOW_MS &&
+      (await snapshot(sourceHistoryPath(paths, current.sourceId, current.revision))) === "missing";
+    // Every save is a revision, so a revision-checked writer never replaces a newer note; the
+    // session's earlier saves are just not kept, and `noteOnlySince` says so to history readers.
     const next: ScientSourceRecord = {
       ...current,
       note,
       revision: current.revision + 1,
-      updatedAt: new Date().toISOString(),
+      ...(continuing ? { noteOnlySince: current.noteOnlySince ?? current.revision } : {}),
+      updatedAt: new Date(now).toISOString(),
       updatedBy: input.actor ?? "user",
     };
-    await persistSourceRevision(paths, current, next);
+    if (continuing) {
+      await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
+    } else {
+      await persistSourceRevision(paths, current, next);
+    }
+    if (input.session === undefined) {
+      noteSessions.delete(key);
+    } else {
+      noteSessions.set(key, {
+        session: input.session,
+        revision: next.revision,
+        updatedAt: next.updatedAt!,
+        since: continuing ? known!.since : now,
+      });
+    }
     return { outcome: "updated", record: next };
   });
 }
@@ -924,6 +989,7 @@ async function moveRecordToTrash(
     formatVersion: storeFormatVersion(paths),
     sourceId: current.sourceId,
     ...projectField(paths),
+    removalId: NodeCrypto.randomUUID(),
     removedAt: new Date().toISOString(),
     removedBy,
     record: current,
@@ -952,7 +1018,7 @@ async function restoreTrashedRecord(
     await latestSourceHistoryRevision(paths, sourceId),
   );
   const restored: ScientSourceRecord = {
-    ...entry.record,
+    ...keptRevision(entry.record),
     // Another source may have taken the key while this one was in the trash.
     ...(entry.record.citationKey
       ? { citationKey: uniqueCitationKey(entry.record.citationKey, takenCitationKeys(existing)) }
@@ -1018,42 +1084,168 @@ async function readTrashEntry(
   return entry;
 }
 
+type TrashFileResult =
+  | { readonly entry: ScientSourceTrashEntry | null }
+  | { readonly issue: ScientSourceStoreIssue };
+
+/** Derived from the Trash files and rebuilt from them, by Trash folder. */
+const trashIndexes = new Map<string, FolderIndex<TrashFileResult>>();
+
+/** Only new or changed Trash files are read again; see `refreshFolderIndex`. */
+async function indexTrash(paths: SourceStorePaths): Promise<FolderIndex<TrashFileResult> | null> {
+  const index = await refreshFolderIndex<TrashFileResult>({
+    folder: paths.trash,
+    previous: trashIndexes.get(paths.trash),
+    read: async (name) => {
+      try {
+        return { entry: await readTrashEntry(paths, name.slice(0, -".json".length)) };
+      } catch (error) {
+        const filePath = NodePath.join(paths.trash, name);
+        return {
+          issue: { path: projectRelativePath(paths, filePath), message: issueMessage(error) },
+        };
+      }
+    },
+    unsafe: (filePath) => ({
+      issue: { path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE },
+    }),
+    unsafeFolderMessage: "The Scient source trash is unsafe.",
+  });
+  if (index) trashIndexes.set(paths.trash, index);
+  else trashIndexes.delete(paths.trash);
+  return index;
+}
+
+function tombstonePath(paths: SourceStorePaths, sourceId: string): string {
+  assertSafeIdentifier(sourceId, "Source ID");
+  return NodePath.join(paths.deleted, `${sourceId}.json`);
+}
+
+/**
+ * Names one removal: no other entry, now or after the source is imported and trashed again, has
+ * it. An entry written before removals had IDs is named by its removal time and revision.
+ */
+export function scientSourceRemovalId(
+  entry: Pick<ScientSourceTrashEntry, "sourceId" | "removalId" | "removedAt"> & {
+    readonly record: Pick<ScientSourceRecord, "revision">;
+  },
+): string {
+  if (entry.removalId) return entry.removalId;
+  return `legacy-${NodeCrypto.createHash("sha256")
+    .update(`${entry.sourceId}\0${entry.removedAt}\0${entry.record.revision}`)
+    .digest("base64url")
+    .slice(0, 32)}`;
+}
+
+const DeletionMarker = Schema.Struct({
+  sourceId: Schema.String,
+  removalId: Schema.optionalKey(Schema.String),
+  removedAt: Schema.String,
+  record: Schema.Struct({ revision: Schema.Number }),
+});
+const decodeDeletionMarker = Schema.decodeUnknownSync(DeletionMarker);
+
+/**
+ * Whether a permanent deletion began on this trashed copy and has not finished: its tombstone is
+ * written first and its trash entry goes last. The tombstone carries the copy's removal ID, so a
+ * later copy trashed under the same source ID is never taken for it.
+ */
+async function deletionStartedOn(
+  paths: SourceStorePaths,
+  entry: ScientSourceTrashEntry,
+): Promise<boolean> {
+  if (paths.owner.kind !== "library") return false;
+  const filePath = tombstonePath(paths, entry.sourceId);
+  if ((await snapshot(filePath)) === "missing") return false;
+  try {
+    const marker = decodeDeletionMarker(
+      await readBoundedJson(filePath, MAX_TRASH_ENTRY_BYTES, Schema.Unknown),
+    );
+    return scientSourceRemovalId(marker) === scientSourceRemovalId(entry);
+  } catch {
+    // An unreadable tombstone began nothing: the entry stays listed, to delete again.
+    return false;
+  }
+}
+
+/** The IDs with a tombstone, listed once for a whole Trash listing. */
+async function tombstonedIds(paths: SourceStorePaths): Promise<ReadonlySet<string>> {
+  if (paths.owner.kind !== "library" || (await snapshot(paths.deleted)) !== "directory") {
+    return new Set();
+  }
+  return new Set(
+    (await NodeFSP.readdir(paths.deleted))
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -".json".length)),
+  );
+}
+
 async function scanTrash(
   paths: SourceStorePaths,
-  /** Entries not to read at all, for a caller that knows they are not what it lists. */
-  skip?: ReadonlySet<string>,
+  /** The IDs with a record file, when the caller has just listed them. */
+  live?: ReadonlySet<string>,
 ): Promise<{
   readonly entries: ReadonlyArray<ScientSourceTrashEntry>;
+  /** Entries whose permanent deletion stopped part way; never listed or restored. */
+  readonly deleting: ReadonlyArray<ScientSourceTrashEntry>;
   readonly issues: ReadonlyArray<ScientSourceStoreIssue>;
 }> {
-  const state = await snapshot(paths.trash);
-  if (state === "missing") return { entries: [], issues: [] };
-  if (state !== "directory") throw new Error("The Scient source trash is unsafe.");
-  const entries: ScientSourceTrashEntry[] = [];
-  const issues: ScientSourceStoreIssue[] = [];
-  for (const file of await NodeFSP.readdir(paths.trash, { withFileTypes: true })) {
-    if (!file.name.endsWith(".json")) continue;
-    const sourceId = file.name.slice(0, -".json".length);
-    if (skip?.has(sourceId)) continue;
-    const filePath = NodePath.join(paths.trash, file.name);
-    if (!file.isFile()) {
-      issues.push({ path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE });
-      continue;
-    }
-    try {
-      const entry = await readTrashEntry(paths, sourceId);
-      // A live record with the same ID means a removal stopped before deleting it.
-      if (entry && (await snapshot(sourceRecordPath(paths, sourceId))) === "missing") {
-        entries.push(entry);
+  const index = await indexTrash(paths);
+  if (!index) return { entries: [], deleting: [], issues: [] };
+  const { entries: listed, issues } = trashListingOf(index);
+  // A live record with the same ID means a removal stopped before deleting it.
+  let present: ReadonlyArray<ScientSourceTrashEntry>;
+  if (live) present = listed.filter((entry) => !live.has(entry.sourceId));
+  else {
+    const missing: boolean[] = [];
+    for (let start = 0; start < listed.length; start += TRASH_LIVE_CHECK_CONCURRENCY) {
+      const part = listed.slice(start, start + TRASH_LIVE_CHECK_CONCURRENCY);
+      for (const state of await Promise.all(
+        part.map((entry) => snapshot(sourceRecordPath(paths, entry.sourceId))),
+      )) {
+        missing.push(state === "missing");
       }
-    } catch (error) {
-      issues.push({ path: projectRelativePath(paths, filePath), message: issueMessage(error) });
     }
+    present = listed.filter((_, position) => missing[position]);
+  }
+  const tombstoned = await tombstonedIds(paths);
+  const begun = new Set<ScientSourceTrashEntry>();
+  for (const entry of present.filter(({ sourceId }) => tombstoned.has(sourceId))) {
+    if (await deletionStartedOn(paths, entry)) begun.add(entry);
   }
   return {
+    entries: present.filter((entry) => !begun.has(entry)),
+    deleting: [...begun],
+    issues,
+  };
+}
+
+const TRASH_LIVE_CHECK_CONCURRENCY = 32;
+
+const trashListings = new WeakMap<
+  FolderIndex<TrashFileResult>,
+  {
+    readonly entries: ReadonlyArray<ScientSourceTrashEntry>;
+    readonly issues: ReadonlyArray<ScientSourceStoreIssue>;
+  }
+>();
+
+/** The index's entries, newest removal first, and its unreadable files; worked out once. */
+function trashListingOf(index: FolderIndex<TrashFileResult>) {
+  const known = trashListings.get(index);
+  if (known) return known;
+  const entries: ScientSourceTrashEntry[] = [];
+  const issues: ScientSourceStoreIssue[] = [];
+  for (const { value } of index.files.values()) {
+    if ("issue" in value) issues.push(value.issue);
+    else if (value.entry) entries.push(value.entry);
+  }
+  const listing = {
     entries: entries.toSorted((left, right) => right.removedAt.localeCompare(left.removedAt)),
     issues,
   };
+  trashListings.set(index, listing);
+  return listing;
 }
 
 /**
@@ -1112,22 +1304,25 @@ function removedByPerson(
   return entries.filter((entry) => !entry.mergedInto);
 }
 
-function trashedCountOf(entries: ReadonlyArray<ScientSourceTrashEntry>): {
-  readonly trashedCount?: number;
-} {
-  const count = removedByPerson(entries).length;
-  return count > 0 ? { trashedCount: count } : {};
+/** What the overview says of the Trash: what a person removed, and deletions left unfinished. */
+function trashCountsOf(trash: {
+  readonly entries: ReadonlyArray<ScientSourceTrashEntry>;
+  readonly deleting: ReadonlyArray<ScientSourceTrashEntry>;
+}): { readonly trashedCount?: number; readonly unfinishedDeletions?: number } {
+  const count = removedByPerson(trash.entries).length;
+  return {
+    ...(count > 0 ? { trashedCount: count } : {}),
+    ...(trash.deleting.length > 0 ? { unfinishedDeletions: trash.deleting.length } : {}),
+  };
 }
 
-/**
- * The Trash as a person or an agent is shown it: what was removed, without merges' copies.
- * `mergedAway` names sources known to be such copies, so a large Library's are not read.
- */
+/** The Trash as a person or an agent is shown it: what was removed, without merges' copies. */
 export async function readScientSourcesRemovedByPerson(
   root: ScientSourceStoreLocation,
-  mergedAway?: ReadonlySet<string>,
+  /** The IDs with a record file (`listScientSourceIds`), when the caller has them. */
+  live?: ReadonlySet<string>,
 ): Promise<ReadonlyArray<ScientSourceTrashEntry>> {
-  return removedByPerson((await scanTrash(await sourceStorePaths(root), mergedAway)).entries);
+  return removedByPerson((await scanTrash(await sourceStorePaths(root), live)).entries);
 }
 
 /**
@@ -1151,22 +1346,36 @@ function withCopiesMergedInto(
   return [...going.values()].toReversed();
 }
 
+/** What a person is shown of the Trash, as one value: each entry, its revision and removal. */
+function trashRevisionOf(entries: ReadonlyArray<ScientSourceTrashEntry>): string {
+  const hash = NodeCrypto.createHash("sha256");
+  for (const entry of removedByPerson(entries).toSorted((left, right) =>
+    left.sourceId.localeCompare(right.sourceId),
+  )) {
+    hash.update(`${scientSourceRemovalId(entry)}\n`);
+  }
+  return hash.digest("base64url");
+}
+
 export async function listScientSourceTrash(
   root: ScientSourceStoreLocation,
 ): Promise<ScientSourceTrashListing> {
-  const { entries, issues } = await scanTrash(await sourceStorePaths(root));
+  const { entries, deleting, issues } = await scanTrash(await sourceStorePaths(root));
   return {
-    entries: removedByPerson(entries).map(({ record, removedAt, removedBy }) => ({
-      sourceId: record.sourceId,
-      revision: record.revision,
-      type: record.type,
-      title: record.title,
-      creators: record.creators,
-      issuedYear: record.issuedYear,
-      removedAt,
-      removedBy,
+    revision: trashRevisionOf(entries),
+    entries: removedByPerson(entries).map((entry) => ({
+      sourceId: entry.record.sourceId,
+      removalId: scientSourceRemovalId(entry),
+      revision: entry.record.revision,
+      type: entry.record.type,
+      title: entry.record.title,
+      creators: entry.record.creators,
+      issuedYear: entry.record.issuedYear,
+      removedAt: entry.removedAt,
+      removedBy: entry.removedBy,
     })),
     issues,
+    ...(deleting.length > 0 ? { unfinished: deleting.map(scientSourceRemovalId) } : {}),
   };
 }
 
@@ -1181,7 +1390,9 @@ export async function restoreScientSource(input: {
   return withStoreLock(paths, "source-write", async () => {
     const empty = { sourceId: input.sourceId, record: null, matchingSourceIds: [] };
     const entry = await readTrashEntry(paths, input.sourceId);
-    if (!entry) return { outcome: "not-found", ...empty };
+    if (!entry || (await deletionStartedOn(paths, entry))) {
+      return { outcome: "not-found", ...empty };
+    }
     const recordPath = sourceRecordPath(paths, input.sourceId);
     if ((await snapshot(recordPath)) !== "missing") {
       return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
@@ -1210,28 +1421,29 @@ export async function restoreScientSource(input: {
 }
 
 /**
- * Deletes trashed sources, their history and their PDFs no remaining source or history uses.
- * Omitting sourceIds empties the trash and also collects PDFs no current record refers to.
- * A collected PDF's extracted text and annotations are removed after its bytes are unlinked.
+ * Deletes trashed sources and their history, then every PDF no live or trashed source attaches.
+ * Named removals go as named; omitting them empties the trash, only while it is still the
+ * listing `trashRevision` names. Deletions that stopped part way are finished either way. A
+ * collected PDF's extracted text and annotations are removed after its bytes are unlinked.
  */
 export async function deleteScientSourcesPermanently(input: {
   readonly root: ScientSourceStoreLocation;
-  readonly sourceIds?: ReadonlyArray<string>;
+  /** `removalId`s of Trash entries; a removal that is gone matches nothing. */
+  readonly removalIds?: ReadonlyArray<string>;
+  /** The `revision` of the Trash listing the person confirmed emptying. */
+  readonly trashRevision?: string;
 }): Promise<ScientSourcePermanentDeletionResult> {
   const paths = await sourceStorePaths(input.root);
-  for (const sourceId of input.sourceIds ?? []) assertSafeIdentifier(sourceId, "Source ID");
   return withStoreLock(paths, "source-write", async () => {
-    const { entries } = await scanTrash(paths);
-    const selected = input.sourceIds ? new Set(input.sourceIds) : null;
-    // Named sources go as named; emptying the Trash takes what a person put there.
+    const { entries, deleting } = await scanTrash(paths);
+    if (!input.removalIds && input.trashRevision !== trashRevisionOf(entries)) {
+      return { outcome: "changed", deletedSourceIds: [], removedFileCount: 0 };
+    }
+    const selected = input.removalIds ? new Set(input.removalIds) : null;
     const chosen = selected
-      ? entries.filter((entry) => selected.has(entry.sourceId))
+      ? entries.filter((entry) => selected.has(scientSourceRemovalId(entry)))
       : removedByPerson(entries);
-    return deleteTrashEntries(
-      paths,
-      withCopiesMergedInto(entries, chosen),
-      selected ? "selected" : "all",
-    );
+    return deleteTrashEntries(paths, deleting, withCopiesMergedInto(entries, chosen));
   });
 }
 
@@ -1241,28 +1453,32 @@ export type ScientTrashedSourceDeletionResult =
   | { readonly outcome: "not-found"; readonly sourceId: string };
 
 /**
- * Deletes one trashed source for good only if it is still the revision the caller saw. The
- * comparison runs under the same lock as the deletion, so a restore, edit and second removal in
- * between can never let an old request delete the newer record.
+ * Deletes one trashed source for good only if it is still the removal the caller saw. The
+ * comparison runs under the same lock as the deletion, so a restore and second removal, or a
+ * deletion for good and a new import, in between can never let an old request delete the newer
+ * copy.
  */
 export async function deleteTrashedScientSource(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
-  readonly expectedRevision: number;
+  /** The entry's `removalId`, from the Trash listing. */
+  readonly removalId: string;
 }): Promise<ScientTrashedSourceDeletionResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
   return withStoreLock(paths, "source-write", async () => {
-    const { entries } = await scanTrash(paths);
-    const entry = entries.find((candidate) => candidate.sourceId === input.sourceId);
+    const { entries, deleting } = await scanTrash(paths);
+    const trashed = entries.find((candidate) => candidate.sourceId === input.sourceId);
+    // A deletion of this copy that stopped part way is finished by asking again.
+    const entry = trashed ?? deleting.find((begun) => begun.sourceId === input.sourceId);
     if (!entry) return { outcome: "not-found", sourceId: input.sourceId };
-    if (entry.record.revision !== input.expectedRevision) {
+    if (scientSourceRemovalId(entry) !== input.removalId) {
       return { outcome: "stale", sourceId: input.sourceId, revision: entry.record.revision };
     }
     const { removedFileCount } = await deleteTrashEntries(
       paths,
-      withCopiesMergedInto(entries, [entry]),
-      "selected",
+      deleting,
+      trashed ? withCopiesMergedInto(entries, [trashed]) : [],
     );
     return { outcome: "deleted", sourceId: input.sourceId, removedFileCount };
   });
@@ -1271,74 +1487,99 @@ export async function deleteTrashedScientSource(input: {
 /** Caller holds the source-write lock. */
 async function deleteTrashEntries(
   paths: SourceStorePaths,
+  /** Deletions that stopped part way, finished first. */
+  resumed: ReadonlyArray<ScientSourceTrashEntry>,
   entries: ReadonlyArray<ScientSourceTrashEntry>,
-  collection: "selected" | "all",
 ): Promise<ScientSourcePermanentDeletionResult> {
-  const candidates = collection === "selected" ? new Set<string>() : undefined;
-  if (candidates) {
+  // The tombstone lands first and marks the deletion as begun; the trash entry goes last, so a
+  // deletion that stops part way is found and finished by the next one.
+  if (paths.owner.kind === "library") {
     for (const entry of entries) {
-      for (const record of [entry.record, ...(await readKeptRevisions(paths, entry.sourceId))]) {
-        for (const attachment of record.attachments) candidates.add(attachment.relativePath);
-      }
-    }
-  }
-  for (const entry of entries) {
-    // The tombstone lands before the trash entry goes, so removal evidence is never absent.
-    if (paths.owner.kind === "library") {
       await atomicWriteJson(
-        NodePath.join(paths.deleted, `${entry.sourceId}.json`),
+        tombstonePath(paths, entry.sourceId),
         tombstoneOf(entry),
         MAX_TRASH_ENTRY_BYTES,
       );
     }
-    // Before the trash entry, which a retry needs to find this source again.
+  }
+  const going = [...resumed, ...entries];
+  for (const entry of going) {
     await NodeFSP.rm(zoteroSyncPath(paths, entry.sourceId), { force: true });
-    await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
+    await NodeFSP.rm(zoteroSyncPendingPath(paths, entry.sourceId), { force: true });
     await NodeFSP.rm(NodePath.dirname(sourceHistoryPath(paths, entry.sourceId, 1)), {
       recursive: true,
       force: true,
     });
   }
-  const removedFileCount =
-    entries.length > 0 ? await collectUnreferencedSourceFiles(paths, candidates) : 0;
-  return { deletedSourceIds: entries.map((entry) => entry.sourceId), removedFileCount };
+  const goingIds = new Set(going.map((entry) => entry.sourceId));
+  const collect = () => collectUnreferencedSourceFiles(paths, goingIds, going.length > 0);
+  const removeEntries = async () => {
+    for (const entry of going) {
+      await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
+    }
+  };
+  // A project store has no tombstone to mark the deletion, so its entries go before collection:
+  // an entry left in its trash stays restorable with its PDFs.
+  let removedFileCount: number;
+  if (paths.owner.kind === "library") {
+    removedFileCount = await collect();
+    await removeEntries();
+  } else {
+    await removeEntries();
+    removedFileCount = await collect();
+  }
+  return {
+    outcome: "deleted",
+    deletedSourceIds: going.map((entry) => entry.sourceId),
+    removedFileCount,
+  };
 }
 
-/** Caller holds the source-write lock; prepared package blobs are rechecked when attached. */
+/**
+ * Removes every PDF no live record and no remaining trash entry attaches. Saved versions keep
+ * none: a restore never brings a PDF back. Caller holds the source-write lock; prepared package
+ * blobs are rechecked when attached.
+ */
 async function collectUnreferencedSourceFiles(
   paths: SourceStorePaths,
-  candidates?: ReadonlySet<string>,
+  /** Trash entries being deleted, which no longer keep a file. */
+  going: ReadonlySet<string>,
+  /** False when nothing is deleted: only material left from an earlier collection is retried. */
+  collectPdfs: boolean,
 ): Promise<number> {
-  if (candidates?.size === 0) return 0;
+  const pending = await pendingMaterialHashes(paths);
+  if (!collectPdfs && pending.length === 0) return 0;
   const live = await scanScientSourceRecords(paths);
   const trash = await scanTrash(paths);
   // An unreadable record may still refer to a file; deleting nothing is the safe answer.
   if (live.issues.length > 0 || trash.issues.length > 0) return 0;
-  const remaining = [...live.records, ...trash.entries.map((entry) => entry.record)];
-  const attachments = remaining.flatMap((record) => record.attachments);
+  const attachments = [
+    ...live.records,
+    ...trash.entries.filter((entry) => !going.has(entry.sourceId)).map((entry) => entry.record),
+  ].flatMap((record) => record.attachments);
   const referenced = new Set(attachments.map((attachment) => attachment.relativePath));
   const referencedHashes = new Set(attachments.map((attachment) => attachment.sha256));
-  if (candidates) {
-    try {
-      for (const current of remaining) {
-        for (const record of await readSourceHistoryRecords(paths, current.sourceId)) {
-          for (const attachment of record.attachments) {
-            referenced.add(attachment.relativePath);
-            referencedHashes.add(attachment.sha256);
-          }
-        }
-      }
-    } catch {
-      // An unreadable retained revision can still own the only restorable copy of a PDF.
-      return 0;
-    }
+  const removed = collectPdfs
+    ? await collectUnreferencedPdfs(paths, referenced, referencedHashes)
+    : 0;
+  for (const sha256 of await pendingMaterialHashes(paths)) {
+    await finishCollectedMaterial(paths, sha256, referencedHashes);
   }
+  return removed;
+}
+
+async function collectUnreferencedPdfs(
+  paths: SourceStorePaths,
+  referenced: ReadonlySet<string>,
+  referencedHashes: ReadonlySet<string>,
+): Promise<number> {
   try {
     await assertScientProjectDirectory(paths.root, paths.files);
   } catch {
     return 0;
   }
   let removed = 0;
+  let failure: unknown;
   for (const prefix of await NodeFSP.readdir(paths.files, { withFileTypes: true })) {
     if (!prefix.isDirectory() || !/^[a-f0-9]{2}$/u.test(prefix.name)) continue;
     const directory = NodePath.join(paths.files, prefix.name);
@@ -1351,37 +1592,83 @@ async function collectUnreferencedSourceFiles(
         continue;
       }
       const relativePath = NodePath.posix.join("files", "sha256", prefix.name, file.name);
-      if (candidates && !candidates.has(relativePath)) continue;
       if (referenced.has(relativePath)) continue;
+      const sha256 = file.name.slice(0, -".pdf".length);
       try {
+        // Noted before the bytes go, so the text and highlights are removed even after a failure.
+        if (!referencedHashes.has(sha256)) {
+          await atomicWriteJson(pendingMaterialPath(paths, sha256), { sha256 }, MAX_POINTER_BYTES);
+        }
         await NodeFSP.unlink(NodePath.join(directory, file.name));
         removed += 1;
-        const sha256 = file.name.slice(0, -".pdf".length);
-        if (!referencedHashes.has(sha256)) await removeCollectedPdfMaterial(paths, sha256);
-      } catch {
-        // A file that cannot be deleted now is collected the next time the trash is emptied.
+      } catch (error) {
+        if (!isNodeError(error, "ENOENT")) failure ??= error;
       }
     }
     await NodeFSP.rmdir(directory).catch(() => undefined);
   }
+  // The rest are collected; the deletion stays unfinished, so finishing it collects this one.
+  if (failure !== undefined) throw failure;
   return removed;
 }
 
-/** Caller has removed this PDF under the source-write lock and found no remaining reference. */
-async function removeCollectedPdfMaterial(paths: SourceStorePaths, sha256: string): Promise<void> {
+/** Where a collected PDF's hash waits until its extracted text and highlights are gone. */
+function pendingMaterialPath(paths: SourceStorePaths, sha256: string): string {
+  return NodePath.join(paths.base, "collected", `${sha256}.json`);
+}
+
+async function pendingMaterialHashes(paths: SourceStorePaths): Promise<ReadonlyArray<string>> {
+  const directory = NodePath.dirname(pendingMaterialPath(paths, "0".repeat(64)));
+  try {
+    await assertScientProjectDirectory(paths.root, directory);
+    return (await NodeFSP.readdir(directory)).flatMap((name) =>
+      /^[a-f0-9]{64}\.json$/u.test(name) ? [name.slice(0, -".json".length)] : [],
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Caller holds the source-write lock; the note goes once the material is gone or used again. */
+async function finishCollectedMaterial(
+  paths: SourceStorePaths,
+  sha256: string,
+  referencedHashes: ReadonlySet<string>,
+): Promise<void> {
+  const note = pendingMaterialPath(paths, sha256);
+  const pdf = NodePath.join(paths.files, sha256.slice(0, 2), `${sha256}.pdf`);
+  // A PDF that could not be unlinked is collected, and this retried, by a later deletion.
+  if (!referencedHashes.has(sha256) && (await snapshot(pdf)) !== "missing") return;
+  if (!referencedHashes.has(sha256) && !(await removeCollectedPdfMaterial(paths, sha256))) return;
+  await NodeFSP.rm(note, { force: true });
+  await NodeFSP.rmdir(NodePath.dirname(note)).catch(() => undefined);
+}
+
+/** Whether none of this PDF's material is left; unsafe or unavailable material is retained. */
+async function removeCollectedPdfMaterial(
+  paths: SourceStorePaths,
+  sha256: string,
+): Promise<boolean> {
+  let removed = true;
   for (const filePath of Object.values(scientSourcePdfMaterialPaths(paths.location, sha256))) {
     try {
       await assertScientProjectDirectory(paths.root, NodePath.dirname(filePath));
-      if ((await snapshot(filePath)) === "file") await NodeFSP.unlink(filePath);
-    } catch {
-      // Unsafe or unavailable material is retained rather than following links or failing deletion.
+      const state = await snapshot(filePath);
+      if (state === "file") await NodeFSP.unlink(filePath);
+      // A link or folder in its place is retained, never followed.
+      else if (state !== "missing") removed = false;
+    } catch (error) {
+      // Material that was never there needs no removal.
+      if (!isNodeError(error, "ENOENT")) removed = false;
     }
   }
+  return removed;
 }
 
 // Reading state is about the person, not a revision of the source: never listed or reverted.
 const REVERT_IGNORED_FIELDS = new Set([
   "revision",
+  "noteOnlySince",
   "updatedAt",
   "updatedBy",
   "readingStatus",
@@ -1390,14 +1677,21 @@ const REVERT_IGNORED_FIELDS = new Set([
 const UNLISTED_CHANGE_FIELDS = new Set(["fieldProvenance", "hydratedCitationFields"]);
 
 /**
- * Fields that describe the source rather than one revision of it; reverting keeps them current.
- * The citation key stays because documents may already cite it.
+ * What a revert keeps as it is now: what identifies the source, the citation key documents may
+ * already cite, and what is the person's rather than the paper's details: the note and the PDFs.
  */
 function revertPreservedFields(
   current: ScientSourceRecord,
 ): Pick<
   ScientSourceRecord,
-  "formatVersion" | "sourceId" | "projectId" | "importedAt" | "origin" | "citationKey"
+  | "formatVersion"
+  | "sourceId"
+  | "projectId"
+  | "importedAt"
+  | "origin"
+  | "citationKey"
+  | "note"
+  | "attachments"
 > &
   Partial<ScientSourceReadingState> {
   return {
@@ -1408,6 +1702,8 @@ function revertPreservedFields(
     importedAt: current.importedAt,
     ...(current.origin ? { origin: current.origin } : {}),
     ...(current.citationKey ? { citationKey: current.citationKey } : {}),
+    ...(current.note !== undefined ? { note: current.note } : {}),
+    attachments: current.attachments,
   };
 }
 
@@ -1451,9 +1747,9 @@ async function readKeptRevisions(
 }
 
 /**
- * A live source as it was at each revision after `revision`, oldest first and ending with now;
- * null when the source is gone or a revision in between is no longer kept or cannot be read.
- * Only the revisions in between are read.
+ * A live source as it was at each kept revision after `revision`, oldest first and ending with
+ * now; null when the source is gone or a revision in between cannot be read or is no longer kept,
+ * unless it was a note save of a typing session. Only the revisions in between are read.
  */
 export async function readScientSourceRecordsAfter(
   root: ScientSourceStoreLocation,
@@ -1466,7 +1762,6 @@ export async function readScientSourceRecordsAfter(
   const wanted = (await sourceHistoryRevisions(paths, sourceId)).filter(
     (kept) => kept > revision && kept < current.revision,
   );
-  if (wanted.length !== Math.max(0, current.revision - revision - 1)) return null;
   const between: ScientSourceRecord[] = [];
   for (const kept of wanted) {
     const record = await readBoundedSourceRecord(sourceHistoryPath(paths, sourceId, kept)).catch(
@@ -1475,7 +1770,19 @@ export async function readScientSourceRecordsAfter(
     if (!record || record.sourceId !== sourceId || record.revision !== kept) return null;
     between.push(record);
   }
-  return [...between, current];
+  const read = [...between, current];
+  // A revision not kept is known only when a later one says it changed nothing but the note.
+  for (let missing = revision + 1; missing < current.revision; missing += 1) {
+    if (wanted.includes(missing)) continue;
+    const covered = read.some(
+      (record) =>
+        record.noteOnlySince !== undefined &&
+        record.noteOnlySince <= missing &&
+        missing < record.revision,
+    );
+    if (!covered) return null;
+  }
+  return read;
 }
 
 /** The kept revisions of a live source, newest first, including the current one. */
@@ -1516,10 +1823,7 @@ async function readScientSourceRecordIfPresent(
   return readSourceRecordFromPaths(paths, sourceId);
 }
 
-/**
- * Makes an earlier revision current again as a new revision. Attachments whose files were
- * deleted when the trash was emptied are left out and counted.
- */
+/** Makes an earlier revision's details current again as a new revision. */
 export async function revertScientSource(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
@@ -1531,7 +1835,7 @@ export async function revertScientSource(input: {
   assertSafeIdentifier(input.sourceId, "Source ID");
   return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
-    const unchanged = { record: current, missingAttachmentCount: 0, matchingSourceIds: [] };
+    const unchanged = { record: current, matchingSourceIds: [] };
     if (current.revision !== input.expectedRevision) return { outcome: "stale", ...unchanged };
     if (input.toRevision === current.revision) return { outcome: "unchanged", ...unchanged };
     const historyPath = sourceHistoryPath(paths, input.sourceId, input.toRevision);
@@ -1551,33 +1855,24 @@ export async function revertScientSource(input: {
     ) {
       throw new Error("The saved source revision has inconsistent identity.");
     }
-    const attachments: ScientSourceAttachment[] = [];
-    let missingAttachmentCount = 0;
-    for (const attachment of target.attachments) {
-      if ((await snapshot(sourceAttachmentAbsolutePath(paths.location, attachment))) === "file") {
-        attachments.push(attachment);
-      } else {
-        missingAttachmentCount += 1;
-      }
-    }
     const {
       revision: _revision,
       updatedAt: _updatedAt,
       updatedBy: _updatedBy,
       origin: _origin,
       citationKey: _citationKey,
+      note: _note,
       ...content
     } = target;
     const next: ScientSourceRecord = {
       ...content,
       ...revertPreservedFields(current),
-      attachments,
       revision: current.revision + 1,
       updatedAt: new Date().toISOString(),
       updatedBy: input.actor ?? "user",
     };
     if (changedRevisionFields(current, next).length === 0) {
-      return { outcome: "unchanged", ...unchanged, missingAttachmentCount };
+      return { outcome: "unchanged", ...unchanged };
     }
     const duplicate = assessSourceMetadataDuplicate({
       source: editableMetadataFromRecord(next),
@@ -1593,7 +1888,7 @@ export async function revertScientSource(input: {
       };
     }
     await persistSourceRevision(paths, current, next);
-    return { outcome: "reverted", record: next, missingAttachmentCount, matchingSourceIds: [] };
+    return { outcome: "reverted", record: next, matchingSourceIds: [] };
   });
 }
 
@@ -1660,37 +1955,10 @@ async function scanScientSourceRecords(paths: SourceStorePaths): Promise<RecordS
   return settleScan(results);
 }
 
-/**
- * Timestamps this close to a scan may still change without changing again (coarse clocks on some
- * volumes), so such files and folders are checked again on the next scan instead of trusted.
- */
-const RACY_TIMESTAMP_NS = 2_000_000_000n;
-
-const RECORD_SCAN_CONCURRENCY = 32;
-
-/** Editing a file in place leaves its folder's timestamps alone, so the folder alone is trusted briefly. */
-const FOLDER_TRUST_MS = 30_000;
-
-interface IndexedRecordFile {
-  readonly stamp: string;
-  readonly settled: boolean;
-  readonly result: RecordFileResult;
-}
-
-interface LibraryRecordIndex extends RecordScan {
-  readonly fingerprint: string;
-  readonly settled: boolean;
-  readonly validatedAtMs: number;
-  readonly files: ReadonlyMap<string, IndexedRecordFile>;
-}
+interface LibraryRecordIndex extends RecordScan, FolderIndex<RecordFileResult> {}
 
 /** Derived from the record files and rebuilt from them; the files stay the truth. */
 const libraryRecordIndexes = new Map<string, LibraryRecordIndex>();
-
-/** True when a file's timestamps are old enough that an unchanged stamp means unchanged bytes. */
-export const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
-  scanStartedNs - stats.mtimeNs > RACY_TIMESTAMP_NS &&
-  scanStartedNs - stats.ctimeNs > RACY_TIMESTAMP_NS;
 
 /** A first build of a library's index in progress; it settles, never rejects. */
 const libraryRecordIndexBuilds = new Map<string, Promise<void>>();
@@ -1726,84 +1994,30 @@ async function scanLibraryRecords(
   return indexLibraryRecords(paths, signal);
 }
 
-/**
- * Every library write replaces, links or unlinks a file in `records/`, which changes the
- * folder's timestamps; while those are unchanged and recently checked, the index answers without
- * touching any record. Otherwise each file is checked by its own timestamps and only new or
- * changed files are read again.
- */
+/** Only new or changed record files are read again; see `refreshFolderIndex`. */
 async function indexLibraryRecords(
   paths: SourceStorePaths,
   signal: AbortSignal | undefined,
 ): Promise<RecordScan> {
-  const scanStartedMs = Date.now();
-  const scanStartedNs = BigInt(scanStartedMs) * 1_000_000n;
-  const folder = await NodeFSP.lstat(paths.records, { bigint: true }).catch((error: unknown) => {
-    if (isNodeError(error, "ENOENT")) return null;
-    throw error;
+  const cached = libraryRecordIndexes.get(paths.root);
+  const folder = await refreshFolderIndex<RecordFileResult>({
+    folder: paths.records,
+    previous: cached,
+    read: (name) => readRecordFile(paths, name),
+    unsafe: (filePath) => ({
+      issue: { path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE },
+    }),
+    unsafeFolderMessage: "The Scient source record store is unsafe.",
+    signal,
   });
   if (!folder) {
     libraryRecordIndexes.delete(paths.root);
     return { records: [], issues: [] };
   }
-  if (!folder.isDirectory() || folder.isSymbolicLink()) {
-    throw new Error("The Scient source record store is unsafe.");
-  }
-  const fingerprint = [folder.dev, folder.ino, folder.mtimeNs, folder.ctimeNs].join(":");
-  const cached = libraryRecordIndexes.get(paths.root);
-  if (
-    cached?.settled &&
-    cached.fingerprint === fingerprint &&
-    scanStartedMs - cached.validatedAtMs < FOLDER_TRUST_MS
-  ) {
-    return cached;
-  }
-
-  const entries = await NodeFSP.readdir(paths.records, { withFileTypes: true });
-  const names = entries
-    .map((entry) => entry.name)
-    .filter((name) => name.endsWith(".json"))
-    .toSorted((left, right) => left.localeCompare(right));
-  const indexFile = async (name: string): Promise<IndexedRecordFile | null> => {
-    const filePath = NodePath.join(paths.records, name);
-    const stats = await NodeFSP.lstat(filePath, { bigint: true }).catch((error: unknown) => {
-      if (isNodeError(error, "ENOENT")) return null;
-      throw error;
-    });
-    if (!stats) return null;
-    if (!stats.isFile()) {
-      return {
-        stamp: "unsafe",
-        settled: false,
-        result: {
-          issue: { path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE },
-        },
-      };
-    }
-    const stamp = [stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
-    const previous = cached?.files.get(name);
-    return previous?.settled && previous.stamp === stamp
-      ? previous
-      : {
-          stamp,
-          settled: isSettled(stats, scanStartedNs),
-          result: await readRecordFile(paths, name),
-        };
-  };
-  const files = new Map<string, IndexedRecordFile>();
-  // One file at a time waits on each stat and read in turn: 20,000 serial stats take 0.6 s.
-  for (let start = 0; start < names.length; start += RECORD_SCAN_CONCURRENCY) {
-    signal?.throwIfAborted();
-    const part = names.slice(start, start + RECORD_SCAN_CONCURRENCY);
-    const indexed = await Promise.all(part.map(indexFile));
-    for (const [offset, file] of indexed.entries()) if (file) files.set(part[offset]!, file);
-  }
+  if (folder === cached) return cached;
   const index: LibraryRecordIndex = {
-    ...settleScan([...files.values()].map((file) => file.result)),
-    fingerprint,
-    settled: isSettled(folder, scanStartedNs),
-    validatedAtMs: scanStartedMs,
-    files,
+    ...settleScan([...folder.files.values()].map((file) => file.value)),
+    ...folder,
   };
   libraryRecordIndexes.set(paths.root, index);
   return index;
@@ -1960,6 +2174,9 @@ export interface ScientSourceImportSummary {
   readonly remaining?: number;
 }
 
+/** Derived from the receipt files, by receipts folder; a receipt is written once. */
+const receiptIndexes = new Map<string, FolderIndex<ScientSourceImportReceipt | null>>();
+
 /**
  * The newest finished imports that added at least one source; reads only. An import whose
  * receipt or operation cannot be read is left out.
@@ -1970,16 +2187,23 @@ export async function listScientSourceImports(
 ): Promise<ReadonlyArray<ScientSourceImportSummary>> {
   const paths = await sourceStorePaths(root);
   if ((await snapshot(paths.receipts)) !== "directory") return [];
-  const receipts: ScientSourceImportReceipt[] = [];
-  for (const name of await NodeFSP.readdir(paths.receipts)) {
-    if (!name.endsWith(".json")) continue;
-    const receipt = await readBoundedJson(
-      NodePath.join(paths.receipts, name),
-      MAX_OPERATION_BYTES,
-      ScientSourceImportReceipt,
-    ).catch(() => null);
-    if (receipt) receipts.push(receipt);
-  }
+  const index = await refreshFolderIndex<ScientSourceImportReceipt | null>({
+    folder: paths.receipts,
+    previous: receiptIndexes.get(paths.receipts),
+    read: (name) =>
+      readBoundedJson(
+        NodePath.join(paths.receipts, name),
+        MAX_OPERATION_BYTES,
+        ScientSourceImportReceipt,
+      ).catch(() => null),
+    unsafe: () => null,
+    unsafeFolderMessage: "The Scient source receipts folder is unsafe.",
+  });
+  if (index) receiptIndexes.set(paths.receipts, index);
+  else receiptIndexes.delete(paths.receipts);
+  const receipts = [...(index?.files.values() ?? [])].flatMap(({ value }) =>
+    value ? [value] : [],
+  );
   // The parts of a large import are one import, dated by its latest part.
   const byImport = new Map<string, ScientSourceImportReceipt[]>();
   for (const receipt of receipts) {
@@ -2099,57 +2323,159 @@ async function readSourceImportOperationFromPaths(
   return operation;
 }
 
+/**
+ * `operations/active` names the import last made running, written under the `active-operation`
+ * lock before that operation; it is active only while it reads back as running. It is a hint:
+ * only `alone` (no other import was running when it was written) lets a settled one mean "none
+ * running". A pointer without it, from an older version or a store with several, is looked past.
+ */
+const ActiveOperationPointer = Schema.Struct({
+  operationId: Schema.NullOr(Schema.String),
+  alone: Schema.optional(Schema.Literal(true)),
+});
+const MAX_POINTER_BYTES = 4 * 1024;
+
+function activeOperationPointerPath(paths: SourceStorePaths): string {
+  return NodePath.join(paths.operations, "active");
+}
+
+interface ActiveOperationHint {
+  readonly operationId: string | null;
+  readonly alone: boolean;
+}
+
+/** The pointer, or null when there is none or it cannot be read. */
+async function readActiveOperationPointer(
+  paths: SourceStorePaths,
+): Promise<ActiveOperationHint | null> {
+  const filePath = activeOperationPointerPath(paths);
+  if ((await snapshot(filePath)) === "missing") return null;
+  try {
+    const { operationId, alone } = await readBoundedJson(
+      filePath,
+      MAX_POINTER_BYTES,
+      ActiveOperationPointer,
+    );
+    if (operationId !== null) assertSafeIdentifier(operationId, "Operation ID");
+    return { operationId, alone: alone === true };
+  } catch {
+    return null;
+  }
+}
+
+/** Caller holds the `active-operation` lock. */
+async function writeActiveOperationPointer(
+  paths: SourceStorePaths,
+  hint: ActiveOperationHint,
+): Promise<void> {
+  await atomicWriteJson(
+    activeOperationPointerPath(paths),
+    { operationId: hint.operationId, ...(hint.alone ? { alone: true } : {}) },
+    MAX_POINTER_BYTES,
+  );
+}
+
+/** A damaged operation can never be continued, since every item update must read it. */
+function readOperationIfReadable(
+  paths: SourceStorePaths,
+  operationId: string,
+): Promise<ScientSourceImportOperation | null> {
+  return readSourceImportOperationFromPaths(paths, operationId).catch(() => null);
+}
+
+/** Answers of a scan for reads, which write nothing, until the operations folder changes. */
+const scannedActiveOperations = new Map<
+  string,
+  { readonly fingerprint: string; readonly operationIds: ReadonlyArray<string> }
+>();
+
+async function operationsFolderFingerprint(paths: SourceStorePaths): Promise<string> {
+  const stats = await NodeFSP.lstat(paths.operations, { bigint: true }).catch(() => null);
+  return stats ? [stats.dev, stats.ino, stats.mtimeNs, stats.ctimeNs].join(":") : "missing";
+}
+
+/** The readable running imports, newest first, found by reading every operation. */
+async function scanForRunningOperations(
+  paths: SourceStorePaths,
+  access: "read" | "write",
+): Promise<ReadonlyArray<string>> {
+  const fingerprint = await operationsFolderFingerprint(paths);
+  const known = scannedActiveOperations.get(paths.root);
+  if (access === "read" && known?.fingerprint === fingerprint) return known.operationIds;
+  const running: ScientSourceImportOperation[] = [];
+  if (fingerprint !== "missing") {
+    for (const entry of await NodeFSP.readdir(paths.operations, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const operation = await readOperationIfReadable(paths, entry.name.slice(0, -".json".length));
+      if (operation?.state === "running") running.push(operation);
+    }
+  }
+  const operationIds = running
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map((operation) => operation.operationId);
+  if (access === "read") scannedActiveOperations.set(paths.root, { fingerprint, operationIds });
+  return operationIds;
+}
+
+/** The operation if it is still running; with write access, a settled one is finished first. */
+async function runningOperation(
+  paths: SourceStorePaths,
+  operationId: string,
+  access: "read" | "write",
+): Promise<ScientSourceImportOperation | null> {
+  let operation = await readOperationIfReadable(paths, operationId);
+  if (
+    access === "write" &&
+    operation?.state === "running" &&
+    operation.items.every((item) => item.state !== "pending")
+  ) {
+    operation = await withStoreLock(paths, operationId, async () => {
+      const current = await readOperationIfReadable(paths, operationId);
+      return current ? finishOperationIfSettled(paths, current) : null;
+    });
+  }
+  return operation?.state === "running" ? operation : null;
+}
+
+/**
+ * The active import and whether it is the only one running. The pointer answers while the import
+ * it names runs, or when it was written alone; otherwise every operation is read once, and with
+ * write access the pointer is written again. Caller of "write" holds the `active-operation` lock.
+ */
+async function findActiveOperationWithHint(
+  paths: SourceStorePaths,
+  access: "read" | "write",
+): Promise<{ readonly operation: ScientSourceImportOperation | null; readonly alone: boolean }> {
+  const hint = await readActiveOperationPointer(paths);
+  const named = hint?.operationId ? await runningOperation(paths, hint.operationId, access) : null;
+  if (named || hint?.alone) return { operation: named, alone: hint?.alone ?? false };
+  let operation: ScientSourceImportOperation | null = null;
+  let others = 0;
+  for (const operationId of await scanForRunningOperations(paths, access)) {
+    const running = await runningOperation(paths, operationId, access);
+    if (!running) continue;
+    if (operation) others += 1;
+    else operation = running;
+    // A read needs only the newest; whether it runs alone matters to writes.
+    if (access === "read") break;
+  }
+  const alone = access === "write" && others === 0;
+  if (access === "write") {
+    await writeActiveOperationPointer(paths, {
+      operationId: operation?.operationId ?? null,
+      alone,
+    });
+    scannedActiveOperations.delete(paths.root);
+  }
+  return { operation, alone };
+}
+
+/** The running import, if any; with write access, a settled one is finished first. */
 async function findActiveOperation(
   paths: SourceStorePaths,
   access: "read" | "write",
 ): Promise<ScientSourceImportOperation | null> {
-  const cachedOperationId = activeOperationIds.get(paths.root);
-  if (cachedOperationId) {
-    let cached = await readSourceImportOperationFromPaths(paths, cachedOperationId);
-    if (
-      access === "write" &&
-      cached?.state === "running" &&
-      cached.items.every((item) => item.state !== "pending")
-    ) {
-      cached = await withStoreLock(paths, cachedOperationId, async () => {
-        const current = await readSourceImportOperationFromPaths(paths, cachedOperationId);
-        if (!current) return null;
-        return finishOperationIfSettled(paths, current);
-      });
-    }
-    if (cached?.state === "running") return cached;
-    clearOperationCaches(paths, cachedOperationId);
-  }
-  if ((await snapshot(paths.operations)) === "missing") return null;
-  const entries = await NodeFSP.readdir(paths.operations, { withFileTypes: true });
-  const operations: ScientSourceImportOperation[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const operationId = entry.name.slice(0, -".json".length);
-    let operation = await readSourceImportOperationFromPaths(paths, operationId);
-    if (!operation) continue;
-    if (!operationBelongsToStore(paths, operation)) {
-      throw new Error(storeOwnerMessage(paths, `Source operation ${entry.name}`));
-    }
-    if (
-      access === "write" &&
-      operation.state === "running" &&
-      operation.items.every((item) => item.state !== "pending")
-    ) {
-      const operationId = operation.operationId;
-      operation = await withStoreLock(paths, operationId, async () => {
-        const current = await readSourceImportOperationFromPaths(paths, operationId);
-        if (!current) throw new Error("The source import operation was not found.");
-        return finishOperationIfSettled(paths, current);
-      });
-    }
-    if (operation.state === "running") operations.push(operation);
-  }
-  const active =
-    operations.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
-  if (active) activeOperationIds.set(paths.root, active.operationId);
-  else activeOperationIds.delete(paths.root);
-  return active;
+  return (await findActiveOperationWithHint(paths, access)).operation;
 }
 
 export async function inspectScientSources(root: string): Promise<ScientSourcesOverview> {
@@ -2174,23 +2500,36 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
     records: scan.records,
     activeOperation,
     ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),
-    ...trashedCountOf(trash.entries),
+    ...trashCountsOf(trash),
   };
 }
 
 /** The library's records, its running import and its trash count; reading writes nothing. */
 const recordRevisions = new WeakMap<LibraryRecordIndex, string>();
-const fileDigests = new WeakMap<IndexedRecordFile, string>();
+const fileDigests = new WeakMap<IndexedFile<RecordFileResult>, string>();
 
 /** What was decoded, not the stamp: a file can change between its stat and its read. */
-function fileDigest(file: IndexedRecordFile): string {
+function fileDigest(file: IndexedFile<RecordFileResult>): string {
   const known = fileDigests.get(file);
   if (known) return known;
   const digest = NodeCrypto.createHash("sha256")
-    .update(JSON.stringify(file.result))
+    .update(JSON.stringify(file.value))
     .digest("base64url");
   fileDigests.set(file, digest);
   return digest;
+}
+
+const liveSourceIds = new WeakMap<LibraryRecordIndex, ReadonlySet<string>>();
+
+/** The IDs with a record file, readable or not, as the index last saw them. */
+function liveSourceIdsOf(scan: RecordScan): ReadonlySet<string> | undefined {
+  if (!("files" in scan)) return undefined;
+  const index = scan as LibraryRecordIndex;
+  const known = liveSourceIds.get(index);
+  if (known) return known;
+  const ids = new Set([...index.files.keys()].map((name) => name.slice(0, -".json".length)));
+  liveSourceIds.set(index, ids);
+  return ids;
 }
 
 /**
@@ -2214,22 +2553,24 @@ export async function inspectScientLibrarySources(library: ScientLibraryLocation
   readonly activeOperation: ScientSourceImportOperation | null;
   readonly unreadableRecords?: ReadonlyArray<ScientSourceStoreIssue>;
   readonly trashedCount?: number;
+  readonly unfinishedDeletions?: number;
   /** See `recordsRevisionOf`; absent when the records were not read through the index. */
   readonly recordsRevision?: string;
 }> {
   const paths = await sourceStorePaths(library);
-  const [scan, activeOperation, trash] = await Promise.all([
+  const [scan, activeOperation] = await Promise.all([
     scanScientSourceRecords(paths),
     findActiveOperation(paths, "read"),
-    scanTrash(paths),
   ]);
+  // A library's records come from its index, or there is no records folder and none is live.
+  const trash = await scanTrash(paths, liveSourceIdsOf(scan) ?? new Set());
   const recordsRevision = recordsRevisionOf(scan);
   return {
     ...(recordsRevision ? { recordsRevision } : {}),
     records: scan.records,
     activeOperation,
     ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),
-    ...trashedCountOf(trash.entries),
+    ...trashCountsOf(trash),
   };
 }
 
@@ -2294,9 +2635,6 @@ export async function createSourceImportOperation(input: {
       ) {
         throw new Error("This operation ID was already used for another import selection.");
       }
-      if (existing.state === "running") {
-        activeOperationIds.set(paths.root, existing.operationId);
-      }
       return existing;
     }
     const active = await findActiveOperation(paths, "write");
@@ -2307,6 +2645,8 @@ export async function createSourceImportOperation(input: {
           : "Another source import is already running for this project.",
       );
     }
+    // Nothing else runs: the pointer named a settled import written alone, or a scan found none.
+    await writeActiveOperationPointer(paths, { operationId: input.operationId, alone: true });
     const now = new Date().toISOString();
     const operation: ScientSourceImportOperation = {
       formatVersion: storeFormatVersion(paths),
@@ -2337,7 +2677,6 @@ export async function createSourceImportOperation(input: {
       operation,
       MAX_OPERATION_BYTES,
     );
-    activeOperationIds.set(paths.root, operation.operationId);
     return operation;
   });
 }
@@ -2450,38 +2789,49 @@ export async function retryFailedSourceImportOperationItems(
   const keys = [...new Set(itemKeys)];
   if (keys.length === 0) throw new Error("Choose at least one failed source item to retry.");
   for (const key of keys) assertSafeIdentifier(key, "Source item key");
-  return withStoreLock(paths, operationId, async () => {
-    const operation = await readSourceImportOperationFromPaths(paths, operationId);
-    if (!operation) throw new Error("The source import operation was not found.");
-    if (operation.state === "cancelled") {
-      throw new Error("A cancelled source import cannot retry failed items.");
+  // Running again makes it the active import, which only one import may be at a time.
+  return withStoreLock(paths, "active-operation", async () => {
+    const { operation: active, alone } = await findActiveOperationWithHint(paths, "write");
+    if (active && active.operationId !== operationId) {
+      throw new Error(
+        paths.owner.kind === "library"
+          ? "Another source import is already running in the Library."
+          : "Another source import is already running for this project.",
+      );
     }
-    const selected = new Set(keys);
-    const operationKeys = new Set(operation.items.map((item) => item.itemKey));
-    for (const key of keys) {
-      if (!operationKeys.has(key))
-        throw new Error("The source item was not found in this operation.");
-    }
-    for (const item of operation.items) {
-      if (selected.has(item.itemKey) && item.state !== "failed") {
-        throw new Error("Only failed source items can be retried.");
+    return withStoreLock(paths, operationId, async () => {
+      const operation = await readSourceImportOperationFromPaths(paths, operationId);
+      if (!operation) throw new Error("The source import operation was not found.");
+      if (operation.state === "cancelled") {
+        throw new Error("A cancelled source import cannot retry failed items.");
       }
-    }
-    const updated: ScientSourceImportOperation = {
-      ...operation,
-      state: "running",
-      updatedAt: new Date().toISOString(),
-      items: operation.items.map((item) =>
-        selected.has(item.itemKey) ? { ...item, state: "pending", message: null } : item,
-      ),
-    };
-    await atomicWriteJson(
-      operationPath(paths.operations, operationId),
-      updated,
-      MAX_OPERATION_BYTES,
-    );
-    activeOperationIds.set(paths.root, operationId);
-    return updated;
+      const selected = new Set(keys);
+      const operationKeys = new Set(operation.items.map((item) => item.itemKey));
+      for (const key of keys) {
+        if (!operationKeys.has(key))
+          throw new Error("The source item was not found in this operation.");
+      }
+      for (const item of operation.items) {
+        if (selected.has(item.itemKey) && item.state !== "failed") {
+          throw new Error("Only failed source items can be retried.");
+        }
+      }
+      const updated: ScientSourceImportOperation = {
+        ...operation,
+        state: "running",
+        updatedAt: new Date().toISOString(),
+        items: operation.items.map((item) =>
+          selected.has(item.itemKey) ? { ...item, state: "pending", message: null } : item,
+        ),
+      };
+      await writeActiveOperationPointer(paths, { operationId, alone });
+      await atomicWriteJson(
+        operationPath(paths.operations, operationId),
+        updated,
+        MAX_OPERATION_BYTES,
+      );
+      return updated;
+    });
   });
 }
 
@@ -2975,7 +3325,7 @@ async function preparePdf(input: {
     await NodeFSP.rm(temporaryPath, { force: true });
     const finalStats = await NodeFSP.lstat(finalPath);
     if (!finalStats.isFile() || finalStats.isSymbolicLink() || finalStats.size !== byteLength) {
-      throw new Error("The project already contains an unsafe or damaged source PDF.");
+      throw new Error("An unsafe or damaged copy of this PDF is already stored.");
     }
     if (!created) {
       const existingHandle = await NodeFSP.open(finalPath, "r");
@@ -2996,7 +3346,7 @@ async function preparePdf(input: {
         await existingHandle.close();
       }
       if (existingDigest.digest("hex") !== sha256) {
-        throw new Error("The project already contains a damaged source PDF.");
+        throw new Error("A damaged copy of this PDF is already stored.");
       }
     }
     const attachment: ScientSourceAttachment = {
@@ -3316,22 +3666,31 @@ async function intakeExclusions(
 
 /**
  * The ID a new record of this import takes: the one its source key derives, unless that ID is a
- * merged-away source or one a merge alias forwards (a live record there is always reused).
+ * merged-away source or one a merge alias forwards (a live record there is always reused), or
+ * a trash entry there cannot be read or is being deleted. `trashed` is the paper a person moved
+ * to the Trash under that ID, which the new record takes the place of.
  */
 async function newRecordId(
   paths: SourceStorePaths,
   input: ImportScientSourceInput,
   existing: ReadonlyArray<ScientSourceRecord>,
   exclusions: ScientLibraryExclusions | undefined,
-): Promise<string> {
+): Promise<{ readonly sourceId: string; readonly trashed?: ScientSourceTrashEntry }> {
   const derived = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
-  const taken =
-    existing.some((record) => record.sourceId === derived) ||
-    exclusions?.forwarded(derived) ||
-    (await readTrashEntry(paths, derived).catch(() => null))?.mergedInto !== undefined;
-  return taken
-    ? scientSourceIdFor(storeOwnerId(paths), `${input.candidate.sourceKey}\0${input.operationId}`)
-    : derived;
+  const alternate = {
+    sourceId: scientSourceIdFor(
+      storeOwnerId(paths),
+      `${input.candidate.sourceKey}\0${input.operationId}`,
+    ),
+  };
+  if (existing.some((record) => record.sourceId === derived) || exclusions?.forwarded(derived)) {
+    return alternate;
+  }
+  if ((await snapshot(trashEntryPath(paths, derived))) === "missing") return { sourceId: derived };
+  const trashed = await readTrashEntry(paths, derived).catch(() => null);
+  return trashed && !trashed.mergedInto && !(await deletionStartedOn(paths, trashed))
+    ? { sourceId: derived, trashed }
+    : alternate;
 }
 
 /** The Library's merge decisions intake respects; none for a project store. */
@@ -3486,9 +3845,10 @@ async function importScientSourceWithRecordLookup(
     if (duplicateBlocksImport(duplicate, input.allowPossibleMetadataMatch ?? false)) {
       return { outcome: "duplicate", record: null, duplicate };
     }
-    const sourceId = await newRecordId(paths, input, existing, exclusions);
+    const { sourceId, trashed } = await newRecordId(paths, input, existing, exclusions);
     const citationKey = assignCitationKey({
-      preferred: input.candidate.citationKey,
+      // Documents may already cite the trashed paper by its key.
+      preferred: trashed?.record.citationKey ?? input.candidate.citationKey,
       creators: input.candidate.creators,
       issuedYear: input.candidate.issuedYear,
       title: input.candidate.title,
@@ -3538,9 +3898,17 @@ async function importScientSourceWithRecordLookup(
       url: input.candidate.url,
       ...(more ? { more } : {}),
       tags: input.candidate.tags,
-      ...(input.candidate.note ? { note: normalizeScientSourceNote(input.candidate.note) } : {}),
+      ...(input.candidate.note
+        ? { note: normalizeScientSourceNote(input.candidate.note) }
+        : trashed?.record.note
+          ? { note: trashed.record.note }
+          : {}),
       externalReferences: input.candidate.externalReferences,
-      attachments: attachment ? [attachment] : [],
+      // What the person kept on the trashed paper stays: its PDFs, and below its reading state.
+      attachments: [
+        ...(trashed?.record.attachments ?? []).filter((kept) => kept.sha256 !== attachment?.sha256),
+        ...(attachment ? [attachment] : []),
+      ],
       fieldProvenance: input.candidate.fieldProvenance,
       ...(input.actor
         ? {
@@ -3556,6 +3924,7 @@ async function importScientSourceWithRecordLookup(
       ...(input.editorialStatus ? { editorialStatus: input.editorialStatus } : {}),
       importedAt,
       ...readingStateField(paths),
+      ...(trashed ? scientSourceReadingState(trashed.record) : {}),
     };
     const recordPath = sourceRecordPath(paths, sourceId);
     if (!(await atomicCreateJson(recordPath, record, MAX_RECORD_BYTES))) {
@@ -3569,16 +3938,14 @@ async function importScientSourceWithRecordLookup(
       }
       return { outcome: "duplicate", record: null, duplicate: concurrentDuplicate };
     }
-    // Importing a trashed source again supersedes its trash entry.
-    await NodeFSP.rm(trashEntryPath(paths, sourceId), { force: true });
+    // The trashed paper's own record stays in its history.
+    if (trashed) await NodeFSP.rm(trashEntryPath(paths, sourceId), { force: true });
     if (lookup === "operation-snapshot") {
-      await replaceOperationRecordSnapshot(
-        paths,
-        input.operationId,
-        [record, ...existing].toSorted((left, right) =>
-          right.importedAt.localeCompare(left.importedAt),
-        ),
+      const next = [record, ...existing].toSorted((left, right) =>
+        right.importedAt.localeCompare(left.importedAt),
       );
+      carryScientSourceIntakeIndex(existing, next);
+      await replaceOperationRecordSnapshot(paths, input.operationId, next);
     }
     return { outcome: "imported", record, duplicate };
   });
@@ -3650,16 +4017,68 @@ function zoteroSyncPath(paths: SourceStorePaths, sourceId: string): string {
   return NodePath.join(paths.zotero, `${sourceId}.json`);
 }
 
+/** A base whose source change was written first: it is the base once that change landed. */
+function zoteroSyncPendingPath(paths: SourceStorePaths, sourceId: string): string {
+  assertSafeIdentifier(sourceId, "Source ID");
+  return NodePath.join(paths.zotero, "pending", `${sourceId}.json`);
+}
+
+/** The pending copy holds the base it replaces and the one it stands for. */
+const MAX_PENDING_SYNC_BYTES = MAX_RECORD_BYTES * 2;
+
+async function savedZoteroSync(
+  paths: SourceStorePaths,
+  sourceId: string,
+): Promise<ScientSourceZoteroSyncType | null> {
+  const filePath = zoteroSyncPath(paths, sourceId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  // A damaged sync file only loses the merge base; refresh then treats every difference as new.
+  return readBoundedJson(filePath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(() => null);
+}
+
+const ZoteroSyncPending = Schema.Struct({
+  revision: Schema.Number,
+  updatedAt: Schema.String,
+  previous: Schema.NullOr(ScientSourceZoteroSync),
+  base: ScientSourceZoteroSync,
+});
+
+async function revisionLanded(
+  paths: SourceStorePaths,
+  sourceId: string,
+  written: { readonly revision: number; readonly updatedAt: string },
+): Promise<boolean> {
+  const at = async (filePath: string) => {
+    if ((await snapshot(filePath)) === "missing") return false;
+    const record = await readBoundedSourceRecord(filePath).catch(() => null);
+    return record?.revision === written.revision && record.updatedAt === written.updatedAt;
+  };
+  return (
+    (await at(sourceRecordPath(paths, sourceId))) ||
+    (await at(sourceHistoryPath(paths, sourceId, written.revision)))
+  );
+}
+
 /** The Zotero values a source was last synced from, or null before its first sync. */
 export async function readScientSourceZoteroSync(
   root: ScientSourceStoreLocation,
   sourceId: string,
 ): Promise<ScientSourceZoteroSyncType | null> {
   const paths = await sourceStorePaths(root);
-  const filePath = zoteroSyncPath(paths, sourceId);
-  if ((await snapshot(filePath)) === "missing") return null;
-  // A damaged sync file only loses the merge base; refresh then treats every difference as new.
-  return readBoundedJson(filePath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(() => null);
+  const saved = await savedZoteroSync(paths, sourceId);
+  const pendingPath = zoteroSyncPendingPath(paths, sourceId);
+  if ((await snapshot(pendingPath)) === "missing") return saved;
+  const pending = await readBoundedJson(
+    pendingPath,
+    MAX_PENDING_SYNC_BYTES,
+    ZoteroSyncPending,
+  ).catch(() => null);
+  // Its source change landed and no base was saved since: the write stopped between the two.
+  return pending &&
+    JSON.stringify(pending.previous) === JSON.stringify(saved) &&
+    (await revisionLanded(paths, sourceId, pending))
+    ? pending.base
+    : saved;
 }
 
 function fitZoteroSyncToBudget(
@@ -3691,66 +4110,339 @@ function fitZoteroSyncToBudget(
   return { state: { ...state, notes }, omittedOriginalNoteHtmlCount };
 }
 
-export async function writeScientSourceZoteroSync(
+interface ZoteroSyncSaved {
+  readonly omittedOriginalNoteHtmlCount: number;
+  /** What was saved, or null when nothing was: the source is gone or its base moved on. */
+  readonly saved: ScientSourceZoteroSyncType | null;
+}
+
+async function zoteroSyncStillIs(
+  root: ScientSourceStoreLocation,
+  sourceId: string,
+  replacing: ScientSourceZoteroSyncType | null,
+): Promise<boolean> {
+  return (
+    JSON.stringify(await readScientSourceZoteroSync(root, sourceId)) === JSON.stringify(replacing)
+  );
+}
+
+/** The base as it is saved: with the import's provenance kept, and fitted to its budget. */
+async function preparedZoteroSync(
+  paths: SourceStorePaths,
+  state: ScientSourceZoteroSyncType,
+  options?: { readonly initialImportOperationId?: string },
+): Promise<{
+  readonly state: ScientSourceZoteroSyncType;
+  readonly omittedOriginalNoteHtmlCount: number;
+}> {
+  let prepared: ScientSourceZoteroSyncType;
+  if (options?.initialImportOperationId !== undefined) {
+    prepared = {
+      ...state,
+      importOperationId: options.initialImportOperationId,
+      importOmittedOriginalNoteHtml:
+        state.notes?.some((entry) => entry.html === undefined) ?? false,
+    };
+  } else if (
+    state.importOperationId === undefined ||
+    state.importOmittedOriginalNoteHtml === undefined
+  ) {
+    // A later sync write keeps the initial import's provenance and omission decision.
+    const existing = await readScientSourceZoteroSync(paths.location, state.sourceId);
+    const importOperationId = state.importOperationId ?? existing?.importOperationId;
+    prepared = {
+      ...state,
+      ...(importOperationId !== undefined ? { importOperationId } : {}),
+      ...(state.importOmittedOriginalNoteHtml === undefined &&
+      existing?.importOmittedOriginalNoteHtml !== undefined &&
+      existing.importOperationId !== undefined &&
+      existing.importOperationId === importOperationId
+        ? { importOmittedOriginalNoteHtml: existing.importOmittedOriginalNoteHtml }
+        : {}),
+    };
+  } else {
+    prepared = state;
+  }
+  const bounded = fitZoteroSyncToBudget(prepared, MAX_RECORD_BYTES);
+  // Flipping false -> true shrinks JSON by 1 byte, so the bounded payload stays within MAX_RECORD_BYTES.
+  const finalState: ScientSourceZoteroSyncType =
+    options?.initialImportOperationId !== undefined && bounded.omittedOriginalNoteHtmlCount > 0
+      ? { ...bounded.state, importOmittedOriginalNoteHtml: true }
+      : bounded.state;
+  return {
+    state: finalState,
+    omittedOriginalNoteHtmlCount: bounded.omittedOriginalNoteHtmlCount,
+  };
+}
+
+/** Caller holds the source-write lock. */
+async function savePreparedZoteroSync(
+  paths: SourceStorePaths,
+  root: ScientSourceStoreLocation,
+  prepared: Awaited<ReturnType<typeof preparedZoteroSync>>,
+): Promise<ZoteroSyncSaved> {
+  const { sourceId } = prepared.state;
+  await atomicWriteJson(zoteroSyncPath(paths, sourceId), prepared.state, MAX_RECORD_BYTES);
+  await NodeFSP.rm(zoteroSyncPendingPath(paths, sourceId), { force: true });
+  return {
+    omittedOriginalNoteHtmlCount: prepared.omittedOriginalNoteHtmlCount,
+    // As a later read decodes it, so it can be the base a next write replaces.
+    saved: await readScientSourceZoteroSync(root, sourceId),
+  };
+}
+
+/** Caller holds the source-write lock. */
+async function saveZoteroSyncLocked(
+  paths: SourceStorePaths,
   root: ScientSourceStoreLocation,
   state: ScientSourceZoteroSyncType,
   options?: { readonly initialImportOperationId?: string },
-): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
+): Promise<ZoteroSyncSaved> {
+  const gone = async (path: string) => (await snapshot(path)) === "missing";
+  if (
+    (await gone(sourceRecordPath(paths, state.sourceId))) &&
+    (await gone(trashEntryPath(paths, state.sourceId)))
+  ) {
+    return { omittedOriginalNoteHtmlCount: 0, saved: null };
+  }
+  return savePreparedZoteroSync(paths, root, await preparedZoteroSync(paths, state, options));
+}
+
+export async function writeScientSourceZoteroSync(
+  root: ScientSourceStoreLocation,
+  state: ScientSourceZoteroSyncType,
+  options?: {
+    readonly initialImportOperationId?: string;
+    /** The base this one was planned from: written only while it is still the saved base. */
+    readonly replacing?: ScientSourceZoteroSyncType | null;
+  },
+): Promise<ZoteroSyncSaved> {
   const paths = await sourceStorePaths(root);
-  let omittedOriginalNoteHtmlCount = 0;
   // Under deletion's lock: a sync finishing after Delete for good must not bring its base back.
-  await withStoreLock(paths, "source-write", async () => {
-    const gone = async (path: string) => (await snapshot(path)) === "missing";
+  return withStoreLock(paths, "source-write", async () => {
     if (
-      (await gone(sourceRecordPath(paths, state.sourceId))) &&
-      (await gone(trashEntryPath(paths, state.sourceId)))
+      options?.replacing !== undefined &&
+      !(await zoteroSyncStillIs(root, state.sourceId, options.replacing))
     ) {
-      return;
+      return { omittedOriginalNoteHtmlCount: 0, saved: null };
     }
-    const syncPath = zoteroSyncPath(paths, state.sourceId);
-    let prepared: ScientSourceZoteroSyncType;
-    if (options?.initialImportOperationId !== undefined) {
-      prepared = {
-        ...state,
-        importOperationId: options.initialImportOperationId,
-        importOmittedOriginalNoteHtml:
-          state.notes?.some((entry) => entry.html === undefined) ?? false,
-      };
-    } else if (
-      state.importOperationId === undefined ||
-      state.importOmittedOriginalNoteHtml === undefined
-    ) {
-      // A later sync write keeps the initial import's provenance and omission decision.
-      const existing =
-        (await snapshot(syncPath)) === "missing"
-          ? null
-          : await readBoundedJson(syncPath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(
-              () => null,
-            );
-      const importOperationId = state.importOperationId ?? existing?.importOperationId;
-      prepared = {
-        ...state,
-        ...(importOperationId !== undefined ? { importOperationId } : {}),
-        ...(state.importOmittedOriginalNoteHtml === undefined &&
-        existing?.importOmittedOriginalNoteHtml !== undefined &&
-        existing.importOperationId !== undefined &&
-        existing.importOperationId === importOperationId
-          ? { importOmittedOriginalNoteHtml: existing.importOmittedOriginalNoteHtml }
-          : {}),
-      };
-    } else {
-      prepared = state;
-    }
-    const bounded = fitZoteroSyncToBudget(prepared, MAX_RECORD_BYTES);
-    // Flipping false -> true shrinks JSON by 1 byte, so the bounded payload stays within MAX_RECORD_BYTES.
-    const finalState: ScientSourceZoteroSyncType =
-      options?.initialImportOperationId !== undefined && bounded.omittedOriginalNoteHtmlCount > 0
-        ? { ...bounded.state, importOmittedOriginalNoteHtml: true }
-        : bounded.state;
-    await atomicWriteJson(syncPath, finalState, MAX_RECORD_BYTES);
-    omittedOriginalNoteHtmlCount = bounded.omittedOriginalNoteHtmlCount;
+    return saveZoteroSyncLocked(paths, root, state, options);
   });
-  return { omittedOriginalNoteHtmlCount };
+}
+
+/** A Zotero link whose version is older than the one the source has for the same item. */
+function olderZoteroLink(
+  current: ReadonlyArray<ScientSourceExternalReference>,
+  next: ReadonlyArray<ScientSourceExternalReference>,
+): boolean {
+  return next.some((entry) =>
+    current.some(
+      (known) =>
+        entry.system === "zotero" &&
+        known.system === "zotero" &&
+        known.libraryId === entry.libraryId &&
+        known.itemKey === entry.itemKey &&
+        (known.itemVersion ?? 0) > (entry.itemVersion ?? 0),
+    ),
+  );
+}
+
+/**
+ * A Zotero sync's change to a source, the PDFs it brings and the base it was planned from, in
+ * one write: all of it, or nothing once the saved base is no longer `replacing`, a Zotero
+ * version would go back, or the change is refused. The base is saved after the source, through
+ * a pending copy that stands for it if that last write fails.
+ */
+export async function commitScientSourceZoteroSync(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly sourceId: string;
+  readonly replacing: ScientSourceZoteroSyncType | null;
+  /** Omitted: the record change alone, with no base to keep in step. */
+  readonly base?: ScientSourceZoteroSyncType;
+  readonly change?: {
+    /** What the plan read; a change of the note alone is checked against `note` when given. */
+    readonly expected: { readonly revision: number; readonly note?: string | null };
+    readonly details?: Omit<
+      MetadataUpdate,
+      "sourceId" | "expectedRevision" | "note" | "externalReferences" | "attachments" | "actor"
+    >;
+    readonly note?: string | null;
+  };
+  /** The source's links as the sync leaves them, from the links it has now. */
+  readonly externalReferences?: (
+    current: ReadonlyArray<ScientSourceExternalReference>,
+  ) => ReadonlyArray<ScientSourceExternalReference>;
+  /** PDFs to attach, as they were inspected; one already attached is passed by. */
+  readonly pdfs?: ReadonlyArray<{
+    readonly path: string;
+    readonly fileName?: string;
+    readonly expected: ScientSourcePdfInspection;
+  }>;
+  readonly actor?: ScientSourceActor;
+}): Promise<
+  ZoteroSyncSaved & {
+    readonly outcome: "updated" | "unchanged" | "stale" | "duplicate";
+    readonly record: ScientSourceRecord;
+    /** The details (and with them the note and links) were written. */
+    readonly detailsUpdated: boolean;
+    readonly addedPdfCount: number;
+  }
+> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  // Bulk I/O precedes the lock; only a verified, unchanged copy is attached under it.
+  const importedAt = new Date().toISOString();
+  const prepared: Array<Awaited<ReturnType<typeof preparePdf>>> = [];
+  for (const pdf of input.pdfs ?? []) {
+    prepared.push(
+      await preparePdf({
+        paths,
+        operationId: `zotero_${NodeCrypto.randomUUID()}`,
+        sourcePath: pdf.path,
+        ...(pdf.fileName ? { fileName: pdf.fileName } : {}),
+        expectedPdf: pdf.expected,
+        importedAt,
+      }),
+    );
+  }
+  return withStoreLock(paths, "source-write", async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    const refused = (outcome: "stale" | "duplicate", record = current) => ({
+      outcome,
+      record,
+      detailsUpdated: false,
+      addedPdfCount: 0,
+      omittedOriginalNoteHtmlCount: 0,
+      saved: null,
+    });
+    if (input.base) {
+      const saved = await readScientSourceZoteroSync(input.root, input.sourceId);
+      if (JSON.stringify(saved) !== JSON.stringify(input.replacing)) return refused("stale");
+      if (
+        saved?.itemKey === input.base.itemKey &&
+        saved.libraryId === input.base.libraryId &&
+        saved.itemVersion > input.base.itemVersion
+      ) {
+        return refused("stale");
+      }
+    }
+    const { change } = input;
+    const references = input.externalReferences?.(current.externalReferences) ?? [
+      ...current.externalReferences,
+    ];
+    if (olderZoteroLink(current.externalReferences, references)) return refused("stale");
+    const attachments: ScientSourceAttachment[] = [];
+    for (const pdf of prepared) {
+      await pdf.verify();
+      const known = [...current.attachments, ...attachments];
+      if (!known.some((entry) => entry.sha256 === pdf.attachment.sha256)) {
+        attachments.push(pdf.attachment);
+      }
+    }
+    const base = input.base ? await preparedZoteroSync(paths, input.base) : null;
+    if (base) {
+      // A pending copy left by an earlier write is settled first: saved, if it stands.
+      const standing = await readScientSourceZoteroSync(input.root, input.sourceId);
+      if (
+        JSON.stringify(standing) !== JSON.stringify(await savedZoteroSync(paths, input.sourceId))
+      ) {
+        await atomicWriteJson(zoteroSyncPath(paths, input.sourceId), standing, MAX_RECORD_BYTES);
+      }
+      await NodeFSP.rm(zoteroSyncPendingPath(paths, input.sourceId), { force: true });
+    }
+    // The pending base goes first, so a failure after the source is written leaves it standing.
+    const persist = async (from: ScientSourceRecord, next: ScientSourceRecord) => {
+      if (base) {
+        await atomicWriteJson(
+          zoteroSyncPendingPath(paths, input.sourceId),
+          {
+            revision: next.revision,
+            updatedAt: next.updatedAt,
+            previous: input.replacing,
+            base: base.state,
+          },
+          MAX_PENDING_SYNC_BYTES,
+        );
+      }
+      await persistSourceRevision(paths, from, next);
+    };
+    let record = current;
+    let outcome: "updated" | "unchanged" = "unchanged";
+    let detailsUpdated = false;
+    if (change?.details) {
+      let others: Promise<ReadonlyArray<ScientSourceRecord>> | undefined;
+      const lookupOthers = (sourceId: string) =>
+        (others ??= listScientSourceRecordsFromPaths(paths).then((records) =>
+          records.filter((entry) => entry.sourceId !== sourceId),
+        ));
+      const result = await applyMetadataUpdate(
+        paths,
+        {
+          ...change.details,
+          sourceId: input.sourceId,
+          expectedRevision: change.expected.revision,
+          ...(change.note !== undefined ? { note: change.note } : {}),
+          externalReferences: references,
+          attachments,
+          ...(input.actor ? { actor: input.actor } : {}),
+        },
+        { duplicates: (_, id) => lookupOthers(id), others: lookupOthers },
+        persist,
+      );
+      if (result.outcome === "stale" || result.outcome === "duplicate") {
+        return refused(result.outcome, result.record);
+      }
+      if (result.outcome === "updated") {
+        record = result.record;
+        outcome = "updated";
+        detailsUpdated = true;
+      }
+    }
+    if (!detailsUpdated) {
+      const note =
+        change?.note !== undefined
+          ? normalizeScientSourceNote(change.note)
+          : (current.note ?? null);
+      const noteChanges = note !== normalizeScientSourceNote(current.note ?? null);
+      const othersChange =
+        attachments.length > 0 ||
+        JSON.stringify(references) !== JSON.stringify(current.externalReferences);
+      const { expected } = change ?? {};
+      if (
+        expected &&
+        (noteChanges || othersChange) &&
+        (noteChanges && !othersChange && expected.note !== undefined
+          ? normalizeScientSourceNote(current.note ?? null) !==
+            normalizeScientSourceNote(expected.note)
+          : current.revision !== expected.revision)
+      ) {
+        return refused("stale");
+      }
+      if (noteChanges || othersChange) {
+        record = {
+          ...current,
+          note,
+          externalReferences: [...references],
+          attachments: [...current.attachments, ...attachments],
+          revision: current.revision + 1,
+          updatedAt: new Date().toISOString(),
+          updatedBy: input.actor ?? "user",
+        };
+        await persist(current, record);
+        outcome = "updated";
+      }
+    }
+    const saved = base
+      ? await savePreparedZoteroSync(paths, input.root, base)
+      : { omittedOriginalNoteHtmlCount: 0, saved: null };
+    return {
+      outcome,
+      record,
+      detailsUpdated,
+      addedPdfCount: outcome === "updated" ? attachments.length : 0,
+      ...saved,
+    };
+  });
 }
 
 /** Replaces a source's links to other reference managers, as a new revision. */

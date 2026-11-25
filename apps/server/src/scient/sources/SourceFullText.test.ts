@@ -224,6 +224,45 @@ describe("source full text", () => {
         sourceIds: [trial.sourceId],
       }),
     ).resolves.toMatchObject({ hits: [] });
+    // Both texts are summarized now: a search reads only the one that may hold its term.
+    const yeast = await searchSourceFullText({ root: fixture.root, query: "yeast", limit: 10 });
+    expect(yeast.status).toEqual(search.status);
+    expect(yeast.hits.map((hit) => hit.title)).toEqual(["Cohort"]);
+  });
+
+  it("reads a PDF again once its stored text is gone, here or in another store", async () => {
+    await using fixture = await project();
+    await using other = await project();
+    const trial = await addPdfSource(fixture.root, "trial", "Early antibiotics trial", trialPages);
+    await indexSourceFullText(fixture.root);
+    const searched = await searchSourceFullText({ root: fixture.root, query: "sepsis", limit: 10 });
+    expect(searched.status).toMatchObject({ searchable: 1, pending: 0 });
+    const pending = { pdfs: 1, searchable: 0, pending: 1, withoutText: 0, unreadable: 0 };
+
+    // The same PDF in a store that never read it is not searchable there.
+    await addPdfSource(other.root, "trial", "Early antibiotics trial", trialPages);
+    await expect(
+      searchSourceFullText({ root: other.root, query: "sepsis", limit: 10, persist: false }),
+    ).resolves.toEqual({ hits: [], status: pending });
+
+    // Deleting the paper for good removes its text; the same bytes come back later.
+    const sha256 = trial.attachments[0]!.sha256;
+    await NodeFSP.rm(
+      NodePath.join(
+        fixture.root,
+        ".scient",
+        "sources",
+        "text",
+        "sha256",
+        sha256.slice(0, 2),
+        `${sha256}.json`,
+      ),
+    );
+    await expect(
+      searchSourceFullText({ root: fixture.root, query: "sepsis", limit: 10, persist: false }),
+    ).resolves.toEqual({ hits: [], status: pending });
+    await indexSourceFullText(fixture.root);
+    expect(await listScientSourceFullTextHashes(fixture.root)).toEqual([sha256]);
   });
 
   it("sends the tightest occurrence of the query as the range the reader reveals", async () => {

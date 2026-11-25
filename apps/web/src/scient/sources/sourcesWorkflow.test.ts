@@ -10,6 +10,7 @@ import {
   emptyZoteroPage,
   importOutcomeFromOperation,
   initialSourcesWorkflowState,
+  heldSourceRecord,
   shownSourceRecord,
   sourcesWorkflowReducer,
   type SourcesWorkflowState,
@@ -201,6 +202,7 @@ describe("sources workflow tokens", () => {
       {
         type: "zoteroLibraryArrived",
         request: 3,
+        query: "",
         page: {
           scope: { kind: "library" },
           items: [],
@@ -237,6 +239,7 @@ describe("sources workflow tokens", () => {
     const rejected = sourcesWorkflowReducer(newer, {
       type: "zoteroLibraryArrived",
       request: 1,
+      query: "",
       page: {
         scope: { kind: "library" },
         items: [],
@@ -247,6 +250,31 @@ describe("sources workflow tokens", () => {
       },
     });
     expect(rejected.library).toBeNull();
+  });
+
+  it("keeps the count of the whole Zotero scope while a search shows part of it", () => {
+    const page = (total: number) => ({
+      scope: { kind: "library" as const },
+      items: [],
+      start: 0,
+      nextStart: 0,
+      total,
+      hasMore: false,
+    });
+    const searched = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "zoteroRequestStarted", request: 1 },
+      { type: "zoteroLibraryArrived", request: 1, query: "", page: page(120) },
+      { type: "zoteroRequestStarted", request: 2 },
+      { type: "zoteroLibraryArrived", request: 2, query: "rare title", page: page(0) },
+    );
+    expect(searched.library?.total).toBe(0);
+    expect(searched.zoteroScopeTotal).toBe(120);
+    const elsewhere = sourcesWorkflowReducer(searched, {
+      type: "zoteroScopeChanged",
+      scope: { kind: "collection", collectionKey: "COLL2345", includeSubcollections: true },
+    });
+    expect(elsewhere.zoteroScopeTotal).toBeNull();
   });
 
   it("seeds a Zotero page without a request token so it always lands", () => {
@@ -993,6 +1021,47 @@ describe("sources workflow transient flags", () => {
     });
     expect(edited.sourceDetails["s1"]).toBeUndefined();
     expect(shownSourceRecord(edited, "s1")).toBeNull();
+  });
+
+  it("holds an outdated detail for an open page until the newer detail arrives", () => {
+    const withDetail = sourcesWorkflowReducer(
+      sourcesWorkflowReducer(initialSourcesWorkflowState, {
+        type: "overviewArrived",
+        request: 0,
+        overview: overviewWith([{ sourceId: "s1", revision: 1 }]),
+      }),
+      {
+        type: "sourceDetailArrived",
+        sourceId: "s1",
+        atDetailFetch: 1,
+        detail: detail({ sourceId: "s1", revision: 1 }),
+      },
+    );
+    // A PDF download or an agent's edit moves the row on while the person edits.
+    const moved = sourcesWorkflowReducer(withDetail, {
+      type: "overviewArrived",
+      request: 0,
+      overview: overviewWith([{ sourceId: "s1", revision: 2 }]),
+    });
+    expect(shownSourceRecord(moved, "s1")).toBeNull();
+    expect(heldSourceRecord(moved, "s1")?.revision).toBe(1);
+
+    const arrived = sourcesWorkflowReducer(moved, {
+      type: "sourceDetailArrived",
+      sourceId: "s1",
+      atDetailFetch: 2,
+      detail: detail({ sourceId: "s1", revision: 2 }),
+    });
+    expect(shownSourceRecord(arrived, "s1")?.revision).toBe(2);
+    expect(heldSourceRecord(arrived, "s1")).toBeNull();
+
+    // A source that left the list is not held.
+    const gone = sourcesWorkflowReducer(moved, {
+      type: "overviewArrived",
+      request: 0,
+      overview: overviewWith([]),
+    });
+    expect(heldSourceRecord(gone, "s1")).toBeNull();
   });
 
   it("lets an error ride along with import preparation for skip messages", () => {

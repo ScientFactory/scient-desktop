@@ -233,7 +233,9 @@ describe("Sources intake on the library backend", () => {
       // The durable import lives in the library; the project store is never touched.
       const library = fixture.libraryRoot;
       expect(
-        yield* Effect.promise(() => listed(NodePath.join(library, "operations"))),
+        (yield* Effect.promise(() => listed(NodePath.join(library, "operations")))).filter((name) =>
+          name.endsWith(".json"),
+        ),
       ).toHaveLength(1);
       expect(yield* Effect.promise(() => listed(NodePath.join(library, "receipts")))).toHaveLength(
         1,

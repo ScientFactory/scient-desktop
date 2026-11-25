@@ -44,7 +44,10 @@ import {
   listScientLibraryImportSources,
   listScientLibraryRecentChanges,
 } from "@scientfactory/scient-sources/library-changes";
-import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
+import {
+  dismissScientLibraryMoveSummary,
+  hasScientPreMoveArchive,
+} from "@scientfactory/scient-sources/library-move";
 import {
   dismissScientLibraryNoticeChanges,
   listScientLibraryNoticeChanges,
@@ -89,7 +92,6 @@ import {
   renameScientProjectPinKey,
   ScientPinWork,
   setScientProjectPinNote,
-  unpinScientLibrarySource,
   type ScientProjectPin,
 } from "@scientfactory/scient-sources/project-pins";
 import {
@@ -143,6 +145,7 @@ import {
   resolveLibrarySourceId,
   resolveLibrarySourceIds,
   syncProjectBibliography,
+  unpinProjectWork,
   type KnownProject,
   type ProjectPinGroup,
 } from "./LibraryProjectSources.ts";
@@ -371,6 +374,8 @@ export async function libraryOverview(
           scopes,
           unreadable: "unreadableRecords" in inspected ? inspected.unreadableRecords : undefined,
           trashedCount: "trashedCount" in inspected ? inspected.trashedCount : undefined,
+          unfinishedDeletions:
+            "unfinishedDeletions" in inspected ? inspected.unfinishedDeletions : undefined,
         })
       : undefined;
   const status = {
@@ -383,7 +388,11 @@ export async function libraryOverview(
     ...("trashedCount" in inspected && inspected.trashedCount !== undefined
       ? { trashedCount: inspected.trashedCount }
       : {}),
+    ...("unfinishedDeletions" in inspected && inspected.unfinishedDeletions !== undefined
+      ? { unfinishedDeletions: inspected.unfinishedDeletions }
+      : {}),
     ...(revision ? { revision } : {}),
+    ...((await hasScientPreMoveArchive(store.root)) ? { preMoveCopy: true as const } : {}),
   };
   // The caller already holds this answer: only the status and counts are sent.
   const unchanged = revision !== undefined && revision === input.knownRevision;
@@ -433,6 +442,7 @@ function overviewRevision(parts: {
   readonly scopes: unknown;
   readonly unreadable: unknown;
   readonly trashedCount: unknown;
+  readonly unfinishedDeletions: unknown;
 }): string {
   const hash = NodeCrypto.createHash("sha256");
   const { scope, readingStatus, starred } = parts.input;
@@ -458,6 +468,7 @@ function overviewRevision(parts: {
     parts.scopes,
     parts.unreadable,
     parts.trashedCount,
+    parts.unfinishedDeletions,
   ]) {
     hash.update(`\0${JSON.stringify(part) ?? ""}`);
   }
@@ -1125,6 +1136,7 @@ export async function updateLibraryPersonalNote(
     readonly expectedRevision: number;
     readonly note: string | null;
     readonly expectedNote?: string | null;
+    readonly noteSession?: string;
   },
 ) {
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -1135,6 +1147,7 @@ export async function updateLibraryPersonalNote(
     expectedRevision: input.expectedRevision,
     note: input.note,
     ...(input.expectedNote !== undefined ? { expectedNote: input.expectedNote } : {}),
+    ...(input.noteSession !== undefined ? { session: input.noteSession } : {}),
     actor: ACTOR,
   });
   return {
@@ -1260,11 +1273,12 @@ export async function restoreLibrarySource(store: Store, input: { readonly sourc
 
 export async function deleteLibrarySourcesPermanently(
   store: Store,
-  input: { readonly sourceIds?: ReadonlyArray<string> },
+  input: { readonly removalIds?: ReadonlyArray<string>; readonly trashRevision?: string },
 ) {
   return deleteScientSourcesPermanently({
     root: store.library,
-    ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+    ...(input.removalIds ? { removalIds: input.removalIds } : {}),
+    ...(input.trashRevision ? { trashRevision: input.trashRevision } : {}),
   });
 }
 
@@ -1425,13 +1439,8 @@ export async function organizeLibrarySources(
       };
     }
     case "unpin": {
-      const unpinned = await unpinScientLibrarySource({
-        projectRoot: store.root,
-        citationKey: change.citationKey,
-        actor: ACTOR,
-      });
+      const unpinned = await unpinProjectWork(store, change.citationKey, ACTOR);
       if (unpinned.outcome === "not-pinned") return { outcome: "not-pinned" as const };
-      await syncProjectBibliography(store, ACTOR);
       return { outcome: "unpinned" as const, pin: pinSummary(unpinned.pin) };
     }
     case "change-pins":
@@ -1765,8 +1774,9 @@ export async function exportLibrarySources(
     readonly sourceIds?: ReadonlyArray<string>;
     readonly includeNotes?: boolean;
   },
+  actor: ScientSourceActor = ACTOR,
 ) {
-  const works = distinctPinnedWorks(await listProjectPinnedWorks(store, ACTOR));
+  const works = distinctPinnedWorks(await listProjectPinnedWorks(store, actor));
   const pinnedRecords = works.map((work) =>
     routeRecord(work.record, {
       citationKey: work.citationKey,

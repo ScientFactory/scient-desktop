@@ -4279,6 +4279,7 @@ function ChatViewContent(props: ChatViewProps) {
         activeThreadRef={activeThreadRef}
         activeThread={activeThread}
         activeProject={activeProject}
+        activeProjectIsScratch={activeProjectIsScratch}
         activeWorkspaceRoot={activeWorkspaceRoot}
         availableEditors={availableEditors}
         keybindings={keybindings}

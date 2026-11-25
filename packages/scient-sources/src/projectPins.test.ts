@@ -11,7 +11,7 @@ import { vi } from "vite-plus/test";
 import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
-import { withScientLibraryLock } from "./libraryLock.ts";
+import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
@@ -28,6 +28,7 @@ import {
   scientProjectPinsText,
   setScientProjectPinNote,
   unpinScientLibrarySource,
+  unpinScientProjectWork,
 } from "./projectPins.ts";
 import {
   importScientSource,
@@ -984,6 +985,56 @@ describe("project pins", () => {
       "lovelace2020",
     ]);
     expect((await readScientSourceRecord(library, first.sourceId))?.citationKey).toBe("smith2020");
+  });
+
+  it("unpins a merged paper under each key it has when unpinned, never one given to another paper", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const loser = await addRecord(library, "A", { citationKey: "smith2020" });
+    const survivor = await addRecord(library, "B", { citationKey: "jones2021" });
+    const other = await addRecord(library, "C", { citationKey: "other2022" });
+    for (const record of [loser, survivor, other]) {
+      await pinScientLibrarySource({
+        projectRoot,
+        library,
+        sourceId: record.sourceId,
+        actor: "user",
+      });
+    }
+    await mergeScientLibrarySources({
+      library,
+      sourceIds: [loser.sourceId, survivor.sourceId],
+      survivorId: survivor.sourceId,
+    });
+    // Another window, as this unpin waits for the pins lock: jones2021 now cites the other paper.
+    const pins = await readScientProjectPins(projectRoot);
+    const replaced = pins
+      .filter((pin) => pin.sourceId !== survivor.sourceId && pin.sourceId !== other.sourceId)
+      .concat({
+        ...pins.find((pin) => pin.sourceId === other.sourceId)!,
+        citationKey: "jones2021",
+      });
+    const actual = await vi.importActual<typeof import("./libraryLock.ts")>("./libraryLock.ts");
+    vi.mocked(withScientFileLock).mockImplementationOnce(async (lockPath, run, options) => {
+      await NodeFSP.writeFile(
+        NodePath.join(projectRoot, ".scient", "library", "pins.json"),
+        scientProjectPinsText(replaced),
+      );
+      return actual.withScientFileLock(lockPath, run, options);
+    });
+
+    expect(
+      await unpinScientProjectWork({
+        projectRoot,
+        library,
+        citationKey: "smith2020",
+        actor: "user",
+      }),
+    ).toMatchObject({ outcome: "unpinned", alsoUnpinned: [] });
+    expect(await readScientProjectPins(projectRoot)).toMatchObject([
+      { citationKey: "jones2021", sourceId: other.sourceId },
+    ]);
   });
 
   it("binds each key a manuscript cites a work by, never taking one that cites another", async () => {

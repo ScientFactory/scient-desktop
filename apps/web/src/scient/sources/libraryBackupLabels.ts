@@ -6,16 +6,21 @@ import type {
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
+import { dayLabel } from "./dayLabel";
 
 export const BACKUP_LABELS = {
   menuItem: msg("Back up My Library…"),
   failed: msg("The Library was not backed up"),
   done: msg("Library backed up"),
+  stillRunning: msg("An earlier backup is still running"),
 } as const;
+
+/** A second request while one runs starts nothing; the running one goes on. */
+export const STILL_RUNNING_HELP = msg("Try again when the one running ends.");
 
 const count = (value: number) => value.toLocaleString();
 
-/** The one line shown while a backup runs: changes wait for it, so it says so. */
+/** The one line shown while a backup runs. */
 export function backupRunningLabel(
   status: ScientSourcesBackupStatus,
   resolve: MessageResolver = m,
@@ -23,12 +28,12 @@ export function backupRunningLabel(
   if (status.state !== "running") return null;
   return status.total > 0
     ? resolve(
-        msg(
-          "Backing up the Library: {done} of {total} files. Changes to the Library wait until it finishes.",
-          { done: count(status.done), total: count(status.total) },
-        ),
+        msg("Backing up the Library: {done} of {total} files.", {
+          done: count(status.done),
+          total: count(status.total),
+        }),
       )
-    : resolve(msg("Backing up the Library. Changes to the Library wait until it finishes."));
+    : resolve(msg("Backing up the Library."));
 }
 
 export function backupDoneLabel(
@@ -73,13 +78,6 @@ export const RESTORE_LABELS = {
   cancel: msg("Cancel"),
 } as const;
 
-const day = (iso: string) => {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
-};
-
 /** The line shown while a backup is checked and copied, and while its copy waits. */
 export function restoreLine(
   status: ScientSourcesRestoreStatus,
@@ -88,43 +86,40 @@ export function restoreLine(
   if (status.state === "preparing") {
     return status.total > 0
       ? resolve(
-          msg(
-            "Checking and copying the backup: {done} of {total} files. The Library is not changed yet.",
-            { done: count(status.done), total: count(status.total) },
-          ),
+          msg("Checking and copying the backup: {done} of {total} files.", {
+            done: count(status.done),
+            total: count(status.total),
+          }),
         )
-      : resolve(msg("Checking and copying the backup. The Library is not changed yet."));
+      : resolve(msg("Checking and copying the backup."));
   }
   if (status.state !== "ready") return null;
   if (status.begun) {
     return status.putBack
       ? resolve(
-          msg(
-            "Scient is part way through putting back the Library that was replaced on {day}. Quit Scient and open it again to finish. Until then no project can move its sources into the Library.",
-            { day: day(status.backupCreatedAt) },
-          ),
+          msg("Putting back the Library that was replaced on {day}. Restart Scient to finish.", {
+            day: dayLabel(status.backupCreatedAt),
+          }),
         )
       : resolve(
-          msg(
-            "Scient is part way through restoring the backup of {day}. Quit Scient and open it again to finish. Until then no project can move its sources into the Library.",
-            { day: day(status.backupCreatedAt) },
-          ),
+          msg("Restoring the backup of {day}. Restart Scient to finish.", {
+            day: dayLabel(status.backupCreatedAt),
+          }),
         );
   }
   const problem = status.problem
     ? resolve(
-        msg(
-          "Scient could not put it in place at its last start ({problem}); it tries again at the next.",
-          { problem: status.problem },
-        ),
+        msg("It could not be put in place ({problem}); Scient tries again at the next start.", {
+          problem: status.problem,
+        }),
       )
     : "";
   const line = status.putBack
     ? resolve(
         msg(
-          "The Library that was replaced on {day} is ready to come back: {sources} sources and {pdfs} PDFs. It takes this Library's place the next time Scient starts, and this Library is then kept in a folder beside it.",
+          "The Library that was replaced on {day} is ready to come back: {sources} sources and {pdfs} PDFs. It takes this Library's place when Scient restarts.",
           {
-            day: day(status.backupCreatedAt),
+            day: dayLabel(status.backupCreatedAt),
             sources: count(status.sources),
             pdfs: count(status.pdfs),
           },
@@ -132,9 +127,9 @@ export function restoreLine(
       )
     : resolve(
         msg(
-          "The backup of {day} is ready: {sources} sources and {pdfs} PDFs. It replaces this Library the next time Scient starts. If this Library holds anything, it is kept in a folder beside the restored one.",
+          "The backup of {day} is ready: {sources} sources and {pdfs} PDFs. It replaces this Library when Scient restarts.",
           {
-            day: day(status.backupCreatedAt),
+            day: dayLabel(status.backupCreatedAt),
             sources: count(status.sources),
             pdfs: count(status.pdfs),
           },
@@ -158,7 +153,7 @@ export function restoreRefusedLabel(
     : resolve(
         msg("{reason} The backup of {day} that was ready is still waiting.", {
           reason: status.refused.reason,
-          day: day(status.backupCreatedAt),
+          day: dayLabel(status.backupCreatedAt),
         }),
       );
 }
@@ -178,23 +173,20 @@ export function restoredLabel(
   const line = status.putBack
     ? resolve(
         msg(
-          "This is the Library that was replaced on {day} again: {sources} sources and {pdfs} PDFs. Project folders were not changed.",
+          "This is the Library that was replaced on {day} again: {sources} sources and {pdfs} PDFs.",
           {
-            day: day(status.backupCreatedAt),
+            day: dayLabel(status.backupCreatedAt),
             sources: count(status.sources),
             pdfs: count(status.pdfs),
           },
         ),
       )
     : resolve(
-        msg(
-          "{sources} sources and {pdfs} PDFs from the backup of {day}. Project folders were not changed.",
-          {
-            day: day(status.backupCreatedAt),
-            sources: count(status.sources),
-            pdfs: count(status.pdfs),
-          },
-        ),
+        msg("{sources} sources and {pdfs} PDFs from the backup of {day}.", {
+          day: dayLabel(status.backupCreatedAt),
+          sources: count(status.sources),
+          pdfs: count(status.pdfs),
+        }),
       );
   return kept ? `${line} ${kept}` : line;
 }
@@ -205,6 +197,7 @@ export const JOIN_LABELS = {
   nothingNew: msg("No sources added from the other Library"),
   failed: msg("Nothing was added from the other Library"),
   stopped: msg("Adding from the other Library stopped part way"),
+  stillRunning: msg("Sources are still being added from another Library"),
 } as const;
 
 /** The one line shown while sources are added. */
@@ -216,16 +209,12 @@ export function joinRunningLabel(
   // Before the first source is added the two Libraries are compared, which can take a while.
   return status.total > 0
     ? resolve(
-        msg(
-          "Adding sources from the other Library: {done} of {total} done. Nothing that is in this Library is changed.",
-          { done: count(status.done), total: count(status.total) },
-        ),
+        msg("Adding sources from the other Library: {done} of {total} done.", {
+          done: count(status.done),
+          total: count(status.total),
+        }),
       )
-    : resolve(
-        msg(
-          "Comparing the other Library with this one. Nothing that is in this Library is changed.",
-        ),
-      );
+    : resolve(msg("Comparing the other Library with this one."));
 }
 
 /** What a join did, and what it left alone, in the order a person cares about. */

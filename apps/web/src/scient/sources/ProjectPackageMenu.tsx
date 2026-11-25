@@ -16,6 +16,8 @@ import { toastManager } from "../../components/ui/toast";
 import { readLocalApi } from "../../localApi";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { organizeScientSources } from "./client";
+import { dayLabel } from "./dayLabel";
+import { sourcesErrorMessage } from "./errorMessage";
 import { settleAfter } from "./settleAfter";
 
 type PackageListing = NonNullable<ScientSourcesOrganizeResult["packages"]>;
@@ -23,9 +25,6 @@ type PackageReport = NonNullable<ScientSourcesOrganizeResult["packageReport"]>;
 
 const plural = (value: number, one: string, many: string) =>
   `${value.toLocaleString()} ${value === 1 ? one : many}`;
-
-const message = (cause: unknown) =>
-  cause instanceof Error ? cause.message : "Something went wrong.";
 
 function exportedDescription(report: PackageReport): string {
   const unavailable =
@@ -99,7 +98,11 @@ function useProjectPackage(props: {
         try {
           await task();
         } catch (cause) {
-          toastManager.add({ type: "error", title: failure, description: message(cause) });
+          toastManager.add({
+            type: "error",
+            title: failure,
+            description: sourcesErrorMessage(cause),
+          });
         }
       },
       () => setWorking(false),
@@ -302,11 +305,7 @@ export function ImportPackageSubmenu(props: {
               onClick={() => void project.importPackage(entry.relativePath)}
             >
               <span className="min-w-0 flex-1 truncate">{entry.relativePath}</span>
-              <MenuItemDetail>
-                {new Date(entry.exportedAt).toLocaleDateString(undefined, {
-                  dateStyle: "medium",
-                })}
-              </MenuItemDetail>
+              <MenuItemDetail>{dayLabel(entry.exportedAt)}</MenuItemDetail>
             </MenuItem>
           ))
         )}

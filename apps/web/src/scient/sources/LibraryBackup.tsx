@@ -13,7 +13,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { randomUUID } from "../../lib/utils";
 import { changeLibraryRestore, organizeScientSources, readLibraryBackupStatus } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import {
   BACKUP_LABELS,
   JOIN_LABELS,
@@ -26,10 +26,13 @@ import {
   restoreLine,
   restoreRefusedLabel,
   restoredLabel,
+  STILL_RUNNING_HELP,
 } from "./libraryBackupLabels";
 import type { SourcesActivityItem, SourcesResultContent } from "./sourcesFeedback";
 
 const ASK_AGAIN_MS = 1_000;
+/** A status read that keeps failing is asked again less and less often, up to this. */
+const ASK_AGAIN_MAX_MS = 30_000;
 
 type CopyKind = "backup" | "join" | "restore";
 
@@ -217,6 +220,8 @@ export function useLibraryBackup(input: {
   const unread = input.enabled && copies === null;
   /** The context a read is under way for: one read at a time, so a slow one is not restarted. */
   const asking = useRef<string | null>(null);
+  /** Reads finished, and how many of the last ones failed in a row; the timer follows both. */
+  const [reads, setReads] = useState({ count: 0, failures: 0 });
   /** The context the panel shows now; an answer for another one (a project left) is dropped. */
   const shown = useStableCallback(() => (input.enabled ? context : null));
 
@@ -239,6 +244,10 @@ export function useLibraryBackup(input: {
     asking.current = asked;
     const next = await readLibraryBackupStatus(input.environmentId, input.root).catch(() => null);
     if (asking.current === asked) asking.current = null;
+    setReads((previous) => ({
+      count: previous.count + 1,
+      failures: next ? 0 : previous.failures + 1,
+    }));
     // A failed read changes nothing: the last answer stands and the timer asks again.
     if (!next || !show(asked, next)) return;
     report(backupEnding(input.environmentId, next.backup));
@@ -256,12 +265,25 @@ export function useLibraryBackup(input: {
     if (input.enabled) void load(context);
   }, [input.enabled, context, load]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment server again on a timer while a backup or a restore's copy runs, or while no answer has come yet, whether or not the last read succeeded; unmounting stops it
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment server again after each read while a backup or a restore's copy runs, or while no answer has come yet, waiting longer after each failed read; unmounting stops it
   useEffect(() => {
     if (!working && !unread) return;
-    const timer = window.setInterval(() => void load(context), ASK_AGAIN_MS);
-    return () => window.clearInterval(timer);
-  }, [working, unread, context, load]);
+    const delay = Math.min(ASK_AGAIN_MS * 2 ** reads.failures, ASK_AGAIN_MAX_MS);
+    const timer = window.setTimeout(() => void load(context), delay);
+    return () => window.clearTimeout(timer);
+  }, [working, unread, context, load, reads]);
+
+  /** A request while the same kind runs started nothing: said at once, the running one kept. */
+  const stillRunning = (kind: CopyKind, title: string, operationId: string | null) =>
+    report({
+      key: randomUUID(),
+      environmentId: input.environmentId,
+      kind,
+      operationId,
+      failed: true,
+      title,
+      description: m(STILL_RUNNING_HELP),
+    });
 
   /** A request that was refused never ran: said at once, as how the person's action ended. */
   const failed = (kind: CopyKind, title: string, operationId: string | null) => (cause: unknown) =>
@@ -272,7 +294,7 @@ export function useLibraryBackup(input: {
       operationId,
       failed: true,
       title,
-      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+      description: sourcesErrorMessage(cause),
     });
 
   /** `operationId` names the result-slot operation the backup's ending belongs to. */
@@ -282,9 +304,15 @@ export function useLibraryBackup(input: {
       root: input.root,
       change: { action: "back-up-library", inFolder },
     }).then(
-      () => {
+      (answer) => {
+        // Only the request that started the backup owns its ending.
+        if (answer.outcome === "backup-running") {
+          stillRunning("backup", m(BACKUP_LABELS.stillRunning), operationId);
+          follow(input.environmentId, "backup", null);
+        } else {
+          follow(input.environmentId, "backup", operationId);
+        }
         // The server said it runs; shown at once, so the timer asks even if the next read fails.
-        follow(input.environmentId, "backup", operationId);
         show(asked, { backup: { state: "running", done: 0, total: 0 } });
         return load(asked);
       },
@@ -316,8 +344,13 @@ export function useLibraryBackup(input: {
       root: input.root,
       change: { action: "add-from-library", fromFolder },
     }).then(
-      () => {
-        follow(input.environmentId, "join", operationId);
+      (answer) => {
+        if (answer.outcome === "join-running") {
+          stillRunning("join", m(JOIN_LABELS.stillRunning), operationId);
+          follow(input.environmentId, "join", null);
+        } else {
+          follow(input.environmentId, "join", operationId);
+        }
         show(asked, { join: { state: "running", done: 0, total: 0 } });
         return load(asked);
       },

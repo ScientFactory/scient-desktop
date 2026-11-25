@@ -203,7 +203,7 @@ export function SourcesActivityButton(props: {
       onClick={() => props.onOpenChange(true)}
     >
       <ActivityIcon />
-      <span className="@max-[20rem]:hidden">
+      <span className="@max-[28rem]:hidden">
         <T context="running and finished Library work">Activity</T>
       </span>
       {activity.count > 0 ? <span className="tabular-nums">{activity.count}</span> : null}
@@ -223,8 +223,7 @@ export function SourcesActivityButton(props: {
               <T context="running and finished Library work">Activity</T>
             </DialogTitle>
             <DialogDescription>
-              {activity.summary ??
-                (activity.count === 0 ? gt("Nothing is running and nothing needs you.") : null)}
+              {activity.summary ?? (activity.count === 0 ? gt("Nothing running.") : null)}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -314,8 +313,7 @@ export function sourcesStateActivity(
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1">
             <T>
-              The list could not be read again, so it may be out of date:{" "}
-              <Var>{input.overviewError}</Var>
+              The list may be out of date: <Var>{input.overviewError}</Var>
             </T>
           </p>
           <Button size="xs" variant="ghost" onClick={input.onRetryOverview}>

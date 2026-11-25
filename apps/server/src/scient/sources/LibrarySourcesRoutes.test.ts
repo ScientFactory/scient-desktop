@@ -1343,7 +1343,7 @@ describe("Library routes on the library backend", () => {
     }),
   );
 
-  it.effect("says how many other projects pin a source an edit changed", () =>
+  it.effect("says how many other projects pin a source an edit changed, and updates them all", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
       const { record } = yield* Effect.promise(async () => {
@@ -1352,6 +1352,17 @@ describe("Library routes on the library backend", () => {
         await pin(fixture, shared.sourceId);
         await pin(fixture, shared.sourceId, other);
         await libraryImportPinInstance(fixture.library, other);
+        // This project's review cannot refresh: its snapshot folder is a file.
+        const { reviewId } = await changeScientLibraryReview({
+          projectRoot: fixture.root,
+          library: fixture.library,
+          change: { action: "create-review", title: "Broken review" },
+          actor: "user",
+        });
+        await NodeFSP.writeFile(
+          NodePath.join(fixture.root, ".scient", "library", "reviews", `${reviewId}.works`),
+          "",
+        );
         return { record: shared };
       });
       const store = yield* storeFor(fixture, "write");
@@ -1379,6 +1390,12 @@ describe("Library routes on the library backend", () => {
         });
 
         expect(result).toMatchObject({ outcome: "updated", alsoPinnedIn: 1 });
+        // Both projects' citations follow the edit, the other without its Library being opened.
+        for (const root of [fixture.root, NodePath.join(fixture.base, "other")]) {
+          await expect(
+            NodeFSP.readFile(NodePath.join(root, "references.bib"), "utf8"),
+          ).resolves.toContain("Shared work, corrected");
+        }
       });
     }),
   );

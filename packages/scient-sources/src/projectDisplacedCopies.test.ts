@@ -10,10 +10,10 @@ import { vi } from "vite-plus/test";
 import {
   countScientDisplacedCopiesInProject,
   keepScientDisplacedCopies,
-  readScientDisplacedCopies,
   readScientDisplacedCopiesOf,
   scientValuesChangedBy,
 } from "./projectDisplacedCopies.ts";
+import { readScientDisplacedCopies } from "./testing/displacedCopies.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 
