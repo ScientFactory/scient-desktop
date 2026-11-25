@@ -136,7 +136,8 @@ import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
-import { forwardWheelToTimeline } from "./timelineMinimapWheel";
+// SCIENT-FORK: cancelTimelineWheelGlide ends a wheel glide when the scroller shows another thread.
+import { cancelTimelineWheelGlide, forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
 import {
   type TimelineRowSharedState,
@@ -1050,8 +1051,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     !waitingForReadingHistory;
   // The unkeyed list positions an opening frames after its rows commit, so it would first paint
   // at the previous thread's offset. Until it reports positioned (at most OPENING_REVEAL_FALLBACK_MS)
-  // a cover hides it, takes presses and passes the wheel on; the list stays readable and
-  // focusable. Restyling the scroller's ancestors instead undid reader scrolls.
+  // a cover hides it, shields it from blind presses and passes the wheel on; the list stays
+  // readable and focusable.
   const hiddenForOpening =
     restoringThreadPosition && rows.length > 0 && openingShownKey !== listIdentityKey;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bounds how long an opening stays covered if it never reports positioned
@@ -1063,6 +1064,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
     return () => window.clearTimeout(timer);
   }, [hiddenForOpening, listIdentityKey]);
+  // A wheel glide (from the cover or the minimap) belongs to the thread it started on: when the
+  // retained scroller shows another thread, it would treat the new restore as drift and move it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the scroller's DOM wheel glide to the thread it shows
+  useLayoutEffect(() => {
+    const scrollNode = listRef.current?.getScrollableNode();
+    if (scrollNode) return () => cancelTimelineWheelGlide(scrollNode);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch ends the outgoing thread's glide.
+    listIdentityKey,
+    listRef,
+  ]);
   // SCIENT-FORK:END
 
   // Z: syncs LegendList's scroll position with which thread it shows. The list
@@ -1972,8 +1984,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setReadingListLoaded(false);
       setListState({ ...timelineListStateFor(listIdentityKey), findOpenAtOpening: findOpen });
       setPositionedThreadKey(null);
-      setOpeningShownKey(null);
     }
+    // A list that never reported loaded remounts too: its new opening is covered again.
+    if (openingShownKey !== null) setOpeningShownKey(null);
     // SCIENT-FORK:END
     if (hideEmptyPlaceholder) {
       return (
