@@ -504,11 +504,12 @@ opens the same palette.
 
 ## Environment icons
 
-On web and desktop, when you are connected to more than one environment, a thread's card shows
-a small icon under its title for the machine it runs on: a server, a cloud VM, a desktop, a laptop,
-a Mac mini, or a Mac Studio. The card shows the icon without the machine's name, and with a single
-environment it shows neither. The thread's environment, branch and worktree folder are always in
-its tooltip. To tell two machines' threads apart, give them different icons (see below). In the mobile app, where every environment
+On web and desktop, when you have more than one environment, including saved ones that are
+offline, a thread's card shows a small icon under its title for the machine it runs on: a server, a
+cloud VM, a desktop, a laptop, a Mac mini, or a Mac Studio. The card shows the icon without the
+machine's name, and with a single environment it shows neither. The thread's tooltip always names
+its environment, and shows its branch and worktree folder when it has them. To tell two machines'
+threads apart, give them different icons (see below). In the mobile app, where every environment
 is remote, each row wears its machine so you can tell them apart at a glance. The same icon appears
 wherever an environment is named: the thread tooltip, the command palette, the "Run on" picker, the
 pull request server filter, the provider settings device tabs, and the environment lists under
