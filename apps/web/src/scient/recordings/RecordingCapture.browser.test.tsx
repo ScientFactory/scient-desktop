@@ -5,13 +5,34 @@ import "../../index.css";
 import { RecordingCapture } from "./RecordingCapture";
 import { openRecordingCapture } from "./recordingCaptureStore";
 
-const mocks = vi.hoisted(() => ({ microphone: vi.fn(), command: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  microphone: vi.fn(),
+  command: vi.fn(),
+  navigate: vi.fn(),
+  captions: vi.fn(),
+  setPaused: vi.fn(),
+}));
 vi.mock("../../speech/requestMicrophone", () => ({ requestMicrophone: mocks.microphone }));
 vi.mock("../../speech/browserMicrophones", () => ({
   chooseRecordingMicrophone: async () => "test-mic",
   listBrowserMicrophones: async () => [{ deviceId: "test-mic", label: "Lecture microphone" }],
 }));
-vi.mock("../../rpc/transcription", () => ({ transcriptionCommand: mocks.command }));
+vi.mock("../../rpc/transcription", () => ({
+  transcriptionCommand: mocks.command,
+  startLessonTalkThread: vi.fn(),
+}));
+vi.mock("@tanstack/react-router", async (load) => ({
+  ...(await load<typeof import("@tanstack/react-router")>()),
+  useRouter: () => ({ navigate: mocks.navigate }),
+}));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("./lessonCaptions", () => ({ tapLessonCaptions: mocks.captions }));
+vi.mock("./LessonTalk", () => ({
+  lessonTalkAgent: () => null,
+  LessonTalk: ({ onEnded }: { onEnded: (error?: string) => void }) => (
+    <button onClick={() => onEnded("The conversation stopped.")}>Lesson answer</button>
+  ),
+}));
 vi.mock("./TranscribeDialog", () => ({
   TranscribeDialog: () => <p>Transcribe saved recording</p>,
 }));
@@ -20,7 +41,10 @@ vi.mock("../../state/entities", () => ({
     { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
   ],
 }));
-vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "test" }));
+vi.mock("../../state/environments", () => ({
+  usePrimaryEnvironmentId: () => "test",
+  useEnvironmentProviders: () => new Map(),
+}));
 
 class Recorder extends EventTarget {
   static isTypeSupported() {
@@ -53,7 +77,11 @@ it("records only after explicit start, handles permission denial, and keeps a gl
   mocks.microphone
     .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"))
     .mockResolvedValueOnce(stream);
-  mocks.command.mockResolvedValue({ source: "/class/Recording.webm" });
+  mocks.command.mockImplementation(async (action: string) =>
+    action === "capture-start"
+      ? { captured: true, language: "auto", talk: { openai: false } }
+      : { source: "/class/Recording.webm" },
+  );
   await using screen = await render(
     <>
       <button onClick={() => openRecordingCapture("class")}>Record</button>
@@ -101,6 +129,72 @@ it("records only after explicit start, handles permission denial, and keeps a gl
       "/class",
       expect.objectContaining({ index: 0 }),
     );
+  } finally {
+    vi.unstubAllGlobals();
+    await context.close();
+  }
+});
+
+it("shows live captions, pauses the lesson while you talk, and opens the lesson when it ends", async () => {
+  vi.stubGlobal("MediaRecorder", Recorder);
+  const context = new AudioContext();
+  const stream = context.createMediaStreamDestination().stream;
+  mocks.microphone.mockResolvedValue(stream);
+  mocks.captions.mockImplementation(async (input: { onCaption: (caption: object) => void }) => {
+    setTimeout(() =>
+      input.onCaption({ window: 0, start: 0, end: 12, text: "Entropy always increases." }),
+    );
+    return { cut: vi.fn(), setPaused: mocks.setPaused, close: vi.fn() };
+  });
+  mocks.command.mockImplementation(async (action: string) =>
+    action === "capture-start"
+      ? {
+          captured: true,
+          language: "en",
+          captions: { kind: "local", modelId: "whisper" },
+          talk: { openai: true },
+        }
+      : action === "capture-finish"
+        ? { captured: true, source: "/class/Lesson.weba", transcription: "started" }
+        : { captured: true },
+  );
+  await using screen = await render(
+    <>
+      <button onClick={() => openRecordingCapture("class")}>Record</button>
+      <RecordingCapture />
+    </>,
+  );
+  try {
+    await screen.getByRole("button", { name: "Record", exact: true }).click();
+    await expect.element(page.getByRole("heading", { name: "Record a lesson" })).toBeVisible();
+    await page.getByRole("button", { name: "Start recording" }).click();
+    await expect.element(page.getByText(/Entropy always increases\./)).toBeVisible();
+    await page.getByRole("button", { name: "Talk", exact: true }).click();
+    await expect.element(page.getByText(/Paused · Talking/)).toBeVisible();
+    expect(mocks.setPaused).toHaveBeenLastCalledWith(true);
+    await page.getByRole("button", { name: "End and resume" }).click();
+    expect(mocks.setPaused).toHaveBeenLastCalledWith(false);
+    await page.getByRole("button", { name: "Talk", exact: true }).click();
+    await page.getByRole("button", { name: "Lesson answer" }).click();
+    await expect.element(page.getByText("The conversation stopped.")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+    const directory = import.meta.env.VITE_SCIENT_RECORDINGS_SCREENSHOTS;
+    if (directory) await page.screenshot({ path: `${directory}/record-lesson.png` });
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith({
+        to: "/recordings",
+        search: { project: "class", source: "/class/Lesson.weba" },
+      }),
+    );
+    expect(mocks.command).toHaveBeenCalledWith("capture-finish", "/class", {
+      id: expect.any(String),
+      lesson: { language: "en" },
+    });
+    expect(mocks.command).toHaveBeenCalledWith("capture-start", "/class", {
+      id: expect.any(String),
+      language: expect.any(String),
+    });
   } finally {
     vi.unstubAllGlobals();
     await context.close();

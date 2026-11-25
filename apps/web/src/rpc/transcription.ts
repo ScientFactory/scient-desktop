@@ -1,4 +1,9 @@
-import type { ModelSelection, ThreadId, TranscriptionWord } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProviderInstanceId,
+  ThreadId,
+  TranscriptionWord,
+} from "@t3tools/contracts";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
 
@@ -186,7 +191,33 @@ type Commands = {
   };
   "capture-recover": { response: object };
   "capture-touch": { id: string; response: object };
-  "capture-finish": { id: string; response: { source?: string } };
+  "capture-start": {
+    id: string;
+    language?: string;
+    response: {
+      language: string;
+      /** The engine live captions use: the recording default for the language. */
+      captions?: LessonCaptionEngine;
+      /** No engine transcribes the lesson when it ends. */
+      transcription?: "unavailable";
+      /** Whether a spoken question can go to OpenAI with the user's own key. */
+      talk: { openai: boolean };
+    };
+  };
+  "capture-caption": {
+    id: string;
+    window: number;
+    start: number;
+    end: number;
+    text: string;
+    response: object;
+  };
+  "capture-talk": { id: string; sdpOffer: string; response: { sdpAnswer: string } };
+  "capture-finish": {
+    id: string;
+    lesson?: { language: string };
+    response: { source?: string; transcription?: "started" | "queued" | "unavailable" };
+  };
   "media-register": { source: string; response: { media: RecordingSource[] } };
   "media-list": { response: { media: RecordingSource[] } };
   pause: { id: string; response: RecordingStatus };
@@ -253,7 +284,21 @@ async function postTranscription(
   return response.json();
 }
 
-export type RecordingNoteRecipe = "summary" | "study-notes" | "action-items";
+export type LessonCaptionEngine =
+  | { kind: "local"; modelId: string }
+  | { kind: "cloud"; engineId: string }
+  | { kind: "chatgpt"; instanceId: ProviderInstanceId };
+
+export type RecordingNoteRecipe = "summary" | "study-notes" | "action-items" | "lesson";
+
+/** A thread for spoken questions during a lesson, which knows where its live captions are. */
+export function startLessonTalkThread(project: string, capture: string) {
+  return postTranscription("/api/transcription/notes", {
+    action: "lesson-talk",
+    project,
+    capture,
+  }) as Promise<{ needsModel: true } | { threadId: string }>;
+}
 export type RecordingNote = {
   threadId: string;
   path: string;

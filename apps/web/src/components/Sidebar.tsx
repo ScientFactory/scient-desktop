@@ -1397,7 +1397,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ...(group.environmentId === primaryEnvironmentId
                 ? [
                     { id: "recordings", label: gt("Recordings") },
-                    { id: "record-audio", label: gt("Record audio") },
+                    { id: "record-audio", label: gt("Record a lesson") },
                   ]
                 : []),
               ...(canPinProject(group)

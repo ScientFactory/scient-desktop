@@ -536,7 +536,7 @@ export function RecordingsPage({
               </MenuItem>
               <MenuItem onClick={() => openRecordingCapture(destination?.id)}>
                 <MicIcon aria-hidden />
-                {gt("Record with the microphone")}
+                {gt("Record a lesson")}
               </MenuItem>
               <MenuItem disabled={!canAdd} onClick={() => chooseTranscript()}>
                 <FileTextIcon aria-hidden />
