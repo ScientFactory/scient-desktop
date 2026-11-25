@@ -503,6 +503,10 @@ describe("Oh My Pi launch arguments", () => {
 
   it.live("holds a conversation's lease until its process scope closes", () =>
     Effect.gen(function* () {
+      // Providing no gate is a compile error rather than a runtime refusal.
+      type Requirements = Effect.Services<ReturnType<typeof makeOmpRpcProcess>>;
+      const requiresGate: [OmpExecutableGate] extends [Requirements] ? true : false = true;
+      expect(requiresGate).toBe(true);
       const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-lease-"));
       try {
         const binary = NodePath.join(root, "omp");
@@ -531,13 +535,6 @@ describe("Oh My Pi launch arguments", () => {
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
-
-  it("requires the server's executable gate at the type level", () => {
-    // Providing no gate is a compile error rather than a runtime refusal.
-    type Requirements = Effect.Services<ReturnType<typeof makeOmpRpcProcess>>;
-    const requiresGate: [OmpExecutableGate] extends [Requirements] ? true : false = true;
-    expect(requiresGate).toBe(true);
-  });
 });
 
 /**
