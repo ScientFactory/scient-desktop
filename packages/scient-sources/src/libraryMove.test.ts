@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterAll, afterEach, describe, expect, it } from "@effect/vitest";
 
 import { readLibraryAliasesAt } from "./libraryAliases.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
@@ -344,12 +344,34 @@ async function expectDone(
   return journal;
 }
 
+/** Seeded once through the store APIs; each case moves its own copy of the folders. */
+let seededTemplate: Promise<{ base: string; seeded: Awaited<ReturnType<typeof seed>> }> | undefined;
+// Recorded as soon as it exists, so a failed seed still removes it.
+let seededTemplateBase: string | undefined;
+
+afterAll(async () => {
+  if (seededTemplateBase) await NodeFSP.rm(seededTemplateBase, { recursive: true, force: true });
+});
+
 async function seededMove() {
+  seededTemplate ??= (async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-move-template-")),
+    );
+    seededTemplateBase = base;
+    await newLibrary(base);
+    return { base, seeded: await seed(await newProject(base)) };
+  })();
+  const template = await seededTemplate;
   const base = await fixture();
-  const library = await newLibrary(base);
-  const project = await newProject(base);
-  const seeded = await seed(project);
-  return { base, library, project, ...seeded };
+  await NodeFSP.cp(template.base, base, { recursive: true });
+  const library = scientLibraryLocation(scientLibraryRootFor(NodePath.join(base, "state")));
+  return {
+    base,
+    library,
+    project: NodePath.join(base, "project"),
+    ...structuredClone(template.seeded),
+  };
 }
 
 describe("the move", () => {

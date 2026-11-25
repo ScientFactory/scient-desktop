@@ -52,14 +52,33 @@ describe("Linux packaging CI contracts", () => {
       ?.run ?? "";
   const installed = installation.match(/sudo apt-get install[^\n]+/)?.[0].split(/\s+/) ?? [];
 
-  it.each(LINUX_DESKTOP_BUILD_PREREQUISITES)(
-    "provides $id required by the production packer",
-    (requirement) => {
-      if (requirement.id === "cargo" || requirement.id === "rust-target") {
+  // The Rust toolchain action provides Cargo and the requested target; every other prerequisite
+  // needs its apt packages. Prerequisites that need the same thing share one check, named by all
+  // of their ids, so a prerequisite whose packages change gets a check of its own.
+  const rustToolchain = new Set<string>(["cargo", "rust-target"]);
+  const groups = new Map<string, { ids: Array<string>; packages: ReadonlyArray<string> }>();
+  for (const requirement of LINUX_DESKTOP_BUILD_PREREQUISITES) {
+    const rust = rustToolchain.has(requirement.id);
+    const key = rust ? "rust-toolchain" : [...requirement.packages].sort().join(" ");
+    const group = groups.get(key) ?? { ids: [], packages: rust ? [] : requirement.packages };
+    group.ids.push(requirement.id);
+    groups.set(key, group);
+  }
+  const prerequisiteGroups = [...groups].map(([key, group]) => ({
+    ids: group.ids.join(", "),
+    rust: key === "rust-toolchain",
+    packages: group.packages,
+  }));
+
+  // regression: 617b9a8b2db fix(ci): install the Linux AppImage icon prerequisite
+  it.each(prerequisiteGroups)(
+    "provides $ids required by the production packer",
+    ({ rust, packages }) => {
+      if (rust) {
         expect(steps.some((step) => step.uses?.startsWith("dtolnay/rust-toolchain@"))).toBe(true);
         expect(workflow.jobs.appimage["runs-on"]).toBe("ubuntu-24.04");
       } else {
-        for (const dependency of requirement.packages) expect(installed).toContain(dependency);
+        for (const dependency of packages) expect(installed).toContain(dependency);
       }
     },
   );

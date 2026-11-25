@@ -935,6 +935,8 @@ describe("bounded TIFF block decoders", () => {
     const stream = new Blob([zeros]).stream().pipeThrough(new CompressionStream("deflate"));
     const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
     await expect(inflateBounded(compressed, 1_000)).rejects.toThrow("oversized");
-    expect(new Uint8Array(await inflateBounded(compressed, 1 << 20))).toEqual(zeros);
+    const inflated = Buffer.from(await inflateBounded(compressed, 1 << 20));
+    expect(inflated.byteLength).toBe(zeros.byteLength);
+    expect(inflated.equals(Buffer.from(zeros.buffer)), "inflated bytes").toBe(true);
   });
 });

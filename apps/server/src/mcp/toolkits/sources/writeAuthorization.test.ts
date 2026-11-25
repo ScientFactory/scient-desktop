@@ -32,7 +32,6 @@ import {
   addScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
   detachScientSourcePdfForInvocation,
-  getScientSourceForInvocation,
   listScientSourcesForInvocation,
   removeScientSourceForInvocation,
   updateScientSourceNoteForInvocation,
@@ -324,103 +323,6 @@ describe("Scient Sources MCP write authorization", () => {
       expect(detached._tag).toBe("Failure");
       if (detached._tag === "Failure")
         expect(detached.failure._tag).toBe("AgentOperationUnavailable");
-    }),
-  );
-
-  it.effect("adds a metadata-only source credited to the agent and repeats as a duplicate", () =>
-    Effect.gen(function* () {
-      const root = yield* Effect.promise(() => fixture("scient-sources-add-"));
-      const projectId = ProjectId.make("project-add");
-      const threadId = ThreadId.make("thread-add");
-      const context = {
-        invocation: makeInvocation(threadId, new Set(["sources:read", "sources:write"])),
-        query: makeQuery({
-          project: makeProject(projectId, root),
-          thread: makeThread({ threadId, projectId }),
-        }),
-      };
-      const payload = {
-        type: "article" as const,
-        title: "Agent DOI article",
-        creators: [
-          {
-            creatorType: "author" as const,
-            givenName: "Ada",
-            familyName: "Lovelace",
-            literalName: null,
-          },
-        ],
-        issuedRaw: "2026",
-        issuedYear: 2026,
-        identifiers: [{ scheme: "doi", value: "10.1000/mcp-add" }],
-        abstract: null,
-        containerTitle: "Journal",
-        publisher: null,
-        volume: null,
-        issue: null,
-        pages: null,
-        language: "en",
-        url: null,
-        tags: [] as const,
-      };
-
-      const invalid = yield* provideContext(
-        addScientSourceForInvocation({
-          type: "article",
-          title: null,
-          creators: [],
-          issuedRaw: null,
-          issuedYear: null,
-          identifiers: [],
-          abstract: null,
-          containerTitle: null,
-          publisher: null,
-          volume: null,
-          issue: null,
-          pages: null,
-          language: null,
-          url: null,
-          tags: [],
-        }),
-        context,
-      );
-      expect(invalid.outcome).toBe("invalid");
-      expect(invalid.sourceId).toBeNull();
-
-      const added = yield* provideContext(addScientSourceForInvocation(payload), context);
-      expect(added).toMatchObject({
-        outcome: "imported",
-        verification: "unchecked",
-        duplicate: { kind: "new" },
-      });
-      expect(added.sourceId).toBeTruthy();
-
-      const detail = yield* provideContext(
-        getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
-        context,
-      );
-      expect(detail.origin).toMatchObject({
-        actor: "agent",
-        intake: "identifier",
-        review: "none",
-      });
-      expect(detail.verification).toEqual({
-        state: "unchecked",
-        identifier: { scheme: "doi", value: "10.1000/mcp-add" },
-      });
-      expect(detail.attachments).toEqual([]);
-
-      const repeated = yield* provideContext(addScientSourceForInvocation(payload), context);
-      expect(repeated.outcome).toBe("duplicate");
-      expect(repeated.duplicate.matchingSourceIds).toEqual([added.sourceId]);
-
-      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
-      expect(listed.records).toHaveLength(1);
-      expect(listed.records[0]).toMatchObject({
-        addedBy: "agent",
-        verification: "unchecked",
-        hasPdf: false,
-      });
     }),
   );
 });

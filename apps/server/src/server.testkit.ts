@@ -7,8 +7,10 @@ import {
   type ScientSourcesBackendKind,
 } from "./scient/sources/SourcesBackend.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
@@ -592,6 +594,40 @@ export const makeBrowserOtlpPayload = (spanName: string) =>
     return (yield* decodeTestJson(request.body).pipe(Effect.orDie)) as OtlpTracer.TraceData;
   });
 
+let migratedTemplate: Promise<{ readonly base: string; readonly dbPath: string }> | undefined;
+// Recorded as soon as it exists, so a failed migration still removes it.
+let migratedTemplateBase: string | undefined;
+/**
+ * The routes' settings layer opens the production database file in the state folder. Each
+ * fixture starts from a copy of one closed database that the same layer created and migrated.
+ */
+const migratedDatabase = (config: ServerConfig.ServerConfig["Service"]) =>
+  Effect.promise(() => {
+    migratedTemplate ??= Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const base = yield* fs.makeTempDirectory({ prefix: "t3-router-database-" });
+        migratedTemplateBase = base;
+        const paths = yield* ServerConfig.deriveServerPaths(base, config.devUrl);
+        yield* fs.makeDirectory(paths.stateDir, { recursive: true });
+        yield* Effect.scoped(
+          Layer.build(SqlitePersistence.layerConfig).pipe(
+            Effect.provide(ServerConfig.layer({ ...config, baseDir: base, ...paths })),
+          ),
+        );
+        return { base, dbPath: paths.dbPath };
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+    return migratedTemplate.then((template) => template.dbPath);
+  });
+
+afterAll(async () => {
+  migratedTemplate = undefined;
+  if (migratedTemplateBase)
+    await NodeFSP.rm(migratedTemplateBase, { recursive: true, force: true });
+  migratedTemplateBase = undefined;
+});
+
 export const buildAppUnderTest = (options?: {
   onPairingChangesSubscribed?: Effect.Effect<void>;
   // SCIENT-FORK:START — Select the Sources backend through its reference.
@@ -706,6 +742,15 @@ export const buildAppUnderTest = (options?: {
       tailscaleServePort: 443,
       ...options?.config,
     };
+    // Only the fixture's own database starts from the template; a caller's path is left alone.
+    if (
+      options?.config?.baseDir === undefined &&
+      options?.config?.stateDir === undefined &&
+      options?.config?.dbPath === undefined
+    ) {
+      yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
+      yield* fileSystem.copyFile(yield* migratedDatabase(config), config.dbPath);
+    }
     const layerConfig = ServerConfig.layer(config);
     const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
       checkpoints: {

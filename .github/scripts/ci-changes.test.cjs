@@ -7,7 +7,6 @@ const packages = readWorkspace();
 test("every diff runs all test lanes, build and typecheck without a package subset", () => {
   for (const files of [
     [],
-    null,
     ["docs/operations/00_development.md"],
     ["docs/fixtures/scient-chat-plotly.md"],
     ["apps/mobile/src/features/review/reviewModel.ts"],
@@ -16,8 +15,6 @@ test("every diff runs all test lanes, build and typecheck without a package subs
     ["apps/server/src/git/GitManager.test.ts"],
     ["packages/contracts/src/setup.ts"],
     ["packages/shared/src/__snapshots__/cross-package.snap"],
-    [".github/workflows/ci.yml"],
-    ["unknown-root-file"],
   ]) {
     const { outputs } = decide(files, packages, false);
     for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
@@ -90,6 +87,9 @@ test("unknown paths and missing diffs fail open; main runs every lane", () => {
     [["docs/a.md"], true],
   ]) {
     const { outputs } = decide(files, packages, full);
+    for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
+      assert.equal(outputs[key], true, `${files}: ${key}`);
+    assert.equal(outputs.test_packages, "", `${files}: all workspace test tasks`);
     for (const [key, value] of Object.entries(outputs)) {
       if (key !== "test_packages" && key !== "mobile_native") assert.equal(value, true, key);
     }

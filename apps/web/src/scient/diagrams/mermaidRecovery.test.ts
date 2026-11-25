@@ -77,7 +77,8 @@ describe("atomic Mermaid recovery plans", () => {
     expect(planMermaidRecovery("\uFEFFaccTitle: Example\nflowchart LR\nA -> B")).toBeNull();
   });
 
-  it("preserves protected regions across 2,000 deterministic combinations", () => {
+  // regression: 39dd77cb5d2 fix(mermaid): extend safe diagram recovery rules (#286)
+  it("preserves protected regions for every label, line ending and index width", () => {
     const labels = [
       '"C4Context"',
       '"`Read (local)`"',
@@ -88,7 +89,12 @@ describe("atomic Mermaid recovery plans", () => {
       '"读取 → 文件"',
       '"#quot;literal#quot;"',
     ];
-    for (let index = 0; index < 2_000; index += 1) {
+    // The index picks a label and, by parity, its line ending; its decimal width (1 to 4 digits)
+    // moves the edit offsets. Eight consecutive indices at each width cover every label.
+    const indices = [0, 16, 104, 1_000].flatMap((first) =>
+      Array.from({ length: labels.length }, (_, offset) => first + offset),
+    );
+    for (const index of indices) {
       const newline = index % 2 ? "\r\n" : "\n";
       const label = labels[index % labels.length]!;
       const prefix = `---${newline}title: 'A -> B (${index})'${newline}---${newline}flowchart LR${newline}%% A -> B (${index})${newline}`;

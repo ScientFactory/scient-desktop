@@ -542,8 +542,10 @@ describe("Scient seam snapshot verification", () => {
     },
   );
 
-  it.each(
-    [
+  it("fails closed for each invalid refinement", () => {
+    const f = connectorFixture();
+    const valid = f.manifest.diffSignalRefinements;
+    for (const rules of [
       null,
       [{ signal: "absent", changed: "connector" }],
       [{ signal: "[Cc]onnectors?\\b", changed: "" }],
@@ -551,12 +553,17 @@ describe("Scient seam snapshot verification", () => {
       [{ signal: "[Cc]onnectors?\\b", changed: "connector", fileContex: "mcp" }],
       [{ signal: "[Cc]onnectors?\\b", changed: "[" }],
       [{ signal: "[Cc]onnectors?\\b", changed: "connector", fileContext: "[" }],
-    ].map((rules) => ({ rules })),
-  )("fails closed for an invalid refinement: $rules", ({ rules }) => {
-    const f = connectorFixture();
-    f.manifest.diffSignalRefinements = rules;
-    f.saveManifest();
-    expect(f.inspect().checks[0].status).toBe("unavailable");
+    ]) {
+      f.manifest.diffSignalRefinements = rules;
+      f.saveManifest();
+      expect(f.inspect().checks[0].status, JSON.stringify(rules)).toBe("unavailable");
+      if (rules === null) {
+        // The inspection rereads the manifest: a valid one passes again.
+        f.manifest.diffSignalRefinements = valid;
+        f.saveManifest();
+        expect(f.inspect().checks[0].status).toBe("passed");
+      }
+    }
   });
 
   it("refuses a conflicted local index but can still inspect an immutable committed candidate", () => {

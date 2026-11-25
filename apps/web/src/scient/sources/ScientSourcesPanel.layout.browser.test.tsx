@@ -165,13 +165,18 @@ function layoutProblems(panel: HTMLElement): string[] {
   return problems;
 }
 
-/** Tabs through the first controls; each one keyboard focus reaches must show it. */
+/**
+ * Tabs through the first controls in one keyboard command; each one keyboard focus reaches
+ * must show it. Each step is read on its own Tab's keyup, after focus has moved.
+ */
 async function unseenFocus(panel: HTMLElement, steps: number): Promise<string[]> {
   const unseen: string[] = [];
-  for (let step = 0; step < steps; step += 1) {
-    await userEvent.keyboard("{Tab}");
+  let observed = 0;
+  const read = (event: KeyboardEvent) => {
+    if (event.key !== "Tab") return;
+    observed += 1;
     const focused = document.activeElement as HTMLElement | null;
-    if (!focused || !panel.contains(focused)) continue;
+    if (!focused || !panel.contains(focused)) return;
     // The ring, outline or field highlight may sit on the control or on the field around it.
     const around = [focused, focused.parentElement, focused.parentElement?.parentElement];
     const shown = around.some((element) => {
@@ -186,7 +191,14 @@ async function unseenFocus(panel: HTMLElement, steps: number): Promise<string[]>
     if (!shown) {
       unseen.push(focused.getAttribute("aria-label") ?? focused.textContent?.slice(0, 40) ?? "");
     }
+  };
+  document.addEventListener("keyup", read, true);
+  try {
+    await userEvent.keyboard("{Tab}".repeat(steps));
+  } finally {
+    document.removeEventListener("keyup", read, true);
   }
+  expect(observed, "every Tab was read").toBe(steps);
   return unseen;
 }
 

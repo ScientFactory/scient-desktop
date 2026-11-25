@@ -3,8 +3,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import type { ScientSourceIdentifier } from "@scientfactory/scient-sources";
+import { vi } from "vite-plus/test";
 
 import { textPdf } from "../annotations/annotationTestUtils.ts";
 import { localPdfSourceInternals } from "./LocalPdfSourceAdapter.ts";
@@ -12,6 +13,33 @@ import type {
   ResolvedSourceMetadata,
   SourceIdentifierResolution,
 } from "./SourceIdentifierResolver.ts";
+
+// Public abstract services answer as for an unknown DOI (HTTP 404); any other request is an escape.
+const metadataRequests = vi.hoisted(() => ({ abstracts: [] as string[], escaped: [] as string[] }));
+vi.mock("./metadataHttp.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./metadataHttp.ts")>();
+  const abstractHosts = new Set(["api.crossref.org", "www.ebi.ac.uk", "api.openalex.org"]);
+  const noRecord = async (url: URL): Promise<never> => {
+    (abstractHosts.has(url.hostname) ? metadataRequests.abstracts : metadataRequests.escaped).push(
+      url.href,
+    );
+    throw new Error("The metadata service returned HTTP 404.");
+  };
+  return {
+    ...actual,
+    requestMetadata: async (url: URL) => {
+      metadataRequests.escaped.push(url.href);
+      return { status: 404, body: "", url };
+    },
+    requestMetadataText: noRecord,
+    requestMetadataJson: noRecord,
+  };
+});
+
+afterEach(() => {
+  metadataRequests.abstracts.splice(0);
+  expect(metadataRequests.escaped.splice(0)).toEqual([]);
+});
 
 describe("local PDF source adapter", () => {
   it("uses only one unambiguous DOI or explicitly labelled PMID", () => {
@@ -236,6 +264,9 @@ describe("local PDF source adapter", () => {
       ]);
       expect(article.fieldProvenance).toContainEqual(
         expect.objectContaining({ field: "title", origin: "doi" }),
+      );
+      expect(metadataRequests.abstracts).toContain(
+        "https://api.crossref.org/works/10.1001/jamanetworkopen.2024.8895",
       );
 
       // A registry that answers for another DOI is not taken: the PDF keeps what it says.

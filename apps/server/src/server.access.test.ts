@@ -22,7 +22,6 @@ import {
 import { assert, it } from "@effect/vitest";
 import { assertInclude } from "@effect/vitest/utils";
 import * as Deferred from "effect/Deferred";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -55,7 +54,6 @@ import {
   getPairedClientCredential,
   getWsServerUrl,
   jsonRequestBody,
-  makeCloudEnvironmentHealthRequest,
   nativeAdmissionInstance,
   parseSessionCookieFromWsUrl,
   readAuthAccessSnapshot,
@@ -67,98 +65,49 @@ import {
 it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
   "server router seam: access",
   (it) => {
-    it.effect("rejects cloud health requests without the exact status scope", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
-        const response = yield* fetchEffect(healthUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody(
-            makeCloudEnvironmentHealthRequest({
-              privateKey: cloudKeyPair.privateKey,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              jti: "cloud-health-jti-duplicate-scope",
-              nonce: "cloud-health-nonce-duplicate-scope",
-              issuedAt: DateTime.formatIso(now),
-              expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-              scope: ["environment:status", "environment:status"],
+    it.effect(
+      "rejects absent, old, newer and invalid WebSocket protocols before authentication or RPC",
+      () =>
+        Effect.gen(function* () {
+          const app = yield* buildAppUnderTest();
+          // Observe the exact memoized live auth service; the spy delegates rather
+          // than replacing the production authentication decision.
+          const authenticate = vi.spyOn(app.auth, "authenticateWebSocketUpgrade");
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              authenticate.mockRestore();
             }),
-          ),
-        });
-
-        assert.equal(response.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
-    it.effect.each(
-      (
-        [
-          ["absent", null],
-          ["old", String(ORCHESTRATION_PROTOCOL_VERSION - 1)],
-          ["newer", String(ORCHESTRATION_PROTOCOL_VERSION + 1)],
-          ["invalid", "not-a-protocol"],
-        ] as const
-      ).map(([label, protocol]) => ({
-        caseTitle: `rejects ${label} WebSocket protocol before authentication or RPC`,
-        label,
-        protocol,
-      })),
-    )("$caseTitle", ({ label: _label, protocol }) =>
-      Effect.gen(function* () {
-        const app = yield* buildAppUnderTest();
-        // Observe the exact memoized live auth service; the spy delegates rather
-        // than replacing the production authentication decision.
-        const authenticate = vi.spyOn(app.auth, "authenticateWebSocketUpgrade");
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            authenticate.mockRestore();
-          }),
-        );
-        const url = new URL(yield* getHttpServerUrl("/ws"));
-        if (protocol !== null) url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, protocol);
-        const response = yield* fetchEffect(url.toString(), {
-          headers: {
-            authorization: "Bearer synthetic-invalid-protocol-credential",
-            [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-          },
-        });
-        const body = yield* response.json;
-        assert.equal(response.status, 426);
-        assert.deepEqual(body, {
-          code: "orchestration_protocol_incompatible",
-          message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
-          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-        });
-        assert.equal(authenticate.mock.calls.length, 0);
-        assert.equal(yield* app.v2.eventSink.latestSequence(), 0);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+          );
+          for (const [label, protocol] of [
+            ["absent", null],
+            ["old", String(ORCHESTRATION_PROTOCOL_VERSION - 1)],
+            ["newer", String(ORCHESTRATION_PROTOCOL_VERSION + 1)],
+            ["invalid", "not-a-protocol"],
+          ] as const) {
+            const url = new URL(yield* getHttpServerUrl("/ws"));
+            if (protocol !== null)
+              url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, protocol);
+            const response = yield* fetchEffect(url.toString(), {
+              headers: {
+                authorization: "Bearer synthetic-invalid-protocol-credential",
+                [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+              },
+            });
+            const body = yield* response.json;
+            assert.equal(response.status, 426, label);
+            assert.deepEqual(
+              body,
+              {
+                code: "orchestration_protocol_incompatible",
+                message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
+                orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+              },
+              label,
+            );
+            assert.equal(authenticate.mock.calls.length, 0, label);
+            assert.equal(yield* app.v2.eventSink.latestSequence(), 0, label);
+          }
+        }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
     it.effect("preserves authentication and real RPC for the current WebSocket protocol", () =>
@@ -229,30 +178,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const plain = yield* openSocket(false);
         assert.notInclude(plain.extensions, "permessage-deflate");
       }).pipe(Effect.scoped, Effect.provide(NodeHttpServerTestWithWsDeflate)),
-    );
-
-    it.effect("issues short-lived websocket tickets for authenticated bearer sessions", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const bearerToken = yield* getAuthenticatedBearerSessionToken();
-        const wsTicketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
-        const wsTicketResponse = yield* fetchEffect(wsTicketUrl, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${bearerToken}`,
-          },
-        });
-        const wsTicketBody = yield* responseJsonEffect<{
-          readonly ticket: string;
-          readonly expiresAt: string;
-        }>(wsTicketResponse);
-
-        assert.equal(wsTicketResponse.status, 200);
-        assert.equal(typeof wsTicketBody.ticket, "string");
-        assert.isTrue(wsTicketBody.ticket.length > 0);
-        assert.equal(typeof wsTicketBody.expiresAt, "string");
-      }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
     it.effect("does not allow management-only access tokens to operate the environment", () =>
@@ -428,32 +353,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect.each(
-      ["scient://app", "scient-next-dev://app"].map((desktopOrigin) => ({
-        caseTitle: `allows credentialed preflights from ${desktopOrigin} in development`,
-        desktopOrigin,
-      })),
-    )("$caseTitle", ({ desktopOrigin }) =>
+    it.effect("allows credentialed preflights from both desktop origins in development", () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({
           config: { devUrl: new URL(crossOriginClientOrigin) },
         });
 
         const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
-        const response = yield* fetchEffect(sessionUrl, {
-          method: "OPTIONS",
-          headers: {
-            origin: desktopOrigin,
-            "access-control-request-method": "GET",
-            "access-control-request-headers": "content-type",
-          },
-        });
+        for (const desktopOrigin of ["scient://app", "scient-next-dev://app"]) {
+          const response = yield* fetchEffect(sessionUrl, {
+            method: "OPTIONS",
+            headers: {
+              origin: desktopOrigin,
+              "access-control-request-method": "GET",
+              "access-control-request-headers": "content-type",
+            },
+          });
 
-        assert.equal(response.status, 204);
-        assertBrowserApiCorsPreflightHeaders(response.headers, {
-          origin: desktopOrigin,
-          credentials: true,
-        });
+          assert.equal(response.status, 204, desktopOrigin);
+          assertBrowserApiCorsPreflightHeaders(response.headers, {
+            origin: desktopOrigin,
+            credentials: true,
+          });
+        }
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 

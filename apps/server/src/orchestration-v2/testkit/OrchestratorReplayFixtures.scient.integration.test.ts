@@ -42,13 +42,15 @@ describe("Claude background subagent replay regressions", () => {
 
   // regression: a8c4802418 fix(server): a background Claude subagent's work shows while its parent is idle (#16486)
 
-  it.effect.each(
-    (["WebFetch", "Write"] as const).flatMap((tool) =>
-      (["before root settles", "while root is idle"] as const).flatMap((opens) =>
-        (["stopped", "failed"] as const).map((status) => [tool, opens, status] as const),
-      ),
-    ),
-  )(
+  // ClaudeReplayFixtures.integration.test.ts runs the other two rows of this matrix.
+  it.effect.each([
+    ["WebFetch", "before root settles", "stopped"],
+    ["WebFetch", "before root settles", "failed"],
+    ["WebFetch", "while root is idle", "failed"],
+    ["Write", "before root settles", "stopped"],
+    ["Write", "while root is idle", "stopped"],
+    ["Write", "while root is idle", "failed"],
+  ] as const)(
     "ends a background subagent's open %s (opened %s) when its notification is %s",
     ([tool, opens, notificationStatus]) =>
       runReplayFixture({
