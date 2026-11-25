@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics globalFetch:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -432,6 +433,76 @@ describe("Scient's Oh My Pi extension", () => {
       expect(await status(host)).toEqual([
         "Scient connected: 1 tools. Full access; no native sandbox. Broken: unavailable. GitHub: 1 tools.",
       ]);
+    });
+
+    /** Holds every request to `url` until the returned function is called. */
+    const holdServer = (url: string) => {
+      const answer = globalThis.fetch;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+        if (input === url) await held;
+        return answer(input, init);
+      });
+      return release;
+    };
+
+    /** Runs the extension past its startup wait for tool catalogs. */
+    const loadPastStartupWait = async (load: Promise<void>) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await vi.advanceTimersByTimeAsync(5_000);
+        await load;
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+
+    // regression: one connector that never answered kept Scient Agent from starting.
+    it("starts without a connector that has not answered, and adds its tools when it does", async () => {
+      stubServers({ [GITHUB]: ["search"], [LINEAR]: ["list"] });
+      const release = holdServer(LINEAR);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        CONNECTED,
+      );
+      const host = makeApi();
+
+      await loadPastStartupWait((await extension.importFresh())(host.api));
+
+      expect([...host.tools.keys()]).toEqual(["scient_fixture", "github__search"]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. GitHub: 1 tools. Linear: connecting.",
+      ]);
+      release();
+      await vi.waitFor(() => expect(host.tools.has("linear__list")).toBe(true));
+      expect((await host.tools.get("linear__list")!.execute("late", {})).content).toEqual([
+        { type: "text", text: `${LINEAR} ran list` },
+      ]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. GitHub: 1 tools. Linear: 1 tools.",
+      ]);
+    });
+
+    it("starts before Scient's own tools arrive, then adds them as essential", async () => {
+      stubServers({ [GITHUB]: ["search"] });
+      const release = holdServer(SESSION.endpoint);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const host = makeApi();
+
+      await loadPastStartupWait((await extension.importFresh())(host.api));
+
+      expect([...host.tools.keys()]).toEqual(["github__search"]);
+      expect(await status(host)).toEqual([
+        "Scient connecting. Full access; no native sandbox. GitHub: 1 tools.",
+      ]);
+      release();
+      await vi.waitFor(() => expect(host.tools.get("scient_fixture")?.loadMode).toBe("essential"));
     });
 
     const calledTools = (
