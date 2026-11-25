@@ -286,6 +286,8 @@ function sandbox() {
   const git = (...args) =>
     NodeChildProcess.execFileSync("git", args, { cwd: workspace, stdio: "ignore" });
   git("init", "-q");
+  // The literal-LF assertions below hold whatever line endings the machine's Git prefers.
+  git("config", "core.autocrlf", "false");
   NodeFS.writeFileSync(NodePath.join(workspace, "recipe.json"), "{}\n");
   NodeFS.writeFileSync(NodePath.join(workspace, "kept.txt"), "before\n");
   git("add", ".");
@@ -600,6 +602,25 @@ NodeTest.test("a child started while the role's processes stop is the role's too
       end("kernels", [], env, system),
       /processes still running after being stopped: \/usr\/bin\/make \(4401\)/,
     );
+  } finally {
+    box.cleanup();
+  }
+});
+
+NodeTest.test("the steps after a role get setup's temporary files back", async () => {
+  const box = sandbox();
+  const { env, system } = box;
+  try {
+    env.TMP = NodePath.join(box.root, "setup-temp");
+    NodeFS.mkdirSync(env.TMP);
+    begin("people", [], env, system);
+    NodeAssert.equal(box.stepEnv().TMPDIR, roleTemp(env, "people"));
+    await end("people", [], env, system);
+    const next = box.stepEnv();
+    for (const name of ["TMPDIR", "TMP", "TEMP"]) {
+      NodeAssert.equal(next[name], env.TMP, name);
+      NodeFS.rmSync(NodeFS.mkdtempSync(NodePath.join(next[name], "next-")), { recursive: true });
+    }
   } finally {
     box.cleanup();
   }

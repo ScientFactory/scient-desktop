@@ -95,6 +95,7 @@ export const roleTemp = (env, role) => NodePath.join(env.RUNNER_TEMP, "cr", role
 const seedDirectory = (env) => NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed");
 // Setup's R libraries as it left them, by their index in the seed's list; roles never write here.
 const savedLibrary = (env, index) => NodePath.join(seedDirectory(env), "R", String(index));
+const TEMP_VARIABLES = ["TMPDIR", "TMP", "TEMP"];
 
 // `ps -o pid=,ppid=,uid=,stat=,comm=`, without zombies: exited, they wait only to be reaped.
 export function parseUnixProcesses(text) {
@@ -510,7 +511,8 @@ const writable = (path) => {
 };
 
 /**
- * Saved when the first role begins: what setup left in HOME_STATE and R's libraries, with a copy of each one a role could write (setup's user library among them).
+ * Saved when the first role begins: what setup left in HOME_STATE, its temporary-file paths, and
+ * R's libraries, with a copy of each one a role could write (setup's user library among them).
  */
 function seed(env, system) {
   if (NodeFS.existsSync(stateFile(env, "seed"))) return { setup: readState(env, "seed") };
@@ -539,8 +541,10 @@ function seed(env, system) {
     copy(library, savedLibrary(env, index));
     copies.push(library);
   }
+  const fallback = env.TMPDIR || env.TEMP || env.TMP || NodeOS.tmpdir();
   const setup = {
     home: saved,
+    temp: Object.fromEntries(TEMP_VARIABLES.map((name) => [name, env[name] || fallback])),
     rUser,
     rLibraries: Object.fromEntries(libraries.map((library) => [library, rPackages(library)])),
     rCopies: copies,
@@ -557,7 +561,7 @@ export function begin(role, args, env, system = host) {
   // Normally the last role's end did this already.
   if (!fresh) restoreHomeState(env, system.home(), setup);
   const owner = `${role}-${NodeCrypto.randomUUID()}`;
-  const lines = [...["TMPDIR", "TMP", "TEMP"].map((name) => [name, temp]), [OWNER_VARIABLE, owner]];
+  const lines = [...TEMP_VARIABLES.map((name) => [name, temp]), [OWNER_VARIABLE, owner]];
   // The role's own R user library, seeded from setup's copy, never from the live library.
   if (setup.rUser) {
     const library = NodePath.join(temp, "R-library");
@@ -703,6 +707,11 @@ export async function end(role, args, env, system = host) {
     }
   }
   remove(roleTemp(env, role));
+  // Later steps, and the job's post steps, get setup's temporary files back.
+  NodeFS.appendFileSync(
+    env.GITHUB_ENV,
+    TEMP_VARIABLES.map((name) => `${name}=${setup.temp[name]}\n`).join(""),
+  );
   if (problems.length) throw new Error(`${label}: ${problems.join("; ")}`);
 }
 
