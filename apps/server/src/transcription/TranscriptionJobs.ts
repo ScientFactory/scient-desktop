@@ -16,6 +16,7 @@ import {
   type ThreadId,
   TranscriptionWord,
   TranscriptionWords,
+  type RecordingEngineSelection,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Clock from "effect/Clock";
@@ -46,6 +47,7 @@ import { isCloudResponseError } from "./cloud.ts";
 import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as SpeechModelStore from "../speech/SpeechModelStore.ts";
 import {
   atomicWrite,
@@ -90,10 +92,15 @@ import {
 } from "./subtitleMedia.ts";
 import {
   finishCapture,
+  readCaptions,
   recoverCaptures,
+  saveCaption,
   saveCaptureChunk,
   touchCapture,
 } from "./RecordingCapture.ts";
+import { connectLessonTalk, LessonTalkError, lessonInstructions } from "./lessonTalk.ts";
+
+const isLessonTalkError = Schema.is(LessonTalkError);
 import {
   prepareImportedTranscript,
   prepareSubtitles,
@@ -164,6 +171,9 @@ export const BatchStartRequest = Schema.Struct({
 const captureId = Schema.String.check(
   Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/),
 );
+const lessonLanguage = Schema.String.check(
+  Schema.isPattern(/^(?:auto|[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$/),
+);
 const captureIndex = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThan(100_000_000),
@@ -196,7 +206,36 @@ export const Request = Schema.Union([
   }),
   Schema.Struct({ action: Schema.Literal("capture-recover"), project: path }),
   Schema.Struct({ action: Schema.Literal("capture-touch"), project: path, id: captureId }),
-  Schema.Struct({ action: Schema.Literal("capture-finish"), project: path, id: captureId }),
+  /** A lesson's start: keeps its lease and names the engine its live captions use. */
+  Schema.Struct({
+    action: Schema.Literal("capture-start"),
+    project: path,
+    id: captureId,
+    language: Schema.optionalKey(lessonLanguage),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("capture-caption"),
+    project: path,
+    id: captureId,
+    window: captureIndex,
+    start: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    end: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    text: Schema.String.check(Schema.isMaxLength(20_000)),
+  }),
+  /** A spoken question with the user's OpenAI key: the window's offer, answered by OpenAI. */
+  Schema.Struct({
+    action: Schema.Literal("capture-talk"),
+    project: path,
+    id: captureId,
+    sdpOffer: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64_000)),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("capture-finish"),
+    project: path,
+    id: captureId,
+    /** Recorded as a lesson: transcribe it with the recording default, then make its notes. */
+    lesson: Schema.optionalKey(Schema.Struct({ language: lessonLanguage })),
+  }),
   Schema.Struct({ action: Schema.Literal("media-register"), project: path, source: path }),
   Schema.Struct({ action: Schema.Literal("revision"), project: path, id: RevisionId }),
   Schema.Struct({ action: Schema.Literal("inventory"), project: path, ...InventoryInput.fields }),
@@ -327,12 +366,17 @@ type JobOptions = {
   projectOnly?: boolean;
   waitSeconds?: number;
   threadId?: ThreadId;
+  /** A lesson's transcription: its notes follow when it completes. */
+  lesson?: boolean;
 };
 
 export type SettledTranscription = {
-  threadId: ThreadId;
+  /** The thread that started the job, told when it settles. */
+  threadId?: ThreadId;
   id: string;
   stage: "completed" | "failed" | "canceled";
+  /** A lesson's job, with its project folder, so its notes can be made. */
+  lesson?: { project: string };
 };
 
 export class TranscriptionJobs extends Context.Service<
@@ -345,7 +389,19 @@ export class TranscriptionJobs extends Context.Service<
       | Status
       | Status[]
       | { media: RecordingSource[] }
-      | { captured: true; source?: string }
+      | {
+          captured: true;
+          source?: string;
+          transcription?: "started" | "queued" | "unavailable";
+        }
+      | {
+          captured: true;
+          language: string;
+          captions?: RecordingEngineSelection;
+          transcription?: "unavailable";
+          talk: { openai: boolean };
+        }
+      | { sdpAnswer: string }
       | { detectedLanguage: string | null }
       | Published
       | typeof EngineInventory.Type
@@ -807,6 +863,14 @@ const make = Effect.gen(function* () {
         if (opts?.scoped && NodePath.relative(input.project, project) !== "")
           throw invalid("The registered project path has changed.");
         const root = NodePath.join(project, "Transcripts");
+        const projectId = async () => {
+          const registered = await run(projects.findActiveByWorkspaceRoot(input.project));
+          const match =
+            Option.isNone(registered) && input.project !== project
+              ? await run(projects.findActiveByWorkspaceRoot(project))
+              : registered;
+          return Option.isSome(match) ? match.value.projectId : undefined;
+        };
         const rootStat = await NodeFSP.lstat(root).catch((error: unknown) => {
           if (missing(error)) return undefined;
           throw error;
@@ -887,12 +951,63 @@ const make = Effect.gen(function* () {
         };
         if (input.action === "media-register")
           return { media: [await registerMedia(input.source)] };
+        if (input.action === "capture-start") {
+          await run(
+            captureGate.withPermit(Effect.promise(() => touchCapture(root, input.id, nowMs))),
+          );
+          const language = input.language ?? "auto";
+          const engine = await run(
+            resolveDefaultEngine(project, { language }, false).pipe(Effect.option),
+          );
+          const captions = Option.isNone(engine)
+            ? undefined
+            : engine.value.engine === "local"
+              ? { kind: "local" as const, modelId: engine.value.model }
+              : engine.value.engine === "cloud" && engine.value.cloudEngineId
+                ? { kind: "cloud" as const, engineId: engine.value.cloudEngineId }
+                : engine.value.engine === "chatgpt" && engine.value.providerInstanceId
+                  ? { kind: "chatgpt" as const, instanceId: engine.value.providerInstanceId }
+                  : undefined;
+          const key = await run(
+            cloud.realtimeKey(await projectId()).pipe(Effect.orElseSucceed(() => undefined)),
+          );
+          return {
+            captured: true as const,
+            language,
+            ...(captions ? { captions } : {}),
+            ...(Option.isSome(engine) ? {} : { transcription: "unavailable" as const }),
+            talk: { openai: key !== undefined },
+          };
+        }
+        if (input.action === "capture-talk") {
+          const key = await run(
+            cloud.realtimeKey(await projectId()).pipe(Effect.orElseSucceed(() => undefined)),
+          );
+          if (!key) throw invalid("Add an OpenAI speech engine to talk with your key.");
+          try {
+            const sdpAnswer = await connectLessonTalk({
+              key: Redacted.value(key),
+              sdpOffer: input.sdpOffer,
+              instructions: lessonInstructions(await readCaptions(root, input.id)),
+              signal: AbortSignal.timeout(20_000),
+            });
+            return { sdpAnswer };
+          } catch (cause) {
+            throw new TranscriptionError({
+              code: "model-unavailable",
+              detail: isLessonTalkError(cause)
+                ? cause.message
+                : "OpenAI could not start the conversation.",
+            });
+          }
+        }
         if (
           input.action === "capture-chunk" ||
           input.action === "capture-touch" ||
+          input.action === "capture-caption" ||
           input.action === "capture-finish"
         ) {
-          return await run(
+          const result = await run(
             captureGate.withPermit(
               Effect.promise(async () => {
                 if (input.action === "capture-chunk") {
@@ -903,11 +1018,28 @@ const make = Effect.gen(function* () {
                   await touchCapture(root, input.id, nowMs);
                   return { captured: true as const };
                 }
+                if (input.action === "capture-caption") {
+                  await saveCaption(root, input.id, {
+                    window: input.window,
+                    start: input.start,
+                    end: Math.max(input.start, input.end),
+                    text: input.text.trim(),
+                  });
+                  return { captured: true as const };
+                }
                 const source = await finishCapture(root, input.id, registerMedia);
                 return { captured: true as const, ...(source ? { source } : {}) };
               }),
             ),
           );
+          if (input.action !== "capture-finish" || !input.lesson || !("source" in result))
+            return result;
+          const transcription = await run(
+            startLesson(project, result.source, input.lesson.language).pipe(
+              Effect.orElseSucceed(() => "unavailable" as const),
+            ),
+          );
+          return { ...result, transcription };
         }
         if (input.action === "capture-recover" || input.action === "media-list") {
           if (rootStat && !agent)
@@ -983,14 +1115,6 @@ const make = Effect.gen(function* () {
           }
         };
 
-        const projectId = async () => {
-          const registered = await run(projects.findActiveByWorkspaceRoot(input.project));
-          const match =
-            Option.isNone(registered) && input.project !== project
-              ? await run(projects.findActiveByWorkspaceRoot(project))
-              : registered;
-          return Option.isSome(match) ? match.value.projectId : undefined;
-        };
         const projectWords = () => readProjectWords(root, projectId);
         const readWords = async (directory: string) =>
           (await (directory === root ? serializeWords(projectWords) : readWordsFile(directory)))
@@ -2001,6 +2125,7 @@ const make = Effect.gen(function* () {
                 words,
                 correction,
                 ...(previous ? { previousRevision: previous.job.id } : {}),
+                ...(opts?.lesson ? { lesson: true as const } : {}),
               };
           const update = (state: State) => {
             current.status = { ...current.status, job, state };
@@ -2134,7 +2259,8 @@ const make = Effect.gen(function* () {
                       id === undefined
                         ? null
                         : userSettings.projectSettingsOverrides[id]?.recordingNotesRecipe;
-                    if (recipe?.trim()) {
+                    // A lesson's notes come from its own thread once it settles.
+                    if (recipe?.trim() && !job.lesson) {
                       try {
                         const published = await readJson<Published>(directory, "transcript.json");
                         const transcript = published.segments.map(({ text }) => text).join("\n");
@@ -2197,15 +2323,22 @@ const make = Effect.gen(function* () {
                 await atomicWrite(NodePath.join(directory, "state.json"), JSON.stringify(state));
                 update(state);
                 if (
-                  userSettings.recordingDefaults?.notify !== false &&
-                  opts?.threadId &&
-                  (state.stage === "completed" ||
-                    state.stage === "failed" ||
-                    state.stage === "canceled")
+                  state.stage === "completed" ||
+                  state.stage === "failed" ||
+                  state.stage === "canceled"
                 ) {
-                  await run(
-                    PubSub.publish(settled, { threadId: opts.threadId, id, stage: state.stage }),
-                  );
+                  const threadId =
+                    userSettings.recordingDefaults?.notify !== false ? opts?.threadId : undefined;
+                  const lesson = job.lesson ? { project: input.project } : undefined;
+                  if (threadId || lesson)
+                    await run(
+                      PubSub.publish(settled, {
+                        id,
+                        stage: state.stage,
+                        ...(threadId ? { threadId } : {}),
+                        ...(lesson ? { lesson } : {}),
+                      }),
+                    );
                 }
               });
             }),
@@ -2264,11 +2397,16 @@ const make = Effect.gen(function* () {
     Effect.mapError(() => new DictationWordsError({ message: "Could not open or save Words." })),
   );
 
-  const startScoped = Effect.fn("TranscriptionJobs.startScoped")(function* (
+  /**
+   * The engine and model a recording uses when its start names none: the recording default for
+   * its language, else an installed local model. `agent` also requires agent cloud uploads.
+   */
+  const resolveDefaultEngine = Effect.fn("TranscriptionJobs.resolveDefaultEngine")(function* (
     project: string,
-    input: ScopedStart,
-    waitSeconds: number,
-    threadId?: ThreadId,
+    input: Partial<
+      Pick<StartInput, "engine" | "model" | "language" | "cloudEngineId" | "providerInstanceId">
+    >,
+    agent: boolean,
   ) {
     const language = input.language ?? "auto";
     const settings = yield* serverSettings.getSettings.pipe(Effect.mapError(failureResponse));
@@ -2289,7 +2427,7 @@ const make = Effect.gen(function* () {
         detail:
           "Your recording default needs attention. Reconnect it or choose another engine in Transcription settings.",
       });
-    if (engine !== "local") yield* requireCloudUpload();
+    if (agent && engine !== "local") yield* requireCloudUpload();
     if (selection?.kind === "local") {
       const candidate = getTranscriptionModel(selection.modelId);
       if (
@@ -2338,6 +2476,17 @@ const make = Effect.gen(function* () {
         code: "model-unavailable",
         detail: "Select or install a model from scient_transcription_engines.",
       });
+    return { language, engine, model, cloudEngineId, providerInstanceId, defaults };
+  });
+
+  const startScoped = Effect.fn("TranscriptionJobs.startScoped")(function* (
+    project: string,
+    input: ScopedStart,
+    waitSeconds: number,
+    threadId?: ThreadId,
+  ) {
+    const { language, engine, model, cloudEngineId, providerInstanceId, defaults } =
+      yield* resolveDefaultEngine(project, input, true);
     const started = yield* execute(
       {
         ...input,
@@ -2362,6 +2511,45 @@ const make = Effect.gen(function* () {
       return yield* invalid("Expected a transcription job.");
     }
     return started;
+  });
+  /** Transcribes a finished lesson with the recording default; waits its turn when one is running. */
+  const startLesson = Effect.fn("TranscriptionJobs.startLesson")(function* (
+    project: string,
+    source: string,
+    language: string,
+  ): Effect.fn.Return<"started" | "queued", TranscriptionError> {
+    const resolved = yield* resolveDefaultEngine(project, { language }, false);
+    const request = {
+      action: "start" as const,
+      project,
+      source,
+      engine: resolved.engine,
+      model: resolved.model,
+      language: resolved.language,
+      ...(resolved.cloudEngineId ? { cloudEngineId: resolved.cloudEngineId } : {}),
+      ...(resolved.providerInstanceId ? { providerInstanceId: resolved.providerInstanceId } : {}),
+    };
+    const attempt = execute(request, { lesson: true }).pipe(Effect.result);
+    const first = yield* attempt;
+    if (first._tag === "Success") return "started" as const;
+    if (first.failure.code !== "busy") return yield* first.failure;
+    queuedSources.add(source);
+    yield* Effect.forkIn(
+      Effect.gen(function* () {
+        let failure = first.failure;
+        while (failure.code === "busy") {
+          const done = active?.done;
+          if (done) yield* Effect.promise(() => done.catch(() => undefined));
+          else yield* Effect.sleep("500 millis");
+          const next = yield* attempt;
+          if (next._tag === "Success") return;
+          failure = next.failure;
+        }
+        yield* Effect.logWarning("Lesson transcription could not start", { code: failure.code });
+      }).pipe(Effect.ensuring(Effect.sync(() => queuedSources.delete(source)))),
+      jobsScope,
+    );
+    return "queued" as const;
   });
   const enqueue = Effect.fn("TranscriptionJobs.enqueue")(function* (
     input: typeof BatchStartRequest.Type,
