@@ -187,7 +187,7 @@ function timelineListStateFor(identity: string): {
   };
 }
 
-// SCIENT-FORK: the longest an opening at the end stays hidden waiting for its restore
+// SCIENT-FORK: the longest an opening stays covered waiting for its restore
 // (about the restore's own settle budget, useTimelinePositionRestore.ts).
 const OPENING_REVEAL_FALLBACK_MS = 1000;
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
@@ -570,6 +570,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the thread whose positioning ran out of frames before it held
   // still (scient-fork/forkLanding.ts). No settling identity: nothing pins the end.
   const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
+  // The thread whose opening was shown before it reported positioned (OPENING_REVEAL_FALLBACK_MS).
+  const [openingShownKey, setOpeningShownKey] = useState<string | null>(null);
   // SCIENT-FORK:END
   const [playingAudioRows, setPlayingAudioRows] = useState<ReadonlyMap<HTMLAudioElement, string>>(
     () => new Map(),
@@ -595,6 +597,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setPositionedThreadKey(null);
     // SCIENT-FORK:START — a new thread's positioning starts over; no settling identity.
     setAbandonedPositionKey(null);
+    setOpeningShownKey(null);
     // SCIENT-FORK:END
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
@@ -1045,19 +1048,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows.length > 0 &&
     !positionHistoryLoading &&
     !waitingForReadingHistory;
-  // An opening at the end scrolls a frame or more after the new rows commit, so the list would
-  // first paint at the previous thread's offset (usually its top). It stays transparent until
-  // positioned (still laid out, readable and focusable, like a fork landing); a restore that never
-  // reports (no list or viewport yet) is shown anyway.
-  const openingAtEnd =
-    restoreReady &&
-    citationRequest === null &&
-    !(anchorMessageId !== null && !rememberedPosition) &&
-    !rememberedPosition?.followingPromptId &&
-    restoreRowIndex < 0;
-  const [openingShownKey, setOpeningShownKey] = useState<string | null>(null);
-  const hiddenForOpening = openingAtEnd && openingShownKey !== listIdentityKey;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bounds how long an opening at the end stays hidden if its restore never reports positioned
+  // The unkeyed list positions an opening frames after its rows commit, so it would first paint
+  // at the previous thread's offset. From its first rows until it reports positioned, a cover
+  // hides it and takes presses; the list stays readable and focusable. At most
+  // OPENING_REVEAL_FALLBACK_MS. Restyling the scroller's ancestors instead undoes reader scrolls.
+  const hiddenForOpening =
+    restoringThreadPosition && rows.length > 0 && openingShownKey !== listIdentityKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bounds how long an opening stays covered if it never reports positioned
   useEffect(() => {
     if (!hiddenForOpening) return;
     const timer = window.setTimeout(
@@ -2005,11 +2002,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {activityAnnouncer}
       <MarkdownFindContext value={findActive}>
         <TimelineRowActivityCtx value={activityState}>
-          <div
-            // SCIENT-FORK: transparent until an opening at the end is positioned.
-            className={cn("scient-reading-ui h-full min-h-0", hiddenForOpening && "opacity-0")}
-            data-timeline-opening={hiddenForOpening ? "positioning" : undefined}
-          >
+          <div className="scient-reading-ui h-full min-h-0">
             <TooltipScrollDismissArea
               ref={attachTimelineViewportElement}
               className="relative h-full min-h-0"
@@ -2092,6 +2085,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
                   });
                 }}
               />
+              {/* SCIENT-FORK:START — covers an opening until it is positioned. */}
+              {hiddenForOpening ? (
+                <div
+                  aria-hidden
+                  data-timeline-opening-cover=""
+                  className="absolute inset-0 z-50 bg-background"
+                />
+              ) : null}
+              {/* SCIENT-FORK:END */}
             </TooltipScrollDismissArea>
           </div>
         </TimelineRowActivityCtx>

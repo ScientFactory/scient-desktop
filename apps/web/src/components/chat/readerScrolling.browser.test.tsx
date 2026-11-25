@@ -1107,6 +1107,86 @@ it("leaves a scroll without reader input where it is while a fresh open settles 
   expect(node.scrollTop).toBe(0);
 });
 
+/** Whether the timeline is covered while an opening is positioned. */
+function timelineCovered(node: HTMLElement) {
+  return (
+    node
+      .closest("[data-assistant-citation-viewport]")
+      ?.querySelector("[data-timeline-opening-cover]") != null
+  );
+}
+
+it("keeps an opening covered while its history loads, then shows it at its end", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await render(
+    _fixture,
+    "geometry:opening-a",
+    Array.from({ length: 20 }, (_, i) => entry(i)),
+  );
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:opening-a")).toBeDefined();
+  });
+  const node = _fixture.listRef.current!.getScrollableNode()!;
+  // Sampled at each DOM change and scroll: once the new thread's rows are shown, it is
+  // covered or at its end, never at the previous thread's offset.
+  const shownAwayFromEnd: number[] = [];
+  const sample = () => {
+    if (!_fixture.host?.textContent?.includes("Message 229") || timelineCovered(node)) return;
+    const shortfall = Math.round(measuredEndOffset(node) - node.scrollTop);
+    if (shortfall > 1) shownAwayFromEnd.push(shortfall);
+  };
+  const commits = new MutationObserver(sample);
+  commits.observe(_fixture.host!, { subtree: true, childList: true, attributes: true });
+  node.addEventListener("scroll", sample);
+  _fixture.cleanup.defer(() => {
+    commits.disconnect();
+    node.removeEventListener("scroll", sample);
+  });
+
+  const opening = Array.from({ length: 30 }, (_, i) => entry(i + 200));
+  // The new thread's rows are already there (cached) while its history still loads.
+  await render(_fixture, "geometry:opening-b", opening, { positionHistoryLoading: true });
+  expect(_fixture.host!.textContent).toContain("Message 229");
+  expect(timelineCovered(node)).toBe(true);
+  await advanceClock(_fixture, 256);
+  expect(timelineCovered(node)).toBe(true);
+
+  await render(_fixture, "geometry:opening-b", opening);
+  await vi.waitFor(() => {
+    expect(timelineCovered(node)).toBe(false);
+  });
+  expect(Math.round(measuredEndOffset(node) - node.scrollTop)).toBeLessThanOrEqual(1);
+  expect(shownAwayFromEnd).toEqual([]);
+});
+
+it("shows an opening that never reports positioned after a second, and hides the next one again", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const stalled = Array.from({ length: 30 }, (_, i) => entry(i));
+  await render(_fixture, "geometry:opening-stalled", stalled, { positionHistoryLoading: true });
+  const node = _fixture.listRef.current!.getScrollableNode()!;
+  expect(timelineCovered(node)).toBe(true);
+  await advanceClock(_fixture, 1000);
+  await vi.waitFor(() => {
+    expect(timelineCovered(node)).toBe(false);
+  });
+
+  // The expiry belonged to that opening: visiting another thread and coming back hides again.
+  await render(
+    _fixture,
+    "geometry:opening-other",
+    Array.from({ length: 4 }, (_, i) => entry(i + 300)),
+  );
+  await vi.waitFor(() => {
+    expect(timelineCovered(node)).toBe(false);
+  });
+  await render(_fixture, "geometry:opening-stalled", stalled, { positionHistoryLoading: true });
+  expect(timelineCovered(node)).toBe(true);
+});
+
 function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
