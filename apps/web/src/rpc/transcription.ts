@@ -229,7 +229,7 @@ type Commands = {
   "recording-rename": { source: string; title: string; response: { media: RecordingSource[] } };
   "recording-trash": { source: string; response: { trashed: true } };
   pause: { id: string; response: RecordingStatus };
-  list: { includeCreated: true; query?: string; response: RecordingStatus[] };
+  list: { includeCreated: true; query?: string; source?: string; response: RecordingStatus[] };
   status: { id: string; response: RecordingStatus };
   revision: {
     id: string;

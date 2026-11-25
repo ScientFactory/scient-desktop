@@ -102,6 +102,17 @@ Right-click a recording on the Recordings page, or use its **⋯** button:
 - **Move to Trash** moves the recording with its transcripts and notes to the
   computer's Trash (the Recycle Bin on Windows), where you can restore it.
 
+## Recordings in your projects
+
+The Recordings page lists the audio and video files in your projects, including
+files you download or copy into a project folder. It skips hidden folders,
+`node_modules` and the project's `Transcripts` folder. To transcribe a file,
+choose **Transcribe** on its row, right-click it in **Files** and choose
+**Transcribe…**, or open it and choose **Transcribe** in the viewer's toolbar.
+Once the file has a transcript, that toolbar button opens it.
+**Add → Audio or video files…** copies files from outside the project into it.
+A file that is already in the project is used where it is.
+
 ## Recordings defaults
 
 To transcribe a recording, [install FFmpeg](https://ffmpeg.org/download.html)

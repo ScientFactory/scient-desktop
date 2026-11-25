@@ -216,6 +216,9 @@ import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersio
 import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
 import { OverleafConflictActions } from "~/scient/overleaf/OverleafConflictActions";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — an audio or video file's Transcribe, or its transcript
+import { TranscribeFileAction } from "~/scient/recordings/useTranscribeFile";
+// SCIENT-FORK:END
 import {
   type FileSaveResolution,
   useSessionFileWatch,
@@ -2794,6 +2797,16 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               cwd={cwd}
               relativePath={relativePath}
+              threadRef={threadRef}
+            />
+          ) : null}
+          {/* SCIENT-FORK:END */}
+          {/* SCIENT-FORK:START — an audio or video file's Transcribe, or its transcript */}
+          {(isAudio || isVideo) && absolutePath && !isHostFile && attachment === undefined ? (
+            <TranscribeFileAction
+              environmentId={environmentId}
+              cwd={cwd}
+              absolutePath={absolutePath}
               threadRef={threadRef}
             />
           ) : null}
