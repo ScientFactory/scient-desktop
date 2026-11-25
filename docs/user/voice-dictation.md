@@ -61,6 +61,17 @@ To change models later, open **Settings → Voice & Transcription**. The page sh
 is recommended for your language, which model is in use, download
 progress, and removal controls.
 
+## Recordings in your projects
+
+The Recordings page lists the audio and video files in your projects, including
+files you download or copy into a project folder. It skips hidden folders,
+`node_modules` and the project's `Transcripts` folder. To transcribe a file,
+choose **Transcribe** on its row, right-click it in **Files** and choose
+**Transcribe…**, or open it and choose **Transcribe** in the viewer's toolbar.
+Once the file has a transcript, that toolbar button opens it.
+**Add → Audio or video files…** copies files from outside the project into it.
+A file that is already in the project is used where it is.
+
 ## Recordings defaults
 
 To transcribe a recording, [install FFmpeg](https://ffmpeg.org/download.html)
