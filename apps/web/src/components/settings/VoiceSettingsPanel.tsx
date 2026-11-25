@@ -650,6 +650,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
   const canManage = useEnvironmentScope(prepared?.environmentId ?? null, AuthSettingsWriteScope);
   const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
   const [status, setStatus] = useState<EnvironmentSpeechStatus | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [requestedDownload, setRequestedDownload] = useState<string | null>(null);
   const [actionConnection, setActionConnection] = useState(prepared);
@@ -659,6 +660,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
     setRequestedDownload(null);
     setModels([]);
     setStatus(null);
+    setLoadFailed(false);
   }
   const epoch = useRef(0);
   const refreshRevision = useRef(0);
@@ -684,6 +686,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
       } catch (error) {
         if (mode === "progress") return;
         if (current !== epoch.current || revision !== refreshRevision.current) return;
+        setLoadFailed(true);
         toastManager.add({
           type: "error",
           title: gt("Could not load transcription models"),
@@ -749,6 +752,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
   return {
     models,
     status,
+    loading: prepared !== null && status === null && !loadFailed,
     run,
     controlsDisabled: busy || downloading || !canManage,
     canCancel: canManage && !busy,

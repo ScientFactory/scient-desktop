@@ -50,8 +50,7 @@ export function DictationChoices({
     { value: "off", label: gt("Off", { $context: "dictation engine" }) },
   ];
   if (!options.some((option) => option.value === value)) {
-    const loading =
-      engine === "local" ? catalog.status === null : engine === "cloud" && cloudLoading;
+    const loading = engine === "local" ? catalog.loading : engine === "cloud" && cloudLoading;
     const label =
       engine === "local" && localModel === null
         ? gt("Local model")

@@ -31,6 +31,7 @@ const fixture = vi.hoisted(() => {
   return {
     commands: [] as unknown[],
     catalogConnected: true,
+    catalogLoadFailed: false,
     removeLegacyModels: vi.fn<() => Promise<void>>(),
     languages,
     phase: "recording",
@@ -103,13 +104,15 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
   return {
     ...(await original<typeof import("@t3tools/client-runtime/voice-input")>()),
     getEnvironmentSpeechStatus: () =>
-      Effect.succeed({
-        supported: true,
-        benchmarkTier: "cpu",
-        acceleration: "auto",
-        modelUnloadTimeout: "never",
-        gpuDevices: [],
-      }),
+      fixture.catalogLoadFailed
+        ? Effect.fail("Model catalog unavailable")
+        : Effect.succeed({
+            supported: true,
+            benchmarkTier: "cpu",
+            acceleration: "auto",
+            modelUnloadTimeout: "never",
+            gpuDevices: [],
+          }),
     getEnvironmentSpeechModels: () =>
       Effect.succeed({
         models: [
@@ -586,6 +589,25 @@ it("switches engines and cleanup without moving the settings below Dictation", a
       });
       __setClientSettingsForTests(previous);
     });
+  }
+});
+
+it("shows a saved local engine as unavailable after the catalog fails to load", async () => {
+  const previous = getClientSettings();
+  fixture.catalogLoadFailed = true;
+  __setClientSettingsForTests({
+    ...previous,
+    voiceDictationEngine: "local",
+    voiceCatalogModelId: fixture.catalog.models[0]!.id,
+  });
+  try {
+    await using screen = await render(<ScientVoiceSettingsPanel />);
+    await expect
+      .element(screen.getByRole("combobox", { name: "Dictate with" }))
+      .toHaveTextContent("Selected engine unavailable");
+  } finally {
+    fixture.catalogLoadFailed = false;
+    __setClientSettingsForTests(previous);
   }
 });
 
