@@ -302,6 +302,22 @@ function prepare(
       file,
       output,
     );
+  if (route.languageId === "sage") {
+    const path = pathModule(platform);
+    if (path.isAbsolute(executable)) {
+      // Sage starts GAP by name, including when discovery found Sage outside PATH.
+      const key =
+        platform === "win32"
+          ? (Object.keys(environment).find((name) => name.toUpperCase() === "PATH") ?? "PATH")
+          : "PATH";
+      const inherited = environment[key];
+      const bin = path.dirname(executable);
+      return {
+        ...step(executable, args),
+        environment: { ...environment, [key]: inherited ? bin + path.delimiter + inherited : bin },
+      };
+    }
+  }
   if (command.build === undefined) return step(executable, args);
   // A build's runner sits beside the compiler that needs it.
   const runner = command.build.runner;
