@@ -20,6 +20,7 @@ import {
   parseWindowsProcesses,
   roleTemp,
   summarize,
+  stop,
   venv,
 } from "./compute-roles.mjs";
 
@@ -29,8 +30,8 @@ const unix = (pid, ppid, user, command, extra = {}) => ({
   ppid,
   uid: user,
   command,
-  created: null,
-  key: `${pid} ${command}`,
+  created: 0,
+  key: `${pid} ${extra.created ?? 0}`,
   ...extra,
 });
 const windows = (pid, ppid, command, created, marked = null) => ({
@@ -52,9 +53,18 @@ const verdicts = (input) => {
 NodeTest.test("reads ps and Windows process lists", () => {
   NodeAssert.deepEqual(
     parseUnixProcesses(
-      "  12     1   501 Ss   /usr/sbin/cfprefsd\n 40 12 0 S+ R\n 41 40 0 Z+ (sh)\n",
+      [
+        "  12     1   501 Ss   Tue Nov 24 21:15:00 2026     /usr/sbin/cfprefsd",
+        " 40 12 0 S+ Wed Nov  5 09:00:01 2026 R",
+        " 41 40 0 Z+ Wed Nov  5 09:00:02 2026 (sh)",
+      ].join("\n"),
     ),
-    [unix(12, 1, 501, "/usr/sbin/cfprefsd"), unix(40, 12, 0, "R")],
+    [
+      unix(12, 1, 501, "/usr/sbin/cfprefsd", {
+        created: Date.parse("Tue Nov 24 21:15:00 2026") / 1000,
+      }),
+      unix(40, 12, 0, "R", { created: Date.parse("Wed Nov 5 09:00:01 2026") / 1000 }),
+    ],
   );
   NodeAssert.deepEqual(
     parseWindowsProcesses(
@@ -103,8 +113,8 @@ NodeTest.test("on Linux, the role owns what carries its mark and what descends f
     unix(34, 5, 501, "/usr/lib/dbus-daemon", { marked: false }),
     // Another user's.
     unix(35, 1, 0, "/usr/bin/sudo", { marked: null }),
-    // The same pid running another program is a new process.
-    unix(10, 1, 501, "python3", { marked: true }),
+    // The same pid started again is a new process.
+    unix(10, 1, 501, "python3", { marked: true, created: 9 }),
   ];
   NodeAssert.deepEqual(verdicts({ before, after, self: 21, uid: 501 }), {
     owned: [30, 31, 33],
@@ -153,7 +163,44 @@ NodeTest.test("on macOS, an orphan whose environment is hidden is only reported"
   );
 });
 
-NodeTest.test("on Windows, the role owns what carries its mark or a recorded parent", () => {
+NodeTest.test("a reused pid is not the process recorded under it", () => {
+  const before = [unix(1, 0, 0, "/sbin/launchd"), unix(10, 1, 501, "Runner.Worker")];
+  const node = unix(21, 10, 501, "node", { marked: true });
+  const kernel = unix(30, 1, 501, "/usr/bin/python3", { marked: true, created: 100 });
+  const recorded = new Map([[kernel.key, kernel]]);
+  // The kernel exited and an unrelated program of the same name got its pid.
+  const reused = unix(30, 1, 501, "/usr/bin/python3", { marked: false, created: 160 });
+  NodeAssert.deepEqual(
+    verdicts({ before, after: [...before, node, reused], self: 21, uid: 501, recorded }),
+    {
+      owned: [],
+      unverified: [30],
+    },
+  );
+});
+
+NodeTest.test("each stop signal goes only to a process still the one asked for", async () => {
+  const kernel = unix(4242, 1, uid, "/usr/bin/python3", { created: 100 });
+  const reused = unix(4242, 1, uid, "/usr/bin/python3", { created: 160 });
+  let lists = 0;
+  const signals = [];
+  await stop([kernel], "linux", {
+    // The kernel exits during the wait and a new process gets its pid.
+    list: () => (++lists <= 3 ? [kernel] : [reused]),
+    signal: (pid, name) => signals.push([pid, name]),
+    wait: async () => {},
+  });
+  NodeAssert.deepEqual(signals, [[4242, "SIGTERM"]]);
+  // On Windows the one forced stop is checked the same way.
+  signals.length = 0;
+  await stop([kernel], "win32", {
+    list: () => [reused],
+    signal: (pid, name) => signals.push([pid, name]),
+  });
+  NodeAssert.deepEqual(signals, []);
+});
+
+NodeTest.test("on Windows, the role owns what carries its mark or was seen as its own", () => {
   const before = [
     windows(4, 0, "", 1),
     windows(600, 4, "C:\\Windows\\System32\\svchost.exe", 2),
@@ -179,17 +226,18 @@ NodeTest.test("on Windows, the role owns what carries its mark or a recorded par
     owned: [34, 35],
     unverified: [30, 31, 32],
   });
-  // A parent the role owned when this step saw it, which has exited since.
+  // A parent the role owned when this step saw it, which has exited since: a later process may
+  // have had its pid, so a child not seen with it is still only reported.
   const parent = windows(25, 10, "C:\\julia\\bin\\julia.exe", 15, true);
   NodeAssert.deepEqual(
     verdicts({ before, after, self: 21, uid: null, recorded: new Map([[parent.key, parent]]) }),
-    { owned: [30, 31, 34, 35], unverified: [32] },
-  );
-  // The same pid recorded for a process started after the orphan is not its parent.
-  const later = windows(25, 10, "C:\\julia\\bin\\julia.exe", 25, true);
-  NodeAssert.deepEqual(
-    verdicts({ before, after, self: 21, uid: null, recorded: new Map([[later.key, later]]) }),
     { owned: [34, 35], unverified: [30, 31, 32] },
+  );
+  // Seen as the role's earlier, under that parent, it stays the role's.
+  const seen = after.find((entry) => entry.pid === 30);
+  NodeAssert.deepEqual(
+    verdicts({ before, after, self: 21, uid: null, recorded: new Map([[seen.key, seen]]) }),
+    { owned: [30, 31, 34, 35], unverified: [32] },
   );
 });
 
@@ -561,20 +609,20 @@ NodeTest.test("an orphan nothing shows is the role's is reported and left runnin
   }
 });
 
-NodeTest.test("a child started while the role's processes stop is the role's too", async () => {
+NodeTest.test("a child seen under the role's process stays the role's after it exits", async () => {
   const box = sandbox();
   const { env, system } = box;
   try {
-    // On Windows a child keeps naming its exited parent, which this end saw as the role's.
+    // On Windows a child keeps naming its exited parent.
     system.platform = "win32";
     system.processes = () => [windows(process.pid, 1, "node.exe", 0, true), ...box.running()];
     begin("kernels", [], env, system);
     const r = windows(4300, 77, "C:\\R\\bin\\x64\\Rterm.exe", 100, true);
     const child = windows(4301, 4300, "C:\\rtools45\\usr\\bin\\sh.exe", 101);
-    box.run([r]);
+    box.run([r, child]);
     system.stop = async (processes) => {
       box.stopped.push(...processes.map((entry) => entry.pid));
-      // R exits starting a child that ignores being stopped.
+      // R exits; its child ignores being stopped.
       if (processes.includes(r)) box.run([child]);
     };
     await NodeAssert.rejects(
@@ -664,6 +712,109 @@ NodeTest.test("a library R reports with CRLF line ends is still checked", async 
       new RegExp(`changed the R library .*base64enc 0\\.1-3 -> 0\\.1-4`),
     );
   } finally {
+    box.cleanup();
+  }
+});
+
+NodeTest.test("an orphan first seen while the role's processes stop is reported", async (t) => {
+  const box = sandbox();
+  const { env, system } = box;
+  const log = t.mock.method(console, "log", () => {});
+  try {
+    // A marked parent exits as it stops and leaves a shell without the mark, adopted by pid 1 or,
+    // on Windows, still naming its parent's pid, which nothing ties to the parent seen.
+    for (const [platform, parent, orphan] of [
+      [
+        "linux",
+        unix(4500, 1, uid, "/opt/R/bin/exec/R", { marked: true }),
+        unix(4501, 1, uid, "/bin/sh", { marked: false }),
+      ],
+      [
+        "win32",
+        windows(4500, 77, "C:\\R\\bin\\x64\\Rterm.exe", 100, true),
+        windows(4501, 4500, "C:\\rtools45\\usr\\bin\\sh.exe", 101),
+      ],
+    ]) {
+      system.platform = platform;
+      const self =
+        platform === "win32"
+          ? windows(process.pid, 1, "node.exe", 0, true)
+          : unix(process.pid, 1, uid, "node", { marked: true });
+      system.processes = () => [self, ...box.running()];
+      box.stopped.length = 0;
+      log.mock.resetCalls();
+      begin("kernels", [], env, system);
+      box.run([parent]);
+      system.stop = async (processes) => {
+        box.stopped.push(...processes.map((entry) => entry.pid));
+        if (processes.includes(parent)) box.run([orphan]);
+      };
+      await end("kernels", [], env, system);
+      NodeAssert.deepEqual(box.stopped, [4500], platform);
+      NodeAssert.deepEqual(pids(box.running()), [4501], platform);
+      const warnings = log.mock.calls.map((call) => String(call.arguments[0]));
+      NodeAssert.equal(
+        warnings.filter((line) => line.includes("lost its parent") && line.includes("(4501)"))
+          .length,
+        1,
+        platform,
+      );
+    }
+  } finally {
+    box.cleanup();
+  }
+});
+
+NodeTest.test(
+  "a symlinked R user library is copied, and kept if it cannot be put back",
+  async () => {
+    const box = sandbox();
+    const { env, system } = box;
+    try {
+      const real = NodePath.join(box.root, "real-library");
+      installR(real, "jsonlite", "1.8.0");
+      const linked = NodePath.join(box.root, "linked-library");
+      NodeFS.symlinkSync(real, linked, "junction");
+      env.R_LIBS_USER = linked;
+      begin("people", [], env, system);
+      // An upgrade in the role's own library leaves setup's alone.
+      installR(box.stepEnv().R_LIBS_USER, "jsonlite", "2.0.0");
+      await end("people", [], env, system);
+      NodeAssert.match(
+        NodeFS.readFileSync(NodePath.join(real, "jsonlite", "DESCRIPTION"), "utf8"),
+        /Version: 1\.8\.0/,
+      );
+      // A role writes into setup's library and setup's copy of that package is gone: the end fails
+      // and leaves the package there rather than removing it.
+      begin("files", [], env, system);
+      installR(linked, "jsonlite", "2.0.0");
+      NodeFS.rmSync(NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed", "R", "0", "jsonlite"), {
+        recursive: true,
+      });
+      await NodeAssert.rejects(end("files", [], env, system), /could not be put back/);
+      NodeAssert.deepEqual(NodeFS.readdirSync(real), ["jsonlite"]);
+    } finally {
+      box.cleanup();
+    }
+  },
+);
+
+NodeTest.test("a read-only R user library still seeds the role's own", async () => {
+  const box = sandbox();
+  const { env, system } = box;
+  const library = NodePath.join(box.root, "read-only-library");
+  try {
+    installR(library, "jsonlite", "1.8.0");
+    NodeFS.chmodSync(library, 0o555);
+    env.R_LIBS_USER = library;
+    begin("people", [], env, system);
+    const own = box.stepEnv().R_LIBS_USER;
+    NodeAssert.deepEqual(NodeFS.readdirSync(own), ["jsonlite"]);
+    installR(own, "IRkernel", "1.3.2");
+    await end("people", [], env, system);
+  } finally {
+    NodeFS.chmodSync(library, 0o755);
+    NodeFS.chmodSync(NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed", "R", "0"), 0o755);
     box.cleanup();
   }
 });

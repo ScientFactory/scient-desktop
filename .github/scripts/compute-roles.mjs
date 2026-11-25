@@ -97,20 +97,26 @@ const seedDirectory = (env) => NodePath.join(env.RUNNER_TEMP, "compute-roles", "
 const savedLibrary = (env, index) => NodePath.join(seedDirectory(env), "R", String(index));
 const TEMP_VARIABLES = ["TMPDIR", "TMP", "TEMP"];
 
-// `ps -o pid=,ppid=,uid=,stat=,comm=`, without zombies: exited, they wait only to be reaped.
+// `ps -o pid=,ppid=,uid=,stat=,lstart=,comm=` in the C locale, without zombies: exited, they wait
+// only to be reaped. A process is its pid and start time; an exited process's pid can be reused.
 export function parseUnixProcesses(text) {
   return text
     .split("\n")
-    .map((line) => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line))
+    .map((line) =>
+      /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/.exec(line),
+    )
     .filter((match) => match && !match[4].startsWith("Z"))
-    .map(([, pid, ppid, uid, , command]) => ({
-      pid: Number(pid),
-      ppid: Number(ppid),
-      uid: Number(uid),
-      command: command.trim(),
-      created: null,
-      key: `${pid} ${command.trim()}`,
-    }));
+    .map(([, pid, ppid, uid, , started, command]) => {
+      const created = Date.parse(started) / 1000;
+      return {
+        pid: Number(pid),
+        ppid: Number(ppid),
+        uid: Number(uid),
+        command: command.trim(),
+        created,
+        key: `${pid} ${created}`,
+      };
+    });
 }
 
 export function parseWindowsProcesses(text) {
@@ -236,7 +242,11 @@ function listProcesses(platform, owner) {
         ? powershell(`${WINDOWS_ENVIRONMENT}\n${windowsList(true)}`, { COMPUTE_ROLE_MARK: mark })
         : powershell(windowsList(false)),
     );
-  const entries = parseUnixProcesses(run("ps", ["-A", "-o", "pid=,ppid=,uid=,stat=,comm="]));
+  const entries = parseUnixProcesses(
+    run("ps", ["-A", "-o", "pid=,ppid=,uid=,stat=,lstart=,comm="], {
+      env: { ...process.env, LC_ALL: "C" },
+    }),
+  );
   if (!owner) return entries;
   const darwin = platform === "darwin" ? environOnDarwin() : null;
   const services = platform === "darwin" ? launchdJobs() : new Set();
@@ -251,10 +261,9 @@ function listProcesses(platform, owner) {
 }
 
 /**
- * This user's new processes outside this step's tree. `owned`: carrying the mark, recorded owned
- * earlier, or descended from one (a Windows child still names its dead parent). `unverified`: the
- * other orphans and their children, only reported, since OS helpers (QuickLook, Spotlight, Windows
- * services) are this user's orphans too and Apple's programs hide their environment.
+ * This user's new processes outside this step's tree. `owned`: marked, recorded owned, or the child
+ * of an owned parent seen with it. `unverified`: other orphans (OS helpers, Apple's programs hiding
+ * their environment, a child whose parent's pid may since be reused) and their children: reported.
  */
 export function leftovers({ before, after, self, uid, recorded = new Map() }) {
   const known = new Set(before.map((entry) => entry.key));
@@ -275,9 +284,6 @@ export function leftovers({ before, after, self, uid, recorded = new Map() }) {
     const candidate = byPid.get(entry.ppid);
     return candidate && entry.ppid > 1 && startedAfter(entry, candidate) ? candidate : null;
   };
-  const recordedParent = (entry) =>
-    entry.ppid > 1 &&
-    [...recorded.values()].some((owner) => owner.pid === entry.ppid && startedAfter(entry, owner));
   const candidate = (entry) =>
     !known.has(entry.key) && !step.has(entry.pid) && (entry.uid === null || entry.uid === uid);
   const verdicts = new Map();
@@ -291,7 +297,6 @@ export function leftovers({ before, after, self, uid, recorded = new Map() }) {
       const inherited = parent ? verdict(parent) : null;
       if (entry.marked === true || recorded.has(entry.key) || inherited === "owned")
         result = "owned";
-      else if (!parent && recordedParent(entry)) result = "owned";
       else if ((!parent || inherited === "unverified") && !entry.service) result = "unverified";
     }
     verdicts.set(entry.pid, result);
@@ -319,33 +324,42 @@ function ownedOnWindows(candidates, user) {
   return candidates.filter((entry) => mine.has(entry.pid));
 }
 
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
+const signalProcess = (pid, name, platform) => {
+  if (platform === "win32")
+    NodeChildProcess.spawnSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore" });
+  else
+    try {
+      process.kill(pid, name);
+    } catch {
+      // Already gone.
+    }
 };
 
-async function stop(processes, platform) {
-  if (platform === "win32") {
-    for (const { pid } of processes)
-      NodeChildProcess.spawnSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore" });
-    return;
-  }
-  const signal = (name) => {
-    for (const { pid } of processes)
-      try {
-        process.kill(pid, name);
-      } catch {
-        // Already gone.
-      }
+/**
+ * Asks `processes` to stop, then forces any left. Each signal goes only to those still the same
+ * process (pid and start time) just before it: an exited process's pid can be reused.
+ */
+export async function stop(
+  processes,
+  platform,
+  {
+    list = () => listProcesses(platform),
+    signal = (pid, name) => signalProcess(pid, name, platform),
+    wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  const running = () => {
+    const current = new Set(list().map((entry) => entry.key));
+    return processes.filter((entry) => current.has(entry.key));
   };
-  signal("SIGTERM");
-  for (let waited = 0; waited < 5000 && processes.some(({ pid }) => alive(pid)); waited += 100)
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  signal("SIGKILL");
+  const send = (name) => {
+    for (const { pid } of running()) signal(pid, name);
+  };
+  if (platform !== "win32") {
+    send("SIGTERM");
+    for (let waited = 0; waited < 5000 && running().length; waited += 100) await wait(100);
+  }
+  send("SIGKILL");
 }
 
 export function homeEntries(home, parents = HOME_PARENTS) {
@@ -400,7 +414,20 @@ function restoreHomeState(env, home, seed) {
   }
 }
 
-/** Each package's version in an R library: its folder name and DESCRIPTION's Version field. */
+/** An installed R package's DESCRIPTION Version, or "" where there is none. */
+const packageVersion = (directory) => {
+  try {
+    const description = NodeFS.readFileSync(NodePath.join(directory, "DESCRIPTION"), "utf8");
+    return /^Version:\s*(\S+)/m.exec(description)?.[1] ?? "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Each package's version in an R library: its folder name and DESCRIPTION's Version field. Only
+ * name and version: a package rewritten at the same version is not seen.
+ */
 export function rPackages(library) {
   let names = [];
   try {
@@ -409,17 +436,7 @@ export function rPackages(library) {
     return {};
   }
   return Object.fromEntries(
-    names.map((name) => {
-      try {
-        const description = NodeFS.readFileSync(
-          NodePath.join(library, name, "DESCRIPTION"),
-          "utf8",
-        );
-        return [name, /^Version:\s*(\S+)/m.exec(description)?.[1] ?? ""];
-      } catch {
-        return [name, ""];
-      }
-    }),
+    names.map((name) => [name, packageVersion(NodePath.join(library, name))]),
   );
 }
 
@@ -501,18 +518,28 @@ const host = {
   },
 };
 
-const writable = (path) => {
+const allows = (path, mode) => {
   try {
-    NodeFS.accessSync(path, NodeFS.constants.W_OK);
+    NodeFS.accessSync(path, mode);
     return true;
   } catch {
     return false;
   }
 };
 
+// The directory itself, so a copy of a symlinked library is independent of it.
+const realPath = (path) => {
+  try {
+    return NodeFS.realpathSync(path);
+  } catch {
+    return NodePath.resolve(path);
+  }
+};
+
 /**
  * Saved when the first role begins: what setup left in HOME_STATE, its temporary-file paths, and
- * R's libraries, with a copy of each one a role could write (setup's user library among them).
+ * R's libraries, with a copy of each one a role could write and of setup's user library, which
+ * seeds each role's own.
  */
 function seed(env, system) {
   if (NodeFS.existsSync(stateFile(env, "seed"))) return { setup: readState(env, "seed") };
@@ -531,15 +558,19 @@ function seed(env, system) {
   const libraries = [];
   const resolved = new Set();
   for (const library of [...(rUser ? [rUser] : []), ...system.rLibraries()])
-    if (!resolved.has(NodePath.resolve(library))) {
-      resolved.add(NodePath.resolve(library));
+    if (!resolved.has(realPath(library))) {
+      resolved.add(realPath(library));
       libraries.push(library);
     }
+  // Restorable: the ones a role could write, which an end puts back from their copy.
   const copies = [];
   for (const [index, library] of libraries.entries()) {
-    if (!NodeFS.existsSync(library) || !writable(library)) continue;
-    copy(library, savedLibrary(env, index));
-    copies.push(library);
+    if (!NodeFS.existsSync(library)) continue;
+    const restorable = allows(library, NodeFS.constants.W_OK);
+    const seeds = Boolean(rUser) && index === 0 && allows(library, NodeFS.constants.R_OK);
+    if (!restorable && !seeds) continue;
+    copy(realPath(library), savedLibrary(env, index));
+    if (restorable) copies.push(library);
   }
   const fallback = env.TMPDIR || env.TEMP || env.TMP || NodeOS.tmpdir();
   const setup = {
@@ -565,8 +596,11 @@ export function begin(role, args, env, system = host) {
   // The role's own R user library, seeded from setup's copy, never from the live library.
   if (setup.rUser) {
     const library = NodePath.join(temp, "R-library");
-    if (setup.rCopies.includes(setup.rUser)) copy(savedLibrary(env, 0), library);
-    else NodeFS.mkdirSync(library, { recursive: true });
+    if (NodeFS.existsSync(savedLibrary(env, 0))) {
+      copy(savedLibrary(env, 0), library);
+      // Setup's may be read-only; the role installs into its own.
+      NodeFS.chmodSync(library, NodeFS.statSync(library).mode | 0o700);
+    } else NodeFS.mkdirSync(library, { recursive: true });
     lines.push(["R_LIBS_USER", library]);
   }
   // Later steps, until the next role begins, see only this role's temporary files and library.
@@ -608,6 +642,7 @@ export async function end(role, args, env, system = host) {
 
   // Ownership found once is kept: a child outlives its parent's shutdown as the role's.
   const recorded = new Map();
+  const reported = new Set();
   const find = () => {
     const { owned, unverified } = leftovers({
       before: before.processes,
@@ -618,13 +653,17 @@ export async function end(role, args, env, system = host) {
     });
     const mine = system.owned(owned);
     for (const entry of mine) recorded.set(entry.key, entry);
-    return { owned: mine, unverified: system.owned(unverified) };
+    // Each once, whenever first seen: a role's process can leave one as it stops.
+    for (const entry of system.owned(unverified))
+      if (!reported.has(entry.key)) {
+        reported.add(entry.key);
+        console.log(
+          `::warning::${label}: ${entry.command} (${entry.pid}) started meanwhile and lost its parent; nothing shows it is the role's, so it is left running`,
+        );
+      }
+    return { owned: mine };
   };
   const first = find();
-  for (const entry of first.unverified)
-    console.log(
-      `::warning::${label}: ${entry.command} (${entry.pid}) started meanwhile and lost its parent; nothing shows it is the role's, so it is left running`,
-    );
   for (const entry of first.owned)
     console.log(`::warning::${label} left ${entry.command} (${entry.pid}) running`);
   // Stop the owned set until none is left, re-listing it each time so children started during
@@ -677,9 +716,22 @@ export async function end(role, args, env, system = host) {
     for (const name of Object.keys({ ...packages, ...now }).filter(
       (name) => packages[name] !== now[name],
     )) {
-      remove(NodePath.join(library, name));
-      if (packages[name] !== undefined)
-        copy(NodePath.join(savedLibrary(env, index), name), NodePath.join(library, name));
+      const live = NodePath.join(library, name);
+      // Setup's copy is staged and checked first: a live package goes only once it can be replaced.
+      const staged = NodePath.join(library, `.${name}.restoring`);
+      try {
+        if (packages[name] !== undefined) {
+          remove(staged);
+          copy(NodePath.join(savedLibrary(env, index), name), staged);
+          if (packageVersion(staged) !== packages[name])
+            throw new Error(`setup's copy is ${packageVersion(staged) || "missing"}`);
+        }
+        remove(live);
+        if (packages[name] !== undefined) NodeFS.renameSync(staged, live);
+      } catch (error) {
+        remove(staged);
+        problems.push(`${live} could not be put back: ${error.message}`);
+      }
     }
     const after = packageChanges(packages, rPackages(library));
     if (after.length) problems.push(`${library} could not be put back: ${after.join(", ")}`);
