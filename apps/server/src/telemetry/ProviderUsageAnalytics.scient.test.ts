@@ -16,6 +16,7 @@ const providers = [
   {
     instanceId: ProviderInstanceId.make("claudeAgent"),
     driver: "claudeAgent",
+    auth: { status: "authenticated" },
     models: [{ slug: "claude-opus-5-5", isCustom: false }],
   } as unknown as ServerProvider,
 ];

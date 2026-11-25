@@ -172,7 +172,20 @@ it.effect(
                 }),
                 Layer.mock(CheckpointStore.CheckpointStore)({
                   isGitRepository: () => Effect.succeed(true),
-                  captureCheckpoint: () => Effect.succeed(null),
+                  // A capture reads the previous checkpoint itself: null when there is none.
+                  captureCheckpoint: () =>
+                    Effect.succeed(
+                      store.previousExists
+                        ? {
+                            from: "previous",
+                            to: "current",
+                            fromCapturedAt: DateTime.formatIso(scope.createdAt),
+                            startHead: "head",
+                            endHead: "head",
+                            unchanged: false,
+                          }
+                        : null,
+                    ),
                   hasCheckpointRef: () => Effect.succeed(store.previousExists),
                   diffCheckpoints: ({ cwd }) =>
                     store.diff === "empty"

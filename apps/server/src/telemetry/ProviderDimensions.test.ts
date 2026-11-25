@@ -43,7 +43,8 @@ const thread = (
   ...overrides,
 });
 
-it("reports custom models as custom:<driver> and never instance names", () => {
+// SCIENT-FORK:START — Scient reports model names (see ScientModelLabels.ts), never instance names.
+it("reports every model name but never instance names", () => {
   expect(
     agentToolProperties({
       tool: "t3_thread_send",
@@ -60,18 +61,19 @@ it("reports custom models as custom:<driver> and never instance names", () => {
   ).toEqual([
     {
       callerProvider: "claudeAgent",
-      callerModel: "custom:claudeAgent",
+      callerModel: "my-private-finetune",
       targetProvider: "opencode",
-      targetModel: "custom:opencode",
+      targetModel: "ollama/acme-internal",
     },
     {
       callerProvider: "claudeAgent",
-      callerModel: "custom:claudeAgent",
+      callerModel: "my-private-finetune",
       targetProvider: "unknown",
       targetModel: undefined,
     },
   ]);
 });
+// SCIENT-FORK:END
 
 it("drops input strings outside the schema's literals, since rejected calls are recorded too", () => {
   expect(handoffSettings("delegate_task", { mode: "/home/me/secret" }, undefined)).toEqual({

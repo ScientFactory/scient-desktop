@@ -396,7 +396,7 @@ async function renderComposerImageThumbnailFromBitmap(
     const height = Math.max(1, Math.round(bitmap.height * scale));
     const surface = createCanvas(width, height, colorSpace);
     if (!surface) return null;
-    surface.context.drawImage(bitmap, 0, 0, width, height);
+    surface.context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, width, height);
     const blob = await encodeCanvas(surface.canvas, colorSpace, 1, "image/png");
     // SCIENT-FORK:END
     return blob ? await readFileAsDataUrl(blob) : null;
