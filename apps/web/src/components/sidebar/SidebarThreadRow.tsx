@@ -5,7 +5,7 @@ import { SidebarRowWindow } from "./SidebarRowWindow";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
-// SCIENT-FORK: the card names its computer only when there is more than one.
+// SCIENT-FORK: the card marks its computer only when there is more than one.
 import { useEnvironmentIdentities } from "../../state/environments";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1286,7 +1286,7 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
   ) : null;
 
   const diff = latestRunDiff(thread);
-  // SCIENT-FORK:START — with one computer every card would name it; the tooltip still does.
+  // SCIENT-FORK:START — with one computer every card would mark it; the tooltip still names it.
   const environmentLabel = useEnvironmentIdentities().length > 1 ? props.environmentLabel : null;
   // SCIENT-FORK:END
   // Only the trailing icons would remain, so the row moves them to the title line instead.
@@ -1298,18 +1298,18 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+      {/* SCIENT-FORK:START — the icon alone marks the computer; the tooltip names it. */}
       {environmentLabel !== null ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3.5 shrink-0 text-icon-muted"
-          />
-          <span className="min-w-0 flex-1 truncate">{environmentLabel}</span>
-        </>
-      ) : (
-        <span className="flex-1" />
-      )}
+        <EnvironmentMachineIcon
+          role="img"
+          aria-label={environmentLabel}
+          kind={props.environmentMachine}
+          className="size-3.5 shrink-0 text-icon-muted"
+        />
+      ) : null}
+      {/* Holds the text line's height, which the folder row's size hint counts on. */}
+      <span className="h-4 flex-1" />
+      {/* SCIENT-FORK:END */}
       {terminalStatusIcon}
       {prBadge}
       {issueBadge}
@@ -1369,6 +1369,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
+                // SCIENT-FORK: the computer its icon marks, which the row's label leaves out.
+                aria-description={multiline ? (environmentLabel ?? undefined) : undefined}
                 aria-current={accessibility.current}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
@@ -1584,6 +1586,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
               data-sidebar-row={threadKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
+              // SCIENT-FORK: the computer its icon marks, which the row's label leaves out.
+              aria-description={environmentLabel ?? undefined}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
