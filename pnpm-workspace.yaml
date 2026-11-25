@@ -27,6 +27,8 @@ allowBuilds:
   "@parcel/watcher": false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz": true
   sharp: true
+  # Its only install script asks for donations.
+  tesseract.js: false
   utf-8-validate: false
   workerd: false
 

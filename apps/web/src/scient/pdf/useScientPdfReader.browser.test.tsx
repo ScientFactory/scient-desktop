@@ -163,6 +163,7 @@ async function _setupFixture0(_fixture: _Fixture) {
       viewer,
       eventBus: {
         on: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
+        off: vi.fn(),
         dispatch: vi.fn(),
       },
       emit: (name: string, event: any) => listeners.get(name)?.(event),

@@ -37,8 +37,9 @@ The reader supports:
 - existing PDF links, annotations, and form fields in read mode;
 - optional virtualized page thumbnails and the document outline, switched by the
   Pages and Outline icons at the top of the sidebar (hover for their names);
-- password-protected files, progress, invalid-file errors, and a scanned-page
-  notice; and
+- password-protected files, progress and invalid-file errors;
+- text recognition on scanned pages, so they can be searched, selected and quoted
+  (see [Scanned pages](#scanned-pages)); and
 - saving a copy from the secondary actions menu. In the desktop app, Scient
   opens a native Save dialog and confirms when the copy has been written;
   cancelling the dialog leaves the PDF unchanged.
@@ -129,8 +130,28 @@ use, such as fonts they share with it, stays. Existing base-document outlines, i
 and attachments are retained; destinations to removed pages follow a surviving
 page. Imported internal links are retained when their target is also inserted.
 
-The reader does not yet add Scient annotations or OCR. Scanned PDFs without a
-text layer can be read visually, but text selection and search may be limited.
+## Scanned pages
+
+When a page is a scan, an image with little or no text of its own, Scient reads
+its words on your computer while you look at it. The page shows **Reading text…**
+in its corner until it is done, usually within a few seconds. You can then
+select and copy its words, quote them with **Ask in chat**, and highlight them or
+add a note, as on any other page. Pages that have text of their own are never
+read again this way.
+
+Search (`Cmd/Ctrl+F`) reads the document's other scanned pages too. While it
+does, the search field shows how many have been read so far, for example
+**Reading 12/40**, and matches on those pages appear as they are read. A search
+says nothing was found only after every page has been searched. Each page is read
+once: the recognized text is kept on this computer, so reopening the PDF, zooming
+or searching again does not read it again.
+
+Recognition reads English and Hebrew, including Hebrew sentences with English
+words, units and numbers. It reads the page as a picture, so expect mistakes,
+especially in tables, formulas, handwriting, and small or faint print. On a
+scanned page, selections and highlights cover whole words. A quote from a scanned
+page tells the agent that its text was recognized and may contain errors. A page
+scanned sideways is read the way round that gives the most legible text.
 
 Keyboard shortcuts inside the reader:
 

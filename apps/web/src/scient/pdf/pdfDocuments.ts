@@ -3,6 +3,7 @@ import {
   type DocumentKind,
   type DocumentLease,
 } from "../documentCache/documentCache";
+import { disposePdfOcrSession } from "./ocr/pdfOcr";
 import { startPdfDocumentLoad, type PdfLoadCallbacks, type PDFDocumentProxy } from "./pdfRuntime";
 
 /** A PDF opened by pdf.js: parsed in the shared worker, with no viewer of its own. */
@@ -11,12 +12,16 @@ export interface OpenedPdf {
   readonly close: () => Promise<void>;
   /** The file's length once pdf.js has all of it. */
   bytes: number | null;
+  readonly passwordProtected?: boolean;
 }
 
 const MB = 1024 * 1024;
 
 const pdfKind: DocumentKind<OpenedPdf> = {
-  dispose: (pdf) => void pdf.close().catch(() => undefined),
+  dispose: (pdf) => {
+    disposePdfOcrSession(pdf.document);
+    void pdf.close().catch(() => undefined);
+  },
   // Measured in the desktop app: about 40 MB, and 12 times the file for its parsed structure.
   size: (pdf) => (pdf.bytes === null ? 64 * MB : 40 * MB + pdf.bytes * 12),
   idle: (pdf) => {
@@ -39,12 +44,24 @@ export function acquirePdfDocument(
   return documentCache.acquire(
     key,
     (signal) => {
-      const task = startPdfDocumentLoad(url, callbacks);
+      let passwordProtected = false;
+      const task = startPdfDocumentLoad(url, {
+        ...callbacks,
+        onPassword: (request) => {
+          passwordProtected = true;
+          callbacks.onPassword(request);
+        },
+      });
       signal.addEventListener("abort", () => void task.destroy().catch(() => undefined), {
         once: true,
       });
       return task.promise.then((document) => {
-        const opened: OpenedPdf = { document, close: () => task.destroy(), bytes: null };
+        const opened: OpenedPdf = {
+          document,
+          close: () => task.destroy(),
+          bytes: null,
+          passwordProtected,
+        };
         void document.getDownloadInfo().then(
           ({ length }) => {
             opened.bytes = length;

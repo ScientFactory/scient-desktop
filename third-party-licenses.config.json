@@ -875,6 +875,34 @@
       "generatedNotice": {
         "licenseId": "Apache-2.0"
       }
+    },
+    {
+      "name": "@tesseract.js-data/eng",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/tesseract-ocr/tessdata_best",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
+    },
+    {
+      "name": "@tesseract.js-data/heb",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/tesseract-ocr/tessdata_best",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
+    },
+    {
+      "name": "tr46",
+      "version": "0.0.3",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/Sebmaster/tr46.js",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Sebastian Mayr"]
+      }
     }
   ],
   "customNotices": [

@@ -211,6 +211,12 @@
         "src/components/settings/CodexSetupSection.tsx": ["files"],
         "src/providerAuthDelivery.ts": ["files"],
       },
+      // Text recognition files the app serves by path (scripts/scientOcrAssets.ts), never imported.
+      "ignoreDependencies": [
+        "@tesseract.js-data/eng",
+        "@tesseract.js-data/heb",
+        "tesseract.js-core",
+      ],
     },
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.

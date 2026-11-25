@@ -42,6 +42,7 @@ export {
   PDF_TEXT_PROFILE,
   PdfDocumentIdentity,
   PdfDocumentLocator,
+  PdfRecognizedText,
   PdfRect,
   PdfTarget,
   PdfTextPageSelector,

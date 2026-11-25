@@ -37,6 +37,7 @@
     "test",
     "scripts/verify-built-boot.ts",
     "scripts/warm-dep-cache.ts",
+    "scripts/scientOcrAssets.ts",
     "scripts/scientPdfAssets.ts",
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/tagged-source-version.ts",

@@ -118,6 +118,25 @@ describe("PDF quotes in prompt text", () => {
       after: " fast.\n",
       comment: "is this right?",
     });
+    // A quote from a scanned page tells the agent its words were recognized from the image.
+    const base = citation();
+    const scanned = decodePdfCitation({
+      ...base,
+      target: {
+        ...base.target,
+        selector: {
+          type: "text",
+          pages: base.target.selector.pages.map((page) => ({
+            ...page,
+            recognized: { engine: "tesseract-5", geometry: "word-box" },
+          })),
+        },
+      },
+    });
+    expect(pdfCitationForProvider(scanned).pages).toEqual([
+      { page: 3, text: base.target.selector.pages[0]!.quote, recognized: true },
+    ]);
+    expect(parseComposerCitationHref(formatPdfCitationHref(scanned))).toEqual(scanned);
   });
 
   it("reads as plain text", () => {

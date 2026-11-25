@@ -63,6 +63,26 @@ describe("PDF target", () => {
     const value = target();
     expect(Schema.decodeSync(json)(Schema.encodeSync(json)(value))).toEqual(value);
     const page = value.selector.pages[0]!;
+    // A quote from a scanned page says its text and positions were recognized.
+    const scanned = PdfTarget.make({
+      ...value,
+      selector: {
+        type: "text",
+        pages: [{ ...page, recognized: { engine: "tesseract-5", geometry: "word-box" } }],
+      },
+    });
+    expect(Schema.decodeSync(json)(Schema.encodeSync(json)(scanned))).toEqual(scanned);
+    expect(() =>
+      Schema.decodeSync(json)(
+        JSON.stringify({
+          ...scanned,
+          selector: {
+            type: "text",
+            pages: [{ ...page, recognized: { engine: "tesseract-5", geometry: "glyph" } }],
+          },
+        }),
+      ),
+    ).toThrow();
     expect(() =>
       PdfTarget.make({
         ...value,

@@ -46,7 +46,7 @@ import { pdfContentKey, webPdfSourceActions, webPdfSourceResolver } from "./pdfS
 import { parseSafePdfExternalUrl, stepPdfZoom, type PdfSidebarMode } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
-import { useScientPdfReader } from "./useScientPdfReader";
+import { useScientPdfReader, type PdfReaderState } from "./useScientPdfReader";
 import type { ScientPdfRuntime } from "./pdfRuntime";
 import { PdfAnnotationLayer } from "../annotations/PdfAnnotationLayer";
 import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
@@ -79,6 +79,44 @@ export interface PdfSyncNavigation {
   readonly forwardTarget: PdfForwardSyncTarget | null;
   readonly onInverseSearch?: (point: PdfInverseSyncPoint, selectedText?: string) => void;
   readonly onPageChange: (page: number) => void;
+}
+
+type Translate = ReturnType<typeof useGT>;
+
+/** Scanned pages still being read, which a search's results do not include yet. */
+function searchRecognitionStatus(state: PdfReaderState, gt: Translate) {
+  const ocr = state.ocr;
+  if (!ocr || ocr.scanned === 0) return undefined;
+  const done = ocr.recognized + ocr.failed;
+  if (ocr.checked && done >= ocr.scanned) return undefined;
+  return {
+    label: gt("Reading {done}/{total}", { done, total: ocr.scanned }),
+    description: gt("Text recognized on {done} of {total} scanned pages so far", {
+      done,
+      total: ocr.scanned,
+    }),
+  };
+}
+
+function searchNotFoundNote(state: PdfReaderState, gt: Translate): string | undefined {
+  const ocr = state.ocr;
+  if (ocr && ocr.scanned > 0) {
+    if (ocr.failed >= ocr.scanned) {
+      return gt(
+        "Text on this PDF's scanned pages couldn't be recognized, so they weren't searched.",
+      );
+    }
+    if (ocr.failed > 0) {
+      return gt(
+        "{count, plural, one {{count} scanned page couldn't be read and wasn't searched.} other {{count} scanned pages couldn't be read and weren't searched.}}",
+        { count: ocr.failed },
+      );
+    }
+    return gt("Scanned pages are searched by their recognized text, which can contain errors.");
+  }
+  return state.scanned
+    ? gt("This PDF's pages are images, so their words can't be searched or copied.")
+    : undefined;
 }
 
 function PdfPasswordPrompt(props: {
@@ -703,9 +741,8 @@ function LoadedScientPdfReader(props: {
           total: state.findCount.total,
           notFound: state.findPhase === "not-found",
           // Said only when a search finds nothing, never over the page.
-          notFoundNote: state.scanned
-            ? "This PDF's pages are images, so their words can't be searched or copied."
-            : undefined,
+          notFoundNote: searchNotFoundNote(state, gt),
+          status: searchRecognitionStatus(state, gt),
           focusRequest: searchFocus,
           onFocus: () => setSearchOpen(true),
           onQuery: (value) => {

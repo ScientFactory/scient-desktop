@@ -183,9 +183,63 @@ editing is disabled. Scient annotation identity, provenance, persistence, and
 cross-artifact behavior remain a later product layer. This reader exposes a
 stable document/page navigation seam without inventing that data model early.
 
-OCR is likewise out of scope. The reader samples only the opening pages for text
-and describes that limited observation rather than declaring the whole document
-to be scanned.
+## Scanned pages
+
+`scient/pdf/ocr` recognizes the text of scanned pages locally. The runtime is
+Tesseract 5 through tesseract.js 7 (Apache-2.0) in Web Workers: LSTM-only cores
+(plain, SIMD and relaxed SIMD) and English and Hebrew `tessdata_best` integer
+models, served from `ocr-assets/` by `scripts/scientOcrAssets.ts` with their
+notices. No CDN request is made. OCRia Nano read the pilot's pages best, but its
+model license does not allow shipping it. Workers start with the first page and
+stop after a minute idle; two run at once on computers with eight or more cores.
+
+- **Seam.** One session per `PDFDocumentProxy` (`pdfOcrSession`, created before
+  the viewer asks for pages) patches each page's `getTextContent` and
+  `streamTextContent`. Find, the text layer, selection, quotes and annotations
+  therefore read recognized words as page text: the page's own items first, then
+  recognized ones. PDF.js's `getTextContent` reads `this.streamTextContent`, so the
+  page's own text is collected from the unpatched stream. Callers that must see
+  only the PDF's own text use `pdfNativeTextContent`.
+- **Which pages.** A page is a scan when it has fewer than 160 non-space
+  characters of its own and images cover at least half of its area (from its
+  display operator list, which the viewer's rendering reuses). Other pages are
+  never recognized.
+- **Find.** For a scanned page, `getTextContent` waits for its reading. PDF.js
+  extracts pages in order and reports not-found only after every page, so a
+  search never claims absence on pages it has not read. Once a search is open and
+  a scanned page is known, every page is classified and the scanned ones queued,
+  so several are read ahead of the search; a PDF with no scanned page is never
+  swept. The search field shows the share read so far.
+- **Text layer.** A page is drawn with what is ready and queued for reading when
+  it appears; pages in view come before pages a search waits for. When its
+  reading arrives its text layer is drawn again, except under a live selection,
+  which is left until it moves. Recognized items sit in a marked-content span whose
+  id starts with `scient-ocr-text-`; that span, not a flag, tells selection the
+  page's text was recognized.
+- **Geometry and anchors.** Each word is one item spanning its box at its line's
+  height, axis-aligned, so selections and highlights cover words. A target's page
+  records `recognized: { engine, geometry: "word-box" }`; offsets and text hashes
+  follow the usual profile, and the agent view marks the page as recognized. The
+  text is derived deterministically from the stored reading, so anchors verify on
+  this computer; another computer's reading can differ and is then relocated by
+  text, as for a changed PDF.
+- **Direction.** Tesseract reads a Hebrew line word by word from the right, which
+  reverses an English run inside it ("mg 10-20") and mirrors its brackets. Such
+  runs, and Hebrew runs in English lines, are put back in reading order and
+  direction marks are dropped. A page whose first reading has little confident
+  text among many words is read at the other three quarter turns and the most
+  legible reading kept.
+- **Cache.** Readings are kept in IndexedDB (`scient-pdf-ocr`), keyed by the
+  recognizer and the SHA-256 of the rendered page image, with an alias from the
+  document cache key, page and rotation so a reopened PDF is not rendered again.
+  At most 4,000 pages are kept, least recently used dropped first. This is the
+  only PDF content the client persists, and it stays in this browser profile. Pages
+  unlocked with a password use a cache in memory for that open document.
+
+Recognized text exists only in the client. Server-side readers of a PDF's text
+(Sources full text, agents anchoring annotations by quote) do not see it. Tables,
+formulas, handwriting, other scripts and vertical text are not handled beyond
+what Tesseract reads as lines.
 
 ## Upstream maintenance
 

@@ -178,7 +178,8 @@
 .scient-reader-search input::placeholder {
   color: var(--muted-foreground);
 }
-.scient-reader-search-count {
+.scient-reader-search-count,
+.scient-reader-search-status {
   flex: none;
   color: var(--muted-foreground);
   font-size: 10.5px;
