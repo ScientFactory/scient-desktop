@@ -2501,8 +2501,9 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       });
 
+      // SCIENT-FORK: a package agent is unprepared until Scient installs it; its version still tracks the index.
       expect(yield* resolver.inspect(settings())).toMatchObject({
-        status: "ready",
+        status: "unprepared",
         version: "1.2.3",
       });
       expect(requests).toBe(0);
@@ -2513,7 +2514,7 @@ describe("AcpRegistrySupport", () => {
       );
       expect(requests).toBe(1);
       expect(yield* resolver.inspect(settings())).toMatchObject({
-        status: "ready",
+        status: "unprepared",
         version: "2.0.0",
       });
 
@@ -2531,7 +2532,7 @@ describe("AcpRegistrySupport", () => {
       );
       expect(requests).toBe(2);
       expect(yield* resolver.inspect(settings())).toMatchObject({
-        status: "ready",
+        status: "unprepared",
         version: "2.0.0",
       });
 

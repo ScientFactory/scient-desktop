@@ -2243,8 +2243,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       Effect.flatMap(Clock.currentTimeMillis, (captureStartedAt) =>
         capture.once({ ...input, captureStartedAt }).pipe(
           Effect.catchTags({
+            // The rebuild's preparation is bounded too: only what is left of the deadline.
             StaleCaptureIndex: () =>
-              capture.once({ ...input, rebuildIndex: true, captureStartedAt }),
+              Effect.flatMap(Clock.currentTimeMillis, (now) =>
+                capture
+                  .once({ ...input, rebuildIndex: true, captureStartedAt })
+                  .pipe(
+                    boundCheckpointCapture(
+                      VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+                      input.cwd,
+                      remainingCheckpointCaptureMs(captureStartedAt, now),
+                    ),
+                  ),
+              ),
           }),
           // Without a kept index nothing can be stale.
           Effect.catchTags({ StaleCaptureIndex: (error) => Effect.die(error) }),
