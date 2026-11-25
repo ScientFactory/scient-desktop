@@ -57,6 +57,7 @@ jobs:
       wsl_attempt: ${{ steps.wsl_uploaded.outputs.attempt }}
       wsl_artifact_id: ${{ steps.wsl_uploaded.outputs.artifact_id }}
       wsl_sha256: ${{ steps.wsl_uploaded.outputs.sha256 }}
+      wsl_install_script_sha256: ${{ steps.wsl_uploaded.outputs.install_script_sha256 }}
     steps:
       - name: Record this execution's attempt
         id: execution
@@ -270,11 +271,25 @@ jobs:
           Copy-Item (Join-Path $unpacked 'resources/wsl-runtime.tar.gz') wsl-qualification/
           $sha256 = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
           "sha256=$sha256" >> $env:GITHUB_OUTPUT
+      # Production's install script for that tarball, generated here because this job has the
+      # workspace; the Linux verifier then needs only Node and its probe.
+      - name: Write the WSL install script for the qualification
+        id: wsl_install_script
+        shell: bash
+        env:
+          SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          script_sha256="$(node scripts/write-scient-wsl-install-script.mjs wsl-qualification/wsl-runtime.tar.gz "$SHA256" "$GITHUB_RUN_ATTEMPT")"
+          echo "sha256=$script_sha256" >> "$GITHUB_OUTPUT"
       - id: wsl_payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-packaging-wsl-runtime
-          path: wsl-qualification/wsl-runtime.tar.gz
+          path: |
+            wsl-qualification/wsl-runtime.tar.gz
+            wsl-qualification/wsl-runtime-install.sh
+            wsl-qualification/wsl-runtime-install.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -284,10 +299,11 @@ jobs:
         env:
           ARTIFACT_ID: ${{ steps.wsl_payload.outputs.artifact-id }}
           SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
+          INSTALL_SCRIPT_SHA256: ${{ steps.wsl_install_script.outputs.sha256 }}
         run: |
           set -euo pipefail
-          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ && "$SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf 'attempt=%s\nartifact_id=%s\nsha256=%s\n' "$GITHUB_RUN_ATTEMPT" "$ARTIFACT_ID" "$SHA256" >> "$GITHUB_OUTPUT"
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ && "$SHA256" =~ ^[0-9a-f]{64}$ && "$INSTALL_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'attempt=%s\nartifact_id=%s\nsha256=%s\ninstall_script_sha256=%s\n' "$GITHUB_RUN_ATTEMPT" "$ARTIFACT_ID" "$SHA256" "$INSTALL_SCRIPT_SHA256" >> "$GITHUB_OUTPUT"
       - name: Exercise packaged terminal and Cursor helpers
         shell: pwsh
         run: node scripts/qualify-windows-packaged-runtime.mjs "$env:SCIENT_PACKAGING_UNPACKED"
@@ -395,8 +411,9 @@ jobs:
           UPLOADED: ${{ needs.package_windows.outputs.wsl_attempt }}
           ARTIFACT_ID: ${{ needs.package_windows.outputs.wsl_artifact_id }}
           SHA256: ${{ needs.package_windows.outputs.wsl_sha256 }}
+          INSTALL_SCRIPT_SHA256: ${{ needs.package_windows.outputs.wsl_install_script_sha256 }}
         run: |
-          if [[ ! "$ARTIFACT_ID" =~ ^[0-9]+$ || ! "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+          if [[ ! "$ARTIFACT_ID" =~ ^[0-9]+$ || ! "$SHA256" =~ ^[0-9a-f]{64}$ || ! "$INSTALL_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
             echo "The installer job reported no WSL payload." >&2
             exit 1
           fi
@@ -404,8 +421,16 @@ jobs:
             echo "The installer job's latest execution (attempt ${STARTED:-unknown}) uploaded no WSL payload; attempt ${UPLOADED:-unknown} did." >&2
             exit 1
           fi
+      # The probe uses only Node built-ins and the uploaded install script; the payload must
+      # supply every package itself, so the workspace is neither checked out nor installed.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          sparse-checkout: |
+            /package.json
+            /scripts/qualify-wsl-runtime.mjs
+            /scripts/scient-wsl-qualification.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -414,10 +439,12 @@ jobs:
           path: wsl-qualification
       - name: Exercise the exact Linux payload from the Windows package
         env:
+          ATTEMPT: ${{ needs.package_windows.outputs.wsl_attempt }}
           SHA256: ${{ needs.package_windows.outputs.wsl_sha256 }}
+          INSTALL_SCRIPT_SHA256: ${{ needs.package_windows.outputs.wsl_install_script_sha256 }}
         run: |
           set -euo pipefail
           payload="$(find wsl-qualification -name wsl-runtime.tar.gz -type f)"
           test "$(printf '%s\n' "$payload" | wc -l)" -eq 1
           echo "$SHA256  $payload" | sha256sum --check --strict
-          node scripts/qualify-wsl-runtime.mjs "$payload"
+          node scripts/qualify-wsl-runtime.mjs "$payload" "$ATTEMPT" "$SHA256" "$INSTALL_SCRIPT_SHA256"

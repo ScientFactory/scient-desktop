@@ -98,7 +98,11 @@ the stable scheduler and production gate.
   lose those permissions. Windows Packaging runs the same install script and
   executes that exact packaged archive on Linux without installing replacement
   dependencies, checking native loads, terminals, CLI,
-  HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
+  HTTP startup, and shutdown. The installer job generates production's install
+  script for a fixed `/tmp` archive path and uploads it with the tarball, bound
+  to its attempt and the tarball's SHA-256. The Linux verifier checks that
+  binding and runs the script on the pinned Node with only its probe checked
+  out and no workspace install. This qualifies the Linux payload; WSL distro and
   Windows/Linux interoperability acceptance remain separate platform checks.
 - Windows loose-file validation retains an 80-file core budget. Pinned transcribe-cpp
   and Windows/WSL Cursor inventories are admitted separately only after their
