@@ -435,6 +435,11 @@ describe("Scient's Oh My Pi extension", () => {
       ]);
     });
 
+    const holds: Array<() => void> = [];
+    afterEach(() => {
+      for (const release of holds.splice(0)) release();
+    });
+
     /** Holds every request to `url` until the returned function is called. */
     const holdServer = (url: string) => {
       const answer = globalThis.fetch;
@@ -442,6 +447,7 @@ describe("Scient's Oh My Pi extension", () => {
       const held = new Promise<void>((resolve) => {
         release = resolve;
       });
+      holds.push(release);
       vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
         if (input === url) await held;
         return answer(input, init);
@@ -450,14 +456,23 @@ describe("Scient's Oh My Pi extension", () => {
     };
 
     /** Runs the extension past its startup wait for tool catalogs. */
-    const loadPastStartupWait = async (load: Promise<void>) => {
+    const loadPastStartupWait = async (
+      extension: (api: unknown) => Promise<void>,
+      api: unknown,
+    ) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let settled = false;
+      let load: Promise<void>;
       try {
+        load = extension(api).finally(() => {
+          settled = true;
+        });
         await vi.advanceTimersByTimeAsync(5_000);
-        await load;
       } finally {
         vi.useRealTimers();
       }
+      if (!settled) throw new Error("The extension did not load within its startup wait.");
+      await load;
     };
 
     // regression: one connector that never answered kept Scient Agent from starting.
@@ -470,7 +485,7 @@ describe("Scient's Oh My Pi extension", () => {
       );
       const host = makeApi();
 
-      await loadPastStartupWait((await extension.importFresh())(host.api));
+      await loadPastStartupWait(await extension.importFresh(), host.api);
 
       expect([...host.tools.keys()]).toEqual(["scient_fixture", "github__search"]);
       expect(await status(host)).toEqual([
@@ -495,7 +510,7 @@ describe("Scient's Oh My Pi extension", () => {
       );
       const host = makeApi();
 
-      await loadPastStartupWait((await extension.importFresh())(host.api));
+      await loadPastStartupWait(await extension.importFresh(), host.api);
 
       expect([...host.tools.keys()]).toEqual(["github__search"]);
       expect(await status(host)).toEqual([
@@ -514,6 +529,85 @@ describe("Scient's Oh My Pi extension", () => {
       requests
         .filter(({ body }) => body.method === "tools/call")
         .map(({ url, body }) => [url, body.params?.name]);
+
+    it("names a late catalog's tools the same for every run, whichever server answers first", async () => {
+      const ALPHA = "http://127.0.0.1/mcp/connectors/connector-alpha";
+      const NESTED = "http://127.0.0.1/mcp/connectors/connector-alpha-beta";
+      const requests = stubServers({ [ALPHA]: ["beta__lookup"], [NESTED]: ["lookup"] });
+      const release = holdServer(ALPHA);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        {
+          ...SESSION,
+          connectors: [
+            { serverName: "alpha", displayName: "Alpha", url: ALPHA },
+            { serverName: "alpha__beta", displayName: "Alpha Beta", url: NESTED },
+          ],
+        },
+      );
+      const parent = makeApi();
+
+      await loadPastStartupWait(await extension.importFresh(), parent.api);
+      release();
+      await vi.waitFor(() => expect(parent.tools.size).toBe(3));
+      const child = makeApi();
+      await (
+        await extension.importFresh()
+      )(child.api);
+
+      expect([...child.tools.keys()].toSorted()).toEqual([...parent.tools.keys()].toSorted());
+      await child.tools.get("alpha__beta__lookup")!.execute("nested", {});
+      expect(calledTools(requests).at(-1)).toEqual([NESTED, "lookup"]);
+      const alias = [...child.tools.keys()].find((name) =>
+        /^alpha__beta__lookup_[0-9a-f]{8}$/u.test(name),
+      );
+      expect(alias).toBeDefined();
+      await child.tools.get(alias!)!.execute("own", {});
+      expect(calledTools(requests).at(-1)).toEqual([ALPHA, "beta__lookup"]);
+    });
+
+    it("keeps a subagent's re-run degraded, not failed, when Scient fails after its parent started", async () => {
+      stubServers({ [SESSION.endpoint]: "fail", [GITHUB]: ["search"] });
+      const release = holdServer(SESSION.endpoint);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const parent = makeApi();
+      await loadPastStartupWait(await extension.importFresh(), parent.api);
+      release();
+      await vi.waitFor(async () =>
+        expect(await status(parent)).toEqual([
+          "Scient unavailable. Full access; no native sandbox. GitHub: 1 tools.",
+        ]),
+      );
+
+      const child = makeApi();
+      await (
+        await extension.importFresh()
+      )(child.api);
+
+      expect([...child.tools.keys()]).toEqual(["github__search"]);
+      expect(child.handlers.has("before_agent_start")).toBe(true);
+    });
+
+    it("adds no late tools to a run whose session has ended", async () => {
+      stubServers({ [GITHUB]: ["search"] });
+      const release = holdServer(GITHUB);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const parent = makeApi();
+      await loadPastStartupWait(await extension.importFresh(), parent.api);
+      const child = makeApi();
+      await loadPastStartupWait(await extension.importFresh(), child.api);
+      (child.handlers.get("session_shutdown") as Handler)({} as never);
+
+      release();
+      await vi.waitFor(() => expect(parent.tools.has("github__search")).toBe(true));
+      expect(child.tools.has("github__search")).toBe(false);
+    });
 
     it("aliases connector tool names that collide or run too long, and skips OMP's MCP namespace", async () => {
       const requests = stubServers({

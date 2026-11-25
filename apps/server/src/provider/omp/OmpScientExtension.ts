@@ -209,12 +209,16 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
 };
 
 /** The tool's model-facing name, or undefined when none is usable. */
-const scientConnectorToolName = (serverName, toolName, taken) => {
+const scientConnectorToolName = (serverName, toolName, taken, serverNames = []) => {
   let name = serverName + "__" + toolName.replace(/[^A-Za-z0-9_-]/gu, "_");
   if (!/^[A-Za-z_]/u.test(name)) name = "_" + name;
   // An alias keeps the name's first 55 characters, so it stays in OMP's namespace too.
   if (name.startsWith("mcp__")) return undefined;
-  if (name.length <= 64 && !taken.has(name)) return name;
+  // Catalogs arrive in any order: a name inside a longer server's namespace is that server's.
+  const foreign = serverNames.some(
+    (other) => other.startsWith(serverName + "__") && name.startsWith(other + "__"),
+  );
+  if (name.length <= 64 && !foreign && !taken.has(name)) return name;
   const digest = scientCreateHash("sha256").update(serverName + "\\u0000" + toolName).digest("hex");
   const alias = name.slice(0, 55) + "_" + digest.slice(0, 8);
   return taken.has(alias) ? undefined : alias;
@@ -264,6 +268,12 @@ export default async function scientOmpExtension(pi) {
       connectorLoadMode: mode === "commands" || mode === "discoverable" ? "discoverable" : "essential",
       connection: scientConnect(bootstrap.endpoint, bootstrap.authorization, "Scient"),
       connectorNames: scientConnectors(bootstrap.connectors).map((connector) => connector.displayName),
+      serverNames: scientConnectors(bootstrap.connectors).map((connector) => connector.serverName),
+      // Every run of this process gives a catalog's tools the same names, decided on arrival.
+      taken: new Set(),
+      named: new Map(),
+      skipped: new Map(),
+      started: false,
       connectors: scientConnectors(bootstrap.connectors).map((connector) => {
         const label = "Connector " + JSON.stringify(connector.displayName);
         return scientConnect(connector.url, bootstrap.authorization, label, AbortSignal.timeout(30_000)).then(
@@ -274,63 +284,70 @@ export default async function scientOmpExtension(pi) {
     };
   });
   const coreTools = new Set(${JSON.stringify(SCIENT_ALWAYS_LOADED_TOOLS)});
-  const taken = new Set();
   const toolNames = new Set();
-  const skipped = new Map();
-  const registerProxied = (tool) => {
-    const { name, remoteName, label, request: call } = tool;
-    taken.add(name);
-    toolNames.add(name);
-    pi.registerTool({
-      name,
-      label: name,
-      loadMode: tool.loadMode,
-      mcpServerName: tool.serverName,
-      // Scient Agent lists a described service as one catalog row.
-      mcpServerDescription: tool.serverDescription,
-      mcpToolName: remoteName,
-      description: tool.description,
-      parameters: tool.parameters,
-      // A strict grammar makes models fill optional fields, and a filled field changes
-      // what a Scient tool does: an invented session, or a page target instead of a URL.
-      strict: false,
-      async execute(_id, args, signal) {
-        return scientToolResult(
-          scientRecord(await call("tools/call", { name: remoteName, arguments: args }, signal)),
-          label,
-        );
-      },
-    });
-  };
-  const addScient = ({ tools, request, description }) => {
-    for (const tool of tools) {
-      if (taken.has(tool.name)) {
-        skipped.set("Scient", (skipped.get("Scient") ?? 0) + 1);
-        continue;
+  const nameScient = ({ tools, request, description }) =>
+    tools.flatMap((tool) => {
+      if (shared.taken.has(tool.name)) {
+        shared.skipped.set("Scient", (shared.skipped.get("Scient") ?? 0) + 1);
+        return [];
       }
-      registerProxied({
+      shared.taken.add(tool.name);
+      return [{
         ...tool, remoteName: tool.name, label: "Scient", request, serverName: "Scient", serverDescription: description ?? "Scient workspace tools",
         loadMode: coreTools.has(tool.name) ? "essential" : shared.connectorLoadMode,
-      });
-    }
-  };
-  const addConnector = (connector) => {
-    for (const tool of connector.tools) {
-      const name = scientConnectorToolName(connector.serverName, tool.name, taken);
+      }];
+    });
+  const nameConnector = (connector) =>
+    connector.tools.flatMap((tool) => {
+      const name = scientConnectorToolName(connector.serverName, tool.name, shared.taken, shared.serverNames);
       if (name === undefined) {
-        skipped.set(connector.serverName, (skipped.get(connector.serverName) ?? 0) + 1);
-        continue;
+        shared.skipped.set(connector.serverName, (shared.skipped.get(connector.serverName) ?? 0) + 1);
+        return [];
       }
-      registerProxied({ ...tool, name, remoteName: tool.name, label: connector.label, serverName: connector.serverName, serverDescription: connector.description ?? connector.displayName + ", a Scient connector", request: connector.request, loadMode: shared.connectorLoadMode });
+      shared.taken.add(name);
+      return [{ ...tool, name, remoteName: tool.name, label: connector.label, serverName: connector.serverName, serverDescription: connector.description ?? connector.displayName + ", a Scient connector", request: connector.request, loadMode: shared.connectorLoadMode }];
+    });
+  const register = (index, value) => {
+    if (!shared.named.has(index)) shared.named.set(index, index === 0 ? nameScient(value) : nameConnector(value));
+    for (const tool of shared.named.get(index)) {
+      const { name, remoteName, label, request: call } = tool;
+      pi.registerTool({
+        name,
+        label: name,
+        loadMode: tool.loadMode,
+        mcpServerName: tool.serverName,
+        // Scient Agent lists a described service as one catalog row.
+        mcpServerDescription: tool.serverDescription,
+        mcpToolName: remoteName,
+        description: tool.description,
+        parameters: tool.parameters,
+        // A strict grammar makes models fill optional fields, and a filled field changes
+        // what a Scient tool does: an invented session, or a page target instead of a URL.
+        strict: false,
+        async execute(_id, args, signal) {
+          return scientToolResult(
+            scientRecord(await call("tools/call", { name: remoteName, arguments: args }, signal)),
+            label,
+          );
+        },
+      });
+      toolNames.add(name);
     }
   };
+  let ended = false;
+  pi.on("session_shutdown", () => {
+    ended = true;
+  });
   // Startup waits a bounded time for tool servers: the host times out an agent that never
   // reports ready. A server that answers later adds its tools then, for the next model call.
   const sources = [
-    { add: addScient, promise: shared.connection.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error })) },
-    ...shared.connectors.map((promise) => ({ add: addConnector, promise: promise.then((value) => ({ ok: true, value })) })),
-  ];
-  for (const source of sources) source.promise.then((outcome) => { source.outcome = outcome; });
+    shared.connection.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error })),
+    ...shared.connectors.map((promise) => promise.then((value) => ({ ok: true, value }))),
+  ].map((promise) => {
+    const source = { promise };
+    void promise.then((outcome) => { source.outcome = outcome; });
+    return source;
+  });
   let waitTimer;
   await Promise.race([
     Promise.all(sources.map((source) => source.promise)),
@@ -338,19 +355,23 @@ export default async function scientOmpExtension(pi) {
   ]);
   clearTimeout(waitTimer);
   const scient = sources[0];
-  if (scient.outcome?.ok === false) throw scient.outcome.error;
-  for (const source of sources) {
-    if (source.outcome) source.add(source.outcome.value);
-    else
-      void source.promise.then((outcome) => {
-        if (!outcome.ok) return;
-        try {
-          source.add(outcome.value);
-        } catch {
-          // The session this run served has ended.
-        }
-      });
-  }
+  // Once a run has started without Scient's tools, a later failure leaves later runs degraded too.
+  if (scient.outcome?.ok === false && !shared.started) throw scient.outcome.error;
+  shared.started = true;
+  sources.forEach((source, index) => {
+    if (source.outcome) {
+      if (source.outcome.ok) register(index, source.outcome.value);
+      return;
+    }
+    void source.promise.then((outcome) => {
+      if (!outcome.ok || ended) return;
+      try {
+        register(index, outcome.value);
+      } catch {
+        // The session this run served has ended.
+      }
+    });
+  });
   pi.on("tool_result", (event) => {
     if (toolNames.has(event.toolName) && scientRecord(event.details)?.isError === true)
       return { isError: true };
@@ -374,7 +395,7 @@ export default async function scientOmpExtension(pi) {
         const displayName = connector?.displayName ?? shared.connectorNames[index];
         if (!connector) return " " + displayName + ": connecting.";
         if (!connector.connected) return " " + displayName + ": unavailable.";
-        const omitted = skipped.get(connector.serverName) ?? 0;
+        const omitted = shared.skipped.get(connector.serverName) ?? 0;
         return (
           " " + displayName + ": " + (connector.tools.length - omitted) + " tools" +
           (omitted > 0 ? " (" + omitted + " omitted: name unusable)" : "") + "."

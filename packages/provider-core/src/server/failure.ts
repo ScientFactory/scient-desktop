@@ -367,7 +367,11 @@ export function makeProviderFailure(input: {
     : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode =
-    input.code ?? stringField(input.cause, "code") ?? nativeOperationCode(input.cause) ?? null;
+    input.code ??
+    stringField(input.cause, "code") ??
+    // SCIENT-FORK: a native adapter's code beneath its wrappers.
+    nativeOperationCode(input.cause) ??
+    null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
