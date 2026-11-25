@@ -201,6 +201,8 @@ export function createPdfOcrSession(
   let disposed = false;
   let pass: SearchPass | null = null;
   let scannedKnown = false;
+  const sparseFindPages = new Set<number>();
+  let checkingSparsePage = false;
   let checked = false;
   let consecutiveFailures = 0;
   let snapshot: PdfOcrCoverage | null = null;
@@ -547,9 +549,38 @@ export function createPdfOcrSession(
   };
 
   function startSearch() {
-    if (disposed || pass || !scannedKnown) return;
+    if (disposed || pass) return;
     const [from] = searchers.values();
     if (from === undefined) return;
+    if (!scannedKnown) {
+      // Native Find may have already walked past an offscreen scan. Check only pages where
+      // it found little text, one at a time, without delaying other native results.
+      const next = sparseFindPages.values().next();
+      if (checkingSparsePage || next.done) return;
+      const number = next.value;
+      sparseFindPages.delete(number);
+      checkingSparsePage = true;
+      void document
+        .getPage(number)
+        .then(async (page) => {
+          if (disposed || searchers.size === 0) {
+            sparseFindPages.add(number);
+            return;
+          }
+          try {
+            await classify(page);
+          } finally {
+            if (!entry(number).visible) page.cleanup();
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          checkingSparsePage = false;
+          startSearch();
+        });
+      return;
+    }
+    sparseFindPages.clear();
     const count = Math.max(1, document.numPages);
     pass = {
       start: Math.min(Math.max(1, Math.trunc(from) || 1), count),
@@ -631,6 +662,10 @@ export function createPdfOcrSession(
       found.characters ??= textContentCharacters(content.items);
       if (found.scanned === null && found.characters >= PDF_NATIVE_TEXT_LIMIT)
         found.scanned = false;
+      if (!scannedKnown && found.scanned === null && !disposed) {
+        sparseFindPages.add(page.pageNumber);
+        startSearch();
+      }
       return { native: content, recognized: found.content };
     },
     dispose() {

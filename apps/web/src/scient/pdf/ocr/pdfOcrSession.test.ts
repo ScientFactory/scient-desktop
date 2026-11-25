@@ -376,6 +376,23 @@ describe("PDF text recognition session", () => {
     expect(textContentText(read.recognized!.items)).toBe("Recognized words\n");
   });
 
+  it("discovers an offscreen scan behind native pages, including after Find prefetched text", async () => {
+    const { document, pages } = fakePdf({ numPages: 3, scanned: (page) => page === 3 });
+    const { dependencies, calls } = setup();
+    const session = createPdfOcrSession(document, "appendix", dependencies);
+    session.setVisible({}, new Set([1]));
+    for (const number of [1, 2, 3]) {
+      await session.findTextContent(await document.getPage(number));
+    }
+    expect(calls.recognitions).toBe(0);
+    expect(pages.get(3)?.operatorLists).toBe(0);
+    session.setSearch({}, 1);
+    await vi.waitFor(() => expect(session.recognized(3)).toBe(true));
+    expect(calls.recognitions).toBe(1);
+    expect(pages.get(1)?.operatorLists).toBe(0);
+    expect(pages.get(2)?.operatorLists).toBe(0);
+  });
+
   it("reads a search's scanned pages a few at a time from its reader's page", async () => {
     const pageCount = 12;
     const { document, pages, fetched } = fakePdf({ numPages: pageCount, scanned: () => true });
