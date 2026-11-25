@@ -638,11 +638,12 @@ jobs:
           SCIENT_TEST_MANAGED_PYTHON: "1"
           MPLBACKEND: Agg
         run: vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1
-      # The seal rewrote recipe metadata in the checkout; the end step restores it.
+      # The seal rewrote recipe metadata in the checkout; the end step restores it. Real Python
+      # reuses the plain 3.12 the people role saved, so the end checks it unchanged here too.
       - name: End managed Python
         id: end-managed
         if: ${{ !cancelled() && steps.managed.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end managed
+        run: node .github/scripts/compute-roles.mjs end managed ${{ steps.people.outcome == 'success' && '--check-python bare' || '' }}
 
       # Real Python on both supported versions, as in real_kernel.
       - name: Begin real Python

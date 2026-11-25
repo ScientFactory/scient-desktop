@@ -13,6 +13,7 @@ import {
   begin,
   end,
   leftovers,
+  libraryPaths,
   packageChanges,
   parseStatus,
   parseUnixProcesses,
@@ -211,6 +212,11 @@ NodeTest.test("reads renamed and untracked entries from git status", () => {
   ]);
 });
 
+NodeTest.test("reads R's library paths from LF and CRLF output", () => {
+  NodeAssert.deepEqual(libraryPaths("C:/a\r\nC:/R/library\r\n"), ["C:/a", "C:/R/library"]);
+  NodeAssert.deepEqual(libraryPaths("/a\n/usr/lib/R/library\n"), ["/a", "/usr/lib/R/library"]);
+});
+
 NodeTest.test("names package additions, removals and version changes", () => {
   NodeAssert.deepEqual(
     packageChanges({ pip: "24.0", six: "1.0" }, { pip: "25.0", ipykernel: "6.29" }),
@@ -407,7 +413,8 @@ NodeTest.test("packages one role installs or upgrades are not there for the next
     });
     const site = NodePath.join(box.root, "site-library");
     installR(site, "base64enc", "0.1-3");
-    system.rLibraries = () => [setupLibrary, site];
+    // R names setup's library again, spelled its own way.
+    system.rLibraries = () => [`${setupLibrary}${NodePath.sep}`, site];
     env.R_LIBS_USER = setupLibrary;
 
     begin("people", ["--save-python", "bare"], env, system);
@@ -457,21 +464,44 @@ NodeTest.test("packages one role installs or upgrades are not there for the next
     NodeAssert.deepEqual(pythons["/toolcache/python"], { pip: "24.0", setuptools: "70.0" });
 
     // A role that upgrades a package of the saved Python, or writes into a shared R library,
-    // fails its end, and the next role still gets the Python as it was.
+    // fails its end, and the next role still gets the Python and the libraries as they were.
     begin("files", [], env, system);
     pythons["/toolcache/python"].pip = "25.0";
     pythons["/toolcache/python"].ipykernel = "6.29";
     installR(site, "IRkernel", "1.3.2");
+    installR(site, "base64enc", "0.1-4");
+    installR(setupLibrary, "IRkernel", "1.3.2");
     await NodeAssert.rejects(
       end("files", ["--check-python", "bare"], env, system),
       (error) =>
         error.message.includes(
           "changed /toolcache/python: ipykernel 6.29 added, pip 24.0 -> 25.0",
-        ) && error.message.includes(`changed the R library ${site}: IRkernel 1.3.2 added`),
+        ) &&
+        error.message.includes(
+          `changed the R library ${site}: IRkernel 1.3.2 added, base64enc 0.1-3 -> 0.1-4`,
+        ) &&
+        error.message.includes(`changed the R library ${setupLibrary}: IRkernel 1.3.2 added`) &&
+        !error.message.includes("could not be put back"),
     );
     NodeAssert.deepEqual(pythons["/toolcache/python"], { pip: "24.0", setuptools: "70.0" });
-    // Setup's own library was never written.
     NodeAssert.deepEqual(NodeFS.readdirSync(setupLibrary), ["jsonlite"]);
+    NodeAssert.deepEqual(NodeFS.readdirSync(site), ["base64enc"]);
+    NodeAssert.match(
+      NodeFS.readFileSync(NodePath.join(site, "base64enc", "DESCRIPTION"), "utf8"),
+      /Version: 0\.1-3/,
+    );
+
+    // Managed Python sits between the R and Julia roles and real Python, which reuses that 3.12.
+    begin("managed", [], env, system);
+    NodeAssert.deepEqual(NodeFS.readdirSync(box.stepEnv().R_LIBS_USER), ["jsonlite"]);
+    pythons["/toolcache/python"].pip = "25.1";
+    await NodeAssert.rejects(
+      end("managed", ["--check-python", "bare"], env, system),
+      /changed \/toolcache\/python: pip 24\.0 -> 25\.1/,
+    );
+    begin("python", [], env, system);
+    NodeAssert.deepEqual(pythons["/toolcache/python"], { pip: "24.0", setuptools: "70.0" });
+    await end("python", [], env, system);
   } finally {
     box.cleanup();
   }
@@ -569,6 +599,48 @@ NodeTest.test("a child started while the role's processes stop is the role's too
     await NodeAssert.rejects(
       end("kernels", [], env, system),
       /processes still running after being stopped: \/usr\/bin\/make \(4401\)/,
+    );
+  } finally {
+    box.cleanup();
+  }
+});
+
+NodeTest.test("Windows' R profile and user library under Documents are put back", async () => {
+  const box = sandbox();
+  const { env, home, system } = box;
+  try {
+    // What setup-r leaves on Windows.
+    const documents = NodePath.join(home, "Documents");
+    NodeFS.mkdirSync(documents);
+    NodeFS.writeFileSync(NodePath.join(documents, ".Rprofile"), "options(repos = 'rspm')\n");
+    begin("people", [], env, system);
+    NodeFS.rmSync(NodePath.join(documents, ".Rprofile"));
+    installR(NodePath.join(documents, "R", "win-library", "4.5"), "IRkernel", "1.3.2");
+    await end("people", [], env, system);
+    begin("files", [], env, system);
+    NodeAssert.deepEqual(NodeFS.readdirSync(documents), [".Rprofile"]);
+    NodeAssert.equal(
+      NodeFS.readFileSync(NodePath.join(documents, ".Rprofile"), "utf8"),
+      "options(repos = 'rspm')\n",
+    );
+  } finally {
+    box.cleanup();
+  }
+});
+
+NodeTest.test("a library R reports with CRLF line ends is still checked", async () => {
+  const box = sandbox();
+  const { env, system } = box;
+  try {
+    const site = NodePath.join(box.root, "site-library");
+    installR(site, "base64enc", "0.1-3");
+    // As `cat(.libPaths(), sep = "\n")` prints on Windows.
+    system.rLibraries = () => libraryPaths(`${site}\r\n`);
+    begin("people", [], env, system);
+    installR(site, "base64enc", "0.1-4");
+    await NodeAssert.rejects(
+      end("people", [], env, system),
+      new RegExp(`changed the R library .*base64enc 0\\.1-3 -> 0\\.1-4`),
     );
   } finally {
     box.cleanup();

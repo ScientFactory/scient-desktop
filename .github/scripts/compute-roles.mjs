@@ -49,8 +49,9 @@ export const HOME_PARENTS = [
 ];
 
 // Per-user packages and kernels a later role would find: Julia's depot, Jupyter kernels and
-// settings, `pip --user` sites and R's default user libraries. Every role starts from, and each end
-// puts back, the copy taken when the first role began.
+// settings, `pip --user` sites and R's profiles and default user libraries (Windows keeps both under
+// Documents, where setup-r writes its profile). Every role starts from, and each end puts back, the
+// copy taken when the first role began.
 export const HOME_STATE = [
   ".julia",
   ".ipython",
@@ -67,6 +68,9 @@ export const HOME_STATE = [
   "R",
   "Library/R",
   "AppData/Local/R",
+  "Documents/.Rprofile",
+  "Documents/.Renviron",
+  "Documents/R",
 ];
 
 // Inherited by every process a role's steps start; Scient's kernels keep it (it is not SCIENT_*).
@@ -89,6 +93,8 @@ const writeState = (env, name, value) => {
 // Short, so paths under it stay well within Windows' and Unix sockets' length limits.
 export const roleTemp = (env, role) => NodePath.join(env.RUNNER_TEMP, "cr", role);
 const seedDirectory = (env) => NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed");
+// Setup's R libraries as it left them, by their index in the seed's list; roles never write here.
+const savedLibrary = (env, index) => NodePath.join(seedDirectory(env), "R", String(index));
 
 // `ps -o pid=,ppid=,uid=,stat=,comm=`, without zombies: exited, they wait only to be reaped.
 export function parseUnixProcesses(text) {
@@ -454,6 +460,9 @@ const pythonPackages = (python) =>
     ).map((entry) => [entry.name.toLowerCase().replace(/[-_.]+/g, "-"), entry.version]),
   );
 
+// One path a line; R on Windows ends its lines with CRLF.
+export const libraryPaths = (text) => text.split(/\r?\n/).filter(Boolean);
+
 const option = (args, name) => {
   const index = args.indexOf(name);
   return index < 0 ? null : args[index + 1];
@@ -484,16 +493,25 @@ const host = {
   // R's libraries (none without R): the user's, then the site's and R's own.
   rLibraries: () => {
     try {
-      return run("Rscript", ["--vanilla", "-e", 'cat(.libPaths(), sep = "\\n")'])
-        .split("\n")
-        .filter(Boolean);
+      return libraryPaths(run("Rscript", ["--vanilla", "-e", 'cat(.libPaths(), sep = "\\n")']));
     } catch {
       return [];
     }
   },
 };
 
-/** Saved when the first role begins: what setup left in HOME_STATE and in R's libraries. */
+const writable = (path) => {
+  try {
+    NodeFS.accessSync(path, NodeFS.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Saved when the first role begins: what setup left in HOME_STATE and R's libraries, with a copy of each one a role could write (setup's user library among them).
+ */
 function seed(env, system) {
   if (NodeFS.existsSync(stateFile(env, "seed"))) return { setup: readState(env, "seed") };
   const home = system.home();
@@ -507,18 +525,25 @@ function seed(env, system) {
     saved.push(entry);
   }
   const rUser = env.R_LIBS_USER || null;
-  const libraries = [
-    ...new Map(
-      [...(rUser ? [rUser] : []), ...system.rLibraries()].map((library) => [
-        NodePath.resolve(library),
-        library,
-      ]),
-    ).values(),
-  ];
+  // Each once, as first named: setup's user library keeps its own spelling at index 0.
+  const libraries = [];
+  const resolved = new Set();
+  for (const library of [...(rUser ? [rUser] : []), ...system.rLibraries()])
+    if (!resolved.has(NodePath.resolve(library))) {
+      resolved.add(NodePath.resolve(library));
+      libraries.push(library);
+    }
+  const copies = [];
+  for (const [index, library] of libraries.entries()) {
+    if (!NodeFS.existsSync(library) || !writable(library)) continue;
+    copy(library, savedLibrary(env, index));
+    copies.push(library);
+  }
   const setup = {
     home: saved,
     rUser,
     rLibraries: Object.fromEntries(libraries.map((library) => [library, rPackages(library)])),
+    rCopies: copies,
   };
   writeState(env, "seed", setup);
   return { setup, fresh: true };
@@ -533,10 +558,10 @@ export function begin(role, args, env, system = host) {
   if (!fresh) restoreHomeState(env, system.home(), setup);
   const owner = `${role}-${NodeCrypto.randomUUID()}`;
   const lines = [...["TMPDIR", "TMP", "TEMP"].map((name) => [name, temp]), [OWNER_VARIABLE, owner]];
-  // The role's own R user library, seeded with the one setup made; the latter is never written.
+  // The role's own R user library, seeded from setup's copy, never from the live library.
   if (setup.rUser) {
     const library = NodePath.join(temp, "R-library");
-    if (NodeFS.existsSync(setup.rUser)) copy(setup.rUser, library);
+    if (setup.rCopies.includes(setup.rUser)) copy(savedLibrary(env, 0), library);
     else NodeFS.mkdirSync(library, { recursive: true });
     lines.push(["R_LIBS_USER", library]);
   }
@@ -637,11 +662,23 @@ export async function end(role, args, env, system = host) {
     remove(NodePath.join(cwd, entry.path));
   for (const entry of changed) console.log(`Restored ${entry.path} in the checkout`);
 
-  // Roles install into their own library; one that wrote into these would reach the next role.
-  for (const [library, packages] of Object.entries(setup.rLibraries)) {
+  // Roles install into their own library; one that wrote into these would reach the next role,
+  // so each changed package is put back from setup's copy.
+  for (const [index, [library, packages]] of Object.entries(setup.rLibraries).entries()) {
     const changes = packageChanges(packages, rPackages(library));
-    if (changes.length)
-      problems.push(`${label} changed the R library ${library}: ${changes.join(", ")}`);
+    if (!changes.length) continue;
+    problems.push(`${label} changed the R library ${library}: ${changes.join(", ")}`);
+    if (!setup.rCopies.includes(library)) continue;
+    const now = rPackages(library);
+    for (const name of Object.keys({ ...packages, ...now }).filter(
+      (name) => packages[name] !== now[name],
+    )) {
+      remove(NodePath.join(library, name));
+      if (packages[name] !== undefined)
+        copy(NodePath.join(savedLibrary(env, index), name), NodePath.join(library, name));
+    }
+    const after = packageChanges(packages, rPackages(library));
+    if (after.length) problems.push(`${library} could not be put back: ${after.join(", ")}`);
   }
 
   const checked = option(args, "--check-python");

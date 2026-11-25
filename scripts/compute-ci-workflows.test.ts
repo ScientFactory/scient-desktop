@@ -283,6 +283,19 @@ describe("Compute CI suite selection", () => {
     expect(index("people")).toBeLessThan(index("kernels-install"));
     expect(index("kernels-install")).toBeLessThan(index("python-install-312"));
     expectPlainPython(steps);
+    // Managed Python runs between them, so its end checks that Python too whenever it was saved.
+    const endManaged = steps[index("end-managed")]!.run!;
+    const managedEnd = (people: string) =>
+      endManaged.replace(/\$\{\{.*\}\}/, (expression) =>
+        evaluate(expression, { steps: { people: { outcome: people } } }),
+      );
+    expect(managedEnd("success")).toBe(
+      "node .github/scripts/compute-roles.mjs end managed --check-python bare",
+    );
+    for (const people of ["", "skipped", "failure"])
+      expect(managedEnd(people), people).toBe(
+        "node .github/scripts/compute-roles.mjs end managed ",
+      );
     const summary = steps.at(-1)!;
     const expected = (inputs: object, leg: object) =>
       (
