@@ -158,14 +158,22 @@ jobs:
           "@ | Set-Content -LiteralPath $script
           Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden
       # SCIENT-FORK:END
-      # Reference repositories and the mobile terminal's prebuilt libraries are half the
-      # repository's bytes and two thirds of its files; nothing here reads them.
+      # Already one commit, no tags, LFS or submodules; the build reads only HEAD's hash. The
+      # checkout's time is mostly the download of each checked-out file, so it leaves out what
+      # nothing here reads: reference repositories, test files (no build input imports one),
+      # and the mobile app's source and native folders (mobile is not installed; its
+      # manifests and tarballs stay for pnpm). That is 9.4k of 40k files and 170 of 500 MB.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: |
             /*
             !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+            !/apps/mobile/src/
+            !/apps/mobile/modules/*/android/
+            !/apps/mobile/modules/*/ios/
+            !/apps/mobile/modules/*/Vendor/
+            !/apps/mobile/modules/*/tests/
+            !*.test.*
           sparse-checkout-cone-mode: false
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
