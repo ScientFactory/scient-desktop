@@ -1,7 +1,7 @@
 import type { EnvironmentId, ScientSourcesLibraryOrganizeAction } from "@t3tools/contracts";
 
 import { organizeScientSources } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 
 export type ProjectSourcesChange = Extract<
   ScientSourcesLibraryOrganizeAction,
@@ -33,7 +33,7 @@ export async function changeProjectSources(input: {
       root: input.root,
       change: { action: "change-pins", changes },
     }).catch((cause: unknown) => {
-      error ??= scientSourcesErrorMessage(cause, import.meta.env.DEV);
+      error ??= sourcesErrorMessage(cause);
       return null;
     });
     for (const [index, change] of changes.entries()) {

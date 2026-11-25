@@ -97,6 +97,8 @@ jobs:
           # SCIENT-FORK:START clerk-legacy-instance
           CLERK_LEGACY_SECRET_KEY: ${{ secrets.CLERK_LEGACY_SECRET_KEY }}
           # SCIENT-FORK:END clerk-legacy-instance
+          # Unset leaves the Clerk account-deletion webhook route off.
+          CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           # SCIENT-FORK:START account-deletion
           APPLE_SIGN_IN_PRIVATE_KEY: ${{ secrets.APPLE_SIGN_IN_PRIVATE_KEY }}

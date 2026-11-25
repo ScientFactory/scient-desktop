@@ -373,6 +373,15 @@ describe("account services", () => {
       ["imessage@claude-plugins-official", "imessage", "iMessage", "shared"],
       ["telegram@claude-plugins-official", "telegram", "Telegram", "shared"],
       ["messages@openai-bundled", "messages", "Messages", "codex"],
+      ["zotero@openai-curated", "zotero", "Zotero", "codex"],
+      ["latex@openai-bundled", "latex", "LaTeX", "codex"],
+      [
+        "life-science-research@openai-curated",
+        "life-science-research",
+        "Life Science Research",
+        "codex",
+      ],
+      ["ngs-analysis@openai-curated", "ngs-analysis", "Life Sciences NGS Analysis", "codex"],
     ] as const)
       expect(isAccountServiceStoreEntry({ id, name, displayName, kind, apps: [] })).toBe(true);
     // A same-named entry stays listed when the service's page has no route to that store's agent.

@@ -7,7 +7,14 @@ import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
 
-import { atomicWriteJson, ensureDirectory, isNodeError, readBoundedJson } from "./storeFiles.ts";
+import {
+  absolute,
+  atomicWriteJson,
+  ensureDirectory,
+  hashFile,
+  isNodeError,
+  readBoundedJson,
+} from "./storeFiles.ts";
 
 /**
  * Sealed copies of a project's evidence from before each Library move. Nothing reads this folder
@@ -60,19 +67,6 @@ function scientPreMoveArchiveKeeps(projectRelative: string): boolean {
   if (!projectRelative.startsWith(V1_PREFIX)) return false;
   const inside = projectRelative.slice(V1_PREFIX.length);
   return !inside.startsWith("text/") && !inside.startsWith("staging/");
-}
-
-const absolute = (base: string, relative: string) => NodePath.join(base, ...relative.split("/"));
-
-async function hashFile(filePath: string): Promise<string | null> {
-  const hash = NodeCrypto.createHash("sha256");
-  try {
-    for await (const chunk of NodeFS.createReadStream(filePath)) hash.update(chunk as Buffer);
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return null;
-    throw error;
-  }
-  return hash.digest("hex");
 }
 
 const SHA256_FILE = /^[0-9a-f]{64}\.json$/u;
@@ -332,6 +326,11 @@ async function listScientPreMoveArchives(
     }
   }
   return archives.toSorted((left, right) => (left.capturedAt < right.capturedAt ? 1 : -1));
+}
+
+/** Whether the project keeps a sealed copy from before a move, which Recover can bring back. */
+export async function hasScientPreMoveArchive(projectRoot: string): Promise<boolean> {
+  return (await listScientPreMoveArchives(projectRoot).catch(() => [])).length > 0;
 }
 
 const RESTORE_PROGRESS = ".scient/library/restore-progress.json";

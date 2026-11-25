@@ -80,3 +80,8 @@ export function scientSourcesErrorMessage(error: unknown, development: boolean):
   }
   return error.message;
 }
+
+/** The person-facing text for a failed Library request, with details in development. */
+export function sourcesErrorMessage(error: unknown): string {
+  return scientSourcesErrorMessage(error, import.meta.env.DEV);
+}

@@ -14,7 +14,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { toastManager } from "../../components/ui/toast";
 import { setScientSourcesReadingState } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import {
   changeProjectSources,
   projectKeys,
@@ -186,7 +186,7 @@ export function useLibraryProjectActions(
       toastManager.add({
         type: "error",
         title: m(LIBRARY_LABELS.readingFailed),
-        description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+        description: sourcesErrorMessage(cause),
       });
       return null;
     });

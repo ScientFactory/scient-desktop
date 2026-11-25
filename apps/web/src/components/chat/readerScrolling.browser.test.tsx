@@ -12,6 +12,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { StrictMode, createRef, useLayoutEffect, useState } from "react";
 
 import { expect, it, vi, type TestContext } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -1086,6 +1087,20 @@ it("leaves a scroll without reader input where it is while a fresh open settles 
 
   const key = "geometry:open-settling-scroll";
   const onPositioned = vi.fn();
+  // The watcher knows an offset only from a scroll event, which the browser fires a frame after
+  // scrollTop moves: the reader's move is made once it has seen the opening leave the top.
+  await mountHost(_fixture);
+  let nativeScrolledDown = false;
+  const onNativeScroll = (event: Event) => {
+    const scroller = _fixture.listRef.current?.getScrollableNode();
+    if (event.isTrusted && scroller && event.target === scroller && scroller.scrollTop > 0) {
+      nativeScrolledDown = true;
+    }
+  };
+  _fixture.host!.addEventListener("scroll", onNativeScroll, { capture: true });
+  _fixture.cleanup.defer(() =>
+    _fixture.host?.removeEventListener("scroll", onNativeScroll, { capture: true }),
+  );
   await render(
     _fixture,
     key,
@@ -1095,6 +1110,7 @@ it("leaves a scroll without reader input where it is while a fresh open settles 
   const node = _fixture.listRef.current!.getScrollableNode()!;
   await vi.waitFor(() => {
     expect(node.scrollTop).toBeGreaterThan(0);
+    expect(nativeScrolledDown).toBe(true);
   });
   expect(onPositioned).not.toHaveBeenCalledWith(key);
   // A screen reader moving to the first heading scrolls with no wheel, touch, press or key.
@@ -1106,6 +1122,204 @@ it("leaves a scroll without reader input where it is while a fresh open settles 
   await advanceClock(_fixture, 256);
   expect(node.scrollTop).toBe(0);
 });
+
+/** Whether the timeline is covered while an opening is positioned. */
+function timelineCovered(node: HTMLElement) {
+  return (
+    node
+      .closest("[data-assistant-citation-viewport]")
+      ?.querySelector("[data-timeline-opening-cover]") != null
+  );
+}
+
+it("keeps an opening covered while its history loads, then shows it at its end", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await render(
+    _fixture,
+    "geometry:opening-a",
+    Array.from({ length: 20 }, (_, i) => entry(i)),
+  );
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:opening-a")).toBeDefined();
+  });
+  const node = _fixture.listRef.current!.getScrollableNode()!;
+  // Sampled at each DOM change and scroll: once the new thread's rows are shown, it is
+  // covered or at its end, never at the previous thread's offset.
+  const shownAwayFromEnd: number[] = [];
+  const sample = () => {
+    if (!_fixture.host?.textContent?.includes("Message 229") || timelineCovered(node)) return;
+    const shortfall = Math.round(measuredEndOffset(node) - node.scrollTop);
+    if (shortfall > 1) shownAwayFromEnd.push(shortfall);
+  };
+  const commits = new MutationObserver(sample);
+  commits.observe(_fixture.host!, { subtree: true, childList: true, attributes: true });
+  node.addEventListener("scroll", sample);
+  _fixture.cleanup.defer(() => {
+    commits.disconnect();
+    node.removeEventListener("scroll", sample);
+  });
+
+  const opening = Array.from({ length: 30 }, (_, i) => entry(i + 200));
+  // The new thread's rows are already there (cached) while its history still loads.
+  await render(_fixture, "geometry:opening-b", opening, { positionHistoryLoading: true });
+  expect(_fixture.host!.textContent).toContain("Message 229");
+  expect(timelineCovered(node)).toBe(true);
+  await advanceClock(_fixture, 256);
+  expect(timelineCovered(node)).toBe(true);
+
+  await render(_fixture, "geometry:opening-b", opening);
+  await vi.waitFor(() => {
+    expect(timelineCovered(node)).toBe(false);
+  });
+  expect(Math.round(measuredEndOffset(node) - node.scrollTop)).toBeLessThanOrEqual(1);
+  expect(shownAwayFromEnd).toEqual([]);
+});
+
+it("shows an opening that never reports positioned after a second, and hides the next one again", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const stalled = Array.from({ length: 30 }, (_, i) => entry(i));
+  await render(_fixture, "geometry:opening-stalled", stalled, { positionHistoryLoading: true });
+  const node = _fixture.listRef.current!.getScrollableNode()!;
+  expect(timelineCovered(node)).toBe(true);
+  await advanceClock(_fixture, 1000);
+  await vi.waitFor(() => {
+    expect(timelineCovered(node)).toBe(false);
+  });
+
+  // The expiry belonged to that opening: visiting another thread and coming back hides again.
+  await render(
+    _fixture,
+    "geometry:opening-other",
+    Array.from({ length: 4 }, (_, i) => entry(i + 300)),
+  );
+  await vi.waitFor(() => {
+    expect(timelineCovered(node)).toBe(false);
+  });
+  await render(_fixture, "geometry:opening-stalled", stalled, { positionHistoryLoading: true });
+  expect(timelineCovered(node)).toBe(true);
+});
+
+it("lets a wheel over a covered opening take over where the reader is", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:opening-wheel";
+  const onPositioned = vi.fn();
+  await render(
+    _fixture,
+    key,
+    Array.from({ length: 30 }, (_, i) => entry(i + 400)),
+    { positionHistoryLoading: true, onPositionedThreadKeyChange: onPositioned },
+  );
+  const cover = () => _fixture.host!.querySelector<HTMLElement>("[data-timeline-opening-cover]");
+  expect(cover()).not.toBeNull();
+  // A real wheel lands on the cover, which passes it on to the timeline: the reader's navigation
+  // ends the wait and the thread reports positioned (the fallback only uncovers, it reports nothing).
+  await userEvent.wheel(cover()!, { delta: { y: 200 } });
+  await vi.waitFor(() => {
+    expect(onPositioned).toHaveBeenCalledWith(key);
+  });
+  expect(cover()).toBeNull();
+  expect(_fixture.listRef.current!.getScrollableNode()!.scrollTop).toBeGreaterThan(0);
+});
+
+it("covers a list that mounts again on the same thread after an expired opening", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:opening-remount";
+  const rows = Array.from({ length: 30 }, (_, i) => entry(i + 500));
+  const covered = () => _fixture.host!.querySelector("[data-timeline-opening-cover]") !== null;
+  await render(_fixture, key, rows, { positionHistoryLoading: true });
+  expect(covered()).toBe(true);
+  await advanceClock(_fixture, 1000);
+  await vi.waitFor(() => {
+    expect(covered()).toBe(false);
+  });
+  // The thread empties (its list unmounts) and fills again: the new list's opening is covered.
+  await render(_fixture, key, []);
+  await vi.waitFor(() => {
+    expect(_fixture.listRef.current?.getScrollableNode() ?? null).toBeNull();
+  });
+  await render(_fixture, key, rows, { positionHistoryLoading: true });
+  expect(covered()).toBe(true);
+});
+
+it("covers a list that mounts again after an opening that never finished loading", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:opening-unloaded-remount";
+  const rows = Array.from({ length: 30 }, (_, i) => entry(i + 800));
+  const covered = () => _fixture.host!.querySelector("[data-timeline-opening-cover]") !== null;
+  // With no height the list never reports loaded; its opening expires uncovered.
+  await mountHost(_fixture);
+  _fixture.host!.style.height = "0px";
+  await render(_fixture, key, rows, { positionHistoryLoading: true });
+  expect(covered()).toBe(true);
+  await advanceClock(_fixture, 1000);
+  await vi.waitFor(() => {
+    expect(covered()).toBe(false);
+  });
+  await render(_fixture, key, []);
+  await vi.waitFor(() => {
+    expect(_fixture.listRef.current?.getScrollableNode() ?? null).toBeNull();
+  });
+  _fixture.host!.style.height = "600px";
+  await render(_fixture, key, rows, { positionHistoryLoading: true });
+  expect(covered()).toBe(true);
+});
+
+it.for(["its first mount", "an empty start", "an empty remount"] as const)(
+  "ends a wheel glide from one thread when the scroller shows another, after %s",
+  async (opening, context) => {
+    await using _fixture = _createFixture(context);
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const rowsA = Array.from({ length: 30 }, (_, i) => entry(i + 600));
+    const unmounted = async () =>
+      await vi.waitFor(() => {
+        expect(_fixture.listRef.current?.getScrollableNode() ?? null).toBeNull();
+      });
+    // The list can mount or mount again while the same thread stays shown.
+    if (opening === "an empty start") {
+      await render(_fixture, "geometry:glide-a", []);
+      await unmounted();
+    }
+    if (opening === "an empty remount") {
+      await render(_fixture, "geometry:glide-a", rowsA, { positionHistoryLoading: true });
+      await render(_fixture, "geometry:glide-a", []);
+      await unmounted();
+    }
+    await render(_fixture, "geometry:glide-a", rowsA, { positionHistoryLoading: true });
+    const node = _fixture.listRef.current!.getScrollableNode()!;
+    const cover = _fixture.host!.querySelector<HTMLElement>("[data-timeline-opening-cover]")!;
+    // A line-mode wheel glides over frames (frames are on the fixture's fake clock).
+    cover.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: 6,
+        deltaMode: WheelEvent.DOM_DELTA_LINE,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    // Another thread opens on the same scroller and waits for its history, so nothing of its own moves it.
+    await render(
+      _fixture,
+      "geometry:glide-b",
+      Array.from({ length: 30 }, (_, i) => entry(i + 700)),
+      { positionHistoryLoading: true },
+    );
+    expect(_fixture.listRef.current!.getScrollableNode()).toBe(node);
+    const shownAt = node.scrollTop;
+    await advanceClock(_fixture, 256);
+    expect(node.scrollTop).toBe(shownAt);
+  },
+);
 
 function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();

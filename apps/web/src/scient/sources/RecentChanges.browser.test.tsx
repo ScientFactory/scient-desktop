@@ -90,14 +90,44 @@ const dialog = (handlers: ReturnType<typeof setup>, canChange = true) => (
 );
 
 describe("Recent changes", () => {
+  it.each([
+    { imports: 0, shown: false },
+    { imports: 1, shown: true },
+  ])(
+    "offers package imports only when the project has some ($imports)",
+    async ({ imports, shown }) => {
+      const handlers = setup();
+      mocks.organize.mockImplementation(async (_environment, { change }) =>
+        change.action === "list-package-imports"
+          ? {
+              outcome: "listed",
+              packageImports: Array.from({ length: imports }, (_, index) => ({
+                importId: `i${index}`,
+              })),
+            }
+          : { outcome: "undone" },
+      );
+      await using _screen = await render(dialog(handlers), { router: false });
+      await expect.element(page.getByText("Added the tag RCT: 120 sources")).toBeVisible();
+      const section = page.getByRole("region", { name: "Package imports" });
+      if (shown) await expect.element(section).toBeVisible();
+      else {
+        await vi.waitFor(() =>
+          expect(mocks.organize).toHaveBeenCalledWith(environmentId, {
+            root: "/project",
+            change: { action: "list-package-imports" },
+          }),
+        );
+        await expect.element(section).not.toBeInTheDocument();
+      }
+    },
+  );
+
   it("lists each change with who made it and the one thing to do about it", async () => {
     const handlers = setup();
     await using _screen = await render(dialog(handlers), { router: false });
 
     await expect.element(page.getByText("Added the tag RCT: 120 sources")).toBeVisible();
-    await expect
-      .element(page.getByText("Edits to one paper are in that paper's History.", { exact: false }))
-      .toBeVisible();
     expect(mocks.read).toHaveBeenCalledWith(environmentId, { root: "/project", limit: 50 });
 
     // A bulk edit sent in two requests goes to the panel's Undo in the edit's own order;

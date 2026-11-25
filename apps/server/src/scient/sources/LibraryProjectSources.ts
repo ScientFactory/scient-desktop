@@ -21,6 +21,7 @@ import {
   readScientProjectPins,
   refreshScientProjectPinSnapshots,
   resolveScientProjectPins,
+  unpinScientProjectWork,
   type ScientProjectPin,
   type ScientProjectPinnedWork,
 } from "@scientfactory/scient-sources/project-pins";
@@ -52,6 +53,29 @@ export async function listProjectPinnedWorks(
     projectRoot: store.root,
     library: store.exists ? store.library : null,
   });
+}
+
+/** `unpinScientProjectWork`, then this project's managed files follow. */
+export async function unpinProjectWork(
+  store: ScientSourcesLibraryStore,
+  citationKey: string,
+  actor: ScientSourceActor,
+): Promise<
+  | {
+      readonly outcome: "unpinned";
+      readonly pin: ScientProjectPin;
+      readonly alsoUnpinned: ReadonlyArray<string>;
+    }
+  | { readonly outcome: "not-pinned" }
+> {
+  const result = await unpinScientProjectWork({
+    projectRoot: store.root,
+    library: store.exists ? store.library : null,
+    citationKey,
+    actor,
+  });
+  if (result.outcome === "unpinned") await syncProjectBibliography(store, actor);
+  return result;
 }
 
 /** Rewrites this project's managed files from its pins; only with write access. */
@@ -377,9 +401,32 @@ export async function alsoPinnedIn(
 }
 
 /**
+ * A checkout's pin snapshots, the snapshots of its reviews that name `changed`, its bibliography.
+ * Each is its own step: one that fails, such as a damaged review, leaves the others to run.
+ */
+async function refreshCheckout(
+  projectRoot: string,
+  library: ScientSourcesLibraryStore["library"],
+  changed: ReadonlySet<string>,
+  actor: ScientSourceActor,
+): Promise<void> {
+  const step = (run: () => Promise<unknown>) => run().catch(() => undefined);
+  await step(() => refreshScientProjectPinSnapshots({ projectRoot, library }));
+  await step(async () => {
+    for (const reviewId of await listScientLibraryReviewIds(projectRoot)) {
+      await step(() =>
+        refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId, naming: changed }),
+      );
+    }
+  });
+  await step(() => syncPinnedBibliography({ root: projectRoot, library, access: "write", actor }));
+}
+
+/**
  * After library records change, refreshes every pin snapshot of this project (so one left stale
  * by a failure or another project is caught up), the snapshots of its reviews that name them,
- * and its managed bibliography. Each writes only when bytes change.
+ * and its managed bibliography; then the same in every other checkout on this computer that
+ * pins a changed source. Each writes only when bytes change; one that fails stops no other.
  */
 export async function refreshProjectAfterLibraryChange(
   store: ScientSourcesLibraryStore,
@@ -388,16 +435,25 @@ export async function refreshProjectAfterLibraryChange(
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
   const changed = new Set(sourceIds);
-  await refreshScientProjectPinSnapshots({ projectRoot: store.root, library: store.library });
-  for (const reviewId of await listScientLibraryReviewIds(store.root)) {
-    await refreshScientLibraryReviewSnapshot({
-      projectRoot: store.root,
+  await refreshCheckout(store.root, store.library, changed, actor);
+  const here = await NodeFSP.realpath(store.root).catch(() => store.root);
+  const instances = await listScientLibraryInstances(store.library).catch(() => []);
+  for (const instance of instances) {
+    if (instance.path === here || !(await folderExists(instance.path))) continue;
+    const pinned = await resolveScientProjectPins({
+      projectRoot: instance.path,
       library: store.library,
-      reviewId,
-      naming: changed,
-    });
+      mode: "read",
+      actor,
+    }).catch(() => []);
+    if (
+      pinned.some(
+        ({ resolution }) => resolution.kind === "resolved" && changed.has(resolution.sourceId),
+      )
+    ) {
+      await refreshCheckout(instance.path, store.library, changed, actor);
+    }
   }
-  await syncProjectBibliography(store, actor);
 }
 
 /** Read or unread, starred or not, for one source or many; each answers under its own ID. */

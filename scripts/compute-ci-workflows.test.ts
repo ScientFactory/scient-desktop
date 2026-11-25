@@ -4,6 +4,8 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
 import * as YAML from "yaml";
 
+import { PROOFS } from "../.github/scripts/compute-roles.mjs";
+
 const workflow = (name: string): unknown =>
   YAML.parse(NodeFS.readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
 
@@ -71,62 +73,250 @@ describe("Compute CI suite selection", () => {
     });
   });
 
-  it("narrows every native matrix to Linux only on an explicit linux", () => {
-    const jobs = (
-      workflow("scient-compute-python-kernel.yml") as {
-        jobs: Record<
-          string,
-          {
-            strategy: { matrix: { runner?: string; include?: string } };
-            steps?: Array<{ env?: Record<string, string> }>;
-          }
-        >;
-      }
-    ).jobs;
-    // Each value is one `${{ ... }}` expression; these use only ==, &&, || and fromJSON.
-    const evaluate = (expression: string, context: object) =>
-      NodeVM.runInNewContext(expression.slice(3, -2), { fromJSON: JSON.parse, ...context });
-    const all = ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"];
-    // A job split into legs must give every runner the whole proof: one leg that runs all of
-    // it, or one leg per part.
-    const legs: Record<string, { key: string; whole: string; parts: Array<string> }> = {
-      real_kernel: { key: "python", whole: "both", parts: ["3.10", "3.12"] },
-      real_languages: { key: "part", whole: "all", parts: ["files", "kernels", "people"] },
+  type Step = {
+    id?: string;
+    name?: string;
+    if?: string;
+    uses?: string;
+    run?: string;
+    env?: Record<string, string>;
+    with?: Record<string, unknown>;
+    "working-directory"?: string;
+  };
+  type Job = {
+    if?: string;
+    strategy: { matrix: { runner?: string; include?: string | Array<Record<string, unknown>> } };
+    steps: Array<Step>;
+  };
+  const jobs = (workflow("scient-compute-python-kernel.yml") as { jobs: Record<string, Job> }).jobs;
+  // Each value is one `${{ ... }}` expression; these use only ==, &&, ||, ! and fromJSON.
+  const evaluate = (expression: string, context: object) =>
+    NodeVM.runInNewContext(expression.slice(3, -2), { fromJSON: JSON.parse, ...context });
+  const all = ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"];
+  const legsOf = (id: string, inputs: object): Array<Record<string, unknown>> => {
+    const job = jobs[id]!;
+    if (job.if && !evaluate(job.if, { inputs })) return [];
+    const { runner, include } = job.strategy.matrix;
+    if (runner !== undefined)
+      return (evaluate(runner, { inputs }) as Array<string>).map((name) => ({ runner: name }));
+    return typeof include === "string" ? evaluate(include, { inputs }) : include!;
+  };
+  // Which runners run each proof, and with which parts, across every job.
+  const coverage = (inputs: Record<string, unknown>) => {
+    const runners: Record<string, Map<string, Array<string>>> = {};
+    const add = (proof: string, runner: string, part: string) => {
+      const byRunner = (runners[proof] ??= new Map());
+      byRunner.set(runner, [...(byRunner.get(runner) ?? []), part].toSorted());
     };
-    const runners = (id: string, context: object): Array<string> => {
-      const { runner, include } = jobs[id]!.strategy.matrix;
-      if (runner !== undefined) return evaluate(runner, context);
-      const entries = evaluate(include!, context) as Array<Record<string, string>>;
-      const byRunner = Map.groupBy(entries, (entry) => entry.runner!);
-      for (const [name, group] of byRunner) {
-        const parts = group.map((entry) => entry[legs[id]!.key]!).toSorted();
-        expect([[legs[id]!.whole], legs[id]!.parts], `${id} ${name}`).toContainEqual(parts);
-      }
-      return [...byRunner.keys()].toSorted((a, b) => all.indexOf(a) - all.indexOf(b));
-    };
-    for (const id of ["managed_python", "real_kernel", "real_languages"]) {
-      const inputs = { real_kernel: true };
-      expect(runners(id, { inputs: { ...inputs, platforms: "linux" } }), id).toEqual([
-        "ubuntu-24.04",
-      ]);
-      expect(runners(id, { inputs: { ...inputs, platforms: "all" } }), id).toEqual(all);
-      // Manual dispatch has no such input.
-      expect(runners(id, { inputs }), id).toEqual(all);
+    for (const leg of legsOf("managed_python", inputs)) add("managed", leg.runner as string, "all");
+    for (const leg of legsOf("real_kernel", inputs))
+      add("kernel", leg.runner as string, leg.python as string);
+    for (const leg of legsOf("real_languages", inputs))
+      add("languages", leg.runner as string, "all");
+    for (const leg of legsOf("macos", inputs)) {
+      if (inputs.managed_python) add("managed", leg.runner as string, "all");
+      if (inputs.real_kernel) add("kernel", leg.runner as string, "both");
+      if (inputs.real_kernel && leg.languages) add("languages", leg.runner as string, "all");
     }
-    // Only the product case changed: one Linux leg on the interpreter its step uses.
-    for (const platforms of ["linux", "all"])
-      expect(
-        evaluate(jobs.real_kernel!.strategy.matrix.include!, {
-          inputs: { real_kernel: false, python_product: true, platforms },
+    return runners;
+  };
+
+  it("narrows every native proof to Linux only on an explicit linux", () => {
+    // A proof split into legs must give every runner the whole proof: one leg that runs all of
+    // it, or one leg per part.
+    const whole: Record<string, Array<Array<string>>> = {
+      managed: [["all"]],
+      kernel: [["both"], ["3.10", "3.12"]],
+      languages: [["all"]],
+    };
+    const runnersOf = (inputs: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(coverage(inputs)).map(([proof, byRunner]) => {
+          for (const [runner, parts] of byRunner)
+            expect(whole[proof], `${proof} ${runner}`).toContainEqual(parts);
+          return [proof, [...byRunner.keys()].toSorted((a, b) => all.indexOf(a) - all.indexOf(b))];
         }),
-      ).toEqual([{ runner: "ubuntu-24.04", python: "3.12" }]);
-    const target = jobs.managed_python!.steps!.find((step) => step.env?.EXPECTED_TARGET)!.env!
+      );
+    const both = { real_kernel: true, managed_python: true };
+    expect(runnersOf({ ...both, platforms: "linux" })).toEqual({
+      managed: ["ubuntu-24.04"],
+      kernel: ["ubuntu-24.04"],
+      languages: ["ubuntu-24.04"],
+    });
+    expect(runnersOf({ ...both, platforms: "all" })).toEqual({
+      managed: all,
+      kernel: all,
+      languages: all,
+    });
+    // Manual dispatch has no platforms input.
+    expect(runnersOf(both)).toEqual({ managed: all, kernel: all, languages: all });
+    expect(runnersOf({ managed_python: true, real_kernel: false, platforms: "all" })).toEqual({
+      managed: all,
+    });
+    // Only the product case changed: one Linux leg on the interpreter its step uses.
+    for (const platforms of ["linux", "all"]) {
+      const inputs = { real_kernel: false, managed_python: false, python_product: true, platforms };
+      expect(legsOf("real_kernel", inputs)).toEqual([{ runner: "ubuntu-24.04", python: "3.12" }]);
+      expect(legsOf("macos", inputs)).toEqual([]);
+    }
+    const target = jobs.managed_python!.steps.find((step) => step.env?.EXPECTED_TARGET)!.env!
       .EXPECTED_TARGET!;
     expect(all.map((runner) => evaluate(target, { matrix: { runner } }))).toEqual([
       "linux-x64",
       "darwin-arm64",
       "darwin-x64",
       "win32-x64",
+    ]);
+    for (const leg of legsOf("macos", both))
+      expect(leg.target, String(leg.runner)).toBe(evaluate(target, { matrix: leg }));
+  });
+
+  // Each role is its begin step, exactly the proofs compute-roles.mjs requires of it and its end
+  // step; every proof runs once the role began, whatever an earlier role did.
+  const expectRoles = (steps: Array<Step>, roles: Array<string>) => {
+    for (const role of roles) {
+      const begin = steps.findIndex((step) => step.id === role);
+      const finish = steps.findIndex((step) => step.id === `end-${role}`);
+      expect(steps[begin]!.run).toMatch(new RegExp(`compute-roles\\.mjs begin ${role}\\b`));
+      expect(steps[begin]!.if).toMatch(/^\$\{\{ !cancelled\(\) && steps\.vp\.outcome == 'success'/);
+      expect(steps[finish]!.run).toMatch(new RegExp(`compute-roles\\.mjs end ${role}\\b`));
+      expect(steps[finish]!.if).toBe(`\${{ !cancelled() && steps.${role}.outcome != 'skipped' }}`);
+      const own = steps.slice(begin + 1, finish);
+      expect(
+        own.map((step) => step.id),
+        role,
+      ).toEqual(PROOFS[role]);
+      for (const step of own) {
+        expect(step.if, step.name).toBe(
+          `\${{ !cancelled() && steps.${role}.outcome == 'success' }}`,
+        );
+      }
+    }
+    // Every step after setup runs whatever an earlier one did, so no proof is skipped after a
+    // failure (ci-quarantine.cjs then reads a skipped step as one whose own condition was false).
+    const setup = steps.findIndex((step) => step.id === "vp");
+    for (const step of steps.slice(setup + 2))
+      expect(step.if, step.name).toMatch(/^\$\{\{ !cancelled\(\)/);
+    const summary = steps.at(-1)!;
+    expect(summary.run).toBe("node .github/scripts/compute-roles.mjs summary");
+    expect(summary.env!.STEPS).toBe("${{ toJSON(steps) }}");
+    return summary;
+  };
+
+  // The plain Python the people role saved is checked after each R and Julia role; the bridge's
+  // packages go into the kernel role's own environment.
+  const expectPlainPython = (steps: Array<Step>) => {
+    const step = (id: string) => steps.find((candidate) => candidate.id === id)!;
+    expect(step("people").run).toBe(
+      "node .github/scripts/compute-roles.mjs begin people --save-python bare",
+    );
+    for (const role of ["people", "files", "kernels"])
+      expect(step(`end-${role}`).run).toBe(
+        `node .github/scripts/compute-roles.mjs end ${role} --check-python bare`,
+      );
+    expect(step("kernels-install").run).toMatch(
+      /^node \.github\/scripts\/compute-roles\.mjs venv kernels /,
+    );
+    expect(step("kernels-run").env!.SCIENT_TEST_PYTHON).toBe(
+      "${{ steps.kernels-install.outputs.python }}",
+    );
+    for (const candidate of steps)
+      expect(candidate.run ?? "", candidate.name).not.toMatch(/restore-python/);
+  };
+
+  it("runs each computer's R and Julia proofs in one job, each from a clean start", () => {
+    const steps = jobs.real_languages!.steps;
+    expect(expectRoles(steps, ["people", "files", "kernels"]).env!.EXPECTED).toBe(
+      "people files kernels",
+    );
+    expectPlainPython(steps);
+    const index = (id: string) => steps.findIndex((step) => step.id === id);
+    const llvm = steps.findIndex((step) => step.run?.includes("match-windows-llvm.sh"));
+    expect(llvm).toBeGreaterThan(-1);
+    expect(llvm).toBeLessThan(index("people"));
+  });
+
+  it("runs on a Mac the same steps as each role's own job, one role after another", () => {
+    const steps = jobs.macos!.steps;
+    const source: Record<string, string> = {
+      people: "real_languages",
+      files: "real_languages",
+      kernels: "real_languages",
+      languages: "real_languages",
+      managed: "managed_python",
+      python: "real_kernel",
+    };
+    const roles = ["people", "files", "kernels", "managed", "python"];
+    const same = (step: Step) => ({
+      uses: step.uses,
+      run: step.run,
+      env: step.env,
+      with: step.with,
+      "working-directory": step["working-directory"],
+    });
+    // R and Julia's setup, then every proof each role requires: a proof deleted from the Mac job
+    // fails here rather than leaving nothing to compare.
+    const proofs = [
+      "languages-python",
+      "languages-r",
+      "languages-julia",
+      ...roles.flatMap((role) => PROOFS[role]!),
+    ].map((id) => {
+      const step = steps.find((candidate) => candidate.id === id);
+      expect(step, id).toBeDefined();
+      return step!;
+    });
+    expect(proofs.length).toBe(17);
+    for (const step of proofs) {
+      const role = step.id!.split("-")[0]!;
+      const original = jobs[source[role]!]!.steps.find((other) => other.name === step.name);
+      expect(original, step.name).toBeDefined();
+      // The target comes from the leg here, from a runner map there (checked above).
+      if (step.env?.EXPECTED_TARGET)
+        expect({ ...same(step), env: undefined }).toEqual({ ...same(original!), env: undefined });
+      else expect(same(step), step.name).toEqual(same(original!));
+    }
+    expectRoles(steps, roles);
+    // The plain-Python proof runs before anything is installed into a Python, and the Python it
+    // saved is checked unchanged before real Python reuses that interpreter.
+    const index = (id: string) => steps.findIndex((step) => step.id === id);
+    expect(index("people")).toBeLessThan(index("kernels-install"));
+    expect(index("kernels-install")).toBeLessThan(index("python-install-312"));
+    expectPlainPython(steps);
+    // Managed Python runs between them, so its end checks that Python too whenever it was saved.
+    const endManaged = steps[index("end-managed")]!.run!;
+    const managedEnd = (people: string) =>
+      endManaged.replace(/\$\{\{.*\}\}/, (expression) =>
+        evaluate(expression, { steps: { people: { outcome: people } } }),
+      );
+    expect(managedEnd("success")).toBe(
+      "node .github/scripts/compute-roles.mjs end managed --check-python bare",
+    );
+    for (const people of ["", "skipped", "failure"])
+      expect(managedEnd(people), people).toBe(
+        "node .github/scripts/compute-roles.mjs end managed ",
+      );
+    const summary = steps.at(-1)!;
+    const expected = (inputs: object, leg: object) =>
+      (
+        evaluate(summary.env!.EXPECTED!, {
+          inputs,
+          matrix: leg,
+          format: (template: string, ...args: Array<string>) =>
+            template.replace(/\{(\d+)\}/g, (_, i: string) => args[Number(i)]!),
+        }) as string
+      )
+        .split(" ")
+        .filter(Boolean);
+    const both = { real_kernel: true, managed_python: true, platforms: "all" };
+    expect(legsOf("macos", both).map((leg) => expected(both, leg))).toEqual([
+      ["people", "files", "kernels", "managed", "python"],
+      ["managed", "python"],
+    ]);
+    const managedOnly = { real_kernel: false, managed_python: true, platforms: "all" };
+    expect(legsOf("macos", managedOnly).map((leg) => expected(managedOnly, leg))).toEqual([
+      ["managed"],
+      ["managed"],
     ]);
   });
 

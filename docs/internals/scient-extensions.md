@@ -110,7 +110,9 @@ names is reused. Every page reads one environment, chosen by the settings scope 
 access.
 
 - **Discover** (`/settings/extensions`) — the curated catalog's sections, each
-  showing a preview with its title linking to the category page, then the
+  showing a preview with its title linking to the category page (a field section shows its
+  account services, less any whose `categoryPageOnly` names it, then its catalog preview, cut to
+  whole two-column rows of at most eight; Most used shows everything), then the
   built-in Scient plugins, shared plugins, Codex store previews, and a link to the full registry. Store headings open searchable, paged store pages. Search replaces the
   sections with one grid: matching installed connectors and plugins first, then
   curated matches, then registry matches as they arrive (see
@@ -845,9 +847,16 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   refreshes are throttled to ten minutes. Sign-in opens claude.ai's connector
   settings. Local installed plugin metadata comes from the selected Claude home.
 - **Scient Agent**: bounded `plugin list --json` through the exact configured
-  executable and isolated root, plus `<root>/agent/mcp.json` and plugin MCP files.
-  Configuration proves a server is configured, not connected. Enable, disable,
-  and uninstall are re-read and verified. Foreign Claude installs are read-only
+  executable and isolated root. When `--runtime-info` lists `mcp` in `hostCommands`,
+  `mcp list` reports the servers a conversation would load with their live status and
+  replaces the configured rows; it omits disabled servers, so `disabled` rows and other
+  sources' rows (ChatGPT apps) stay. An older agent, or a failed listing, falls back to
+  `<root>/agent/mcp.json` and plugin MCP files, which prove a server is configured, not
+  connected. **Sign in** runs `mcp login <name>` with `SCIENT_AGENT_HOST_PAGES=1`: the
+  process prints the authorization page and holds the browser callback, in the sign-in's
+  scope, until it reports the outcome; the agent stores the credential and the inventory
+  re-reads. An older agent's rows offer no **Sign in**.
+  Enable, disable, and uninstall are re-read and verified. Foreign Claude installs are read-only
   from this section. No configuration, environment, or credentials from an MCP
   definition are projected into the UI.
 - **Scient Agent's ChatGPT apps**: the apps its own ChatGPT sign-in has
@@ -1208,14 +1217,14 @@ rejected with a named reason.
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
 a short description, categories (`most-used`, then `papers`, `biology`,
-`code`, `data`, `physics-math`, `files`, `communication`, `projects`,
-`figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
+`code`, `ai-ml`, `data`, `cloud`, `files`, `communication`, `projects`,
+`figures`, `chemistry`, `social-science`, in that home-page order),
 a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
-an initialize result, or 401 with `WWW-Authenticate`); the verification date
-is recorded in the file. Servers are never invented, and a category with no
-verified entry has no section. A curated server that is not in the registry is
+an initialize result, 401 with `WWW-Authenticate`, or 401 from a server that takes an API
+key); the verification date is recorded in the file. Servers are never invented, and a category
+with no verified entry has no section. A curated server that is not in the registry is
 named `scient.curated/<id>` with the verification date as its version; clients
 install it by URL.
 
@@ -1246,6 +1255,23 @@ name (`/v0.1/servers/<name>/versions/latest`), otherwise `not-found`. Names
 starting `scient.curated/` never reach the registry.
 `installedConnectorId` is resolved live on every call, by registry name or by
 canonical connector URL (parsed, trailing path slash ignored).
+
+**Categories across versions.** `ExtensionCategory` is a closed list, so a new category would
+break the Discover catalog for clients built before it. Each Discover request (catalog, search,
+entry) and each agent store search carries `knownCategories`, the categories the client decodes.
+The server (`discover/clientCategories.ts`) names and filters by only those: an entry in a newer
+category is listed under the categories it had before that category existed (`ai-ml` under `code`
+and `data`, `cloud` under `code`), a category page lists every entry that names it that way, and
+a newer section is left out. A request without the field comes from a client that predates it
+and is answered with `EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES`. In the other direction, a
+newer client opens a category outside that list only once the machine's catalog has a section
+for it, since an older server rejects a category it does not know. Adding a category means
+adding its earlier categories in `clientCategories.ts`. `physics-math` and `earth` are retired:
+their entries moved to `data`, `papers`, `biology` and `code`, and no server lists them any more
+(`ListedExtensionCategory`). They stay in `ExtensionCategory` and in the before-list so a newer
+client still decodes an older server's catalog, and an older server's sections for them still show.
+The web's category copy (`extensionCategoryCopy.ts`) keeps every title and description an older
+server sends, so renaming a section adds its new words without removing the old.
 
 **Icons.** Clients never load remote images. Registry icons are not fetched at runtime;
 Codex store logos use the bounded server-side path above. Every curated server ships with a bundled logo:

@@ -17,12 +17,9 @@ function sources(directory: string): string[] {
 
 // Universal sibling selectors restyle following siblings on every insertion, making Enter costly in
 // long documents. Use :not(:first-child) for equivalent separators without that invalidation.
+const universalSibling = /\[&>\*\+\*\]|\*\s*[+~]\s*\*/u;
 it("keeps universal sibling selectors out of app styles", () => {
-  const offenders = sources(root).flatMap((path) => {
-    const text = NodeFS.readFileSync(path, "utf8");
-    return /\[&>\*\+\*\]|\*\s*[+~]\s*\*/u.test(text) ? [NodePath.relative(root, path)] : [];
-  });
-  expect(offenders).toEqual([]);
+  expect(scan().universalSibling).toEqual([]);
 });
 
 // In Chromium, a :has() anchored on body, html or :root made each keystroke in a controlled
@@ -40,11 +37,7 @@ it("keeps :has() off the document root", () => {
   expect(
     [".body:has(.a)", "#body:has(.a)", "tbody:has(.a)"].filter((s) => rootHas.test(s)),
   ).toEqual([]);
-  const offenders = sources(root).flatMap((path) => {
-    const text = NodeFS.readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
-    return rootHas.test(text) ? [NodePath.relative(root, path)] : [];
-  });
-  expect(offenders).toEqual([]);
+  expect(scan().rootHas).toEqual([]);
 });
 
 // In Chromium, a sibling :has(+ …) or :has(~ …) restyled every top-level LaTeX block on each
@@ -57,9 +50,27 @@ it("keeps sibling :has() out of Scient styles", () => {
   expect(sibling.filter((selector) => !siblingHas.test(selector))).toEqual([]);
   const other = ["p:has(> .a)", "p:has(.a + .b)", "p:has(:is(.a, .b) + .c)", "p:has(.a, .b ~ .c)"];
   expect(other.filter((selector) => siblingHas.test(selector))).toEqual([]);
-  const offenders = sources(NodePath.join(root, "scient")).flatMap((path) => {
-    const text = NodeFS.readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
-    return siblingHas.test(text) ? [NodePath.relative(root, path)] : [];
-  });
-  expect(offenders).toEqual([]);
+  expect(scan().siblingHas).toEqual([]);
 });
+
+// One walk for the three checks, made by whichever check runs first. The universal sibling
+// check reads the original text; the :has() checks read it without comments.
+let scanned: { universalSibling: string[]; rootHas: string[]; siblingHas: string[] } | undefined;
+function scan() {
+  if (scanned) return scanned;
+  const result = {
+    universalSibling: [] as string[],
+    rootHas: [] as string[],
+    siblingHas: [] as string[],
+  };
+  const scient = NodePath.join(root, "scient") + NodePath.sep;
+  for (const path of sources(root)) {
+    const text = NodeFS.readFileSync(path, "utf8");
+    const relative = NodePath.relative(root, path);
+    if (universalSibling.test(text)) result.universalSibling.push(relative);
+    const stripped = text.replace(/\/\*[\s\S]*?\*\//gu, "");
+    if (rootHas.test(stripped)) result.rootHas.push(relative);
+    if (path.startsWith(scient) && siblingHas.test(stripped)) result.siblingHas.push(relative);
+  }
+  return (scanned = result);
+}

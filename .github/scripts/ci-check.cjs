@@ -9,16 +9,7 @@ const GATED = {
   linux_packaging: ["linux_changed"],
 };
 const REPORTERS = ["test_web_reused", "test_server_reused", "stable_contexts_reused"];
-const ALWAYS = [
-  "changes",
-  "lint",
-  "build",
-  "test",
-  "test_web",
-  "test_server",
-  "test_web_performance",
-  "test_server_performance",
-];
+const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
 const JOBS = ["queue_ci", ...ALWAYS, "overleaf_windows", ...Object.keys(GATED), ...REPORTERS];
 // Evidence and upkeep only: these run beside the gate and never block a merge.
 const ADVISORY = ["overleaf_macos", "main_caches"];
@@ -69,8 +60,6 @@ const QUARANTINABLE = [
   "test",
   "test_web",
   "test_server",
-  "test_web_performance",
-  "test_server_performance",
   "overleaf_windows",
   "compute_native",
   "windows_packaging",

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadRef, ThreadRoom } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
@@ -15,13 +16,13 @@ export function useThreadRoom(ref: ScopedThreadRef | null) {
   const threadId = ref?.threadId;
   const atom = useMemo(() => {
     if (environmentId === undefined || threadId === undefined) return NO_ROOM;
-    let previous: ThreadRoom | null = null;
-    return Atom.make((get) => {
+    return Atom.make((get): ThreadRoom | null => {
       const next =
         get(environmentThreadDetails.threadAtom({ environmentId, threadId }))?.projection.thread
           .room ?? null;
-      if (JSON.stringify(next) !== JSON.stringify(previous)) previous = next;
-      return previous;
+      // An equal room keeps its identity, so readers do not re-render for a rebuilt copy.
+      const previous = Option.getOrNull(get.self<ThreadRoom | null>());
+      return JSON.stringify(next) === JSON.stringify(previous) ? previous : next;
     });
   }, [environmentId, threadId]);
   return useAtomValue(atom);

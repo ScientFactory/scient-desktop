@@ -1,15 +1,22 @@
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { request } from "@t3tools/client-runtime/rpc";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, ExtensionCategory, WS_METHODS } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
+
+/**
+ * Sent with every Discover and store search request, so the server names and filters by only the
+ * categories this client decodes.
+ */
+const knownCategories = ExtensionCategory.literals;
 
 /**
  * Extensions state for one atom runtime. Queries re-read on every event of the
@@ -83,6 +90,8 @@ export function createExtensionsAtoms<R, E>(
     discoverCatalog: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:discover-catalog",
       tag: WS_METHODS.extensionsDiscoverCatalog,
+      execute: (input) =>
+        request(WS_METHODS.extensionsDiscoverCatalog, { ...input, knownCategories }),
       staleTimeMs: 10 * 60_000,
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
@@ -91,6 +100,8 @@ export function createExtensionsAtoms<R, E>(
     discoverEntry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:discover-entry",
       tag: WS_METHODS.extensionsDiscoverEntry,
+      execute: (input) =>
+        request(WS_METHODS.extensionsDiscoverEntry, { ...input, knownCategories }),
       staleTimeMs: 10 * 60_000,
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
@@ -99,6 +110,8 @@ export function createExtensionsAtoms<R, E>(
     discoverPage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:discover",
       tag: WS_METHODS.extensionsDiscoverSearch,
+      execute: (input) =>
+        request(WS_METHODS.extensionsDiscoverSearch, { ...input, knownCategories }),
       staleTimeMs: 10 * 60_000,
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
@@ -112,6 +125,8 @@ export function createExtensionsAtoms<R, E>(
     providerStorePage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:provider-store",
       tag: WS_METHODS.extensionsProviderStoreSearch,
+      execute: (input) =>
+        request(WS_METHODS.extensionsProviderStoreSearch, { ...input, knownCategories }),
       refreshTrigger: changesOf,
       staleTimeMs: 60_000,
       // Kept for a while after leaving a category, so going back shows it at once.

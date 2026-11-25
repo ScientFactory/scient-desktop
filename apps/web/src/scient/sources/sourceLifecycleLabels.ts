@@ -37,48 +37,22 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   externalReferences: msg("Zotero link", { $context: "a source field named in a sentence" }),
 };
 
-function shortDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
-    date,
-  );
-}
-
-const withDate = (label: string, date: string) => (date ? `${label} · ${date}` : label);
-
-export function removedLabel(
-  entry: {
-    readonly removedAt: string;
-    readonly removedBy: "user" | "agent";
-  },
+/** What a source's details lack, in plain words ("Not found: date, identifiers"). */
+export function missingDetailsLabel(
+  fields: ReadonlyArray<string>,
   resolve: MessageResolver = m,
 ): string {
-  const label =
-    entry.removedBy === "agent"
-      ? resolve(msg("Removed by an agent"))
-      : resolve(msg("Removed by you"));
-  return withDate(label, shortDate(entry.removedAt));
-}
-
-export function revisionLabel(
-  revision: {
-    readonly savedAt: string;
-    readonly savedBy: "user" | "agent";
-    readonly changes: ReadonlyArray<string>;
-  },
-  resolve: MessageResolver = m,
-): string {
-  const saved = revision.changes.length === 0;
-  const label =
-    revision.savedBy === "agent"
-      ? saved
-        ? resolve(msg("Saved by an agent"))
-        : resolve(msg("Edited by an agent"))
-      : saved
-        ? resolve(msg("Saved by you"))
-        : resolve(msg("Edited by you"));
-  return withDate(label, shortDate(revision.savedAt));
+  const labels = [
+    ...new Set(
+      fields.flatMap((field) => {
+        const label = FIELD_LABELS[field];
+        return label ? [resolve(label)] : [];
+      }),
+    ),
+  ];
+  return labels.length > 0
+    ? resolve(msg("Not found: {fields}", { fields: labels.join(", ") }))
+    : "";
 }
 
 /** Plain names for what a revision changed, without repeats or bookkeeping fields. */

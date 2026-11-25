@@ -15,7 +15,6 @@ import type { ScientSourceCandidate } from "./model.ts";
 import { resolveScientProjectPins } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
-  deleteScientSourcesPermanently,
   deleteTrashedScientSource,
   importScientSource,
   listScientSourceRecords,
@@ -23,7 +22,11 @@ import {
   readScientSourceRecord,
   removeScientSource,
 } from "./store.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import {
+  emptyScientSourceTrash,
+  sourceCandidate,
+  trashRemovalId,
+} from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -116,7 +119,7 @@ async function highlight(projectRoot: string, sha256: string) {
 async function deleteForGood(library: ReturnType<typeof scientLibraryLocation>, sourceId: string) {
   const record = (await readScientSourceRecord(library, sourceId))!;
   await removeScientSource({ root: library, sourceId, expectedRevision: record.revision });
-  await deleteScientSourcesPermanently({ root: library });
+  await emptyScientSourceTrash(library);
 }
 
 const work = (title: string) => ({
@@ -153,10 +156,10 @@ describe("sources deleted for good", () => {
         await deleteTrashedScientSource({
           root: library,
           sourceId: record.sourceId,
-          expectedRevision: record.revision,
+          removalId: await trashRemovalId(library, record.sourceId),
         });
       } else {
-        await deleteScientSourcesPermanently({ root: library });
+        await emptyScientSourceTrash(library);
       }
       // A new checkout: no instance map remembers the pin.
       await NodeFSP.rm(NodePath.join(root, "projects"), { recursive: true });
@@ -189,7 +192,7 @@ describe("sources deleted for good", () => {
       sourceIds: [loser.sourceId, survivor.sourceId],
       survivorId: survivor.sourceId,
     });
-    await deleteScientSourcesPermanently({ root: library });
+    await emptyScientSourceTrash(library);
     expect(
       await resolveScientProjectSources({
         library,
@@ -213,7 +216,7 @@ describe("sources deleted for good", () => {
       sourceId: moved.sourceId,
       expectedRevision: moved.revision,
     });
-    await deleteScientSourcesPermanently({ root: library });
+    await emptyScientSourceTrash(library);
 
     await runScientLibraryMove({ library, projectRoot: copy, actor: "user" });
     expect(await listScientSourceRecords(library)).toEqual([]);
@@ -274,7 +277,7 @@ describe("sources deleted for good", () => {
     await NodeFSP.cp(projectRoot, copy, { recursive: true });
     await highlight(copy, sha256);
     await runScientLibraryMove({ library, projectRoot, actor: "user" });
-    await deleteScientSourcesPermanently({ root: library });
+    await emptyScientSourceTrash(library);
 
     await runScientLibraryMove({ library, projectRoot: copy, actor: "user" });
     expect((await listScientSourceTrash(library)).entries).toEqual([]);

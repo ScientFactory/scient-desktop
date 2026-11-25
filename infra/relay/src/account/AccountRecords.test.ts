@@ -93,6 +93,9 @@ describe("account record deletion", () => {
         Object.values(getColumns(table)).some((column) => column.name === "user_id"),
       )
       .map((table) => getTableConfig(table).name)
+      // The Clerk webhook's deletion trail records the account after it is gone, by design
+      // (accounts/AccountDeletion.ts).
+      .filter((name) => name !== "relay_account_deletions")
       .toSorted();
     // A new one needs a statement in accountRecordDeletions and a seed row below. Allocations
     // leave through deprovisioning, which deletes their Cloudflare tunnel and DNS record first.

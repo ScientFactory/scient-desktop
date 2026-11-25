@@ -17,7 +17,7 @@ import {
   scientSourcePdfMaterialPaths,
 } from "./projectFiles.ts";
 import { canonicalizeScientSourceRoot } from "./store.ts";
-import { ensureDirectory, replaceFileAtomically, snapshot } from "./storeFiles.ts";
+import { ensureDirectory, isNodeError, replaceFileAtomically, snapshot } from "./storeFiles.ts";
 
 export { SCIENT_SOURCE_TEXT_DIRECTORY } from "./projectFiles.ts";
 
@@ -68,10 +68,6 @@ const MAX_TEXT_FILE_BYTES = 48 * 1024 * 1024;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const decodeFullText = Schema.decodeUnknownSync(ScientSourceFullText);
 const encodeFullText = Schema.encodeSync(ScientSourceFullText);
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
-}
 
 function textPath(store: TextStore, sha256: string): string {
   if (!SHA256_PATTERN.test(sha256)) throw new Error("The full-text key is not a SHA-256 digest.");

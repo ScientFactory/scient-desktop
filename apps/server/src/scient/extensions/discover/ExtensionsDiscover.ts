@@ -35,6 +35,7 @@ import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CATALOG_SECTIONS,
+  CATEGORY_HOME_PICKS,
   MOST_USED_SERVER_IDS,
   CURATED_NAME_PREFIX,
   CURATED_SERVERS,
@@ -43,6 +44,7 @@ import {
   listedWhenBrowsing,
   type CuratedServer,
 } from "./curatedCatalog.ts";
+import { categoriesForClient } from "./clientCategories.ts";
 
 export const MCP_REGISTRY_SERVERS_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const OFFICIAL_META_KEY = "io.modelcontextprotocol.registry/official";
@@ -439,16 +441,20 @@ const registryQueries = (query: string, terms: ReadonlyArray<string>) =>
         ]),
       ];
 
-/** Entries whose primary category is `category` first (most used leading), then the rest. */
+/**
+ * A section's servers: its picks in their order, then those whose primary category it is (most used
+ * leading), then the rest.
+ */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
   const members = servers.filter((server) => server.categories.includes(category));
-  if (category === "most-used") {
+  const ranked = (picks: ReadonlyArray<string>, list: ReadonlyArray<CuratedServer>) => {
     const rank = (id: string) => {
-      const index = MOST_USED_SERVER_IDS.findIndex((candidate) => candidate === id);
-      return index < 0 ? MOST_USED_SERVER_IDS.length : index;
+      const index = picks.indexOf(id);
+      return index < 0 ? picks.length : index;
     };
-    return members.toSorted((a, b) => rank(a.id) - rank(b.id));
-  }
+    return list.toSorted((a, b) => rank(a.id) - rank(b.id));
+  };
+  if (category === "most-used") return ranked(MOST_USED_SERVER_IDS, members);
   const primary = (server: CuratedServer) =>
     server.categories.find((candidate) => candidate !== "most-used") === category;
   // Within a field, the most used lead: GitHub before the rest of Code, Slack in chat.
@@ -456,10 +462,10 @@ const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCat
     ...list.filter((server) => server.categories.includes("most-used")),
     ...list.filter((server) => !server.categories.includes("most-used")),
   ];
-  return [
+  return ranked(CATEGORY_HOME_PICKS[category] ?? [], [
     ...mostUsedFirst(members.filter(primary)),
     ...members.filter((server) => !primary(server)),
-  ];
+  ]);
 };
 
 export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
@@ -470,6 +476,12 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const servers = options.servers ?? CURATED_SERVERS;
   // Browsing (the home page and category pages) lists these; search reaches every server.
   const browsable = servers.filter(listedWhenBrowsing);
+  /** The browsable servers under the categories a client lists them in, so browsing agrees. */
+  const browsableFor = (knownCategories: ReadonlyArray<string> | undefined) => {
+    if (knownCategories === undefined) return browsable;
+    const shown = categoriesForClient(knownCategories);
+    return browsable.map((server) => ({ ...server, categories: shown(server.categories) }));
+  };
   // Keyed by query, cursor and limit; Map insertion order drives eviction.
   const cache = new Map<string, CachedPage>();
 
@@ -584,10 +596,11 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   );
 
   const catalog: ExtensionsDiscoverShape["catalog"] = Effect.fn("ExtensionsDiscover.catalog")(
-    function* () {
+    function* (input) {
       const installed = yield* installedConnectors;
+      const listed = browsableFor(input?.knownCategories);
       const previews = CATALOG_CATEGORY_ORDER.flatMap((category) => {
-        const members = serversIn(browsable, category);
+        const members = serversIn(listed, category);
         return members.length === 0
           ? []
           : [
@@ -709,7 +722,9 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       if (input.scope === "curated") {
         // Small and complete: filtered in memory, never paged.
         const curatedMatches = (
-          input.category === undefined ? servers : serversIn(browsable, input.category)
+          input.category === undefined
+            ? servers
+            : serversIn(browsableFor(input.knownCategories), input.category)
         ).filter((server) => matchesQuery(server, terms));
         const installed = yield* installedConnectors;
         return {

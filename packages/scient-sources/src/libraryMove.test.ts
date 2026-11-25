@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterAll, afterEach, describe, expect, it } from "@effect/vitest";
 
 import { readLibraryAliasesAt } from "./libraryAliases.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
@@ -23,6 +23,7 @@ import {
 import {
   moveScientProjectBackIntoProject,
   readScientLibraryMoveState,
+  hasScientPreMoveArchive,
   restoreScientProjectPreMoveArchive,
   runScientLibraryMove,
   scientLibraryMoveInternals,
@@ -72,6 +73,7 @@ import {
   updateSourceImportOperationItem,
   writeScientSourceZoteroSync,
 } from "./store.ts";
+import { trashRemovalId } from "./testing/sourceFixtures.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { organizeScientSources } from "./collections.ts";
 import { changeScientSystematicReview } from "./systematicReviewStore.ts";
@@ -344,12 +346,34 @@ async function expectDone(
   return journal;
 }
 
+/** Seeded once through the store APIs; each case moves its own copy of the folders. */
+let seededTemplate: Promise<{ base: string; seeded: Awaited<ReturnType<typeof seed>> }> | undefined;
+// Recorded as soon as it exists, so a failed seed still removes it.
+let seededTemplateBase: string | undefined;
+
+afterAll(async () => {
+  if (seededTemplateBase) await NodeFSP.rm(seededTemplateBase, { recursive: true, force: true });
+});
+
 async function seededMove() {
+  seededTemplate ??= (async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-move-template-")),
+    );
+    seededTemplateBase = base;
+    await newLibrary(base);
+    return { base, seeded: await seed(await newProject(base)) };
+  })();
+  const template = await seededTemplate;
   const base = await fixture();
-  const library = await newLibrary(base);
-  const project = await newProject(base);
-  const seeded = await seed(project);
-  return { base, library, project, ...seeded };
+  await NodeFSP.cp(template.base, base, { recursive: true });
+  const library = scientLibraryLocation(scientLibraryRootFor(NodePath.join(base, "state")));
+  return {
+    base,
+    library,
+    project: NodePath.join(base, "project"),
+    ...structuredClone(template.seeded),
+  };
 }
 
 describe("the move", () => {
@@ -1373,7 +1397,7 @@ describe("the library lock during a move", () => {
           await deleteTrashedScientSource({
             root: library,
             sourceId: a.sourceId,
-            expectedRevision: record.revision,
+            removalId: await trashRemovalId(library, a.sourceId),
           }),
         ).toMatchObject({ outcome: "deleted" });
       }
@@ -1613,6 +1637,7 @@ describe("the sealed copy from before the move", () => {
     await NodeFSP.cp(project, oldCopy, { recursive: true });
     const highlightPath = NodePath.join(".scient/annotations/v1", `${sha256}.json`);
     const highlights = await NodeFSP.readFile(NodePath.join(oldCopy, highlightPath));
+    expect(await hasScientPreMoveArchive(project)).toBe(false);
     await move(library, project);
     const record = (await readScientSourceRecord(library, a.sourceId))!;
     await removeScientSource({
@@ -1623,7 +1648,7 @@ describe("the sealed copy from before the move", () => {
     await deleteTrashedScientSource({
       root: library,
       sourceId: record.sourceId,
-      expectedRevision: record.revision,
+      removalId: await trashRemovalId(library, record.sourceId),
     });
     const { journal } = await move(library, oldCopy);
     expect(journal!.annotations).not.toContain(sha256);
@@ -1636,6 +1661,8 @@ describe("the sealed copy from before the move", () => {
     const elsewhere = NodePath.join(base, "elsewhere");
     await NodeFSP.cp(oldCopy, elsewhere, { recursive: true });
     await NodeFSP.rm(NodePath.join(elsewhere, ".scient/annotations"), { recursive: true });
+    // The copy travels with the project folder: another computer offers Recover too.
+    expect(await hasScientPreMoveArchive(elsewhere)).toBe(true);
     expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
       outcome: "restored",
     });

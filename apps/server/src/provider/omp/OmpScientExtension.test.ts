@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics globalFetch:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -434,6 +435,95 @@ describe("Scient's Oh My Pi extension", () => {
       ]);
     });
 
+    // A request still held when a test ends fails, so discovery sends nothing after teardown.
+    const holds: Array<() => void> = [];
+    afterEach(() => {
+      for (const refuse of holds.splice(0)) refuse();
+    });
+
+    /** Holds every request to `url` until the returned function is called. */
+    const holdServer = (url: string) => {
+      const answer = globalThis.fetch;
+      let release!: () => void;
+      let refuse!: () => void;
+      const held = new Promise<void>((resolve, reject) => {
+        release = resolve;
+        refuse = () => reject(new Error("The test ended while this request was held."));
+      });
+      held.catch(() => undefined);
+      holds.push(refuse);
+      vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+        if (input === url) await held;
+        return answer(input, init);
+      });
+      return release;
+    };
+
+    /** Runs the extension past its startup wait for tool catalogs. */
+    const loadPastStartupWait = async (
+      extension: (api: unknown) => Promise<void>,
+      api: unknown,
+    ) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let settled = false;
+      let load: Promise<void>;
+      try {
+        load = extension(api).finally(() => {
+          settled = true;
+        });
+        await vi.advanceTimersByTimeAsync(5_000);
+      } finally {
+        vi.useRealTimers();
+      }
+      if (!settled) throw new Error("The extension did not load within its startup wait.");
+      await load;
+    };
+
+    // regression: one connector that never answered kept Scient Agent from starting.
+    it("starts without a connector that has not answered, and adds its tools when it does", async () => {
+      stubServers({ [GITHUB]: ["search"], [LINEAR]: ["list"] });
+      const release = holdServer(LINEAR);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        CONNECTED,
+      );
+      const host = makeApi();
+
+      await loadPastStartupWait(await extension.importFresh(), host.api);
+
+      expect([...host.tools.keys()]).toEqual(["scient_fixture", "github__search"]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. GitHub: 1 tools. Linear: connecting.",
+      ]);
+      release();
+      await vi.waitFor(() => expect(host.tools.has("linear__list")).toBe(true));
+      expect((await host.tools.get("linear__list")!.execute("late", {})).content).toEqual([
+        { type: "text", text: `${LINEAR} ran list` },
+      ]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. GitHub: 1 tools. Linear: 1 tools.",
+      ]);
+    });
+
+    it("starts before Scient's own tools arrive, then adds them as essential", async () => {
+      stubServers({ [GITHUB]: ["search"] });
+      const release = holdServer(SESSION.endpoint);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const host = makeApi();
+
+      await loadPastStartupWait(await extension.importFresh(), host.api);
+
+      expect([...host.tools.keys()]).toEqual(["github__search"]);
+      expect(await status(host)).toEqual([
+        "Scient connecting. Full access; no native sandbox. GitHub: 1 tools.",
+      ]);
+      release();
+      await vi.waitFor(() => expect(host.tools.get("scient_fixture")?.loadMode).toBe("essential"));
+    });
+
     const calledTools = (
       requests: ReadonlyArray<{
         readonly url: string;
@@ -443,6 +533,119 @@ describe("Scient's Oh My Pi extension", () => {
       requests
         .filter(({ body }) => body.method === "tools/call")
         .map(({ url, body }) => [url, body.params?.name]);
+
+    it("names a late catalog's tools the same for every run, whichever server answers first", async () => {
+      const ALPHA = "http://127.0.0.1/mcp/connectors/connector-alpha";
+      const NESTED = "http://127.0.0.1/mcp/connectors/connector-alpha-beta";
+      const requests = stubServers({ [ALPHA]: ["beta__lookup"], [NESTED]: ["lookup"] });
+      const release = holdServer(ALPHA);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        {
+          ...SESSION,
+          connectors: [
+            { serverName: "alpha", displayName: "Alpha", url: ALPHA },
+            { serverName: "alpha__beta", displayName: "Alpha Beta", url: NESTED },
+          ],
+        },
+      );
+      const parent = makeApi();
+
+      await loadPastStartupWait(await extension.importFresh(), parent.api);
+      release();
+      await vi.waitFor(() => expect(parent.tools.size).toBe(3));
+      const child = makeApi();
+      await (
+        await extension.importFresh()
+      )(child.api);
+
+      expect([...child.tools.keys()].toSorted()).toEqual([...parent.tools.keys()].toSorted());
+      await child.tools.get("alpha__beta__lookup")!.execute("nested", {});
+      expect(calledTools(requests).at(-1)).toEqual([NESTED, "lookup"]);
+      const alias = [...child.tools.keys()].find((name) =>
+        /^alpha__beta__lookup_[0-9a-f]{8}$/u.test(name),
+      );
+      expect(alias).toBeDefined();
+      await child.tools.get(alias!)!.execute("own", {});
+      expect(calledTools(requests).at(-1)).toEqual([ALPHA, "beta__lookup"]);
+    });
+
+    it.each([
+      ["1password", "1password__vault"],
+      ["github", "github_"],
+    ])("gives %s and %s the same tool names whichever answers first", async (shorter, longer) => {
+      const SHORT = "http://127.0.0.1/mcp/connectors/connector-short";
+      const LONG = "http://127.0.0.1/mcp/connectors/connector-long";
+      // Each server's tool would otherwise take the other's plain name.
+      const shortTool = longer.slice(shorter.length) === "__vault" ? "vault__lookup" : "_lookup";
+      const names = async (first: string) => {
+        vi.unstubAllGlobals();
+        stubServers({ [SHORT]: [shortTool], [LONG]: ["lookup"] });
+        const release = holdServer(first === "short" ? LONG : SHORT);
+        const extension = await loadExtension(
+          (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+          {
+            ...SESSION,
+            connectors: [
+              { serverName: shorter, displayName: "Short", url: SHORT },
+              { serverName: longer, displayName: "Long", url: LONG },
+            ],
+          },
+        );
+        const host = makeApi();
+        await loadPastStartupWait(await extension.importFresh(), host.api);
+        release();
+        await vi.waitFor(() => expect(host.tools.size).toBe(3));
+        return [...host.tools.keys()].toSorted();
+      };
+
+      const shortFirst = await names("short");
+      expect(await names("long")).toEqual(shortFirst);
+      expect(shortFirst).toContain(`${/^[A-Za-z_]/u.test(longer) ? "" : "_"}${longer}__lookup`);
+    });
+
+    it("keeps a subagent's re-run degraded, not failed, when Scient fails after its parent started", async () => {
+      stubServers({ [SESSION.endpoint]: "fail", [GITHUB]: ["search"] });
+      const release = holdServer(SESSION.endpoint);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const parent = makeApi();
+      await loadPastStartupWait(await extension.importFresh(), parent.api);
+      release();
+      await vi.waitFor(async () =>
+        expect(await status(parent)).toEqual([
+          "Scient unavailable. Full access; no native sandbox. GitHub: 1 tools.",
+        ]),
+      );
+
+      const child = makeApi();
+      await (
+        await extension.importFresh()
+      )(child.api);
+
+      expect([...child.tools.keys()]).toEqual(["github__search"]);
+      expect(child.handlers.has("before_agent_start")).toBe(true);
+    });
+
+    it("adds no late tools to a run whose session has ended", async () => {
+      stubServers({ [GITHUB]: ["search"] });
+      const release = holdServer(GITHUB);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const parent = makeApi();
+      await loadPastStartupWait(await extension.importFresh(), parent.api);
+      const child = makeApi();
+      await loadPastStartupWait(await extension.importFresh(), child.api);
+      (child.handlers.get("session_shutdown") as Handler)({} as never);
+
+      release();
+      await vi.waitFor(() => expect(parent.tools.has("github__search")).toBe(true));
+      expect(child.tools.has("github__search")).toBe(false);
+    });
 
     it("aliases connector tool names that collide or run too long, and skips OMP's MCP namespace", async () => {
       const requests = stubServers({
@@ -468,16 +671,17 @@ describe("Scient's Oh My Pi extension", () => {
         await extension.importFresh()
       )(host.api);
 
-      // "a.b" becomes "github__a_b", so the later "a_b" takes a hashed alias, as do
-      // the 68-character name and the later "github___x".
+      // "a.b" becomes "github__a_b", so the later "a_b" takes a hashed alias, as does the
+      // 68-character name. "github___x" lies in "github_"'s namespace, so it is that server's
+      // whichever catalog arrives first, and "github"'s "_x" takes the alias.
       expect([...host.tools.keys()]).toEqual([
         "scient_fixture",
         "github__ok",
         "github__a_b",
         "github__a_b_44fdc099",
-        "github___x",
+        "github___x_ff2ab3db",
         "github__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_592e2afd",
-        "github___x_4b9a77d4",
+        "github___x",
         "github___list",
       ]);
       expect(await status(host)).toEqual([
@@ -487,11 +691,13 @@ describe("Scient's Oh My Pi extension", () => {
       await host.tools
         .get("github__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_592e2afd")!
         .execute("call-2", {});
-      await host.tools.get("github___x_4b9a77d4")!.execute("call-3", {});
+      await host.tools.get("github___x")!.execute("call-3", {});
+      await host.tools.get("github___x_ff2ab3db")!.execute("call-4", {});
       expect(calledTools(requests)).toEqual([
         [GITHUB, "a_b"],
         [GITHUB, "x".repeat(60)],
         [LINEAR, "x"],
+        [GITHUB, "_x"],
       ]);
     });
 

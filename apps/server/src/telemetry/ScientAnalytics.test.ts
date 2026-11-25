@@ -33,7 +33,7 @@ it.effect("the disabled adapter reports unavailable without collecting events", 
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService;
     yield* analytics.record("server.boot.heartbeat");
-    yield* analytics.recordOwners([{ source: "openai", ownerId: "a".repeat(64) }], "server");
+    yield* analytics.recordOwners([{ source: "connect", ownerId: "a".repeat(64) }], "server");
     yield* analytics.flush;
     assert.isFalse((yield* ScientAnalytics.ScientAnalyticsAvailability).available);
   }).pipe(Effect.provide(ScientAnalytics.layerDisabled)),

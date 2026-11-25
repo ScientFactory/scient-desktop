@@ -1,4 +1,4 @@
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { m } from "~/i18n/messages";
 import type {
@@ -18,15 +18,14 @@ import {
   readScientSourceTrash,
   restoreScientSource,
 } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
-import { alsoInOtherProjectsLabel, stillCitedInLabel } from "./libraryLabels";
-import { removedLabel, restoreProblem } from "./sourceLifecycleLabels";
+import { sourcesErrorMessage } from "./errorMessage";
+import { alsoInOtherProjectsLabel } from "./libraryLabels";
+import { byLine } from "./dayLabel";
+import { restoreProblem } from "./sourceLifecycleLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { settleAfter } from "./settleAfter";
 
 type TrashEntry = ScientSourceTrashListing["entries"][number];
-
-const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 async function restoreSourceFromTrash(input: {
   readonly environmentId: EnvironmentId;
@@ -63,13 +62,15 @@ export function announceSourceMovedToTrash(input: {
       children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {
         toastManager.close(id);
+        // The restore's own answer says whether it worked; a list read that fails after it is
+        // the list's problem, shown where the list shows it.
         void restoreSourceFromTrash(input)
-          .then(input.onRestored)
+          .then(() => void input.onRestored().catch(() => undefined))
           .catch((cause: unknown) =>
             toastManager.add({
               type: "error",
               title: m(msg("Source could not be restored")),
-              description: errorMessage(cause),
+              description: sourcesErrorMessage(cause),
             }),
           );
       },
@@ -85,7 +86,7 @@ export function SourceTrashPopover(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onChanged: () => Promise<unknown>;
 }) {
-  const m = useMessages();
+  const gt = useGT();
   const [listing, setListing] = useState<ScientSourceTrashListing | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
@@ -96,7 +97,7 @@ export function SourceTrashPopover(props: {
     try {
       setListing(await readScientSourceTrash(props.environmentId, { root: props.root }));
     } catch (cause) {
-      setProblem(errorMessage(cause));
+      setProblem(sourcesErrorMessage(cause));
     }
   };
 
@@ -107,21 +108,19 @@ export function SourceTrashPopover(props: {
       async () => {
         try {
           await work();
-          await props.onChanged();
-          await load();
         } catch (cause) {
-          setProblem(errorMessage(cause));
+          setProblem(sourcesErrorMessage(cause));
+          return;
         }
+        // Each list is read on its own: the Library's failing leaves the Trash's to show.
+        await Promise.all([props.onChanged().catch(() => undefined), load()]);
       },
       () => setPending(null),
     );
   };
 
   const entries = listing?.entries ?? [];
-  const stillCited = stillCitedInLabel(
-    [...new Set(entries.flatMap((entry) => entry.citedBy ?? []))],
-    m,
-  );
+  const unfinished = listing?.unfinished ?? [];
   return (
     <Popover
       open={props.open}
@@ -140,28 +139,46 @@ export function SourceTrashPopover(props: {
         padding="none"
         className="w-[22rem] max-w-[calc(100vw-1rem)]"
       >
-        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <PopoverTitle>
-            <T context="the Library's Trash">Trash</T>
-          </PopoverTitle>
+        <div className="flex min-h-11 items-center justify-between gap-2 border-b border-border px-3 py-2">
+          {confirmingEmpty ? (
+            <PopoverTitle>
+              {gt(
+                "{count, plural, =1 {Delete 1 paper for good?} other {Delete {count} papers for good?}}",
+                { count: entries.length },
+              )}
+            </PopoverTitle>
+          ) : (
+            <PopoverTitle>
+              <T context="the Library's Trash">Trash</T>
+            </PopoverTitle>
+          )}
           {entries.length > 0 ? (
             confirmingEmpty ? (
-              <div className="flex items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <Button size="xs" variant="ghost" onClick={() => setConfirmingEmpty(false)}>
                   <T>Cancel</T>
                 </Button>
                 <Button
                   size="xs"
-                  variant="destructive"
+                  variant="ghost-destructive-action"
                   disabled={pending !== null || !canChange}
                   onClick={() =>
-                    void run("empty", () =>
-                      deleteScientSourcesPermanently(props.environmentId, { root: props.root }),
-                    ).then(() => setConfirmingEmpty(false))
+                    void run("empty", async () => {
+                      const result = await deleteScientSourcesPermanently(props.environmentId, {
+                        root: props.root,
+                        ...(listing?.revision ? { trashRevision: listing.revision } : {}),
+                      });
+                      if (result.outcome === "changed") {
+                        // The list is read again below; the person confirms what it now holds.
+                        setProblem(gt("The Trash changed. Check it and try again."));
+                        return;
+                      }
+                      setConfirmingEmpty(false);
+                    })
                   }
                 >
                   {pending === "empty" ? <LoaderCircle className="animate-spin" /> : null}
-                  <T>Delete for good</T>
+                  <T context="verb, deletes papers for good">Delete</T>
                 </Button>
               </div>
             ) : (
@@ -176,18 +193,31 @@ export function SourceTrashPopover(props: {
             )
           ) : null}
         </div>
-        {confirmingEmpty ? (
-          <p className="px-3 pt-2 text-xs text-muted-foreground">
-            <T>
-              Sources in the trash, their saved versions and PDFs nothing else uses are deleted.
-              This cannot be undone. <Var>{stillCited}</Var>
-            </T>
-          </p>
-        ) : null}
         {problem ? (
           <p className="px-3 pt-2 text-xs text-destructive" role="alert">
             {problem}
           </p>
+        ) : null}
+        {unfinished.length > 0 ? (
+          <div className="flex items-center justify-between gap-2 px-3 pt-2 text-xs text-muted-foreground">
+            <T>Deleting for good did not finish.</T>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={pending !== null || !canChange}
+              onClick={() =>
+                void run("finish", () =>
+                  deleteScientSourcesPermanently(props.environmentId, {
+                    root: props.root,
+                    removalIds: unfinished,
+                  }),
+                )
+              }
+            >
+              {pending === "finish" ? <LoaderCircle className="animate-spin" /> : null}
+              <T>Finish deleting</T>
+            </Button>
+          </div>
         ) : null}
         <ScrollArea className="max-h-80">
           {listing === null ? (
@@ -236,9 +266,11 @@ function TrashRow(props: {
   return (
     <li className="flex items-center gap-2 px-3 py-2">
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm">{props.entry.title ?? gt("Untitled source")}</div>
+        <div className="line-clamp-2 text-sm wrap-break-word">
+          {props.entry.title ?? gt("Untitled source")}
+        </div>
         <div className="truncate text-xs text-muted-foreground">
-          {removedLabel(props.entry, resolve)}
+          {byLine(props.entry.removedBy, props.entry.removedAt, resolve)}
         </div>
       </div>
       <Button size="xs" variant="ghost" disabled={props.disabled} onClick={props.onRestore}>

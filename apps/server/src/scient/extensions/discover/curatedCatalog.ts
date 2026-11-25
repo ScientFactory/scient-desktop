@@ -7,6 +7,7 @@ import {
   matchesExtensionAddressTemplate,
   type DiscoverEntry,
   type ExtensionCategory,
+  type ListedExtensionCategory,
   type LocalPackage,
 } from "@t3tools/contracts";
 
@@ -22,34 +23,57 @@ export const MOST_USED_SERVER_IDS = [
   "github",
   "slack",
   "notion",
+  "dropbox",
+  "linear",
   "pubmed",
   "semantic-scholar",
+  "hugging-face",
   "exa",
+  "canva",
   "playwright",
   "context7",
   "vercel",
   "cloudflare",
 ] as const;
 
+/**
+ * Each field's home-page row, in this order: the most useful and common first. The rest of the
+ * field follows, primary field first, and appears in full on the category page.
+ */
+export const CATEGORY_HOME_PICKS: Readonly<Partial<Record<ExtensionCategory, readonly string[]>>> =
+  {
+    papers: ["pubmed", "semantic-scholar", "openalex", "consensus", "scite", "biorxiv"],
+    biology: ["clinical-trials", "open-targets", "rcsb-pdb", "chembl", "benchling-lab", "synapse"],
+    code: ["github", "playwright", "context7", "deepwiki", "gitlab", "hugging-face"],
+    "ai-ml": ["hugging-face", "wandb", "kaggle", "replicate"],
+    data: ["kaggle", "bigquery", "hex", "motherduck", "supabase", "data-commons"],
+    cloud: ["vercel", "cloudflare", "sentry", "cloudflare-docs", "microsoft-learn"],
+    files: ["notion", "dropbox", "box", "coda", "atlassian"],
+    communication: ["slack", "fireflies", "granola"],
+    projects: ["linear", "asana", "notion", "monday", "clickup", "todoist"],
+    figures: ["canva", "biorender", "excalidraw", "mermaid-chart", "miro"],
+    chemistry: ["chembl", "materials-project-docs", "rcsb-pdb", "open-targets", "maven-bio"],
+  };
+
 /** Section order on the Discover home page: most used, then fields led by where users work. */
-export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ExtensionCategory> = [
+export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ListedExtensionCategory> = [
   "most-used",
   "papers",
   "biology",
   "code",
+  "ai-ml",
   "data",
-  "physics-math",
+  "cloud",
   "files",
   "communication",
   "projects",
   "figures",
   "chemistry",
-  "earth",
   "social-science",
 ];
 
 export const CATALOG_SECTIONS: Readonly<
-  Record<ExtensionCategory, { readonly title: string; readonly description: string }>
+  Record<ListedExtensionCategory, { readonly title: string; readonly description: string }>
 > = {
   "most-used": {
     title: "Most used",
@@ -65,15 +89,19 @@ export const CATALOG_SECTIONS: Readonly<
   },
   code: {
     title: "Code & developer tools",
-    description: "Repositories, models, documentation and deployment.",
+    description: "Repositories, code review, documentation and developer tools.",
+  },
+  "ai-ml": {
+    title: "AI & machine learning",
+    description: "Models, datasets, training, evaluation and experiment tracking.",
   },
   data: {
     title: "Data & databases",
     description: "Datasets, notebooks, warehouses and databases.",
   },
-  "physics-math": {
-    title: "Physics, maths & astronomy",
-    description: "Preprints, symbolic computation, sequences and the sky.",
+  cloud: {
+    title: "Cloud, DevOps & security",
+    description: "Hosting, deployment, monitoring, incidents and security scanning.",
   },
   files: {
     title: "Files & documents",
@@ -95,13 +123,9 @@ export const CATALOG_SECTIONS: Readonly<
     title: "Chemistry & materials",
     description: "Compounds, properties, bioactivity and materials.",
   },
-  earth: {
-    title: "Earth & environment",
-    description: "Earth observation, climate, earthquakes, biodiversity and agriculture.",
-  },
   "social-science": {
-    title: "Social science & economics",
-    description: "Economic and development indicators, census data and open studies.",
+    title: "Social science, economics & finance",
+    description: "Economic and development indicators, census data, markets and open studies.",
   },
 };
 
@@ -242,7 +266,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search the Hugging Face Hub for models, datasets, Spaces and papers, and read repository details and files. Works without an account; sign in to reach your private repositories.",
     url: "https://huggingface.co/mcp",
     registry: { name: "co.huggingface/hf-mcp-server", version: "0.2.33" },
-    categories: ["code", "data"],
+    categories: ["most-used", "ai-ml", "code", "data"],
     websiteUrl: "https://huggingface.co",
     icon: CURATED_ICONS["hugging-face"],
   },
@@ -255,9 +279,43 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Search and download Kaggle datasets, explore competitions and leaderboards, and work with notebooks and models. Some actions need a signed-in Kaggle account.",
     url: "https://www.kaggle.com/mcp",
-    categories: ["data"],
+    categories: ["data", "ai-ml"],
     websiteUrl: "https://www.kaggle.com",
     icon: CURATED_ICONS["kaggle"],
+  },
+  {
+    // Verified 2026-11-23: 401 without a key;
+    // vendor setup: https://docs.wandb.ai/platform/mcp-server.
+    id: "wandb",
+    displayName: "Weights & Biases",
+    tagline: "Experiment runs, sweeps, traces and reports",
+    description:
+      "Query your W&B runs, sweeps and metrics, Weave traces and evaluations, and create reports. Uses your W&B API key; access follows your W&B permissions.",
+    url: "https://mcp.withwandb.com/mcp",
+    categories: ["ai-ml"],
+    websiteUrl: "https://wandb.ai",
+    accountRequired: true,
+    apiKey: {
+      strategy: "bearer",
+      fieldLabel: "W&B API key",
+      helpUrl: "https://wandb.ai/authorize",
+    },
+    icon: CURATED_ICONS["wandb"],
+  },
+  {
+    // Verified 2026-11-23: OAuth (protected resource metadata, dynamic client registration);
+    // vendor setup: https://replicate.com/docs/reference/mcp.
+    id: "replicate",
+    displayName: "Replicate",
+    tagline: "Search, compare and run open AI models",
+    description:
+      "Search and compare models on Replicate, run them and fetch their predictions. Sign-in asks for a Replicate API token; running models is billed to your Replicate account.",
+    url: "https://mcp.replicate.com/mcp",
+    categories: ["ai-ml"],
+    websiteUrl: "https://replicate.com",
+    accountRequired: true,
+    accessNote: "Running models is billed by Replicate",
+    icon: CURATED_ICONS["replicate"],
   },
 
   // ── Biology & genetics ──────────────────────────────────────────────────
@@ -353,7 +411,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Compute symbolic and numerical answers, evaluate Wolfram Language and query curated data through Wolfram Research's official server. Free without an account for limited personal, small-scale use; requests are stateless. Wolfram's terms restrict bulk extraction and AI training; other uses may require separate licensing.",
     url: "https://agenttools.wolfram.com/mcp",
     registry: { name: "com.wolfram/mcp", version: "1.0.1" },
-    categories: ["physics-math", "data"],
+    categories: ["data"],
     websiteUrl: "https://www.wolfram.com/ai/mcp/cloud/",
     icon: CURATED_ICONS["wolfram"],
   },
@@ -367,7 +425,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search arXiv preprints by topic, author or category, retrieve paper metadata and read available full text. Community server maintained and hosted by Casey Hand; no account needed. Preprints may not be peer reviewed, and reuse follows each paper's licence.",
     url: "https://arxiv.caseyjhand.com/mcp",
     registry: { name: "io.github.cyanheads/arxiv-mcp-server", version: "1.8.0" },
-    categories: ["papers", "physics-math"],
+    categories: ["papers"],
     websiteUrl: "https://github.com/cyanheads/arxiv-mcp-server",
     icon: CURATED_ICONS["arxiv-community"],
   },
@@ -381,7 +439,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Identify sequences from their terms and explore formulas, programs, extended terms and related entries in the On-Line Encyclopedia of Integer Sequences. Community server maintained and hosted by Casey Hand; uncached lookups share one request every 10 seconds. OEIS data is CC BY-SA 4.0: credit OEIS with a link and share adaptations under the same licence.",
     url: "https://oeis.caseyjhand.com/mcp",
     registry: { name: "io.github.cyanheads/oeis-mcp-server", version: "0.1.3" },
-    categories: ["physics-math"],
+    categories: ["data"],
     websiteUrl: "https://github.com/cyanheads/oeis-mcp-server",
     icon: CURATED_ICONS["oeis-community"],
   },
@@ -542,7 +600,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Look up Sentry issues, errors and traces for your projects. Helps agents debug with real production context.",
     url: "https://mcp.sentry.dev/mcp",
     registry: { name: "io.github.getsentry/sentry-mcp", version: "0.42.0" },
-    categories: ["code"],
+    categories: ["cloud", "code"],
     websiteUrl: "https://sentry.io",
     icon: CURATED_ICONS["sentry"],
   },
@@ -561,7 +619,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Inspect Vercel projects and deployments, read build logs and search Vercel documentation. Access follows the teams you authorize.",
     url: "https://mcp.vercel.com",
     registry: { name: "com.vercel/vercel-mcp", version: "0.0.3" },
-    categories: ["most-used", "code"],
+    categories: ["most-used", "cloud", "code"],
     websiteUrl: "https://vercel.com",
     icon: CURATED_ICONS["vercel"],
   },
@@ -579,7 +637,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Manage your Cloudflare account through its whole API: Workers, Pages, DNS, R2, D1 and more. Access follows the account you authorize.",
     url: "https://mcp.cloudflare.com/mcp",
-    categories: ["most-used", "code"],
+    categories: ["most-used", "cloud", "code"],
     websiteUrl: "https://www.cloudflare.com",
     icon: CURATED_ICONS["cloudflare"],
   },
@@ -641,7 +699,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search Cloudflare's developer documentation for Workers, R2, D1 and the rest of the platform. No account needed.",
     url: "https://docs.mcp.cloudflare.com/mcp",
     registry: { name: "com.cloudflare.mcp/mcp", version: "1.0.0" },
-    categories: ["code"],
+    categories: ["cloud", "code"],
     websiteUrl: "https://developers.cloudflare.com",
     icon: CURATED_ICONS["cloudflare-docs"],
   },
@@ -655,7 +713,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search and read Microsoft Learn documentation and code samples for Azure, .NET, Microsoft 365 and more. No account needed.",
     url: "https://learn.microsoft.com/api/mcp",
     registry: { name: "com.microsoft/microsoft-learn-mcp", version: "1.0.0" },
-    categories: ["code"],
+    categories: ["cloud", "code"],
     websiteUrl: "https://learn.microsoft.com",
     icon: CURATED_ICONS["microsoft-learn"],
   },
@@ -727,7 +785,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Create, search and update Linear issues and projects. Keeps your agent's work tied to the team's plan.",
     url: "https://mcp.linear.app/mcp",
     registry: { name: "app.linear/linear", version: "1.0.1" },
-    categories: ["projects", "code"],
+    categories: ["most-used", "projects", "code"],
     websiteUrl: "https://linear.app",
     icon: CURATED_ICONS["linear"],
   },
@@ -834,7 +892,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search, create and edit Canva designs such as posters and slides. Access follows your Canva account.",
     url: "https://mcp.canva.com/mcp",
     registry: { name: "com.canva.mcp/mcp", version: "1.0.0" },
-    categories: ["figures"],
+    categories: ["most-used", "figures"],
     websiteUrl: "https://www.canva.com",
     icon: CURATED_ICONS["canva"],
   },
@@ -916,7 +974,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Find high-energy physics papers, authors, experiments and citations. Hosted independently by Casey Hand; source content retains its own terms.",
     url: "https://cern-inspire.caseyjhand.com/mcp",
-    categories: ["papers", "physics-math"],
+    categories: ["papers"],
     websiteUrl: "https://inspirehep.net",
     accountRequired: false,
     hosting: "Community",
@@ -1085,7 +1143,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Discover Earth-observation collections, granules, variables and citations through NASA’s official server. Discovery needs no account; downloads and transformations may require Earthdata Login and separate services.",
     url: "https://cmr.earthdata.nasa.gov/mcp/v1",
-    categories: ["earth", "data"],
+    categories: ["data"],
     websiteUrl: "https://www.earthdata.nasa.gov",
     accountRequired: false,
     icon: CURATED_ICONS["nasa-earthdata"],
@@ -1098,7 +1156,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Find earthquake events from USGS and EMSC. Hosted independently by Casey Hand; source attribution and accuracy limitations apply.",
     url: "https://earthquake.caseyjhand.com/mcp",
-    categories: ["earth"],
+    categories: ["data"],
     websiteUrl: "https://earthquake.usgs.gov",
     accountRequired: false,
     hosting: "Community",
@@ -1112,7 +1170,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Explore species observations and biodiversity records from iNaturalist. Hosted independently by Casey Hand; observations and photographs have individual licences.",
     url: "https://inaturalist.caseyjhand.com/mcp",
-    categories: ["earth", "biology"],
+    categories: ["biology"],
     websiteUrl: "https://www.inaturalist.org",
     accountRequired: false,
     hosting: "Community",
@@ -1126,7 +1184,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Explore food and agriculture statistics from FAOSTAT. Hosted independently by Casey Hand; cite FAO and observe dataset-specific terms.",
     url: "https://faostat.caseyjhand.com/mcp",
-    categories: ["earth", "data"],
+    categories: ["data"],
     websiteUrl: "https://www.fao.org/faostat",
     accountRequired: false,
     hosting: "Community",
@@ -1140,7 +1198,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Find development indicators, metadata and time series through the World Bank’s official Data360 server. World Bank open data generally uses CC BY 4.0; some datasets have additional restrictions.",
     url: "https://maimcpext.worldbank.org/ext/data360/mcp",
-    categories: ["social-science", "earth", "data"],
+    categories: ["social-science", "data"],
     websiteUrl: "https://data360.worldbank.org",
     accountRequired: false,
     icon: CURATED_ICONS["world-bank"],
@@ -1309,7 +1367,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Search, read and organise files in your Dropbox account. OAuth permissions apply; automatic registration is limited to vendor-supported clients.",
     url: "https://mcp.dropbox.com/mcp",
-    categories: ["files"],
+    categories: ["most-used", "files"],
     websiteUrl: "https://www.dropbox.com",
     accountRequired: true,
     accessNote: "Vendor-supported OAuth clients only",

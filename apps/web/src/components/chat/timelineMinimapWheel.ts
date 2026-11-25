@@ -30,6 +30,13 @@ function stopGlide(timeline: HTMLElement): WheelGlide | undefined {
   return glide;
 }
 
+// SCIENT-FORK:START — a glide belongs to the thread it started on; switching threads on the same
+// scroller ends it (MessagesTimeline.tsx).
+export function cancelTimelineWheelGlide(timeline: HTMLElement): void {
+  stopGlide(timeline);
+}
+// SCIENT-FORK:END
+
 function glideBy(timeline: HTMLElement, distance: number): void {
   const current = stopGlide(timeline);
   const scrollTop = timeline.scrollTop;

@@ -112,6 +112,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
   /** Present only when the registry reported a retraction, withdrawal, concern or correction. */
   editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus.fields.state),
+  /** In the Trash: names this removal for a deletion for good. */
+  removalId: Schema.optionalKey(NonEmptyString),
   removedAt: Schema.optionalKey(NonEmptyString),
   removedBy: Schema.optionalKey(ScientSourceActor),
   tags: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -309,12 +311,15 @@ const listParameters = {
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
 };
 
+/** Library mode: this project's sources, or the whole Library's. */
+const Scope = Schema.optionalKey(Schema.Literals(["project", "library"]));
+
 const sourcesListTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_list", {
     description:
       mode === "project"
         ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${LIST_FILTERS}`
-        : "Page project pins (scope library: the whole Library). libraryCopies gives backup, restore and join status (act via scient_sources_organize). total counts normal list matches. Use before literature or citation work and web search. Never edit .scient files directly. query matches citation key, title, authors, year, journal, identifiers and tags. tags all match. collectionId includes subcollections. Use savedSearchId from scient_sources_collections. Alternate views: libraryCopies, inTrash (removed), citationStyles (CSL by journal/name, project style), duplicates (pairs at offset, merges at mergeOffset, allMerges includes nonundoable), mergeId (one receipt), recentChanges (bulk edits, merges, imports, joins, restores and Trash, newest first). Pass duplicates.revision as revision. Undo unfinished bulk edit parts' batchIds in reverse array order.",
+        : "Page project pins (scope library: the whole Library). libraryCopies gives backup, restore and join status. total counts normal list matches. Use before literature or citation work and web search. Never edit .scient files directly. query matches citation key, title, authors, year, journal, identifiers and tags. tags all match. collectionId includes subcollections. Use savedSearchId from scient_sources_collections. Alternate views: libraryCopies, inTrash (removed), citationStyles (CSL by journal/name, project style), duplicates (pairs at offset, merges at mergeOffset, allMerges includes nonundoable), mergeId (one receipt), recentChanges (bulk edits, merges, imports, joins, restores and Trash, newest first). Pass duplicates.revision as revision. Undo unfinished bulk edit parts' batchIds in reverse array order.",
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
@@ -322,7 +327,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
             ...listParameters,
             readingStatus: Schema.optionalKey(ReadingStatus),
             starred: Schema.optionalKey(Schema.Boolean),
-            scope: Schema.optionalKey(Schema.Literals(["project", "library"])),
+            scope: Scope,
             duplicates: Schema.optionalKey(Schema.Boolean),
             mergeOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
             allMerges: Schema.optionalKey(Schema.Boolean),
@@ -474,35 +479,47 @@ const ScientSourceLibraryMetadataUpdateTool = Tool.make("scient_sources_update",
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.update", true));
 
-const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
-  description:
-    "Trash one source and its PDFs after the user explicitly asks. scient_sources_restore undoes it. Pass expectedRevision. Re-read and retry if stale. permanent deletes a trashed source, its revisions and unused PDFs only if the user asks to delete for good. Its revision: scient_sources_list inTrash. stillCitedBy lists projects citing their own copy. Undo Library joins with scient_sources_organize undo-join.",
-  parameters: Schema.Struct({
-    sourceId: NonEmptyString,
-    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
-    permanent: Schema.optionalKey(Schema.Boolean),
-  }),
-  success: Schema.Struct({
-    outcome: Schema.Literals(["removed", "not-found", "stale", "deleted"]),
-    sourceId: NonEmptyString,
-    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
-    restorable: Schema.optionalKey(Schema.Boolean),
-    alsoPinnedIn: AlsoPinnedIn,
-    stillCitedBy: Schema.optionalKey(Schema.Array(NonEmptyString)),
-  }),
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Remove a project source")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, true)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.remove", true));
+const REMOVE_DESCRIPTION =
+  "scient_sources_restore undoes it. Pass expectedRevision; re-read if stale. Only if the user asks to delete for good: permanent deletes a trashed source, its revisions and unused PDFs; pass removalId from scient_sources_list inTrash. stillCitedBy: citing projects.";
+
+const sourceRemoveTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_remove", {
+    description:
+      mode === "project"
+        ? `Trash one source and its PDFs after the user explicitly asks. ${REMOVE_DESCRIPTION} Undo Library joins with scient_sources_organize undo-join.`
+        : `Trash one source and its PDFs from every project after the user explicitly asks (this project only: organize unpin). ${REMOVE_DESCRIPTION}`,
+    parameters: Schema.Struct({
+      sourceId: NonEmptyString,
+      expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+      permanent: Schema.optionalKey(Schema.Boolean),
+      removalId: Schema.optionalKey(NonEmptyString),
+    }),
+    success: Schema.Struct({
+      outcome: Schema.Literals(["removed", "not-found", "stale", "deleted"]),
+      sourceId: NonEmptyString,
+      revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+      restorable: Schema.optionalKey(Schema.Boolean),
+      alsoPinnedIn: AlsoPinnedIn,
+      stillCitedBy: Schema.optionalKey(Schema.Array(NonEmptyString)),
+    }),
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(
+      Tool.Title,
+      mode === "project" ? "Remove a project source" : "Move a source to the Library Trash",
+    )
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, true)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.remove", true));
+
+const ScientSourceRemoveTool = sourceRemoveTool("project");
 
 const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
   description:
-    "Restore a trashed source and its PDFs as a new revision credited to you. Library backup/restore, put-back-library and cancel-restore use scient_sources_organize. exists means its ID is present. duplicate lists matchingSourceIds sharing its identifier.",
+    "Restore a trashed source and its PDFs as a new revision. Library backup/restore, put-back-library and cancel-restore use scient_sources_organize. duplicate: matchingSourceIds share its identifier.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: Schema.Struct({
     outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
@@ -522,7 +539,7 @@ const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
 
 const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
   description:
-    "Revert to kept toRevision as a new revision credited to you. Library undo via scient_sources_organize: cancel-restore, put-back-library, undo-join. Pass current expectedRevision. Re-read if stale. Restores metadata, note, tags, identifiers and attachments. missingAttachmentCount counts PDFs deleted with Trash.",
+    "Revert to kept toRevision as a new revision credited to you. Library undo via scient_sources_organize: cancel-restore, put-back-library, undo-join. Pass current expectedRevision. Re-read if stale. Restores details; keeps note and PDFs.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -532,7 +549,6 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
     outcome: Schema.Literals(["reverted", "unchanged", "stale", "not-found", "duplicate"]),
     sourceId: NonEmptyString,
     revision: Schema.Int.check(Schema.isGreaterThan(0)),
-    missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     matchingSourceIds: Schema.Array(NonEmptyString),
     alsoPinnedIn: AlsoPinnedIn,
   }),
@@ -713,7 +729,7 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
 
 const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
-    "Detach one PDF from a Source after the user explicitly asks. Pass its current revision; if stale, re-read and redo. The file stays until the trash is emptied (scient_sources_revert brings it back).",
+    "Detach one PDF from a Source after the user explicitly asks. Pass its current revision; if stale, re-read and redo.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
@@ -772,16 +788,21 @@ export const ScientSourcesFullTextStatus = Schema.Struct({
   unreadable: TextOffset,
 });
 
+const searchParameters = {
+  query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  sourceIds: Schema.optionalKey(
+    Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(100))),
+  ),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
+};
+
 const sourcesSearchTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_search", {
     description: `Search the full text of ${mode === "project" ? "Source" : "Library"} PDFs: ranked passages with source, PDF and page${mode === "project" ? "" : " (pinned: pinned here, under citationKey)"}; quote a "phrase" to require it. status.pending above zero: text is still being read. Read around a hit with scient_sources_read_text; check quotes with scient_sources_quote_check.`,
-    parameters: Schema.Struct({
-      query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
-      sourceIds: Schema.optionalKey(
-        Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(100))),
-      ),
-      limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
-    }),
+    parameters:
+      mode === "project"
+        ? Schema.Struct(searchParameters)
+        : Schema.Struct({ ...searchParameters, scope: Scope }),
     success: Schema.Struct({
       hits: Schema.Array(
         Schema.Struct({
@@ -856,54 +877,62 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.text.read", false));
 
-const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
-  description:
-    "Check quotes against the stored text of Source PDFs before giving them. exact, or normalized (spacing, ligatures, quote marks, dashes, hyphenation evened out), returns the stored text and page: quote that. ambiguous: it occurs more than once; lengthen it. not-found returns the closest passages. No sourceId: the whole Library.",
-  parameters: Schema.Struct({
-    quotes: Schema.Array(
-      Schema.Struct({
-        quote: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_000))),
-        sourceId: Schema.optionalKey(NonEmptyString),
-      }),
-    ).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(25))),
-  }),
-  success: Schema.Struct({
-    results: Schema.Array(
-      Schema.Struct({
-        outcome: Schema.Literals([
-          "exact",
-          "normalized",
-          "ambiguous",
-          "not-found",
-          "not-indexed",
-          "no-text",
-          "source-not-found",
-        ]),
-        sourceId: Schema.optionalKey(NonEmptyString),
-        attachmentId: Schema.optionalKey(NonEmptyString),
-        ranges: Schema.optionalKey(Schema.Array(SourceTextRange)),
-        text: Schema.optionalKey(Schema.String),
-        prefix: Schema.optionalKey(Schema.String),
-        suffix: Schema.optionalKey(Schema.String),
-        sourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
-        closest: Schema.optionalKey(
-          Schema.Array(
-            Schema.Struct({ sourceId: NonEmptyString, page: PageNumber, passage: Schema.String }),
+const quoteCheckParameters = {
+  quotes: Schema.Array(
+    Schema.Struct({
+      quote: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_000))),
+      sourceId: Schema.optionalKey(NonEmptyString),
+    }),
+  ).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(25))),
+};
+
+const sourceQuoteCheckTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_quote_check", {
+    description:
+      "Check quotes against the stored text of Source PDFs before giving them. exact, or normalized (spacing, ligatures, dashes, hyphens evened out), returns the stored text and page: quote that. ambiguous: it occurs more than once; lengthen it. not-found returns the closest passages. No sourceId: the whole Library.",
+    parameters:
+      mode === "project"
+        ? Schema.Struct(quoteCheckParameters)
+        : Schema.Struct({ ...quoteCheckParameters, scope: Scope }),
+    success: Schema.Struct({
+      results: Schema.Array(
+        Schema.Struct({
+          outcome: Schema.Literals([
+            "exact",
+            "normalized",
+            "ambiguous",
+            "not-found",
+            "not-indexed",
+            "no-text",
+            "source-not-found",
+          ]),
+          sourceId: Schema.optionalKey(NonEmptyString),
+          attachmentId: Schema.optionalKey(NonEmptyString),
+          ranges: Schema.optionalKey(Schema.Array(SourceTextRange)),
+          text: Schema.optionalKey(Schema.String),
+          prefix: Schema.optionalKey(Schema.String),
+          suffix: Schema.optionalKey(Schema.String),
+          sourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+          closest: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({ sourceId: NonEmptyString, page: PageNumber, passage: Schema.String }),
+            ),
           ),
-        ),
-        pending: Schema.optionalKey(TextOffset),
-      }),
-    ),
-  }),
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Check quotes against sources")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
+          pending: Schema.optionalKey(TextOffset),
+        }),
+      ),
+    }),
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Check quotes against sources")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
+
+const ScientSourceQuoteCheckTool = sourceQuoteCheckTool("project");
 
 const ZoteroConnectionInput = ZoteroConnection.annotate({
   description:
@@ -1094,7 +1123,10 @@ export const ScientSourcesCollectionsResult = Schema.Struct({
       collectionId: NonEmptyString,
       name: NonEmptyString,
       parentCollectionId: Schema.optionalKey(NonEmptyString),
+      /** Library mode: this project's sources in it, as `list` shows them by default. */
       sourceCount: Schema.Int,
+      /** Library mode: the whole Library's sources in it (`list` scope library). */
+      librarySourceCount: Schema.optionalKey(Schema.Int),
     }),
   ),
   savedSearches: Schema.Array(
@@ -1276,6 +1308,8 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     ),
   ),
   survivorId: Schema.optionalKey(NonEmptyString),
+  /** unpin: the paper's other keys here (after a merge), taken out with it. */
+  alsoUnpinned: Schema.optionalKey(Schema.Array(CitationKey)),
   /** Sources a merge stopped at (missing or failed) and did not reach; the listed merges landed. */
   notMerged: Schema.optionalKey(Schema.Array(NonEmptyString)),
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -1301,7 +1335,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  "Back up, restore, put back or join the whole Library. Manage collections, saved searches, pins, merges and packages. Act after the user asks. Give absolute folders. scient_sources_list libraryCopies shows progress. back-up-library copies to a dated folder in inFolder. Next start applies restore-library (backup fromFolder) or put-back-library (folder from recentChanges kept.path). cancel-restore takes libraryCopies.restore.restoreId. add-from-library adds missing sources from fromFolder. undo-join takes joinId (recentChanges join id or libraryCopies.join.joinId). Collections can overlap and keep records intact. create-collection reuses names (existing). parentCollectionId nests or moves it (move-collection, null for top level). delete-collection keeps sources (restore-collection undoes). save-search replaces filters by name. unknownSourceIds were skipped. pin adds a source here. note sets its project note. citationKey selects among pins. unpin takes citationKey. For note replacement, pass the prior note as noteBase. If stale, reconcile with pin.note. merge combines duplicates (undo-merge takes mergeId). mark-distinct rules out pairs (clear-distinct undoes). move-back moves this project's sources back. dismiss-move-summary clears the move notice. restore-pre-move restores the sealed pre-move copy anywhere. abandon true ends a partial restore, keeping restored data. export-package includes pins, project notes, reviews, records, PDFs and highlights. It leaves personal notes and saved searches here. Use relativePath or a dated folder in inFolder here, outside .scient and existing packages. import-package reads relativePath. list-package-imports shows dates, counts, canUndo, kept and left. undo-import uses importId, removes unchanged project additions and keeps Library papers (retainedSourceIds). With libraryMatch, link-pin (sourceId, librarySourceId) only if the user confirms the same work (unlink-pin undoes). keep-pin-separate records no match (clear-pin-separate undoes).",
+  "Back up, restore, put back or join the whole Library. Manage collections, saved searches, pins, merges and packages. Act after the user asks. Give absolute folders. scient_sources_list libraryCopies shows progress. back-up-library copies to a dated folder in inFolder. Next start applies restore-library (backup fromFolder) or put-back-library (folder from recentChanges kept.path). cancel-restore takes libraryCopies.restore.restoreId. add-from-library adds missing sources from fromFolder. undo-join takes joinId (recentChanges join id or libraryCopies.join.joinId). Collections can overlap and keep records intact. create-collection reuses names (existing). parentCollectionId nests or moves it (move-collection, null for top level). delete-collection keeps sources (restore-collection undoes). save-search replaces filters by name. unknownSourceIds were skipped. pin adds a source here. note sets its project note. citationKey selects among pins. For note replacement, pass the prior note as noteBase. If stale, reconcile with pin.note. merge combines duplicates (undo-merge takes mergeId). mark-distinct rules out pairs (clear-distinct undoes). move-back moves this project's sources back. dismiss-move-summary clears the move notice. restore-pre-move restores the sealed pre-move copy anywhere. abandon true ends a partial restore, keeping restored data. export-package includes pins, project notes, reviews, records, PDFs and highlights. It leaves personal notes and saved searches here. Use relativePath or a dated folder in inFolder here, outside .scient and existing packages. import-package reads relativePath. list-package-imports shows dates, counts, canUndo, kept and left. undo-import uses importId, removes unchanged project additions and keeps Library papers (retainedSourceIds). With libraryMatch, link-pin (sourceId, librarySourceId) only if the user confirms the same work (unlink-pin undoes). keep-pin-separate records no match (clear-pin-separate undoes).",
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );
@@ -1409,7 +1443,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
   failure: ScientSourcesToolError,
   dependencies,
 })
-  .annotate(Tool.Title, "Export the Library to a file")
+  .annotate(Tool.Title, "Export project citations to a file")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
@@ -1531,7 +1565,7 @@ export const ScientSourcesLibraryToolkit = Toolkit.make(
   sourceGetTool("library"),
   sourceNoteUpdateTool("library"),
   ScientSourceLibraryMetadataUpdateTool,
-  ScientSourceRemoveTool,
+  sourceRemoveTool("library"),
   ScientSourceRestoreTool,
   ScientSourceRevertTool,
   ScientSourceCheckTool,
@@ -1542,7 +1576,7 @@ export const ScientSourcesLibraryToolkit = Toolkit.make(
   sourcesCiteTool("library"),
   sourcesSearchTool("library"),
   ScientSourceReadTextTool,
-  ScientSourceQuoteCheckTool,
+  sourceQuoteCheckTool("library"),
   ScientSourceSavePageTool,
   importFileTool("library"),
   ScientSourcesExportTool,

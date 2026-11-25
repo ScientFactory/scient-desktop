@@ -100,12 +100,13 @@ export const matchAgentAnswer = <Agent extends { readonly id: string }>(
   );
 };
 
-const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
+export const pickAgent = <Agent extends { readonly id: string; readonly label: string }>(
+  agents: ReadonlyArray<Agent>,
+  input: NodeJS.ReadableStream = process.stdin,
+  output: NodeJS.WritableStream = process.stdout,
+) =>
   Effect.promise(async () => {
-    const readline = NodeReadlinePromises.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+    const readline = NodeReadlinePromises.createInterface({ input, output });
     try {
       const menu = agents
         .map((agent, index) => `  [${String(index + 1)}] ${agent.label}`)
@@ -117,6 +118,11 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
           return picked;
         }
       }
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return undefined;
+      }
+      throw error;
     } finally {
       readline.close();
     }
@@ -220,7 +226,12 @@ export const triageCommand = Command.make("triage", {
         if (!process.stdin.isTTY || !process.stdout.isTTY) {
           return yield* new TriageAgentChoiceRequiredError();
         }
-        selected = yield* pickAgent(installed);
+        const picked = yield* pickAgent(installed);
+        if (picked === undefined) {
+          yield* Console.log("\nNo agent started.");
+          return;
+        }
+        selected = picked;
       }
 
       // Windows .cmd shims cannot carry multiline argv; the prompt file also serves as the paste fallback.

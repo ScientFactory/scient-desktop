@@ -299,6 +299,7 @@ async function plan(
     readonly text: string;
     readonly format?: BibliographyFormat;
     readonly sourceFolder?: string;
+    readonly batchLimit?: number;
   },
 ) {
   const format = input.format ?? detectBibliographyFormat(input.fileName, input.text);
@@ -313,7 +314,7 @@ async function plan(
     sourceKeyFor: fileImportSourceKey,
     sourceIdFor: await storeSourceIdFor(root, existing),
     ...(exclusions ? { exclusions } : {}),
-    limit: SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
+    limit: input.batchLimit ?? SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   });
   const linked = await resolveLinkedPdfs(projectRoot, input.sourceFolder, planned.linkedFiles);
   return {
@@ -343,6 +344,8 @@ export async function beginBibliographyFileImport(input: {
   /** The folder the reference file came from on this computer; PDFs it names inside it are attached. */
   readonly sourceFolder?: string;
   readonly actor: ScientSourceActor;
+  /** Tests only: entries per import, below the store's limit. */
+  readonly batchLimit?: number;
 }): Promise<BibliographyFileImportResult> {
   const root = await canonicalScientSourceLocation(input.root);
   const projectRoot = input.projectRoot ?? (isScientLibraryLocation(root) ? null : root);

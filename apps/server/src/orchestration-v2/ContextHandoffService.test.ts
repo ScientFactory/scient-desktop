@@ -447,6 +447,7 @@ it.effect("inherited history stops at a missing fork ancestor", () =>
     const items = yield* ContextHandoffService.readInheritedHandoffItems(
       {
         getForkHistoryItems: () => Effect.succeed([]),
+        getForkSourceRunIds: () => Effect.succeed([]),
         getThreadRecords: (missing) =>
           Effect.fail(new ProjectionStoreThreadNotFoundError({ threadId: missing })),
       },
@@ -496,6 +497,7 @@ it.effect("portable fork references keep frozen rows and drop removed conversati
       {
         getForkHistoryItems: () => Effect.die("A bounded read keeps bodies out of memory."),
         getThreadRecords: () => Effect.die("A Scient fork names no run-fork ancestor."),
+        getForkSourceRunIds: () => Effect.die("A Scient fork records no run membership."),
         getContextHistoryCandidates: (_threadId, runIds) =>
           Effect.sync(() => {
             requested.push(runIds);
@@ -510,6 +512,7 @@ it.effect("portable fork references keep frozen rows and drop removed conversati
       source,
       source.runs[2]!,
       true,
+      source.thread,
     );
 
     assert.deepEqual(requested, [
@@ -542,9 +545,11 @@ it.effect("a Scient fork's frozen rows are its inherited history, once each", ()
         getForkHistoryItems: () => Effect.succeed([frozen]),
         // The thread's own runless rows include the copy its history already lists.
         getThreadRecords: () => Effect.succeed({ turnItems: [frozen, imported] }) as never,
+        getForkSourceRunIds: () => Effect.die("A Scient fork records no run membership."),
       },
       source,
       null,
+      source.thread,
     );
     assert.deepEqual(
       items.map((item) => item.id),
@@ -659,9 +664,18 @@ const readClearFork = Effect.fn(function* (
     threadId: clearAncestorId,
     runId: clearAncestorRunId,
   });
+  const fork = clearThread(ThreadId.make("thread:clear-fork"), {
+    type: "run",
+    threadId: clearSourceId,
+    runId: sourceRuns.at(-1)!.id,
+  });
   const store = {
     // SCIENT-FORK: inherited history reads a Scient fork's frozen rows first; these have none.
     getForkHistoryItems: () => Effect.succeed([]),
+    getForkSourceRunIds: (threadId: ThreadId) =>
+      Effect.succeed(
+        threadId === clearSourceId ? [clearAncestorRunId] : sourceRuns.map((run) => run.id),
+      ),
     getThreadRecords: (threadId: ThreadId) =>
       Effect.succeed(
         (threadId === clearAncestorId
@@ -685,6 +699,7 @@ const readClearFork = Effect.fn(function* (
     store as never,
     { thread: sourceThread, runs: sourceRuns, attempts: [] } as never,
     sourceRuns.at(-1)!,
+    fork,
   );
   return items.map((item) => (item.type === "user_message" ? item.text : ""));
 });

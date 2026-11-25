@@ -16,6 +16,7 @@ import {
 import { settleScientLibraryMerges } from "./libraryMerge.ts";
 import { countScientLibraryUnfinishedMoves } from "./libraryMove.ts";
 import { readScientLibraryManifest, type ScientLibraryLocation } from "./libraryRoot.ts";
+import { isSettled } from "./folderIndex.ts";
 import { isNodeError, readBoundedJson, snapshot } from "./storeFiles.ts";
 
 export const SCIENT_LIBRARY_BACKUP_MANIFEST_FILE = "backup.json";
@@ -235,18 +236,108 @@ async function holding<A>(
   return hold(0);
 }
 
+type CopiedFile = typeof BackupFile.Type;
+
+/** What a file was before it was copied; files Scient writes are replaced, never changed in place. */
+const stampOf = (stats: NodeFS.BigIntStats) =>
+  [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
+
 /**
- * Copies everything in the Library into a new dated folder under `destination`. The copy is
- * made inside the Library's write lock, so changes wait while it runs; each file's copy is
- * checked against the original, and the folder gets its name only once `backup.json` is written.
+ * Copies one Library file and checks the copy; null when the file is gone or is not a file.
+ * `trusted` holds when the file had not changed for a while and did not change while copied.
+ */
+async function copyLibraryFile(
+  libraryRoot: string,
+  partial: string,
+  path: string,
+): Promise<{
+  readonly file: CopiedFile;
+  readonly stamp: string;
+  readonly trusted: boolean;
+} | null> {
+  const from = NodePath.join(libraryRoot, ...path.split("/"));
+  const to = NodePath.join(partial, SCIENT_LIBRARY_BACKUP_PAYLOAD, ...path.split("/"));
+  const startedNs = BigInt(Date.now()) * 1_000_000n;
+  const before = await NodeFSP.lstat(from, { bigint: true }).catch((error: unknown) => {
+    if (isNodeError(error, "ENOENT")) return null;
+    throw error;
+  });
+  if (!before?.isFile()) return null;
+  await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
+  await NodeFSP.rm(to, { force: true });
+  const hash = NodeCrypto.createHash("sha256");
+  let bytes = 0;
+  try {
+    await NodeStreamPromises.pipeline(
+      NodeFS.createReadStream(from),
+      async function* (source) {
+        for await (const chunk of source) {
+          hash.update(chunk as Buffer);
+          bytes += (chunk as Buffer).length;
+          yield chunk;
+        }
+      },
+      NodeFS.createWriteStream(to, { flags: "wx", mode: 0o600 }),
+    );
+  } catch (error) {
+    // Replaced or removed between the listing and the read: the final pass decides.
+    if (isNodeError(error, "ENOENT")) return null;
+    throw error;
+  }
+  const sha256 = hash.digest("hex");
+  if ((await hashOf(to)) !== sha256) {
+    throw new Error(`The copy of ${path} does not match the original.`);
+  }
+  const after = await NodeFSP.lstat(from, { bigint: true }).catch(() => null);
+  const stamp = stampOf(before);
+  return {
+    file: { path, sha256, bytes },
+    stamp,
+    trusted: after !== null && stampOf(after) === stamp && isSettled(before, startedNs),
+  };
+}
+
+const PARTIAL_FOLDER = /^\.scient-library-backup-(backup_[0-9a-f]{32})\.partial$/u;
+const lockOf = (destination: string, backupId: string) =>
+  NodePath.join(destination, `.scient-library-backup-${backupId}.lock`);
+/** A partial folder that older versions left without a lock is taken as abandoned after this. */
+const UNLOCKED_PARTIAL_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Removes partial folders that backups into `destination` left when they were stopped. */
+async function removeAbandonedBackups(destination: string): Promise<void> {
+  for (const entry of await NodeFSP.readdir(destination, { withFileTypes: true })) {
+    const backupId = PARTIAL_FOLDER.exec(entry.name)?.[1];
+    if (!backupId || !entry.isDirectory()) continue;
+    const partial = NodePath.join(destination, entry.name);
+    const lock = lockOf(destination, backupId);
+    try {
+      if ((await snapshot(lock)) === "missing") {
+        const { mtimeMs } = await NodeFSP.lstat(partial);
+        if (Date.now() - mtimeMs < UNLOCKED_PARTIAL_AGE_MS) continue;
+      } else {
+        // A running backup holds its lock from before its folder exists until it is renamed.
+        await withScientFileLock(lock, async () => undefined, { timeoutMs: 0 });
+      }
+      await NodeFSP.rm(partial, { recursive: true, force: true });
+      await NodeFSP.rm(lock, { force: true });
+    } catch {
+      // Still running, or not ours to remove: left alone.
+    }
+  }
+}
+
+/**
+ * Copies the Library, as it was at one moment, into a new dated folder under `destination`:
+ * first without the write lock, then under it only what is new or changed since. The folder
+ * gets its name once `backup.json` is written; ones stopped backups left there are removed.
  */
 export async function backUpScientLibrary(input: {
   readonly library: ScientLibraryLocation;
   /** An existing folder, outside the Library. */
   readonly destination: string;
-  /** Called inside the Library's lock: it must only report, never change the Library. */
+  /** It must only report, never change the Library. */
   readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
-  /** Tests only: runs after the checkouts are listed, before the Library's lock is asked for. */
+  /** Tests only: runs after the first copy, before the Library's lock is asked for. */
   readonly faults?: { readonly beforeLibraryLock?: () => Promise<void> };
 }): Promise<ScientLibraryBackupResult> {
   const libraryRoot = await NodeFSP.realpath(input.library.root);
@@ -260,19 +351,53 @@ export async function backUpScientLibrary(input: {
   ) {
     return { outcome: "unsafe-destination" };
   }
+  await removeAbandonedBackups(destination);
   const createdAt = new Date().toISOString();
   const backupId = `backup_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+  const lock = lockOf(destination, backupId);
+  try {
+    return await withScientFileLock(
+      lock,
+      () => backUpInto({ ...input, libraryRoot, destination, createdAt, backupId }),
+      { timeoutMs: 0 },
+    );
+  } finally {
+    await NodeFSP.rm(lock, { force: true }).catch(() => undefined);
+  }
+}
+
+async function backUpInto(input: {
+  readonly library: ScientLibraryLocation;
+  readonly libraryRoot: string;
+  readonly destination: string;
+  readonly createdAt: string;
+  readonly backupId: string;
+  readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
+  readonly faults?: { readonly beforeLibraryLock?: () => Promise<void> };
+}): Promise<ScientLibraryBackupResult> {
+  const { libraryRoot, destination, createdAt, backupId } = input;
   const partial = NodePath.join(destination, `.scient-library-backup-${backupId}.partial`);
   let created = false;
   /** Removes what this backup wrote; never a folder it did not create. */
   const discard = async () => {
     if (created) await NodeFSP.rm(partial, { recursive: true, force: true }).catch(() => undefined);
   };
+  const backedUp = (path: string) => !scientLibraryBackupLeavesOut(path);
 
   const lockedFirst = await moveLocks(libraryRoot);
-  await input.faults?.beforeLibraryLock?.();
-  const copied = await holding(lockedFirst, () =>
-    withScientLibraryLock(libraryRoot, async () => {
+  const copied = await holding(lockedFirst, async () => {
+    // Exclusive, so a folder another backup left under this name is never written into.
+    await NodeFSP.mkdir(partial);
+    created = true;
+    const early = new Map<string, NonNullable<Awaited<ReturnType<typeof copyLibraryFile>>>>();
+    const first = (await scientLibraryBackupEntries(libraryRoot)).files.filter(backedUp);
+    for (const [index, path] of first.entries()) {
+      const copy = await copyLibraryFile(libraryRoot, partial, path);
+      if (copy) early.set(path, copy);
+      input.onProgress?.({ done: index + 1, total: first.length });
+    }
+    await input.faults?.beforeLibraryLock?.();
+    return withScientLibraryLock(libraryRoot, async () => {
       // A checkout that began its move since: its lock too, or the copy could split its files.
       const since = (await moveLocks(libraryRoot)).filter((lock) => !lockedFirst.includes(lock));
       return holding(since, async () => {
@@ -284,41 +409,34 @@ export async function backUpScientLibrary(input: {
           why: rule.why,
           files: found.files.filter((path) => rule.test(path)).length,
         }));
-        const paths = found.files.filter((path) => !scientLibraryBackupLeavesOut(path));
-        const skipped = found.others.filter((path) => !scientLibraryBackupLeavesOut(path));
+        const paths = found.files.filter(backedUp);
+        const skipped = found.others.filter(backedUp);
         const unfinishedMoves = await countScientLibraryUnfinishedMoves(libraryRoot);
-        // Exclusive, so a folder another backup left under this name is never written into.
-        await NodeFSP.mkdir(partial);
-        created = true;
-        const files: Array<typeof BackupFile.Type> = [];
-        for (const [index, path] of paths.entries()) {
-          const from = NodePath.join(libraryRoot, ...path.split("/"));
-          const to = NodePath.join(partial, SCIENT_LIBRARY_BACKUP_PAYLOAD, ...path.split("/"));
-          await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
-          const hash = NodeCrypto.createHash("sha256");
-          let bytes = 0;
-          await NodeStreamPromises.pipeline(
-            NodeFS.createReadStream(from),
-            async function* (source) {
-              for await (const chunk of source) {
-                hash.update(chunk as Buffer);
-                bytes += (chunk as Buffer).length;
-                yield chunk;
-              }
-            },
-            NodeFS.createWriteStream(to, { flags: "wx", mode: 0o600 }),
-          );
-          const sha256 = hash.digest("hex");
-          if ((await hashOf(to)) !== sha256) {
-            throw new Error(`The copy of ${path} does not match the original.`);
+        const files: CopiedFile[] = [];
+        for (const path of paths) {
+          const known = early.get(path);
+          const now = await NodeFSP.lstat(NodePath.join(libraryRoot, ...path.split("/")), {
+            bigint: true,
+          });
+          if (known?.trusted && known.stamp === stampOf(now)) {
+            files.push(known.file);
+            continue;
           }
-          files.push({ path, sha256, bytes });
-          input.onProgress?.({ done: index + 1, total: paths.length });
+          const copy = await copyLibraryFile(libraryRoot, partial, path);
+          if (!copy) throw new Error(`${path} could not be copied.`);
+          files.push(copy.file);
+        }
+        // The payload is exactly what is listed: a file copied first and gone by now, or one
+        // whose copy was abandoned when it vanished mid-read, is not the Library at this moment.
+        const payload = NodePath.join(partial, SCIENT_LIBRARY_BACKUP_PAYLOAD);
+        const listed = new Set(files.map((file) => file.path));
+        for (const path of (await scientLibraryBackupEntries(payload)).files) {
+          if (!listed.has(path)) await NodeFSP.rm(NodePath.join(payload, ...path.split("/")));
         }
         return { library, files, leftOut, skipped, unfinishedMoves };
       });
-    }),
-  ).catch(async (error: unknown) => {
+    });
+  }).catch(async (error: unknown) => {
     await discard();
     throw error;
   });

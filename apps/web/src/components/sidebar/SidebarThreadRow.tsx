@@ -2,10 +2,10 @@
 import type { ComponentProps } from "react";
 import { SidebarRowWindow } from "./SidebarRowWindow";
 // SCIENT-FORK:END
-import { useAtomMount } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
-// SCIENT-FORK: the card names its computer only when there is more than one.
+// SCIENT-FORK: the card marks its computer only when there is more than one.
 import { useEnvironmentIdentities } from "../../state/environments";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -89,7 +89,12 @@ import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useSidebarLinkedIssueState } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentScopeDenied,
+} from "../../state/session";
 import { formatRelativeTime, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -112,6 +117,7 @@ import {
 } from "../Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
+  ThreadLinkBadge,
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
   prStatusIndicator,
@@ -161,6 +167,19 @@ function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: Mess
   const parts = formatRelativeTime(timestamp, nowMs, resolve);
   if (parts === null) return "";
   return parts.suffix === null ? resolve(msg("now", { $context: "relative time" })) : parts.value;
+}
+
+function PendingSyncLabel() {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />}>
+        <T>Pending</T>
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        <T>Waiting to sync with its environment</T>
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 // Subscribes to the minute tick itself, so only the label re-renders each
@@ -737,6 +756,14 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const canTriageThread = !useEnvironmentScopeDenied(
+    thread.environmentId,
+    AuthOrchestrationOperateScope,
+  );
+  const pendingSync = useAtomValue(
+    threadEnvironment.pendingSyncAtom(thread.environmentId),
+    (threads) => threads.has(thread.id),
+  );
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
@@ -1017,7 +1044,7 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
     setSnoozeGateClock({ thread, now: new Date(snoozeGateOpensAt).toISOString() });
   }
   const showSnoozeButton =
-    canOperateThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
+    canTriageThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
   // Closing here, not just masking, keeps the menu from reopening when the button returns.
   if (snoozeMenuOpenRaw && !showSnoozeButton) setSnoozeMenuOpen(false);
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
@@ -1080,7 +1107,7 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: topStatus?.label ?? null,
+    statusLabel: pendingSync ? gt("Pending") : (topStatus?.label ?? null),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1156,7 +1183,6 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
     leaseLiveStatus ? thread.issues : undefined,
   );
   const issueStatus = issueState === null ? null : issueStatePresentation(issueState);
-  const IssueIcon = issueStatus?.Icon ?? IssueGlyph.issue;
   const issueLabel =
     issueCount === 1 && firstIssue
       ? issueStatus
@@ -1170,45 +1196,31 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
           count: issueCount,
         });
   const issueBadge = firstIssue ? (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <InlineButton
-            tone="muted"
-            aria-label={issueLabel}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              openLinkedItems();
-            }}
-          />
-        }
-      >
-        <IssueIcon aria-hidden className={cn("size-3 shrink-0", issueStatus?.toneClassName)} />
-        <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
-          {issueCount === 1 ? firstIssue.displayKey : issueCount}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup
-        side="top"
-        sideOffset={0}
-        variant="glass"
-        className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
-        onContextMenu={(event) => event.stopPropagation()}
-      >
-        <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
-          <ThreadDetailsIssueRows
-            links={thread.issues ?? []}
-            threadRef={threadRef}
-            compact={false}
-            mountScope="sidebar-tooltip"
-            onOpen={() => {
-              if (!props.isRouteThread) onThreadActivate(threadRef);
-            }}
-          />
-        </div>
-      </TooltipPopup>
-    </Tooltip>
+    <ThreadLinkBadge
+      control={
+        <InlineButton
+          aria-label={issueLabel}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            openLinkedItems();
+          }}
+        />
+      }
+      Icon={issueStatus?.Icon ?? IssueGlyph.issue}
+      toneClassName={issueStatus?.toneClassName ?? "text-muted-foreground"}
+      text={issueCount === 1 ? firstIssue.displayKey.replace(/^#/, "") : issueCount}
+    >
+      <ThreadDetailsIssueRows
+        links={thread.issues ?? []}
+        threadRef={threadRef}
+        compact={false}
+        mountScope="sidebar-tooltip"
+        onOpen={() => {
+          if (!props.isRouteThread) onThreadActivate(threadRef);
+        }}
+      />
+    </ThreadLinkBadge>
   ) : null;
   const terminalStatusIcon = (
     <ThreadTerminalStatusButton
@@ -1274,7 +1286,7 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
   ) : null;
 
   const diff = latestRunDiff(thread);
-  // SCIENT-FORK:START — with one computer every card would name it; the tooltip still does.
+  // SCIENT-FORK:START — with one computer every card would mark it; the tooltip still names it.
   const environmentLabel = useEnvironmentIdentities().length > 1 ? props.environmentLabel : null;
   // SCIENT-FORK:END
   // Only the trailing icons would remain, so the row moves them to the title line instead.
@@ -1286,18 +1298,18 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+      {/* SCIENT-FORK:START — the icon alone marks the computer; the tooltip names it. */}
       {environmentLabel !== null ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3.5 shrink-0 text-icon-muted"
-          />
-          <span className="min-w-0 flex-1 truncate">{environmentLabel}</span>
-        </>
-      ) : (
-        <span className="flex-1" />
-      )}
+        <EnvironmentMachineIcon
+          role="img"
+          aria-label={environmentLabel}
+          kind={props.environmentMachine}
+          className="size-3.5 shrink-0 text-icon-muted"
+        />
+      ) : null}
+      {/* Holds the text line's height, which the folder row's size hint counts on. */}
+      <span className="h-4 flex-1" />
+      {/* SCIENT-FORK:END */}
       {terminalStatusIcon}
       {prBadge}
       {issueBadge}
@@ -1357,6 +1369,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
+                // SCIENT-FORK: the computer its icon marks, which the row's label leaves out.
+                aria-description={multiline ? (environmentLabel ?? undefined) : undefined}
                 aria-current={accessibility.current}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
@@ -1417,7 +1431,11 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                       !isWoke && "group-any-hover/sidebar-row:opacity-0",
                     )}
                   >
-                    {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                    {pendingSync ? (
+                      <span className="text-xs">
+                        <PendingSyncLabel />
+                      </span>
+                    ) : variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                       <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
                         {/* The clock tells a wake time from an age at a glance. */}
                         <AlarmClockIcon aria-hidden className="size-3" />
@@ -1568,6 +1586,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
               data-sidebar-row={threadKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
+              // SCIENT-FORK: the computer its icon marks, which the row's label leaves out.
+              aria-description={environmentLabel ?? undefined}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
@@ -1621,7 +1641,9 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {topStatus ? (
+                    {pendingSync ? (
+                      <PendingSyncLabel />
+                    ) : topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
                           <TooltipTrigger

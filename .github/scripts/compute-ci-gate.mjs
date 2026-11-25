@@ -35,16 +35,24 @@ export function computeQualificationSuites(paths) {
     ".github/scripts/match-windows-llvm.sh",
     ".github/scripts/compute-ci-gate.mjs",
     ".github/scripts/compute-ci-gate.test.mjs",
+    ".github/scripts/compute-roles.mjs",
     "apps/server/src/atomicWrite.ts",
     "apps/server/scripts/compute-recipes.ts",
     // It can turn tests off on one platform.
     "apps/server/vite.config.ts",
+    // The run table's live test runs in real_languages; these are what it exercises.
+    "apps/server/src/scient/analysis/RunTableAdapter.ts",
+    "apps/server/src/scient/analysis/RunTableAdapter.live.test.ts",
+    "apps/server/src/scient/analysis/StanRun.ts",
+    "apps/server/src/scient/analysis/batchLogOutput.ts",
+    "packages/contracts/src/scient/computeRunTable.ts",
   ]);
   const prefixes = [
     "apps/server/src/scient/compute/",
     "apps/server/src/scient/execution/",
     "apps/server/src/localEndpoints/",
     "packages/scient-compute/",
+    "packages/scient-analysis/",
     "packages/contracts/src/scientCompute",
     "packages/scient-execution/",
     "packages/scient-project-init/",

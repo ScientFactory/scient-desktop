@@ -53,7 +53,9 @@ it("serves exact local PDF support bytes with decoder MIME and refuses missing o
       const response = await request(`/pdfjs-assets/${asset}`);
       expect(response.status).toBe(200);
       expect(response.type).toBe(type);
-      expect(response.body).toEqual(await NodeFSP.readFile(NodePath.join(installed, asset)));
+      const expected = await NodeFSP.readFile(NodePath.join(installed, asset));
+      expect(response.body.byteLength, asset).toBe(expected.byteLength);
+      expect(response.body.equals(expected), asset).toBe(true);
     }
     for (const path of [
       "wasm/missing.wasm",

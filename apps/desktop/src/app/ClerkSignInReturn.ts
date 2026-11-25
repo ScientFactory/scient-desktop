@@ -69,7 +69,7 @@ p{margin:0 0 .25rem;font-size:.9rem;line-height:1.6;color:var(--ink-2)}
 @media (prefers-reduced-motion:reduce){.container,.timer{animation:none}}
 `;
 
-export function renderClerkSignInReturnPage(success: boolean) {
+function renderClerkSignInReturnPage(success: boolean) {
   const title = success ? "You're signed in" : "Sign-in didn't finish";
   const message = success
     ? "You can close this tab and go back to Scient."

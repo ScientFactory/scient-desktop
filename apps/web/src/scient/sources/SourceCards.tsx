@@ -1,7 +1,7 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { msg, useGT, useMessages } from "gt-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import type { MessageResolver } from "~/i18n/messages";
 
@@ -16,7 +16,6 @@ import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { sourcePinLabel, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import {
   activateSource,
-  MetadataReviewIndicator,
   RowStar,
   SourceMenuButton,
   SourcePdfAction,
@@ -39,6 +38,26 @@ const CARD_MAX_WIDTH_REM = 11;
 /** Tailwind's `gap-x-3.5`, the space between cards in a row. */
 const CARD_GAP_REM = 0.875;
 const CARD_ASPECT = 1.3;
+/** The title's 15px type at `leading-snug`. */
+const TITLE_LINE_PX = 15 * 1.375;
+
+/**
+ * The title takes the space the card has left and shows as many whole lines as fit there, so the
+ * ellipsis ends a line. Written to a CSS variable: a resize renders nothing.
+ */
+function fitTitleLines(slot: HTMLElement | null) {
+  if (!slot) return;
+  const fit = (height: number) =>
+    slot.style.setProperty(
+      "--title-lines",
+      String(Math.max(1, Math.floor((height + 0.5) / TITLE_LINE_PX))),
+    );
+  fit(slot.clientHeight);
+  return observeResize(slot, (entries) => {
+    const entry = entries.at(-1);
+    if (entry) fit(entry.contentRect.height);
+  });
+}
 const NO_SECTIONS: ReadonlyArray<ScientSourceSection> = [];
 
 function authorsLine(record: SourceRecord, resolve: MessageResolver): string {
@@ -52,8 +71,8 @@ function authorsLine(record: SourceRecord, resolve: MessageResolver): string {
 }
 
 /**
- * The section's name over a row's first card (dimmed when the section began on an earlier row)
- * and over a card that starts one mid-row; a thin line runs on over the rest.
+ * The section's name over the card that starts it; a thin line runs on over the rest, so a
+ * section that fills several rows reads as one.
  */
 function CardLabel(props: { readonly label: SourceCardLabel | null }) {
   const { label } = props;
@@ -66,12 +85,6 @@ function CardLabel(props: { readonly label: SourceCardLabel | null }) {
           </ScientTooltip>
           <span className="shrink-0 tabular-nums">{label.section.count.toLocaleString()}</span>
         </h3>
-      ) : label ? (
-        <ScientTooltip content={label.section.label}>
-          <span aria-hidden className="truncate">
-            {label.section.label}
-          </span>
-        </ScientTooltip>
       ) : null}
       <span className="h-px min-w-3 flex-1 bg-border" />
     </div>
@@ -84,7 +97,6 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
   const m = useMessages();
   const journal = record.containerTitle?.trim() || null;
   const selected = row.selection.has(record.sourceId);
-  const diagnostics = row.diagnosticsBySourceId.get(record.sourceId);
   const onToggleStar = row.onToggleStar;
   return (
     <div
@@ -109,16 +121,25 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
               className="flex min-h-0 flex-1 cursor-pointer flex-col rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
               onClick={(event) => activateSource(event, record, row)}
             >
-              <span className="flex min-w-0 items-center gap-1.5 pe-3 text-[10px] tracking-wider text-muted-foreground uppercase">
+              <span className="flex h-4 min-w-0 shrink-0 items-center gap-1.5 pe-3 text-[11px] text-muted-foreground">
                 <SourceJournalIcon record={record} />
                 <span className="truncate">
                   {journal ?? m(SCIENT_SOURCE_TYPE_LABELS[record.type])}
                 </span>
               </span>
-              <span className="mt-2.5 line-clamp-5 font-serif text-[15px] leading-snug">
-                {record.title ?? gt("Untitled source")}
+              <span
+                ref={fitTitleLines}
+                className="mt-2.5 flex min-h-0 flex-1 flex-col overflow-hidden"
+                style={{ "--title-lines": 2 } as CSSProperties}
+              >
+                <span
+                  data-card-title
+                  className="line-clamp-(--title-lines) font-serif text-[15px] leading-snug wrap-break-word"
+                >
+                  {record.title ?? gt("Untitled source")}
+                </span>
               </span>
-              <span className="mt-auto flex items-end gap-2 pt-2">
+              <span className="flex shrink-0 items-end gap-2 pt-2">
                 <span className="line-clamp-3 min-w-0 flex-1 text-xs text-muted-foreground">
                   {authorsLine(record, m)}
                   {record.issuedYear ? ` · ${record.issuedYear}` : ""}
@@ -134,8 +155,13 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
             </button>
           }
         />
-        <TooltipPopup side="top">
-          <SourceProvenance record={record} row={row} />
+        <TooltipPopup side="top" className="max-w-72">
+          {/* The card shortens the title and venue; here they are whole. */}
+          <span className="block font-medium">{record.title ?? gt("Untitled source")}</span>
+          {journal ? <span className="block">{journal}</span> : null}
+          <span className="block text-muted-foreground">
+            <SourceProvenance record={record} row={row} />
+          </span>
         </TooltipPopup>
       </Tooltip>
       <div className="mt-1.5 flex items-center gap-0.5">
@@ -147,20 +173,15 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
           />
         ) : null}
         {record.readingStatus === "unread" ? (
-          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span aria-hidden className="size-1.5 rounded-full bg-sky-500" />
-            {m(LIBRARY_LABELS.unread)}
-          </span>
+          <ScientTooltip content={m(LIBRARY_LABELS.unread)}>
+            <span
+              role="img"
+              aria-label={m(LIBRARY_LABELS.unread)}
+              className="ms-1 size-1.5 rounded-full bg-sky-500"
+            />
+          </ScientTooltip>
         ) : null}
         <span className="flex-1" />
-        {diagnostics && diagnostics.length > 0 ? (
-          <span className="flex size-6 items-center justify-center">
-            <MetadataReviewIndicator
-              diagnostics={diagnostics}
-              onOpen={() => row.onOpenDetails(record.sourceId)}
-            />
-          </span>
-        ) : null}
         <SourcePdfAction record={record} row={row} size="icon-xs" />
         {record.readingStatus !== undefined ? (
           <RowStar

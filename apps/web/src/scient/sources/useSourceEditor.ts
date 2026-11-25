@@ -6,7 +6,7 @@ import type {
 import { useEffect, useRef, useState } from "react";
 
 import { updateScientSourceMetadata } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 
 export function useSourceEditor(input: {
   readonly environmentId: EnvironmentId;
@@ -71,7 +71,7 @@ export function useSourceEditor(input: {
     })()
       .catch(async (cause) => {
         if (generation.current === request) {
-          setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+          setError(sourcesErrorMessage(cause));
         }
         return null;
       })

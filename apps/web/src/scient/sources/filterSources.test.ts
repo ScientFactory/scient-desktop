@@ -87,6 +87,22 @@ describe("Scient source search index", () => {
       ["two"],
     );
   });
+  it("indexes and sorts a list once until its rows or the sort change", () => {
+    const index = indexScientSourceSummaries(records);
+    expect(indexScientSourceSummaries(records)).toBe(index);
+    expect(indexScientSourceSummaries([...records])).not.toBe(index);
+    // Each render filters into a new list of the same rows.
+    const sorted = sortScientSourceRecords(filterScientSourceSearchIndex(index, ""), "title");
+    expect(sortScientSourceRecords(filterScientSourceSearchIndex(index, ""), "title")).toBe(sorted);
+    const byYear = sortScientSourceRecords(
+      filterScientSourceSearchIndex(index, ""),
+      "publication-year",
+    );
+    expect(byYear).not.toBe(sorted);
+    const fewer = sortScientSourceRecords(filterScientSourceSearchIndex(index, "smith"), "title");
+    expect(fewer.map((item) => item.sourceId)).toEqual(["two"]);
+  });
+
   it("sorts by newest publication year and keeps undated sources last", () => {
     const sorted = sortScientSourceRecords(
       [

@@ -4,7 +4,6 @@ import {
   changedFieldsLabel,
   editorialStatusLine,
   noticeChangesLine,
-  revisionLabel,
   sourceTrustLabel,
 } from "./sourceLifecycleLabels";
 
@@ -14,12 +13,6 @@ describe("source lifecycle labels", () => {
       "Changed date, authors, PDFs",
     );
     expect(changedFieldsLabel([])).toBe("");
-    expect(revisionLabel({ savedAt: "not a date", savedBy: "agent", changes: ["title"] })).toBe(
-      "Edited by an agent",
-    );
-    expect(revisionLabel({ savedAt: "not a date", savedBy: "user", changes: [] })).toBe(
-      "Saved by you",
-    );
   });
 
   it("warns about the most serious registry notice and stays quiet otherwise", () => {

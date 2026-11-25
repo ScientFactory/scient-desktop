@@ -45,7 +45,7 @@
     "@noble/hashes": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/theme": "1.1.0",
-    "@pierre/trees": "1.0.0-beta.6",
+    "@pierre/trees": "catalog:",
     "@pierre/words": "file:deps/pierre-words-0.2.2-t3.4-7c04b7f1.tgz",
     "@scientfactory/conversation": "workspace:*",
     "@scientfactory/document-artifacts": "workspace:*",
@@ -161,7 +161,7 @@
     "@types/use-sync-external-store": "^0.0.6",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/browser-playwright": "5.0.5",
+    "@vitest/browser-playwright": "5.1.1",
     "compression": "^1.8.2",
     "fake-indexeddb": "6.2.5",
     "gt": "2.27.0",
@@ -171,6 +171,6 @@
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
     "vite-plus": "catalog:",
-    "vitest": "5.0.5"
+    "vitest": "5.1.1"
   }
 }

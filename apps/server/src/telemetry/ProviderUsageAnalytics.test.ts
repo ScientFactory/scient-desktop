@@ -43,10 +43,11 @@ const providers = [
     ({
       instanceId: ProviderInstanceId.make(driver),
       driver,
+      auth: { status: "authenticated" },
       models: models.map((model) => ({ ...model, isCustom: false })),
     }) as unknown as ServerProvider,
 );
-const label = (model: string) => reportedModelLabel(providers, model);
+const label = (_driver: string, model: string) => reportedModelLabel(providers, model);
 
 const at = (ms: number) => DateTime.makeUnsafe(ms);
 const complete = (input: number, output: number, extra: Partial<TurnTokenUsage> = {}) =>
@@ -310,7 +311,7 @@ describe("provider usage reporting", () => {
     });
   });
 
-  it("reports every model name and closed efforts only", () => {
+  it("reports catalog models by slug, custom models by driver, and closed efforts only", () => {
     const routed = (model: string, variant: string) =>
       providerTurnProperties(
         {
@@ -332,6 +333,7 @@ describe("provider usage reporting", () => {
       effort: "high",
     });
     const local = routed("ollama/acme-internal", "secret-variant");
+    // SCIENT-FORK: Scient names a model outside the vendor catalogs; see ScientModelLabels.ts.
     expect(local).toMatchObject({
       model: "ollama/acme-internal",
       observedModel: "ollama/acme-internal",
@@ -341,13 +343,13 @@ describe("provider usage reporting", () => {
 
   // SCIENT-FORK:START — Scient's modelKey reports a path-looking model name as `other`.
   it("maps provider catalog aliases to their slug and never reports file paths", () => {
-    expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
-    expect(label("antigravity-default")).toBe("gemini-4-neon");
-    expect(label("/Users/jane/models/qwen-coder.gguf")).toBe("other");
-    expect(label("~/models/qwen-coder.gguf")).toBe("other");
-    expect(label("C:\\Users\\jane\\qwen-coder.gguf")).toBe("other");
-    expect(label("../jane/qwen-coder.gguf")).toBe("other");
-    expect(label("pi-local")).toBe("pi-local");
+    expect(label("antigravity", "gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
+    expect(label("antigravity", "antigravity-default")).toBe("gemini-4-neon");
+    expect(label("pi", "/Users/jane/models/qwen-coder.gguf")).toBe("other");
+    expect(label("pi", "~/models/qwen-coder.gguf")).toBe("other");
+    expect(label("pi", "C:\\Users\\jane\\qwen-coder.gguf")).toBe("other");
+    expect(label("pi", "../jane/qwen-coder.gguf")).toBe("other");
+    expect(label("pi", "pi-local")).toBe("pi-local");
   });
   // SCIENT-FORK:END
 

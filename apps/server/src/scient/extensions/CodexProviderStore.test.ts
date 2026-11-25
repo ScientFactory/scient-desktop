@@ -20,6 +20,7 @@ import {
   codexStoreDisabledReason,
   makeCodexProviderStore,
 } from "./CodexProviderStore.ts";
+import { requestKnownCategories } from "./discover/clientCategories.ts";
 const decodeInstall = Schema.decodeUnknownEffect(Schema.Struct({ pluginName: Schema.String }));
 const encode = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 type Plugin = CodexSchema.V2PluginListResponse__PluginSummary;
@@ -164,6 +165,25 @@ describe("Codex provider store", () => {
         expect(
           (yield* store.search({ category: "papers" })).entries.map((entry) => entry.name),
         ).toEqual(["zotero"]);
+      }),
+    ),
+  );
+
+  it.effect("lists a newer category's plugins under the earlier ones an older client browses", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = clientFixture([plugin("circleci")]);
+        const store = yield* makeCodexProviderStore(() => Effect.succeed(fixture.client));
+        expect((yield* store.search({ category: "cloud" })).entries.map((e) => e.name)).toEqual([
+          "circleci",
+        ]);
+        expect((yield* store.search({ category: "code" })).entries).toEqual([]);
+        // An older client knows no Cloud, so its Code still lists CircleCI.
+        const older = yield* store.search({
+          category: "code",
+          knownCategories: requestKnownCategories(undefined),
+        });
+        expect(older.entries.map((entry) => entry.name)).toEqual(["circleci"]);
       }),
     ),
   );

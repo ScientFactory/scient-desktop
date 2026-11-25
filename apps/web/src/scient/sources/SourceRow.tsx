@@ -1,9 +1,9 @@
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 
 import type { MessageResolver } from "~/i18n/messages";
 import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
-import { AlertCircle, FileText, MoreVertical, Star } from "lucide-react";
+import { FileText, MoreVertical, Star } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -16,8 +16,6 @@ import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { sourceAddedLabel, sourcePinLabel } from "./sourceLabels";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
-type SourceDiagnostic =
-  ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 
 /** What every row of the sources list shares: the panel's state and its handlers. */
 export interface SourceRowContext {
@@ -26,7 +24,6 @@ export interface SourceRowContext {
   readonly listed: NonNullable<ScientSourcesOverviewResult["scopes"]>["listed"] | undefined;
   readonly selection: ReadonlySet<string>;
   readonly recentlyAddedSourceIds: ReadonlySet<string>;
-  readonly diagnosticsBySourceId: ReadonlyMap<string, ReadonlyArray<SourceDiagnostic>>;
   readonly onToggleSelected: (sourceId: string) => void;
   readonly onOpenDetails: (sourceId: string) => void;
   readonly onOpenPdf: (input: {
@@ -40,45 +37,6 @@ export interface SourceRowContext {
   ) => void;
   /** Present only for a session that may change reading state. */
   readonly onToggleStar?: (record: SourceRecord) => Promise<void>;
-}
-
-export function MetadataReviewIndicator(props: {
-  readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
-  readonly onOpen: () => void;
-}) {
-  const gt = useGT();
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
-            aria-label={gt("Metadata needs review")}
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onOpen();
-            }}
-          >
-            <AlertCircle className="size-4" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top" align="end" className="max-w-72" variant="glass">
-        <div className="space-y-1 px-3 py-2">
-          <div className="font-medium">
-            <T>Metadata needs review</T>
-          </div>
-          <div className="text-muted-foreground">
-            {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-          </div>
-          <div className="pt-1 text-muted-foreground">
-            <T>Click to view source details.</T>
-          </div>
-        </div>
-      </TooltipPopup>
-    </Tooltip>
-  );
 }
 
 /** A personal Library's star on a row: shown when set, offered on hover to a session that may change it. */
@@ -234,7 +192,7 @@ export function SourceProvenance(props: {
   const { record, row } = props;
   const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
   const membership = row.listed === "library" ? sourcePinLabel(record, row.listed, m) : "";
-  return `${sourceAddedLabel(record.importedAt, justAdded, false, m)}${membership}`;
+  return `${sourceAddedLabel(record.importedAt, justAdded, m)}${membership}`;
 }
 
 export function SourceRow(props: {
@@ -244,7 +202,6 @@ export function SourceRow(props: {
   const m = useMessages();
   const gt = useGT();
   const { record, row } = props;
-  const metadataDiagnostics = row.diagnosticsBySourceId.get(record.sourceId);
   const onToggleStar = row.onToggleStar;
   const material = selectScientSourceMaterial({ materials: record.attachments })._tag;
   const hasPdf = material === "Selected" || material === "SeveralMaterials";
@@ -294,14 +251,6 @@ export function SourceRow(props: {
         </TooltipPopup>
       </Tooltip>
       <div className="mr-1 flex shrink-0 items-center gap-1">
-        {metadataDiagnostics && metadataDiagnostics.length > 0 ? (
-          <span className="flex size-7 shrink-0 items-center justify-center">
-            <MetadataReviewIndicator
-              diagnostics={metadataDiagnostics}
-              onOpen={() => row.onOpenDetails(record.sourceId)}
-            />
-          </span>
-        ) : null}
         <span className="flex w-3 shrink-0 items-center justify-center">
           {record.readingStatus === "unread" ? (
             <ScientTooltip content={m(LIBRARY_LABELS.unread)}>

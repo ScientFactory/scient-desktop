@@ -81,17 +81,11 @@ export async function listScientLibraryRecentChanges(
     listScientSourceIds(library),
     readScientLibraryAliases(library),
   ]);
-  // A source an alias forwards is a merge's copy, never a removal: its Trash entry is not read.
-  const mergedAway = new Set(
-    [...aliases.values()].flatMap((alias) =>
-      alias.undoneAt === undefined ? [alias.sourceId] : [],
-    ),
-  );
   const [bulkEdits, merges, imports, trash, organization, restores, joins] = await Promise.all([
     listScientSourcesBulkEdits(library, limit + 1),
     listScientLibraryRecentMerges(library, limit + 1),
     listScientSourceImports(library, limit + 1),
-    readScientSourcesRemovedByPerson(library, mergedAway),
+    readScientSourcesRemovedByPerson(library, present),
     readScientSourcesOrganization(library, present),
     listScientLibraryRestores(library),
     listScientLibraryJoins(library, runningJoins),

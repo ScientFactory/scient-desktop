@@ -1823,288 +1823,135 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("rejects cloud mint requests with the wrong issuer or audience", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
+    it.effect(
+      "rejects cloud mint requests with the wrong issuer, audience, subject or connect scope",
+      () =>
+        Effect.gen(function* () {
+          yield* buildAppUnderTest();
 
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
-        const postMint = (request: ReturnType<typeof makeCloudMintCredentialRequest>) =>
-          fetchEffect(mintUrl, {
+          const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+            privateKeyEncoding: { format: "pem", type: "pkcs8" },
+            publicKeyEncoding: { format: "pem", type: "spki" },
+          });
+          const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+          const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+          const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
             method: "POST",
             headers: {
+              cookie: ownerCookie,
               "content-type": "application/json",
             },
-            body: jsonRequestBody(request),
+            body: jsonRequestBody({
+              relayUrl: "https://relay.example.test/",
+              cloudUserId: "user_123",
+              environmentCredential: "t3env_test_credential",
+              cloudMintPublicKey: cloudKeyPair.publicKey,
+              endpointRuntime: null,
+            }),
           });
+          assert.equal(relayConfigResponse.status, 200);
 
-        const wrongIssuer = yield* postMint(
-          makeCloudMintCredentialRequest({
-            privateKey: cloudKeyPair.privateKey,
-            environmentId: testEnvironmentDescriptor.environmentId,
-            clientProofKeyThumbprint: "client-proof-key-thumbprint",
-            issuer: "https://attacker.example.test",
-            jti: "cloud-mint-jti-wrong-issuer",
-            nonce: "cloud-mint-nonce-wrong-issuer",
-            issuedAt: DateTime.formatIso(now),
-            expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-          }),
-        );
-        const wrongAudience = yield* postMint(
-          makeCloudMintCredentialRequest({
-            privateKey: cloudKeyPair.privateKey,
-            environmentId: testEnvironmentDescriptor.environmentId,
-            clientProofKeyThumbprint: "client-proof-key-thumbprint",
-            audience: "t3-env:other-environment",
-            jti: "cloud-mint-jti-wrong-audience",
-            nonce: "cloud-mint-nonce-wrong-audience",
-            issuedAt: DateTime.formatIso(now),
-            expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-          }),
-        );
+          const now = yield* DateTime.now;
+          const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
+          const post = (
+            claim: string,
+            overrides: Partial<Parameters<typeof makeCloudMintCredentialRequest>[0]>,
+          ) =>
+            fetchEffect(mintUrl, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: jsonRequestBody(
+                makeCloudMintCredentialRequest({
+                  privateKey: cloudKeyPair.privateKey,
+                  environmentId: testEnvironmentDescriptor.environmentId,
+                  clientProofKeyThumbprint: "client-proof-key-thumbprint",
+                  jti: `cloud-mint-jti-${claim}`,
+                  nonce: `cloud-mint-nonce-${claim}`,
+                  issuedAt: DateTime.formatIso(now),
+                  expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
+                  ...overrides,
+                }),
+              ),
+            });
 
-        assert.equal(wrongIssuer.status, 401);
-        assert.equal(wrongAudience.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+          for (const [claim, overrides] of [
+            ["wrong-issuer", { issuer: "https://attacker.example.test" }],
+            ["wrong-audience", { audience: "t3-env:other-environment" }],
+            ["wrong-subject", { subject: "user_other" }],
+            ["duplicate-scope", { scope: ["environment:connect", "environment:connect"] }],
+          ] as const) {
+            assert.equal((yield* post(claim, overrides)).status, 401, claim);
+          }
+          // The same fixture accepts a valid proof, so the refusals are not a blanket 401.
+          assert.equal((yield* post("valid", {})).status, 200);
+        }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("rejects cloud mint requests for a cloud subject other than the linked user", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
+    it.effect(
+      "rejects cloud health requests with the wrong issuer, audience, subject or status scope",
+      () =>
+        Effect.gen(function* () {
+          yield* buildAppUnderTest();
 
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
-        const response = yield* fetchEffect(mintUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody(
-            makeCloudMintCredentialRequest({
-              privateKey: cloudKeyPair.privateKey,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              clientProofKeyThumbprint: "client-proof-key-thumbprint",
-              subject: "user_other",
-              jti: "cloud-mint-jti-wrong-subject",
-              nonce: "cloud-mint-nonce-wrong-subject",
-              issuedAt: DateTime.formatIso(now),
-              expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-            }),
-          ),
-        });
-
-        assert.equal(response.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
-    it.effect("rejects cloud mint requests without the exact connect scope", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
-        const response = yield* fetchEffect(mintUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody(
-            makeCloudMintCredentialRequest({
-              privateKey: cloudKeyPair.privateKey,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              clientProofKeyThumbprint: "client-proof-key-thumbprint",
-              jti: "cloud-mint-jti-duplicate-scope",
-              nonce: "cloud-mint-nonce-duplicate-scope",
-              issuedAt: DateTime.formatIso(now),
-              expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-              scope: ["environment:connect", "environment:connect"],
-            }),
-          ),
-        });
-
-        assert.equal(response.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
-    it.effect("rejects cloud health requests with the wrong issuer or audience", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
-        const postHealth = (request: ReturnType<typeof makeCloudEnvironmentHealthRequest>) =>
-          fetchEffect(healthUrl, {
+          const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+            privateKeyEncoding: { format: "pem", type: "pkcs8" },
+            publicKeyEncoding: { format: "pem", type: "spki" },
+          });
+          const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+          const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+          const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
             method: "POST",
             headers: {
+              cookie: ownerCookie,
               "content-type": "application/json",
             },
-            body: jsonRequestBody(request),
-          });
-
-        const wrongIssuer = yield* postHealth(
-          makeCloudEnvironmentHealthRequest({
-            privateKey: cloudKeyPair.privateKey,
-            environmentId: testEnvironmentDescriptor.environmentId,
-            issuer: "https://attacker.example.test",
-            jti: "cloud-health-jti-wrong-issuer",
-            nonce: "cloud-health-nonce-wrong-issuer",
-            issuedAt: DateTime.formatIso(now),
-            expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-          }),
-        );
-        const wrongAudience = yield* postHealth(
-          makeCloudEnvironmentHealthRequest({
-            privateKey: cloudKeyPair.privateKey,
-            environmentId: testEnvironmentDescriptor.environmentId,
-            audience: "t3-env:other-environment",
-            jti: "cloud-health-jti-wrong-audience",
-            nonce: "cloud-health-nonce-wrong-audience",
-            issuedAt: DateTime.formatIso(now),
-            expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-          }),
-        );
-
-        assert.equal(wrongIssuer.status, 401);
-        assert.equal(wrongAudience.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
-    it.effect("rejects cloud health requests for a cloud subject other than the linked user", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
-        const response = yield* fetchEffect(healthUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody(
-            makeCloudEnvironmentHealthRequest({
-              privateKey: cloudKeyPair.privateKey,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              subject: "user_other",
-              jti: "cloud-health-jti-wrong-subject",
-              nonce: "cloud-health-nonce-wrong-subject",
-              issuedAt: DateTime.formatIso(now),
-              expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
+            body: jsonRequestBody({
+              relayUrl: "https://relay.example.test/",
+              cloudUserId: "user_123",
+              environmentCredential: "t3env_test_credential",
+              cloudMintPublicKey: cloudKeyPair.publicKey,
+              endpointRuntime: null,
             }),
-          ),
-        });
+          });
+          assert.equal(relayConfigResponse.status, 200);
 
-        assert.equal(response.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+          const now = yield* DateTime.now;
+          const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
+          const post = (
+            claim: string,
+            overrides: Partial<Parameters<typeof makeCloudEnvironmentHealthRequest>[0]>,
+          ) =>
+            fetchEffect(healthUrl, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: jsonRequestBody(
+                makeCloudEnvironmentHealthRequest({
+                  privateKey: cloudKeyPair.privateKey,
+                  environmentId: testEnvironmentDescriptor.environmentId,
+                  jti: `cloud-health-jti-${claim}`,
+                  nonce: `cloud-health-nonce-${claim}`,
+                  issuedAt: DateTime.formatIso(now),
+                  expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
+                  ...overrides,
+                }),
+              ),
+            });
+
+          for (const [claim, overrides] of [
+            ["wrong-issuer", { issuer: "https://attacker.example.test" }],
+            ["wrong-audience", { audience: "t3-env:other-environment" }],
+            ["wrong-subject", { subject: "user_other" }],
+            ["duplicate-scope", { scope: ["environment:status", "environment:status"] }],
+          ] as const) {
+            assert.equal((yield* post(claim, overrides)).status, 401, claim);
+          }
+          // The same fixture accepts a valid proof, so the refusals are not a blanket 401.
+          assert.equal((yield* post("valid", {})).status, 200);
+        }).pipe(Effect.provide(NodeHttpServerTest)),
     );
   },
 );

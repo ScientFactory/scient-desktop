@@ -80,6 +80,8 @@ export const makeCheckpointSizeCheck = (deps: {
   return Effect.fn("GitVcsDriver.checkpoints.checkSize")(function* (
     cwd: string,
     env: NodeJS.ProcessEnv,
+    /** The repository root, when the capture has already read it. */
+    knownTopLevel?: string,
   ) {
     const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
     const scanTimeoutMs = yield* CheckpointSizeScanTimeout;
@@ -88,8 +90,15 @@ export const makeCheckpointSizeCheck = (deps: {
       return yield* tooLarge(cwd, "Changed files were too large for file history a moment ago.");
     // Porcelain v1 paths are repository-relative even when cwd is a subdirectory.
     // Scope enumeration to the same pathspec used by checkpoint staging.
-    const root = yield* execute({ operation, cwd, args: ["rev-parse", "--show-toplevel"], env });
-    const rootPrefix = Buffer.from(`${root.stdout.replace(/\r?\n$/, "")}/`);
+    const root =
+      knownTopLevel ??
+      (yield* execute({
+        operation,
+        cwd,
+        args: ["rev-parse", "--show-toplevel"],
+        env,
+      })).stdout.replace(/\r?\n$/, "");
+    const rootPrefix = Buffer.from(`${root}/`);
     let changedBytes = 0n;
     const consumer = makeCheckpointStatusConsumer({
       cwd,
@@ -182,13 +191,13 @@ export const makeCheckpointSizeCheck = (deps: {
 export const remainingCheckpointCaptureMs = (startedAtMs: number, nowMs: number) =>
   Math.max(0, CHECKPOINT_CAPTURE_TIMEOUT_MS - (nowMs - startedAtMs));
 
-/** One deadline for the whole capture. */
+/** One deadline for the whole capture: `budgetMs` is what is left of it. */
 export const boundCheckpointCapture =
-  (operation: string, cwd: string) =>
+  (operation: string, cwd: string, budgetMs = CHECKPOINT_CAPTURE_TIMEOUT_MS) =>
   <A, E, R>(capture: Effect.Effect<A, E, R>) =>
     capture.pipe(
       Effect.timeoutOrElse({
-        duration: CHECKPOINT_CAPTURE_TIMEOUT_MS,
+        duration: budgetMs,
         orElse: () =>
           Effect.fail(
             new VcsProcessTimeoutError({

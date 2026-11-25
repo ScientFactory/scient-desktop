@@ -45,7 +45,7 @@ export const makeOwnedRunFinalizer = Effect.fnUntraced(function* <
     if (
       yield* (
         input.session.droidSteerTerminalHeld?.(input.attempt.id, final.terminal.status) ??
-          Effect.succeed(false)
+        Effect.succeed(false)
       )
     )
       return false;
@@ -82,7 +82,7 @@ export const makeOwnedRunFinalizer = Effect.fnUntraced(function* <
               if (
                 yield* (
                   input.session.droidSteerTerminalHeld?.(input.attempt.id, "completed") ??
-                    Effect.succeed(false)
+                  Effect.succeed(false)
                 )
               )
                 return { type: "recheck-held" } as const;
@@ -98,7 +98,7 @@ export const makeOwnedRunFinalizer = Effect.fnUntraced(function* <
       if (
         yield* (
           input.session.droidSteerTerminalHeld?.(input.attempt.id, final.terminal.status) ??
-            Effect.succeed(false)
+          Effect.succeed(false)
         )
       )
         return false;

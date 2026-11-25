@@ -339,7 +339,7 @@ export async function getScientSourceDetail(input: {
   readonly sourceId: string;
 }): Promise<ScientSourceRecord> {
   const record = await readScientSourceRecord(input.root, input.sourceId);
-  if (!record) throw new Error("The source was not found in this project.");
+  if (!record) throw new Error("The source was not found.");
   return normalizeSourceRecordForRead(record);
 }
 
@@ -358,7 +358,7 @@ export async function getScientSourceAttachmentPreviewMaterial(input: {
       attachment,
     };
   }
-  throw new Error("The source attachment was not found in this project.");
+  throw new Error("The source attachment was not found.");
 }
 
 export async function getScientSourceJournalIconMaterial(input: {
@@ -586,7 +586,7 @@ export async function checkSourceIdentifier(input: {
   readonly record: ScientSourceRecord;
 }> {
   const record = await readScientSourceRecord(input.root, input.sourceId);
-  if (!record) throw new Error("The source was not found in this project.");
+  if (!record) throw new Error("The source was not found.");
   const resolved = await (input.resolveIdentifier ?? resolveSourceIdentifier)(record.identifiers);
   // A catalogue's word alone is not a registry check: treat it like an unreachable registry.
   const resolution =
@@ -969,7 +969,7 @@ export async function refreshAndCheckSourceMetadata(input: {
     ? await canonicalScientSourceLocation(input.root)
     : await canonicalizeScientSourceRoot(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
-  if (!record) throw new Error("The source was not found in this project.");
+  if (!record) throw new Error("The source was not found.");
   if (record.revision !== input.expectedRevision) {
     return unchecked({
       outcome: "stale" as const,
@@ -1073,7 +1073,7 @@ export async function listSourceRevisions(input: {
   readonly sourceId: string;
 }) {
   const revisions = await listScientSourceRevisions(input.root, input.sourceId);
-  if (!revisions) throw new Error("The source was not found in this project.");
+  if (!revisions) throw new Error("The source was not found.");
   return { revisions };
 }
 

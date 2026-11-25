@@ -42,8 +42,9 @@ vi.mock("../accounts/useAccounts", () => ({
   usePasswordStorePermission: () => true,
   useAccountCommand: () => vi.fn(async () => undefined),
 }));
+// A university waiting for sign-in puts one more labelled button in the header.
 vi.mock("../accounts/University", () => ({
-  UniversityCrest: () => null,
+  UniversityCrest: () => <button type="button">Sign in</button>,
   UniversityPicker: () => null,
 }));
 vi.mock("../accounts/PaperRequests", () => ({ PaperQueueBand: () => null }));
@@ -60,7 +61,11 @@ function source(index: number, pinned: boolean): SourceRecord {
     sourceId: `source_${index}`,
     revision: 1,
     type: "article",
-    title: `Measured outcomes of a long-running cohort study, part ${index + 1}`,
+    // Every fifth title is long, with a word longer than a card is wide.
+    title:
+      index % 5 === 0
+        ? `Electroencephalographically measured outcomes of a long-running multicentre cohort study with repeated follow-up over two decades, part ${index + 1}`
+        : `Measured outcomes of a long-running cohort study, part ${index + 1}`,
     creators: [
       { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
     ],
@@ -162,16 +167,31 @@ function layoutProblems(panel: HTMLElement): string[] {
       problems.push(`${label} is too narrow to read`);
     }
   }
+  // A card's title ends on a whole line, inside the card, and no word runs past its edge.
+  for (const title of panel.querySelectorAll<HTMLElement>("[data-card-title]")) {
+    const rect = title.getBoundingClientRect();
+    const card = title.closest<HTMLElement>("[data-source-card]")!.getBoundingClientRect();
+    const authors = title.parentElement?.nextElementSibling?.getBoundingClientRect();
+    const name = `card title "${title.textContent?.slice(0, 30)}"`;
+    if (authors && rect.bottom > authors.top + 0.5) problems.push(`${name} runs under the authors`);
+    if (rect.bottom > card.bottom + 0.5) problems.push(`${name} is cut off by the card`);
+    if (title.scrollWidth > title.clientWidth + 1) problems.push(`${name} cuts off a word`);
+  }
   return problems;
 }
 
-/** Tabs through the first controls; each one keyboard focus reaches must show it. */
+/**
+ * Tabs through the first controls in one keyboard command; each one keyboard focus reaches
+ * must show it. Each step is read on its own Tab's keyup, after focus has moved.
+ */
 async function unseenFocus(panel: HTMLElement, steps: number): Promise<string[]> {
   const unseen: string[] = [];
-  for (let step = 0; step < steps; step += 1) {
-    await userEvent.keyboard("{Tab}");
+  let observed = 0;
+  const read = (event: KeyboardEvent) => {
+    if (event.key !== "Tab") return;
+    observed += 1;
     const focused = document.activeElement as HTMLElement | null;
-    if (!focused || !panel.contains(focused)) continue;
+    if (!focused || !panel.contains(focused)) return;
     // The ring, outline or field highlight may sit on the control or on the field around it.
     const around = [focused, focused.parentElement, focused.parentElement?.parentElement];
     const shown = around.some((element) => {
@@ -186,7 +206,14 @@ async function unseenFocus(panel: HTMLElement, steps: number): Promise<string[]>
     if (!shown) {
       unseen.push(focused.getAttribute("aria-label") ?? focused.textContent?.slice(0, 40) ?? "");
     }
+  };
+  document.addEventListener("keyup", read, true);
+  try {
+    await userEvent.keyboard("{Tab}".repeat(steps));
+  } finally {
+    document.removeEventListener("keyup", read, true);
   }
+  expect(observed, "every Tab was read").toBe(steps);
   return unseen;
 }
 
@@ -234,146 +261,160 @@ const WORDS = {
 // The narrowest Library sits beside the file tree; a short window leaves it little height.
 const SIZES = [
   { name: "narrow", width: 256, height: 480 },
-  { name: "normal", width: 480, height: 800 },
+  { name: "normal", width: 420, height: 800 },
   { name: "full", width: 1200, height: 800 },
 ] as const;
 
+// German's longer labels clip at the narrow and normal widths; at full width they have room.
 describe.each(["en", "de"] as const)("Library panel layout (%s)", (language) => {
-  describe.each(SIZES)("$name", (size) => {
-    const words = WORDS[language];
-    const open = async () => {
-      startI18n();
-      await setI18nLanguage(language);
-      // A narrow Library sits in a wide window: controls keep their desktop size.
-      await page.viewport(Math.max(size.width, 1280), size.height);
-      const screen = await render(panel, {
-        router: false,
-        container: host(size.width, size.height),
-      });
-      return {
-        screen,
-        check: () => {
-          const problems = layoutProblems(screen.container);
-          expect(problems, problems.join("\n")).toEqual([]);
-        },
-        [Symbol.asyncDispose]: async () => {
-          await screen[Symbol.asyncDispose]();
-          localStorage.clear();
-          await act(() => setI18nLanguage("en"));
-        },
-      };
-    };
-
-    it("loading", async () => {
-      mocks.read.mockReset().mockReturnValue(new Promise(() => {}));
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByRole("heading")).toBeVisible();
-      check();
-    });
-
-    it("failed load", async () => {
-      mocks.read.mockReset().mockRejectedValue(new Error("The Library folder could not be read."));
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByText("The Library folder could not be read.")).toBeVisible();
-      check();
-    });
-
-    it("empty Library", async () => {
-      holding(0, 0);
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByRole("heading").first()).toBeVisible();
-      check();
-    });
-
-    it("empty project with a populated Library", async () => {
-      holding(0, 12);
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByRole("heading").first()).toBeVisible();
-      check();
-    });
-
-    it("no filter matches", async () => {
-      holding(12, 12);
-      await using opened = await open();
-      const { screen, check } = opened;
-      const search = screen.getByRole("searchbox");
-      await search.fill("no such paper anywhere");
-      await expect.element(screen.getByText(words.noMatches)).toBeVisible();
-      check();
-    });
-
-    it.each(["list", "cards"] as const)("populated %s layout and keyboard focus", async (view) => {
-      holding(40, 40);
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
-      const toggle = screen.getByRole("button", { name: /^Show as|^Als /u });
-      if (
-        (view === "cards") ===
-        /cards|Karten/u.test(toggle.element().getAttribute("aria-label") ?? "")
-      ) {
-        await toggle.click();
-      }
-      await expect
-        .poll(() => screen.container.querySelector("[data-source-card]") !== null)
-        .toBe(view === "cards");
-      check();
-      expect(await unseenFocus(screen.container, 14)).toEqual([]);
-    });
-
-    it("selection with the bulk bar, All Library", async () => {
-      holding(0, 12);
-      mocks.menu.mockReset().mockResolvedValue("select");
-      await using opened = await open();
-      const { screen, check } = opened;
-      await screen.getByRole("button", { name: words.myLibrary, exact: true }).click();
-      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
-      await screen.getByRole("button", { name: words.moreSource }).nth(4).click();
-      await expect.element(screen.getByText(/^1 /u)).toBeVisible();
-      check();
-    });
-
-    it("open Library menu", async () => {
-      holding(3, 3);
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
-      await screen.getByRole("button", { name: words.moreLibrary }).click();
-      await expect.element(page.getByRole("menu")).toBeVisible();
-      check();
-      await userEvent.keyboard("{Escape}");
-    });
-
-    it("import result and Activity", async () => {
-      holding(3, 3);
-      mocks.addByIdentifier.mockReset().mockResolvedValue({
-        results: [
-          {
-            input: "10.1000/abc.123",
-            identifier: { scheme: "doi", value: "10.1000/abc.123" },
-            outcome: "imported",
-            sourceId: "source_new",
-            title: "Measured outcomes",
-            verification: "verified",
-            message: null,
+  describe.each(SIZES.filter((size) => language === "en" || size.name !== "full"))(
+    "$name",
+    (size) => {
+      const words = WORDS[language];
+      const open = async () => {
+        startI18n();
+        await setI18nLanguage(language);
+        // A narrow Library sits in a wide window: controls keep their desktop size.
+        await page.viewport(Math.max(size.width, 1280), size.height);
+        const screen = await render(panel, {
+          router: false,
+          container: host(size.width, size.height),
+        });
+        return {
+          screen,
+          check: () => {
+            const problems = layoutProblems(screen.container);
+            expect(problems, problems.join("\n")).toEqual([]);
           },
-        ],
+          [Symbol.asyncDispose]: async () => {
+            await screen[Symbol.asyncDispose]();
+            localStorage.clear();
+            await act(() => setI18nLanguage("en"));
+          },
+        };
+      };
+
+      it("loading", async () => {
+        mocks.read.mockReset().mockReturnValue(new Promise(() => {}));
+        await using opened = await open();
+        const { screen, check } = opened;
+        await expect.element(screen.getByRole("heading")).toBeVisible();
+        check();
       });
-      await using opened = await open();
-      const { screen, check } = opened;
-      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
-      await screen.getByRole("button", { name: words.importSources }).click();
-      await page.getByRole("menuitem", { name: words.addByIdentifier }).click();
-      await page.getByRole("textbox", { name: words.identifiers }).fill("10.1000/abc.123");
-      await page.getByRole("button", { name: words.add, exact: true }).click();
-      await expect.element(screen.getByRole("status").first()).toBeVisible();
-      check();
-    });
-  });
+
+      it("failed load", async () => {
+        mocks.read
+          .mockReset()
+          .mockRejectedValue(new Error("The Library folder could not be read."));
+        await using opened = await open();
+        const { screen, check } = opened;
+        await expect
+          .element(screen.getByText("The Library folder could not be read."))
+          .toBeVisible();
+        check();
+      });
+
+      it("empty Library", async () => {
+        holding(0, 0);
+        await using opened = await open();
+        const { screen, check } = opened;
+        await expect.element(screen.getByRole("heading").first()).toBeVisible();
+        check();
+      });
+
+      it("empty project with a populated Library", async () => {
+        holding(0, 12);
+        await using opened = await open();
+        const { screen, check } = opened;
+        await expect.element(screen.getByRole("heading").first()).toBeVisible();
+        check();
+      });
+
+      it("no filter matches", async () => {
+        holding(12, 12);
+        await using opened = await open();
+        const { screen, check } = opened;
+        const search = screen.getByRole("searchbox");
+        await search.fill("no such paper anywhere");
+        await expect.element(screen.getByText(words.noMatches)).toBeVisible();
+        check();
+      });
+
+      it.each(["list", "cards"] as const)(
+        "populated %s layout and keyboard focus",
+        async (view) => {
+          holding(40, 40);
+          await using opened = await open();
+          const { screen, check } = opened;
+          await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
+          const toggle = screen.getByRole("button", { name: /^Show as|^Als /u });
+          if (
+            (view === "cards") ===
+            /cards|Karten/u.test(toggle.element().getAttribute("aria-label") ?? "")
+          ) {
+            await toggle.click();
+          }
+          await expect
+            .poll(() => screen.container.querySelector("[data-source-card]") !== null)
+            .toBe(view === "cards");
+          check();
+          // Focus styles depend on neither language nor width: walked once per view.
+          if (language === "en" && size.name === "normal") {
+            expect(await unseenFocus(screen.container, 14)).toEqual([]);
+          }
+        },
+      );
+
+      it("selection with the bulk bar, All Library", async () => {
+        holding(0, 12);
+        mocks.menu.mockReset().mockResolvedValue("select");
+        await using opened = await open();
+        const { screen, check } = opened;
+        await screen.getByRole("button", { name: words.myLibrary, exact: true }).click();
+        await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
+        await screen.getByRole("button", { name: words.moreSource }).nth(4).click();
+        await expect.element(screen.getByText(/^1 /u)).toBeVisible();
+        check();
+      });
+
+      it("open Library menu", async () => {
+        holding(3, 3);
+        await using opened = await open();
+        const { screen, check } = opened;
+        await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
+        await screen.getByRole("button", { name: words.moreLibrary }).click();
+        await expect.element(page.getByRole("menu")).toBeVisible();
+        check();
+        await userEvent.keyboard("{Escape}");
+      });
+
+      it("import result and Activity", async () => {
+        holding(3, 3);
+        mocks.addByIdentifier.mockReset().mockResolvedValue({
+          results: [
+            {
+              input: "10.1000/abc.123",
+              identifier: { scheme: "doi", value: "10.1000/abc.123" },
+              outcome: "imported",
+              sourceId: "source_new",
+              title: "Measured outcomes",
+              verification: "verified",
+              message: null,
+            },
+          ],
+        });
+        await using opened = await open();
+        const { screen, check } = opened;
+        await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
+        await screen.getByRole("button", { name: words.importSources }).click();
+        await page.getByRole("menuitem", { name: words.addByIdentifier }).click();
+        await page.getByRole("textbox", { name: words.identifiers }).fill("10.1000/abc.123");
+        await page.getByRole("button", { name: words.add, exact: true }).click();
+        await expect.element(screen.getByRole("status").first()).toBeVisible();
+        check();
+      });
+    },
+  );
 });
 
 describe("Library panel large-list reachability", () => {

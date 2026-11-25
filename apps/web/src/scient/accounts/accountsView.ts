@@ -247,6 +247,7 @@ export function importedLabel(
 /** The names the desktop's browser import gives each browser. */
 const BROWSER_NAMES: Readonly<Record<BrowserImportSourceId, string>> = {
   chrome: "Chrome",
+  chromium: "Chromium",
   edge: "Microsoft Edge",
   brave: "Brave",
   vivaldi: "Vivaldi",

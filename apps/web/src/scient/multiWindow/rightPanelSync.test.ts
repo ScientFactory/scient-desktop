@@ -1,6 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   openAppWindow,
@@ -8,6 +8,13 @@ import {
   type SharedLocalStorage,
 } from "../../../test/scientAppWindows";
 import type { ThreadRightPanelState } from "../../rightPanelStore";
+
+// Each window reloads the store and its own modules; the immutable contracts module is
+// evaluated once and shared, as it would be by any two copies of the same app build.
+const shared = vi.hoisted(() => ({
+  contracts: undefined as Promise<typeof import("@t3tools/contracts")> | undefined,
+}));
+vi.mock(import("@t3tools/contracts"), (importOriginal) => (shared.contracts ??= importOriginal()));
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const threadA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));

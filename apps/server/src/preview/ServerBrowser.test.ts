@@ -388,6 +388,8 @@ function makeEncoderPage() {
     btoa,
     Blob,
     performance,
+    setInterval,
+    clearInterval,
   };
   sandbox.window = sandbox;
   const context = NodeVM.createContext(sandbox);

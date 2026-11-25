@@ -9,6 +9,8 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
+import { dayLabel } from "./dayLabel";
+
 /**
  * Words of the possible-duplicates screen. `libraryDuplicateLabels.test.ts` keeps the engine's
  * words ("pin", "alias", "survivor", "loser", "record") out of every one of them.
@@ -217,10 +219,7 @@ export function sideSummary(
 
 /** The month-name date the details and History use ("Nov 12, 2026"). */
 export function mergedDateLabel(mergedAt: string): string {
-  const date = new Date(mergedAt);
-  return Number.isNaN(date.getTime())
-    ? ""
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+  return Number.isNaN(new Date(mergedAt).getTime()) ? "" : dayLabel(mergedAt);
 }
 
 export function sectionCountLabel(label: string, count: number): string {

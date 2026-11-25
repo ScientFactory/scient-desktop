@@ -29,7 +29,6 @@ import {
   clerkSignInReturnUrl,
   createClerkBridgeWithSignInReturn,
   isTopLevelNavigation,
-  renderClerkSignInReturnPage,
 } from "./ClerkSignInReturn.ts";
 import { SCIENT_SYMBOL_SVG } from "./scientSymbolSvg.ts";
 
@@ -108,11 +107,6 @@ describe("ClerkSignInReturn", () => {
       "utf8",
     );
     expect(SCIENT_SYMBOL_SVG).toBe(asset);
-  });
-
-  it("renders success and failure", () => {
-    expect(renderClerkSignInReturnPage(true)).toContain("You're signed in");
-    expect(renderClerkSignInReturnPage(false)).toContain("Sign-in didn't finish");
   });
 
   it("keeps the library's other handlers and its attempt id", async () => {

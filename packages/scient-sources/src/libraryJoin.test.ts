@@ -33,7 +33,6 @@ import { finishScientLibraryRestore, prepareScientLibraryRestore } from "./libra
 import { pinScientLibrarySource } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
-  deleteScientSourcesPermanently,
   detachScientSourcePdf,
   importScientSource,
   listScientSourceRecords,
@@ -56,7 +55,7 @@ import {
 } from "./testing/libraryModel.ts";
 import { checkLibraryRules } from "./testing/libraryRules.ts";
 import { createScenario, libraryOf, runStep, type Scenario } from "./testing/librarySteps.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import { emptyScientSourceTrash, sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const roots: string[] = [];
 
@@ -430,22 +429,20 @@ describe("adding what another Library holds", () => {
       });
       await checked.promise;
       // Enqueue before resuming Undo, without yielding to a filesystem path lookup first.
-      const changing = withScientFileLock(
-        NodePath.join(scenario.libraryRoot, "library.lock"),
-        () =>
-          addition === "member"
-            ? changeScientSourceCollectionMembers({
-                root: library,
-                collectionId,
-                add: [workOf(model, "mine").sourceId],
-                actor: "user",
-              })
-            : createScientSourceCollection({
-                root: library,
-                name: "Added child",
-                parentCollectionId: collectionId,
-                actor: "user",
-              }),
+      const changing = withScientFileLock(NodePath.join(scenario.libraryRoot, "library.lock"), () =>
+        addition === "member"
+          ? changeScientSourceCollectionMembers({
+              root: library,
+              collectionId,
+              add: [workOf(model, "mine").sourceId],
+              actor: "user",
+            })
+          : createScientSourceCollection({
+              root: library,
+              name: "Added child",
+              parentCollectionId: collectionId,
+              actor: "user",
+            }),
       );
       resume.resolve();
       const [undone, changed] = await Promise.all([undoing, changing]);
@@ -685,7 +682,7 @@ describe("adding what another Library holds", () => {
       expectedRevision: here.revision,
       actor: "user",
     });
-    await deleteScientSourcesPermanently({ root: ours.library });
+    await emptyScientSourceTrash(ours.library);
     expect(await join()).toMatchObject({ outcome: "joined", added: 0, removedHere: 1 });
     expect(await readScientSourceRecord(ours.library, there.sourceId)).toBeNull();
   });

@@ -35,9 +35,10 @@ import {
   updateScientSourceMetadata,
 } from "@scientfactory/scient-sources/store";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
 import { ScientSourceAgentDetail, ScientSourcesLibraryToolkit } from "./tools.ts";
 
 import { ServerConfig } from "../../../config.ts";
@@ -81,19 +82,44 @@ import {
   bulkUpdateScientSourcesForInvocation,
   checkScientSourceQuotesForInvocation,
   citeScientSourcesForInvocation,
+  exportScientSourcesForInvocation,
   getScientSourceForInvocation,
   libraryCopyFolder,
   listScientSourcesForInvocation,
   removeScientSourceForInvocation,
   organizeLibrarySourcesForInvocation,
+  readScientSourceCollectionsForInvocation,
   readScientSourceTextForInvocation,
   resolveScientSourcesStore,
+  restoreScientSourceForInvocation,
   searchScientSourcesForInvocation,
   syncScientBibliographyForInvocation,
   updateScientSourceForInvocation,
   updateScientSourceNoteForInvocation,
   updateLibrarySourceForInvocation,
 } from "./handlers.ts";
+
+// Public abstract services answer as for an unknown DOI (HTTP 404); any other request is an escape.
+const metadataRequests = vi.hoisted(() => ({ abstracts: [] as string[], escaped: [] as string[] }));
+vi.mock("../../../scient/sources/metadataHttp.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../scient/sources/metadataHttp.ts")>();
+  const abstractHosts = new Set(["api.crossref.org", "www.ebi.ac.uk", "api.openalex.org"]);
+  const noRecord = async (url: URL): Promise<never> => {
+    (abstractHosts.has(url.hostname) ? metadataRequests.abstracts : metadataRequests.escaped).push(
+      url.href,
+    );
+    throw new Error("The metadata service returned HTTP 404.");
+  };
+  return {
+    ...actual,
+    requestMetadata: async (url: URL) => {
+      metadataRequests.escaped.push(url.href);
+      return { status: 404, body: "", url };
+    },
+    requestMetadataText: noRecord,
+    requestMetadataJson: noRecord,
+  };
+});
 
 const fixtures: string[] = [];
 const environmentId = EnvironmentId.make("environment-sources-library");
@@ -105,6 +131,8 @@ afterEach(async () => {
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
+  metadataRequests.abstracts.splice(0);
+  expect(metadataRequests.escaped.splice(0)).toEqual([]);
 });
 
 async function setup() {
@@ -282,6 +310,13 @@ const addSource = (fixture: Fixture, title: string, doi: string, pdfRelativePath
       ...(pdfRelativePath ? { pdfRelativePath } : {}),
     }),
     fixture,
+  ).pipe(
+    // The omitted `enrich` option still asks for the missing abstract.
+    Effect.tap(() =>
+      Effect.sync(() =>
+        expect(metadataRequests.abstracts).toContain(`https://api.crossref.org/works/${doi}`),
+      ),
+    ),
   );
 
 describe("Sources tools on the library backend", () => {
@@ -777,6 +812,246 @@ describe("Sources tools on the library backend", () => {
         "lovelace2026pinned",
         "lovelace2026pinneda",
       ]);
+    }),
+  );
+
+  it.effect("unpin takes a merged paper out of the project under every key it had here", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const first = (yield* addSource(fixture, "First copy", "10.1000/first")).sourceId!;
+      const later = (yield* addSource(fixture, "Later copy", "10.1000/later")).sourceId!;
+      yield* Effect.promise(() =>
+        mergeScientLibrarySources({
+          library: fixture.library,
+          sourceIds: [first, later],
+          survivorId: later,
+          actor: "user",
+        }),
+      );
+      const pins = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+      const [firstKey, laterKey] = [first, later].map(
+        (id) => pins.find((pin) => pin.sourceId === id)!.citationKey,
+      );
+
+      const unpinned = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "unpin", citationKey: laterKey! },
+        }),
+        fixture,
+      );
+      expect(unpinned).toMatchObject({ outcome: "unpinned", alsoUnpinned: [firstKey] });
+      expect(yield* Effect.promise(() => readScientProjectPins(fixture.root))).toEqual([]);
+      const listed = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(listed.total).toBe(0);
+    }),
+  );
+
+  it.effect("an agent pages the recent changes past the first page", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      for (const name of ["one", "two", "three"]) {
+        const record = yield* Effect.promise(() => libraryRecord(fixture, name));
+        yield* run(
+          removeScientSourceForInvocation({
+            sourceId: record.sourceId,
+            expectedRevision: record.revision,
+          }),
+          fixture,
+        );
+      }
+      const page = (offset: number) =>
+        run(listScientSourcesForInvocation({ recentChanges: true, limit: 2, offset }), fixture);
+      const first = yield* page(0);
+      expect([first.recentChanges?.length, first.nextOffset]).toEqual([2, 2]);
+      const second = yield* page(2);
+      expect([second.recentChanges?.length, second.nextOffset]).toEqual([1, null]);
+      expect(
+        new Set([...first.recentChanges!, ...second.recentChanges!].map((change) => change.id)),
+      ).toHaveProperty("size", 3);
+    }),
+  );
+
+  it.effect("an agent's restore brings this project's references.bib up to date", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Old title", "10.1000/restored");
+      const record = (yield* Effect.promise(() =>
+        readScientSourceRecord(fixture.library, added.sourceId!),
+      ))!;
+      // Edited in the Library from elsewhere: this project's files still hold the old title.
+      const edited = yield* Effect.promise(() =>
+        updateScientSourceMetadata({
+          root: fixture.library,
+          sourceId: record.sourceId,
+          expectedRevision: record.revision,
+          metadata: { ...editableMetadataFromRecord(record), title: "New title" },
+        }),
+      );
+      yield* run(
+        removeScientSourceForInvocation({
+          sourceId: record.sourceId,
+          expectedRevision: edited.record.revision,
+        }),
+        fixture,
+      );
+      const restored = yield* run(
+        restoreScientSourceForInvocation({ sourceId: record.sourceId }),
+        fixture,
+      );
+      expect(restored.outcome).toBe("restored");
+      const bibtex = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(fixture.root, "references.bib"), "utf8"),
+      );
+      expect(bibtex).toContain("New title");
+    }),
+  );
+
+  it.effect("collection counts are this project's, as the list shows, beside the Library's", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const pinned = yield* addSource(fixture, "Pinned sepsis trial", "10.1000/counted");
+      const elsewhere = yield* Effect.promise(() => libraryRecord(fixture, "elsewhere"));
+      yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: {
+            action: "create-collection",
+            name: "Sepsis",
+            sourceIds: [pinned.sourceId!, elsewhere.sourceId],
+          },
+        }),
+        fixture,
+      );
+      const read = yield* run(readScientSourceCollectionsForInvocation(), fixture);
+      const listed = yield* run(
+        listScientSourcesForInvocation({ collectionId: read.collections[0]!.collectionId }),
+        fixture,
+      );
+      expect(read.collections).toMatchObject([
+        { name: "Sepsis", sourceCount: listed.total, librarySourceCount: 2 },
+      ]);
+      expect(listed.total).toBe(1);
+    }),
+  );
+
+  it.effect("full-text search and quote check can keep to this project's papers", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const line = "Sepsis outcomes improved";
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(fixture.root, "here.pdf"), textPdf(`${line} in adults`)),
+      );
+      const here = yield* addSource(fixture, "Cited here", "10.1000/here", "here.pdf");
+      const otherPdf = NodePath.join(fixture.base, "other.pdf");
+      yield* Effect.promise(() => NodeFSP.writeFile(otherPdf, textPdf(`${line} in children`)));
+      yield* Effect.promise(() => libraryRecord(fixture, "other", {}, otherPdf));
+      yield* Effect.promise(() => indexSourceFullText(fixture.library));
+
+      const search = (scope?: "project") =>
+        run(
+          searchScientSourcesForInvocation({ query: "sepsis", ...(scope ? { scope } : {}) }),
+          fixture,
+        );
+      expect((yield* search()).hits).toHaveLength(2);
+      expect((yield* search("project")).hits.map((hit) => hit.sourceId)).toEqual([here.sourceId]);
+
+      const check = (scope?: "project") =>
+        run(
+          checkScientSourceQuotesForInvocation({
+            quotes: [{ quote: line }],
+            ...(scope ? { scope } : {}),
+          }),
+          fixture,
+        );
+      expect((yield* check()).results).toMatchObject([{ outcome: "ambiguous" }]);
+      expect((yield* check("project")).results).toMatchObject([
+        { outcome: "exact", sourceId: here.sourceId },
+      ]);
+    }),
+  );
+
+  it.effect("export with notes writes the project note, never My note", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const record = yield* Effect.promise(() =>
+        libraryRecord(fixture, "noted", { citationKey: "noted2026", note: "Private Library note" }),
+      );
+      yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "pin", sourceId: record.sourceId, note: "Why this project cites it" },
+        }),
+        fixture,
+      );
+
+      for (const sourceIds of [undefined, [record.sourceId]]) {
+        yield* run(
+          exportScientSourcesForInvocation({
+            relativePath: "export.json",
+            format: "csl-json",
+            includeNotes: true,
+            overwrite: true,
+            ...(sourceIds ? { sourceIds } : {}),
+          }),
+          fixture,
+        );
+        const written = yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(fixture.root, "export.json"), "utf8"),
+        );
+        expect(written).toContain("Why this project cites it");
+        expect(written).not.toContain("Private Library note");
+      }
+    }),
+  );
+
+  it.effect("an agent that may write reads My note, so it can add to it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const record = yield* Effect.promise(() =>
+        libraryRecord(fixture, "noted", { note: "First thought" }),
+      );
+      const read = yield* run(getScientSourceForInvocation({ sourceId: record.sourceId }), fixture);
+      expect(read.note).toBe("First thought");
+      yield* run(
+        updateScientSourceNoteForInvocation({
+          sourceId: record.sourceId,
+          expectedRevision: read.revision,
+          note: `${read.note}\n\nSecond thought`,
+        }),
+        fixture,
+      );
+      const after = yield* Effect.promise(() =>
+        readScientSourceRecord(fixture.library, record.sourceId),
+      );
+      expect(after?.note).toBe("First thought\n\nSecond thought");
+    }),
+  );
+
+  it.effect("citing a merged paper by its old ID cites the paper it was merged into", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const merged = yield* Effect.promise(() =>
+        libraryRecord(fixture, "merged", { citationKey: "merged2026" }),
+      );
+      const kept = yield* Effect.promise(() =>
+        libraryRecord(fixture, "kept", { citationKey: "kept2026" }),
+      );
+      yield* Effect.promise(() =>
+        mergeScientLibrarySources({
+          library: fixture.library,
+          sourceIds: [merged.sourceId, kept.sourceId],
+          survivorId: kept.sourceId,
+          actor: "user",
+        }),
+      );
+
+      const cited = yield* run(
+        citeScientSourcesForInvocation({ sources: [merged.sourceId] }),
+        fixture,
+      );
+      expect(cited).toMatchObject({
+        citation: "[@kept2026]",
+        sources: [{ sourceId: kept.sourceId, citationKey: "kept2026" }],
+        notFound: [],
+      });
     }),
   );
 

@@ -833,7 +833,21 @@ entry's attachments, not the incoming copy's. Tombstones and unreferenced orphan
 payloads add no hashes. The rest is in the sealed pre-move archive
 and the move's backup, never in the live Library. Nothing clears a tombstone: a
 live record of the same work, imported again on purpose (by intake or a project
-package), resolves first. The Trash listing names, per entry, the checkouts that would
+package), resolves first. Each move to the Trash gets a `removalId`, unique to
+that removal (an entry from before has one derived from its removal time and
+revision). The listing, every request to delete for good (agent and panel) and
+the tombstone name it, so a deletion acts on one removal only: neither a delayed
+request nor a begun deletion's tombstone matches a copy imported again under the
+same ID (whose revision restarts at 1) and trashed later. Begun deletions are not
+listed but named in the listing's `unfinished`, which the panel offers to finish;
+the overview counts them (`unfinishedDeletions`) so the menu keeps the Trash.
+Permanent deletion collects every PDF no live record or remaining Trash entry
+attaches; saved versions keep none, since a restore never brings PDFs back, so
+deletion reads no history. A collected PDF's hash is noted in `collected/`
+before its bytes go and the note stays until its text and highlights are gone;
+every later deletion retries it. A PDF whose note cannot be written, or that
+cannot be unlinked, fails the deletion before its Trash entry goes, so it stays
+unfinished. The Trash listing names, per entry, the checkouts that would
 keep citing it (`citedBy`), and the agent's permanent removal answers
 `stillCitedBy`.
 A `contradicted` pin is not hydrated either: the project snapshot serves it,
@@ -2521,30 +2535,44 @@ when, and only then deletes the live record, so a crash leaves the source
 listed rather than lost. Restore writes the trashed record back as a new
 revision credited to the restorer; it refuses when a live record with the same
 ID exists (`exists`) or another live source has the same identifier
-(`duplicate`). Importing a trashed source again supersedes its trash entry.
+(`duplicate`). Importing a trashed source again supersedes its trash entry: the
+record is the candidate, as for any import (so a Zotero sync base matches it),
+but it keeps the trashed record's PDFs, reading state and citation key, and its
+note when the candidate has none; the trashed revision stays in history. A trash
+entry the import cannot read, or whose deletion began, is never replaced: the
+import takes the alternate ID.
 
 Neither removal nor detaching a PDF deletes PDF files. Permanent deletion
-(one trashed source, or the whole trash) deletes the trash entries and their
-revision history, then deletes content-addressed PDFs that no live or
-trashed record refers to. Deleting one trashed source considers only the PDFs
-that source and its history named, and keeps any of them another source's kept
-revision still names, so reverting that source can bring it back. Emptying the
-whole trash considers every PDF and ignores history. It deletes no file at all
-while any record or trash entry cannot be read, since that record might refer
-to it. Deleting one
+(one trashed source, or the whole trash) deletes the sources' revision history,
+then content-addressed PDFs that no live or remaining trashed record refers to,
+and the trash entries last. In the Library the tombstone is written first and
+marks the deletion as begun: such a trash entry is not listed or restorable,
+and every later deletion finishes it, so an interrupted one leaves no history
+or PDF behind for good. A project store has no tombstone; its trash entries go
+before PDF collection. Deleting one trashed source considers only the PDFs
+that source and its history named; emptying the whole trash considers every
+PDF. Both keep any PDF another source's kept revision still names, and delete
+no file at all while any record, trash entry or kept revision cannot be read,
+since it might refer to it. Deleting one
 trashed source takes the revision the caller saw and compares it under the
 same write lock that deletes, returning `stale` when the source was restored,
-edited or removed again in between; emptying the whole trash takes no
-revision. Revert and history
-listing do not keep PDFs alive: a revert whose revision names a deleted file
-leaves that attachment out and reports `missingAttachmentCount`.
+edited or removed again in between. Emptying the whole trash takes the
+listing's `revision` (a digest of each person-removed entry's ID, revision and
+removal time) and answers `changed`, deleting nothing, when the Trash under the
+lock is no longer that listing; a request without it is refused the same way.
 
 Revert copies an earlier revision's content into a new revision credited to
-the actor, keeping the source's identity, `importedAt` and origin. It returns
+the actor, keeping the source's identity, `importedAt`, origin, citation key,
+reading state, note and current attachments: a restore brings back details only. It returns
 `stale`, `not-found` (revision not kept), `unchanged` or `duplicate` (the
 reverted identifiers belong to another live source) without writing. Each
 source keeps its first revision and the most recent ones, 50 including the
-current record; older revisions are pruned after each write.
+current record; older revisions are pruned after each write. Every write, each
+My note autosave included, is a new revision, so `expectedRevision` always
+names the record a caller saw. One My note editing session (ten minutes at
+most) is one kept version: its earlier saves are not kept, and the record's
+`noteOnlySince` names the first of them, so a reader of the revisions in
+between (bulk-edit Undo) knows they changed only the note.
 
 Listing reads every record file independently. A `.json` entry that is not a
 regular file (a symlink, for example) is never followed. It, and a file that is
@@ -2831,9 +2859,15 @@ does not load the Sources tools.
 (format version, backup ID, the Library's ID, counts, every file with size and
 SHA-256, each reason something was left out with its file count, the entries
 that are not files, and the number of unfinished moves) and a README. It holds
-every checkout's move lock (answering `busy` when a move holds one) and the
-Library's write lock for the whole copy, because deleting a source for good
-collects PDFs that no live or trashed record names. Inside the Library lock it
+every checkout's move lock (answering `busy` when a move holds one) for the
+whole copy, and the Library's write lock only for a final pass: the first pass
+copies every file without it, noting each file's identity, size and times
+before reading it; the final pass lists the files again under the lock and
+copies again only what is new, changed or was changed within the store's
+two-second racy window, and drops copies of files that are gone. Every Library
+write replaces a file by rename, so an unchanged identity means unchanged bytes,
+and the result is the Library at the moment of the final pass (a source deleted
+for good meanwhile is not in it, nor are its collected PDFs). Inside the Library lock it
 takes the move lock of any checkout that began moving since (or answers
 `busy`), settles interrupted merges, and counts the moves that stopped part
 way (`countScientLibraryUnfinishedMoves`: a journal in `copying`, `prepared`
@@ -2849,8 +2883,11 @@ file whose name only resembles those stays. Links and other entries that are
 not files are never copied and are listed. Package receipts are written under
 the Library lock for the same reason. Each copy is hashed against what was
 read, the folder is created exclusively under a hidden `.partial` name and
-renamed once the manifest is written, and a stop or a failure removes what
-this backup created. The callbacks run inside the lock and must only report.
+renamed once the manifest is written, and a failure removes what this backup
+created. A backup holds a lock file beside its partial folder from before the
+folder exists until it is renamed; the next backup into that folder removes
+partial folders whose lock it can take, and unlocked ones (older versions) over
+a day old. The callbacks must only report.
 `checkScientLibraryBackup` reads a folder against its manifest: files changed,
 gone, or not listed.
 
@@ -4246,6 +4283,16 @@ resumed from its next pending item.
 Only one import operation may be running for a project in an environment
 server. Concurrent begin requests are serialized, same-ID replay remains
 idempotent, and a new operation is accepted after completion or cancellation.
+`operations/active` names the operation last made running (a new import or
+running failed items again), written under the `active-operation` lock before
+that operation; it is active only while it reads back as `running`, and a
+damaged operation file (which no step can continue) never blocks the Library or a
+new import. The pointer is a hint: only one marked `alone` (nothing else was
+running when it was written) lets a settled import mean "none running" without
+reading past operations. Any other pointer (none, an older version's, or one
+written beside other running imports a pre-pointer store left) leads to a scan
+once its import settles; admission and Retry write the pointer again, and reads
+reuse a scan until the folder changes.
 The current store assumes the normal application ownership model of one
 environment server writing a project at a time. The filesystem remains durable,
 and the normal single-server write paths invalidate cached snapshots. True
@@ -4502,7 +4549,9 @@ them, and a crash leaves at most one per interrupted write.
   and Undos on a Library with three projects, checked after every step. The
   default run is 6 seeds of 40 steps; the hunt to make after changing a store:
   `LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150`.
-- `libraryRules.crash.test.ts`: each action is stopped at its file changes in a
+- `libraryRules.crash.test.ts` and `libraryRules.crashMerge.test.ts` (one
+  harness, `libraryCrash.ts`, split so the smoke check runs as two files side by
+  side): each action is stopped at its file changes in a
   child process (`libraryWorker.ts`) by a real SIGKILL, plainly or with half of
   a file written, or by a disk that is full from that change on
   (`fileFaults.ts` instruments `node:fs/promises`, including the handles `open`
@@ -4512,7 +4561,7 @@ them, and a crash leaves at most one per interrupted write.
   these process-and-flush tests run about eight times slower than on a
   developer's Mac: four actions (add with a PDF, delete for good, merge, Undo),
   killed at two changes each, plus the run without hard links.
-  `LIBRARY_CRASH_SWEEP=full` runs every change of all fourteen actions with
+  `LIBRARY_CRASH_SWEEP=full` on `libraryRules.crash.test.ts` runs every change of all fourteen actions with
   half-written files, a full disk and a killed recovery; it is the run to make
   after changing a store's write order (about two minutes on a Mac).
 - `libraryRules.cases.test.ts`: the short sequences those runs found, kept as

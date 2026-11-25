@@ -18,6 +18,7 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { scrollLatexVisualTestEditor, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
+import { revealFileEditorSelection } from "~/components/files/fileEditorSourceReveal";
 import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import { pagedLayoutIncludesRendered, pagedLayoutSettled } from "./latexPagedGeometry";
@@ -295,6 +296,16 @@ async function scrollToWord(editor: ProseEditor, word: string, context: TestCont
   // A scroll event can precede lazy-block layout and leave readiness briefly stale.
   await waitForTestReceipt(context.signal, visible.promise);
 }
+// Template 26 through its first page: the same preamble, front matter and opening section
+// at the same source offsets, still taller than both panes, without the later math,
+// tables and long table the front-matter fields never reach.
+const template26FirstPage = `${template26.slice(0, template26.indexOf("\\clearpage"))}\\end{document}\n`;
+// Template 26's preamble and its math section alone: the display alignment, the matrix and
+// cases grid and the formulas around them, without the front matter and tables.
+const template26Math = `${template26.slice(0, template26.indexOf("\\maketitle"))}${template26.slice(
+  template26.indexOf("\\section{נוסחאות"),
+  template26.indexOf("\\section{טבלאות"),
+)}\\end{document}\n`;
 // One row per way a word is selected and owned: prose, a table cell, each front-matter
 // field (title, author and date are looked up separately), a footnote's own editor, the
 // literal code field, and the English column template.
@@ -302,9 +313,9 @@ async function scrollToWord(editor: ProseEditor, word: string, context: TestCont
 const WORD_CASES = [
   ["26", template26, "פסקה"],
   ["26-table", template26, "ראשונה"],
-  ["26-title", template26, "נוספים"],
-  ["26-author", template26, "מחבר"],
-  ["26-date", template26, "אוקטובר"],
+  ["26-title", template26FirstPage, "נוספים"],
+  ["26-author", template26FirstPage, "מחבר"],
+  ["26-date", template26FirstPage, "אוקטובר"],
   ["26-footnote", template26, "ובה"],
   ["26-code", template26, "return"],
   ["28", template28, "Early"],
@@ -344,6 +355,8 @@ async function selectWordWithoutJumping(
       .toBeTruthy();
   }
   const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  // A pane that cannot scroll cannot jump: every manuscript here is taller than its pane.
+  expect(scroll.scrollHeight, "Visual pane scrolls").toBeGreaterThan(scroll.clientHeight);
   // On the fixture, so a test past its deadline stops holding the next test's reports.
   if (lateVisibilityReports) _fixture.cleanup.use(delayVisibilityReports(lateVisibilityReports));
   await scrollToWord(state.visual, word, context);
@@ -365,8 +378,10 @@ async function selectWordWithoutJumping(
   const wordTop = () => wordPosition(state.visual.view.dom, word, false).box.top;
   let before = scroll.scrollTop;
   let beforeTop = wordTop();
+  // The gesture runs on the browser's own clock. Under fake timers Vitest advances the clock
+  // while an action is pending, so the editor's focus and selection callbacks could run before
+  // Chromium delivers the double-click's selectionchange, which empties the native selection.
   {
-    using _clock = fakeTimers();
     const pointer = () => {
       before = scroll.scrollTop;
       beforeTop = wordTop();
@@ -424,10 +439,6 @@ async function selectWordWithoutJumping(
     }
     const afterGesture = scroll.scrollTop;
     expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
-    // Publish the gesture's queued source reveal without advancing recurring editor services.
-    // Not once this test is past its deadline: the installed clock may be the next test's.
-    context.signal.throwIfAborted();
-    await act(() => vi.runOnlyPendingTimersAsync());
     await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
     const mapped = state.reveals[0]!;
     expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
@@ -487,16 +498,31 @@ async function selectWordWithoutJumping(
     )
     .toBe("visible");
   const sourceHit = wordPosition(container.shadowRoot!, word);
+  // Source already holds the word from Visual; a caret first means only the double-click selects
+  // it. Set the way a Visual reveal does, so Source neither scrolls nor takes focus before the click.
+  const caret = selection![0]!.start;
+  const caretOffset = sourceOffset(source, caret);
+  expect(
+    revealFileEditorSelection(state.source(), {
+      source,
+      from: caretOffset,
+      to: caretOffset,
+      requestId: 0,
+    }),
+  ).toBe(true);
+  expect(state.source().getViewState().selections?.[0]?.end).toEqual(caret);
+  expect(state.visual.view.dom.contains(document.activeElement)).toBe(true);
   state.sourceSelections.mockClear();
   await userEvent.dblClick(sourceHit.element, { position: sourceHit.position });
   await vi.waitFor(() => {
-    expect(state.sourceSelections).toHaveBeenCalled();
+    const reported = state.sourceSelections.mock.lastCall?.[0];
     const selected = state.source().getViewState().selections?.[0];
-    expect(selected).toBeDefined();
-    if (!selected) throw new Error("The Source owner did not acknowledge its native selection.");
-    expect(
-      source.slice(sourceOffset(source, selected.start), sourceOffset(source, selected.end)),
-    ).toBe(word);
+    if (!reported || !selected)
+      throw new Error("The Source owner did not acknowledge its native selection.");
+    for (const range of [reported, selected])
+      expect(source.slice(sourceOffset(source, range.start), sourceOffset(source, range.end))).toBe(
+        word,
+      );
   });
   const manuallySelected = state.source().getViewState().selections;
   await clickVisualPane(state.visual);
@@ -571,7 +597,7 @@ it.for([
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const state = await mount(_fixture, template26, `26-math-${name}`, context);
+    const state = await mount(_fixture, template26Math, `26-math-${name}`, context);
     let mathNode: HTMLElement | null = null;
     state.visual.state.doc.descendants((node, at) => {
       if (
@@ -622,18 +648,18 @@ it.for([
       });
     await expect.poll(() => state.reveals.length).toBe(1);
     const range = state.reveals[0]!;
-    const selected = template26.slice(range.from, range.to).trim();
+    const selected = template26Math.slice(range.from, range.to).trim();
     if (expected) expect(selected).toBe(expected);
     else {
-      const start = template26.indexOf("(x-y)^2");
+      const start = template26Math.indexOf("(x-y)^2");
       expect(range.from).toBeGreaterThanOrEqual(start);
-      expect(range.to).toBeLessThanOrEqual(template26.indexOf("\\end{align}", start));
+      expect(range.to).toBeLessThanOrEqual(template26Math.indexOf("\\end{align}", start));
       expect(selected).toContain("-");
     }
     await expect
       .poll(() => state.source().getViewState().selections?.[0]?.start)
-      .toEqual(sourcePosition(template26, range.from));
-    expect(state.text()).toBe(template26);
+      .toEqual(sourcePosition(template26Math, range.from));
+    expect(state.text()).toBe(template26Math);
   },
 );
 

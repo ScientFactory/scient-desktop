@@ -155,6 +155,62 @@ function setup(canChange = true, extra = false) {
 }
 
 // Routing is disabled because these scope and recovery flows stay within the Library panel.
+describe("Just added", () => {
+  it("never marks a paper the project showed when the no-project Library opens again", async () => {
+    setup();
+    let now = Date.parse("2026-11-25T19:27:00.000Z");
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const answer = mocks.read.getMockImplementation()!;
+    let importedAt: string | null = null;
+    mocks.read.mockImplementation(async (...args: Parameters<typeof answer>) => {
+      const overview = await answer(...args);
+      const [paper] = (await answer(args[0], args[1], "library")).records;
+      return {
+        ...overview,
+        records: importedAt
+          ? [{ ...paper!, importedAt, pinned: true, citationKey: "Study2024" }]
+          : [],
+      };
+    });
+    const panel = (root: string, scratch: boolean) => (
+      <ScientSourcesPanel
+        environmentId={"environment-just-added" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root={root}
+        {...(scratch ? { scratch: true } : {})}
+        onOpenPdf={() => {}}
+      />
+    );
+    const shown = (screen: Awaited<ReturnType<typeof render>>) =>
+      screen.getByRole("button", { name: /Existing study/u });
+
+    // The no-project Library is read while empty, then the paper is added and seen in the project.
+    {
+      await using _screen = await render(panel("/scratch", true), { router: false });
+      await vi.waitFor(() => expect(mocks.read).toHaveBeenCalled());
+      await act(async () => undefined);
+    }
+    now = Date.parse("2026-11-25T19:29:00.000Z");
+    importedAt = "2026-11-25T19:28:40.000Z";
+    {
+      await using screen = await render(panel("/project", false), { router: false });
+      await expect.element(shown(screen)).toBeVisible();
+    }
+
+    // A quarter of an hour later the no-project Library opens again.
+    now = Date.parse("2026-11-25T19:42:00.000Z");
+    try {
+      await using screen = await render(panel("/scratch", true), { router: false });
+      await userEvent.hover(shown(screen));
+      await expect.element(page.getByText(/^Added /u)).toBeVisible();
+      await expect.element(page.getByText("Just added")).not.toBeInTheDocument();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
 describe("Sources project scope", () => {
   it("reuses a Library paper from an empty project, including after its last source is removed", async () => {
     setup();
@@ -227,6 +283,40 @@ describe("Sources project scope", () => {
       "environment-1",
       expect.objectContaining({ pin: false }),
     );
+    // A paper's own page offers only its own Add to project; the result waits in Activity.
+    mocks.detail.mockResolvedValue({
+      formatVersion: 1,
+      projectId: "project",
+      sourceId: "paper",
+      revision: 1,
+      type: "article",
+      title: "Existing study",
+      creators: [],
+      issuedRaw: null,
+      issuedYear: 2024,
+      identifiers: [],
+      abstract: null,
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      attachments: [],
+      fieldProvenance: [],
+      importedAt: "2026-11-01T00:00:00.000Z",
+      note: null,
+      projectNote: null,
+      personalNote: null,
+      pinned: false,
+    } satisfies ScientSourceDetailResult);
+    await userEvent.click(screen.getByRole("button", { name: /Existing study/u }));
+    await expect.element(screen.getByRole("heading", { name: "Existing study" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add to project" }).all()).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: /Back/u }).first());
     await userEvent.click(added.getByRole("button", { name: "Add to project" }));
     await vi.waitFor(() =>
       expect(mocks.organize).toHaveBeenCalledWith(
@@ -236,6 +326,61 @@ describe("Sources project scope", () => {
         }),
       ),
     );
+  });
+
+  it("with no project open, lists My Library and offers nothing for a project", async () => {
+    setup();
+    mocks.addByIdentifier.mockReset().mockResolvedValue({
+      results: [
+        {
+          input: "10.1000/abc.123",
+          identifier: { scheme: "doi", value: "10.1000/abc.123" },
+          outcome: "imported",
+          sourceId: "source_new",
+          title: "Measured outcomes",
+          verification: "verified",
+          message: null,
+        },
+      ],
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Scratch"
+        root="/scratch"
+        scratch
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await expect.element(screen.getByRole("button", { name: /Existing study/u })).toBeVisible();
+    expect(mocks.read.mock.calls.every((call) => call[2] === "library")).toBe(true);
+    await expect
+      .element(screen.getByRole("button", { name: "This project", exact: true }))
+      .not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Import sources" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Add by identifier" }));
+    await page.getByRole("textbox", { name: "Identifiers to add" }).fill("10.1000/abc.123");
+    await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
+    const added = screen.getByRole("status").filter({ hasText: "Added 1 source" });
+    await expect.element(added).toBeVisible();
+    expect(mocks.addByIdentifier).toHaveBeenCalledWith(
+      "environment-1",
+      expect.objectContaining({ pin: false }),
+    );
+    await expect
+      .element(added.getByRole("button", { name: "Add to project" }))
+      .not.toBeInTheDocument();
+    await expect.element(added.getByText(/not in this project/u)).not.toBeInTheDocument();
+
+    // The row's own menu offers Add to project disabled, never enabled.
+    mocks.menu.mockReset().mockResolvedValue(null);
+    await userEvent.click(screen.getByRole("button", { name: "More source actions" }));
+    await vi.waitFor(() => expect(mocks.menu).toHaveBeenCalledTimes(1));
+    const items: ReadonlyArray<{ id: string; disabled?: boolean }> = mocks.menu.mock.calls[0]![0];
+    expect(items.find((item) => item.id === "add-to-project")?.disabled ?? true).toBe(true);
   });
 
   it("names the computer under the title only when the Library is another computer's", async () => {
@@ -545,6 +690,168 @@ describe("Sources project scope", () => {
     await expect.element(screen.getByText(/first\.bib/u)).not.toBeInTheDocument();
   });
 
+  it("shows a scope switch at once, imports into the scope still shown, and goes back if it fails", async () => {
+    setup();
+    const answer = mocks.read.getMockImplementation()!;
+    const gates: Array<PromiseWithResolvers<void>> = [];
+    mocks.read.mockImplementation(async (...args: Parameters<typeof answer>) => {
+      if (args[2] === "library") {
+        const gate = Promise.withResolvers<void>();
+        gates.push(gate);
+        await gate.promise;
+      }
+      return answer(...args);
+    });
+    mocks.fileImport.mockReset().mockResolvedValue({
+      operation: null,
+      report: {
+        format: "bibtex",
+        entryCount: 1,
+        importCount: 0,
+        alreadyInLibrary: 1,
+        remaining: 0,
+        unreadableCount: 0,
+        unreadable: [],
+        notKept: [],
+      },
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    const empty = screen.getByRole("heading", { name: "No sources in this project" });
+    await expect.element(empty).toBeVisible();
+    const library = screen.getByRole("button", { name: "My Library", exact: true });
+    const project = screen.getByRole("button", { name: "This project", exact: true });
+
+    await userEvent.click(library);
+    await expect.element(library).toHaveAttribute("aria-pressed", "true");
+    await expect.element(library).toHaveAttribute("aria-busy", "true");
+    // The list still shows this project: a file dropped now goes to the project.
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(["@article{a, title={A}}"], "refs.bib"));
+    empty
+      .element()
+      .dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+    await vi.waitFor(() => expect(mocks.fileImport).toHaveBeenCalledTimes(1));
+    expect(mocks.fileImport.mock.calls[0]?.[1]).not.toHaveProperty("pin");
+    gates[0]!.resolve();
+    await expect.element(screen.getByRole("button", { name: /Existing study/u })).toBeVisible();
+    await expect.element(library).not.toHaveAttribute("aria-busy");
+
+    // A switch whose list cannot be read leaves the switch on the scope still shown.
+    mocks.read.mockImplementationOnce(async () => {
+      throw new Error("The Library folder could not be read.");
+    });
+    await userEvent.click(project);
+    await expect.element(library).toHaveAttribute("aria-pressed", "true");
+    await expect.element(screen.getByRole("button", { name: /Existing study/u })).toBeVisible();
+  });
+
+  it("goes back to the scope shown when a switch fails after another still loading", async () => {
+    setup();
+    const answer = mocks.read.getMockImplementation()!;
+    const libraryRead = Promise.withResolvers<void>();
+    let failProject = false;
+    mocks.read.mockImplementation(async (...args: Parameters<typeof answer>) => {
+      if (args[2] === "library") await libraryRead.promise;
+      else if (failProject) throw new Error("The project's sources could not be read.");
+      return answer(...args);
+    });
+    mocks.fileImport.mockReset().mockResolvedValue({
+      operation: null,
+      report: {
+        format: "bibtex",
+        entryCount: 1,
+        importCount: 0,
+        alreadyInLibrary: 1,
+        remaining: 0,
+        unreadableCount: 0,
+        unreadable: [],
+        notKept: [],
+      },
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    const empty = screen.getByRole("heading", { name: "No sources in this project" });
+    await expect.element(empty).toBeVisible();
+    const library = screen.getByRole("button", { name: "My Library", exact: true });
+    const project = screen.getByRole("button", { name: "This project", exact: true });
+
+    await userEvent.click(library);
+    await expect.element(library).toHaveAttribute("aria-busy", "true");
+    failProject = true;
+    await userEvent.click(project);
+    await expect.element(project).toHaveAttribute("aria-pressed", "true");
+    await expect.element(library).not.toHaveAttribute("aria-busy");
+    libraryRead.resolve();
+
+    // The project list is still the one shown, and the next read lists it too.
+    failProject = false;
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(["@article{a, title={A}}"], "refs.bib"));
+    empty
+      .element()
+      .dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+    await vi.waitFor(() => expect(mocks.fileImport).toHaveBeenCalledTimes(1));
+    expect(mocks.fileImport.mock.calls[0]?.[1]).not.toHaveProperty("pin");
+    await vi.waitFor(() => expect(mocks.read.mock.calls.at(-1)?.[2]).toBeUndefined());
+    await expect.element(project).toHaveAttribute("aria-pressed", "true");
+    await expect.element(empty).toBeVisible();
+  });
+
+  it("clears the drop overlay when a drag leaves from over a paper or ends", async () => {
+    setup();
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    const paper = screen.getByRole("button", { name: /Existing study/u });
+    await expect.element(paper).toBeVisible();
+    const overlay = screen.getByText("Drop PDFs or a reference file");
+    const drag = (type: string, target: Element | Window) => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File(["%PDF"], "paper.pdf", { type: "application/pdf" }));
+      act(() => {
+        target.dispatchEvent(
+          new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }),
+        );
+      });
+    };
+    // The drag leaves the window from over a paper: dragleave comes from the paper, with nowhere
+    // inside the panel to go.
+    drag("dragover", paper.element());
+    await expect.element(overlay).toBeVisible();
+    drag("dragleave", paper.element());
+    await expect.element(overlay).not.toBeInTheDocument();
+    // A drag cancelled elsewhere ends on the window.
+    drag("dragover", paper.element());
+    await expect.element(overlay).toBeVisible();
+    drag("dragend", window);
+    await expect.element(overlay).not.toBeInTheDocument();
+  });
+
   it("shows full-text results under cards, also when the view cannot be saved", async () => {
     setup(true, true);
     await using screen = await render(
@@ -654,6 +961,10 @@ it.each([false, true])(
         expectedNote: "My draft",
         note: "My draft, again",
       });
+      // Both saves are one editing session, which the Library keeps as one version.
+      const sessions = mocks.personalNote.mock.calls.map(([, request]) => request.noteSession);
+      expect(sessions[0]).toEqual(expect.any(String));
+      expect(sessions[1]).toBe(sessions[0]);
       await mocks.personalNote.mock.results[1]?.value;
       expect(stored.personalNote).toBe("My draft, again");
       await expect.element(page.getByText("Saved elsewhere")).not.toBeInTheDocument();

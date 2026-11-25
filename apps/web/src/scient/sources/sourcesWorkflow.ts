@@ -36,8 +36,12 @@ export interface SourcesWorkflowState {
   readonly zoteroSettled: number;
   readonly overview: ScientSourcesOverviewResult | null;
   readonly sourceDetails: Readonly<Record<string, ScientSourceDetailResult>>;
+  /** Details a newer overview row outdated; an open page shows one until its newer detail comes. */
+  readonly outdatedDetails: Readonly<Record<string, ScientSourceDetailResult>>;
   readonly zoteroStatus: ZoteroConnectionStatus | null;
   readonly library: ZoteroLibraryPage | null;
+  /** The references "Import all" or "Import collection" brings, whatever the search shows. */
+  readonly zoteroScopeTotal: number | null;
   readonly zoteroCollections: ReadonlyArray<ZoteroCollection>;
   readonly zoteroScope: ZoteroImportScope;
   /** The Zotero group being browsed; null for My Library. */
@@ -55,6 +59,8 @@ export interface SourcesWorkflowState {
   readonly cancelling: boolean;
   /** The failure of an action the person took. */
   readonly error: string | null;
+  /** Runs the action that failed again, when it can be; always paired with `error`. */
+  readonly errorRetry: (() => Promise<unknown>) | null;
   /** The newest overview read's failure; kept apart so a refresh cannot erase an action's error. */
   readonly overviewError: string | null;
   readonly readingOverrides: Readonly<Record<string, ReadingOverride>>;
@@ -68,8 +74,10 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
   zoteroSettled: 0,
   overview: null,
   sourceDetails: {},
+  outdatedDetails: {},
   zoteroStatus: null,
   library: null,
+  zoteroScopeTotal: null,
   zoteroCollections: [],
   zoteroScope: { kind: "library" },
   zoteroGroupId: null,
@@ -83,6 +91,7 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
   zoteroCheckFeedback: null,
   cancelling: false,
   error: null,
+  errorRetry: null,
   overviewError: null,
   readingOverrides: {},
 };
@@ -97,7 +106,6 @@ export type SourcesWorkflowAction =
   | { readonly type: "requestStarted"; readonly request: number }
   | { readonly type: "overviewRequestStarted"; readonly request: number }
   | { readonly type: "overviewFailed"; readonly request: number; readonly error: string }
-  | { readonly type: "overviewErrorCleared" }
   | { readonly type: "zoteroRequestStarted"; readonly request: number }
   | { readonly type: "zoteroRequestSettled"; readonly request: number }
   | {
@@ -126,6 +134,7 @@ export type SourcesWorkflowAction =
   | {
       readonly type: "zoteroLibraryArrived";
       readonly request: number;
+      readonly query: string;
       readonly page: ZoteroLibraryPage;
     }
   | { readonly type: "zoteroLibrarySeeded"; readonly page: ZoteroLibraryPage }
@@ -163,7 +172,11 @@ export type SourcesWorkflowAction =
   | { readonly type: "removalSettled" }
   | { readonly type: "cancellingChanged"; readonly cancelling: boolean }
   | { readonly type: "checkingZoteroChanged"; readonly checking: boolean }
-  | { readonly type: "errorArrived"; readonly error: string | null }
+  | {
+      readonly type: "errorArrived";
+      readonly error: string | null;
+      readonly retry?: () => Promise<unknown>;
+    }
   | { readonly type: "errorCleared" };
 
 /** A response belongs to the present only if its lane token is still current. */
@@ -299,20 +312,34 @@ export function samePinState(row: OverviewRow, detail: ScientSourceDetailResult)
 }
 
 function pruneSourceDetails(
-  details: SourcesWorkflowState["sourceDetails"],
+  state: Pick<SourcesWorkflowState, "sourceDetails" | "outdatedDetails">,
   overview: ScientSourcesOverviewResult,
-): SourcesWorkflowState["sourceDetails"] {
-  return Object.fromEntries(
-    Object.entries(details).flatMap(([sourceId, detail]) => {
-      const summary = overview.records.find(
-        (entry) =>
-          entry.sourceId === sourceId &&
-          entry.revision === detail.revision &&
-          samePinState(entry, detail),
-      );
-      return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
-    }),
-  );
+): Pick<SourcesWorkflowState, "sourceDetails" | "outdatedDetails"> {
+  const rows = new Map(overview.records.map((entry) => [entry.sourceId, entry]));
+  const sourceDetails: Record<string, ScientSourceDetailResult> = {};
+  const outdatedDetails: Record<string, ScientSourceDetailResult> = {};
+  for (const [sourceId, detail] of Object.entries(state.outdatedDetails)) {
+    if (rows.has(sourceId)) outdatedDetails[sourceId] = detail;
+  }
+  for (const [sourceId, detail] of Object.entries(state.sourceDetails)) {
+    const summary = rows.get(sourceId);
+    if (!summary) continue;
+    if (summary.revision === detail.revision && samePinState(summary, detail)) {
+      sourceDetails[sourceId] = withSummaryReadingState(detail, summary);
+    } else {
+      outdatedDetails[sourceId] = detail;
+    }
+  }
+  return { sourceDetails, outdatedDetails };
+}
+
+function withoutOutdated(
+  details: SourcesWorkflowState["outdatedDetails"],
+  sourceId: string,
+): SourcesWorkflowState["outdatedDetails"] {
+  if (!(sourceId in details)) return details;
+  const { [sourceId]: _outdated, ...rest } = details;
+  return rest;
 }
 
 /** The newest reading change wins over an answer to a read that started before it. */
@@ -379,6 +406,18 @@ export function shownSourceRecord(
   };
 }
 
+/**
+ * The details an open page keeps showing while a newer one loads: a detail the latest overview
+ * outdated, for a source still listed. Its actions answer "stale" until the newer detail arrives.
+ */
+export function heldSourceRecord(
+  state: Pick<SourcesWorkflowState, "overview" | "outdatedDetails">,
+  sourceId: string,
+): ScientSourceDetailResult | null {
+  const listed = state.overview?.records.some((record) => record.sourceId === sourceId);
+  return listed ? (state.outdatedDetails[sourceId] ?? null) : null;
+}
+
 export function sourcesWorkflowReducer(
   state: SourcesWorkflowState,
   action: SourcesWorkflowAction,
@@ -402,8 +441,6 @@ export function sourcesWorkflowReducer(
     case "overviewFailed":
       if (action.request !== state.overviewRequest) return state;
       return { ...state, overviewSettled: action.request, overviewError: action.error };
-    case "overviewErrorCleared":
-      return { ...state, overviewError: null };
     case "zoteroRequestStarted":
       return { ...state, zoteroRequest: action.request };
     case "zoteroRequestSettled":
@@ -430,7 +467,7 @@ export function sourcesWorkflowReducer(
         overview,
         overviewSettled: action.request,
         overviewError: null,
-        sourceDetails: pruneSourceDetails(state.sourceDetails, overview),
+        ...pruneSourceDetails(state, overview),
         operation: overview.activeOperation ?? state.operation,
         readingOverrides: Object.fromEntries(
           Object.entries(state.readingOverrides).filter(
@@ -442,6 +479,7 @@ export function sourcesWorkflowReducer(
     case "sourceDetailArrived": {
       return {
         ...state,
+        outdatedDetails: withoutOutdated(state.outdatedDetails, action.sourceId),
         sourceDetails: {
           ...state.sourceDetails,
           [action.sourceId]: withReadingOverride(
@@ -458,6 +496,7 @@ export function sourcesWorkflowReducer(
       const record = action.record;
       return {
         ...state,
+        outdatedDetails: withoutOutdated(state.outdatedDetails, record.sourceId),
         sourceDetails: {
           ...state.sourceDetails,
           [record.sourceId]: keepPersonalFields(record, state.sourceDetails[record.sourceId]),
@@ -471,6 +510,7 @@ export function sourcesWorkflowReducer(
       return {
         ...state,
         sourceDetails,
+        outdatedDetails: withoutOutdated(state.outdatedDetails, action.sourceId),
         overview: state.overview
           ? {
               ...state.overview,
@@ -526,7 +566,9 @@ export function sourcesWorkflowReducer(
       // progress cannot invalidate a browse response.
       if (action.request !== state.zoteroRequest) return state;
       const page = action.page;
-      if (page.start === 0 || !state.library) return { ...state, library: page };
+      const zoteroScopeTotal =
+        page.start === 0 && !action.query.trim() ? page.total : state.zoteroScopeTotal;
+      if (page.start === 0 || !state.library) return { ...state, library: page, zoteroScopeTotal };
       const items = [...state.library.items];
       const seen = new Set(items.map((item) => item.sourceKey));
       for (const item of page.items) {
@@ -538,13 +580,18 @@ export function sourcesWorkflowReducer(
       // Local placeholder with no request behind it; never gated.
       return { ...state, library: action.page };
     case "zoteroScopeChanged":
-      return { ...state, zoteroScope: action.scope };
+      return { ...state, zoteroScope: action.scope, zoteroScopeTotal: null };
     case "zoteroGroupChanged":
-      return { ...state, zoteroGroupId: action.groupId, zoteroCollections: [] };
+      return {
+        ...state,
+        zoteroGroupId: action.groupId,
+        zoteroCollections: [],
+        zoteroScopeTotal: null,
+      };
     case "zoteroCollectionsArrived":
       return { ...state, zoteroCollections: action.collections };
     case "zoteroLibraryClosed":
-      return { ...state, library: null };
+      return { ...state, library: null, zoteroScopeTotal: null };
     case "zoteroStatusDismissed":
       return { ...state, zoteroStatus: null, zoteroCheckFeedback: null };
     case "zoteroCheckFeedbackChanged":
@@ -559,7 +606,7 @@ export function sourcesWorkflowReducer(
       return {
         ...state,
         importPreparation: action.preparation,
-        ...(action.error !== undefined ? { error: action.error } : {}),
+        ...(action.error !== undefined ? { error: action.error, errorRetry: null } : {}),
       };
     case "preflightArrived": {
       if (!isCurrent(state, action.request)) return state;
@@ -591,9 +638,9 @@ export function sourcesWorkflowReducer(
     case "checkingZoteroChanged":
       return { ...state, checkingZotero: action.checking };
     case "errorArrived":
-      return { ...state, error: action.error };
+      return { ...state, error: action.error, errorRetry: action.retry ?? null };
     case "errorCleared":
-      return { ...state, error: null };
+      return { ...state, error: null, errorRetry: null };
   }
 }
 

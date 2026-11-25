@@ -441,7 +441,15 @@ function tightestReveal(
 export function searchFullText(
   documents: ReadonlyArray<FullTextSearchDocument>,
   query: FullTextQuery,
-  options: { readonly limit: number; readonly perDocument: number },
+  options: {
+    readonly limit: number;
+    readonly perDocument: number;
+    /**
+     * How many documents the search is over, when `documents` leaves out some that hold none of
+     * the query's terms and phrases (`fullTextMayMatch`): ranking weighs a term by how rare it is.
+     */
+    readonly corpusSize?: number;
+  },
 ): ReadonlyArray<FullTextSearchHit> {
   const needles = [...query.terms, ...query.phrases];
   if (needles.length === 0) return [];
@@ -467,7 +475,7 @@ export function searchFullText(
         pages.some((page) => page.occurrences.some((entry) => entry.needle === needle)),
       ).length,
   );
-  const total = documents.length;
+  const total = options.corpusSize ?? documents.length;
   const weight = needles.map(
     (_, needle) =>
       Math.log(
@@ -526,6 +534,83 @@ export function searchFullText(
         right.score - left.score || left.key.localeCompare(right.key) || left.page - right.page,
     )
     .slice(0, options.limit);
+}
+
+/** Longer prefixes are kept cut to this length: a longer term then reads a few more documents. */
+const SUMMARY_PREFIX_MAXIMUM = 24;
+const SUMMARY_BITS_PER_KEY = 10;
+const SUMMARY_HASHES = 6;
+
+/**
+ * Which words a document's pages hold, as a Bloom filter: never a false "absent", rarely a false
+ * "present". Small enough to keep for every stored text, so a search reads only the texts that
+ * may hold one of its terms. Built from the same folded pages the search scans.
+ */
+export interface FullTextWordSummary {
+  readonly bits: Uint32Array;
+}
+
+const wordKey = (word: string) => `=${word}`;
+const prefixKey = (word: string) => `<${word.slice(0, SUMMARY_PREFIX_MAXIMUM)}`;
+
+function summaryHashes(key: string): readonly [number, number] {
+  let first = 0x811c9dc5;
+  let second = 0x9747b28c;
+  for (let index = 0; index < key.length; index += 1) {
+    const unit = key.charCodeAt(index);
+    first = Math.imul(first ^ unit, 0x01000193);
+    second = Math.imul(second ^ unit, 0x5bd1e995);
+  }
+  return [first >>> 0, (second | 1) >>> 0];
+}
+
+function summaryPositions(bits: Uint32Array, key: string): ReadonlyArray<number> {
+  const size = bits.length * 32;
+  const [first, step] = summaryHashes(key);
+  return Array.from({ length: SUMMARY_HASHES }, (_, index) => (first + index * step) % size);
+}
+
+/** What a search term is matched by: a whole word, or (from four characters) a word's start. */
+function needleKeys(needle: string, isTerm: boolean): ReadonlyArray<string> {
+  if (!isTerm) return needle.split(" ").filter(Boolean).map(wordKey);
+  return [needle.length >= PREFIX_TERM_LENGTH ? prefixKey(needle) : wordKey(needle)];
+}
+
+export function summarizeFullTextWords(document: FullTextSearchDocument): FullTextWordSummary {
+  const keys = new Set<string>();
+  for (const page of document.pages) {
+    for (const word of page.folded.split(" ")) {
+      if (!word || keys.has(wordKey(word))) continue;
+      keys.add(wordKey(word));
+      const longest = Math.min(word.length, SUMMARY_PREFIX_MAXIMUM);
+      for (let length = PREFIX_TERM_LENGTH; length <= longest; length += 1) {
+        keys.add(`<${word.slice(0, length)}`);
+      }
+    }
+  }
+  const bits = new Uint32Array(Math.max(2, Math.ceil((keys.size * SUMMARY_BITS_PER_KEY) / 32)));
+  for (const key of keys) {
+    for (const position of summaryPositions(bits, key)) {
+      bits[position >>> 5] = bits[position >>> 5]! | (1 << (position & 31));
+    }
+  }
+  return { bits };
+}
+
+const summaryHas = (summary: FullTextWordSummary, key: string) =>
+  summaryPositions(summary.bits, key).every(
+    (position) => (summary.bits[position >>> 5]! & (1 << (position & 31))) !== 0,
+  );
+
+/**
+ * False only when the document holds none of the query's terms and none of its phrases: such a
+ * document adds no hit and no weight, so the search can leave it unread.
+ */
+export function fullTextMayMatch(summary: FullTextWordSummary, query: FullTextQuery): boolean {
+  return [
+    ...query.terms.map((term) => needleKeys(term, true)),
+    ...query.phrases.map((phrase) => needleKeys(phrase, false)),
+  ].some((keys) => keys.every((key) => summaryHas(summary, key)));
 }
 
 const PASSAGE_MAXIMUM = 480;

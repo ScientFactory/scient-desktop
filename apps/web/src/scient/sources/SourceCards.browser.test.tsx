@@ -50,7 +50,7 @@ function labelOver(container: HTMLElement, title: string): string {
   return card.parentElement!.firstElementChild!.textContent ?? "";
 }
 
-it("names a section again over the first card of each row it wraps onto, as the width changes", async () => {
+it("names a section once, over the card that starts it, as the width changes", async () => {
   await using screen = await render(
     <div
       data-testid="frame"
@@ -65,7 +65,6 @@ it("names a section again over the first card of each row it wraps onto, as the 
           listed: undefined,
           selection: new Set(),
           recentlyAddedSourceIds: new Set(),
-          diagnosticsBySourceId: new Map(),
           onToggleSelected: ignore,
           onOpenDetails: ignore,
           onOpenPdf: ignore,
@@ -77,19 +76,21 @@ it("names a section again over the first card of each row it wraps onto, as the 
   );
   await expect.element(screen.getByText("Paper s4")).toBeVisible();
 
-  // Two across: 2016 runs onto the second row, where 2015 starts beside it.
+  // Two across: 2016 runs onto the second row without its name again; 2015 starts beside it.
   expect(labelOver(screen.container, "Paper s0")).toBe("20163");
   expect(labelOver(screen.container, "Paper s1")).toBe("");
-  expect(labelOver(screen.container, "Paper s2")).toBe("2016");
+  expect(labelOver(screen.container, "Paper s2")).toBe("");
   expect(labelOver(screen.container, "Paper s3")).toBe("20152");
-  expect(labelOver(screen.container, "Paper s4")).toBe("2015");
+  expect(labelOver(screen.container, "Paper s4")).toBe("");
 
   // Three across: 2016 fills the first row, and 2015 starts the second.
   screen
     .getByTestId("frame")
     .element()
     .setAttribute("style", "display: flex; flex-direction: column; height: 900px; width: 640px");
-  await vi.waitFor(() => expect(labelOver(screen.container, "Paper s2")).toBe(""));
+  const top = (title: string) => screen.getByText(title).element().getBoundingClientRect().top;
+  await vi.waitFor(() => expect(top("Paper s3")).toBeGreaterThan(top("Paper s2")));
   expect(labelOver(screen.container, "Paper s3")).toBe("20152");
+  expect(labelOver(screen.container, "Paper s2")).toBe("");
   expect(labelOver(screen.container, "Paper s4")).toBe("");
 });

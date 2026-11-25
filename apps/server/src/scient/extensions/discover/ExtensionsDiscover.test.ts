@@ -4,6 +4,7 @@ import {
   DiscoverCatalog,
   DiscoverEntry,
   DiscoverPage,
+  ExtensionCategory,
   isExtensionIconDataUri,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -23,12 +24,14 @@ import {
 import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
+  CATEGORY_HOME_PICKS,
   CURATED_SERVERS,
   curatedServerForUrl,
   curatedDiscoverEntry,
   MOST_USED_SERVER_IDS,
   type CuratedServer,
 } from "./curatedCatalog.ts";
+import { forClientCategories, requestKnownCategories } from "./clientCategories.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 import recordedPage from "./fixtures/registry-servers-page.json" with { type: "json" };
@@ -489,7 +492,7 @@ const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
     tagline: "Search papers and citations",
     icon: ICON_URIS.semantic,
   }),
-  curated("kaggle", ["data", "papers"]),
+  curated("warehouse", ["data", "papers"]),
   ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["papers"])),
   curated("hub", ["most-used", "data"], {
     url: "https://hub.example/mcp/",
@@ -532,7 +535,7 @@ describe("curated Discover catalog", () => {
       // A most used member leads its field.
       expect(catalog.sections[2]!.entries.map((entry) => entry.title)).toEqual([
         "hub",
-        "kaggle",
+        "warehouse",
         "lab",
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
@@ -690,10 +693,13 @@ describe("curated Discover catalog", () => {
       expect(
         server.categories.filter((category) => category !== "most-used").length,
       ).toBeGreaterThan(0);
+      // Retired categories (physics-math, earth) list no section, so an entry there is unreachable.
+      for (const category of server.categories)
+        expect(CATALOG_CATEGORY_ORDER, server.id).toContain(category);
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 12 : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 14 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });
@@ -721,15 +727,22 @@ describe("curated Discover catalog", () => {
     }
   });
 
-  it.effect("ranks Most used independently of catalog order", () =>
+  it.effect("leads Most used and every picked section with its picks, in any catalog order", () =>
     Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
       const catalog = yield* discover.catalog();
+      const names = (ids: ReadonlyArray<string>) =>
+        ids.map((id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName);
       expect(catalog.sections[0]?.entries.map((entry) => entry.title)).toEqual(
-        MOST_USED_SERVER_IDS.map(
-          (id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName,
-        ),
+        names(MOST_USED_SERVER_IDS),
       );
+      for (const [category, picks] of Object.entries(CATEGORY_HOME_PICKS)) {
+        const section = catalog.sections.find((candidate) => candidate.category === category);
+        expect(
+          section?.entries.slice(0, picks.length).map((entry) => entry.title),
+          category,
+        ).toEqual(names(picks));
+      }
     }).pipe(
       Effect.provide(
         harness(
@@ -740,6 +753,86 @@ describe("curated Discover catalog", () => {
         ).layer(),
       ),
     ),
+  );
+
+  it.effect(
+    "names and browses only categories the client decodes; older clients get the old ones",
+    () =>
+      Effect.gen(function* () {
+        const discover = yield* ExtensionsDiscover;
+        const catalog = yield* discover.catalog();
+        // What clients decoded before they sent `knownCategories`.
+        const OlderCategory = Schema.Literals([
+          "most-used",
+          "papers",
+          "biology",
+          "code",
+          "data",
+          "physics-math",
+          "files",
+          "communication",
+          "projects",
+          "figures",
+          "chemistry",
+          "earth",
+          "social-science",
+        ]);
+        const decodesForOlder = Schema.is(Schema.Array(OlderCategory));
+        const named = (value: DiscoverCatalog) =>
+          value.sections.flatMap((section) => [
+            section.category,
+            ...section.entries.flatMap((entry) => entry.categories),
+          ]);
+        expect(decodesForOlder(named(catalog))).toBe(false);
+        // A request without the field, as the RPC handlers answer it.
+        const knownCategories = requestKnownCategories(undefined);
+        const older = forClientCategories(knownCategories);
+        const olderCatalog = older.catalog(yield* discover.catalog({ knownCategories }));
+        expect(decodesForOlder(named(olderCatalog))).toBe(true);
+        const huggingFace = olderCatalog.sections[0]?.entries.find(
+          (entry) => entry.title === "Hugging Face",
+        );
+        expect(huggingFace?.categories).toEqual(["most-used", "code", "data"]);
+        // Every category an entry names lists that entry, so details and browsing agree.
+        for (const section of olderCatalog.sections) {
+          const browsed = older.page(
+            yield* discover.search({
+              scope: "curated",
+              category: section.category,
+              knownCategories,
+            }),
+          );
+          expect(browsed.entries.length).toBe(section.total);
+          expect(
+            browsed.entries.every((entry) => entry.categories.includes(section.category)),
+          ).toBe(true);
+          for (const entry of olderCatalog.sections.flatMap((other) => other.entries))
+            if (entry.categories.includes(section.category))
+              expect(browsed.entries.map((listed) => listed.name)).toContain(entry.name);
+        }
+        // Kaggle (Data, AI & ML) is named under Code for an older client, so Code lists it.
+        const olderCode = yield* discover.search({
+          scope: "curated",
+          category: "code",
+          knownCategories,
+        });
+        expect(olderCode.entries.map((entry) => entry.title)).toContain("Kaggle");
+        const page = yield* discover.search({ scope: "curated", query: "Vercel", knownCategories });
+        const olderPage = older.page(page);
+        expect(olderPage.entries.length).toBeGreaterThan(0);
+        expect(decodesForOlder(olderPage.entries.flatMap((entry) => entry.categories))).toBe(true);
+        expect(
+          forClientCategories(ExtensionCategory.literals).catalog(
+            yield* discover.catalog({ knownCategories: ExtensionCategory.literals }),
+          ),
+        ).toEqual(catalog);
+      }).pipe(
+        Effect.provide(
+          harness(() => {
+            throw new Error("No registry expected");
+          }).layer(),
+        ),
+      ),
   );
 
   it.effect("recognises an installed tenant without treating foreign hosts as that service", () => {

@@ -4,20 +4,17 @@ import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 import { mergeStateLabel } from "./libraryDuplicateLabels";
+import { byLine, dayLabel } from "./dayLabel";
 
 export const RECENT_CHANGES_LABELS = {
   menuItem: msg("Recent changes"),
   title: msg("Recent changes"),
-  // Said always: the list is what can be taken back, not everything that happened.
-  coverage: msg(
-    "Changes to your whole Library that are still on record: bulk edits (the latest 250 requests), merges, imports, restores, additions from another Library and the Trash. Edits to one paper are in that paper's History. Reading status and removals from a project are not recorded.",
-  ),
   none: msg("No recorded changes yet."),
   loading: msg("Reading changes…"),
-  loadFailed: msg("The changes could not be read. Close and open this again to retry."),
+  loadFailed: msg("The changes could not be read. Close and open this again."),
   reloadFailed: msg("The list could not be read again, so it may be out of date."),
   tryAgain: msg("Try again"),
-  noOlder: msg("Older changes are not shown here: the list holds the newest 400."),
+  noOlder: msg("Showing the newest 400."),
   undo: msg("Undo", { $context: "verb, button that undoes a change" }),
   restore: msg("Restore", { $context: "verb, button" }),
   showSources: msg("Show sources"),
@@ -30,21 +27,13 @@ export const RECENT_CHANGES_LABELS = {
   importRest: msg("Import the rest"),
   importedSources: msg("Sources from this import"),
   notBrought: msg("Not brought", { $context: "items not imported" }),
-  notBroughtAbout: msg(
-    "What the place it was imported from holds for these sources that did not come:",
-  ),
   notBroughtNone: msg("The record of what was not brought is no longer there."),
   showThese: msg("Show", { $context: "verb, shows the sources a line lists" }),
   packageImports: msg("Package imports"),
-  packageImportsAbout: msg(
-    "Project packages imported into this project, each with what it added and what Undo would keep.",
-  ),
   openPackageImports: msg("Show package imports"),
 } as const;
 
 const count = (value: number) => value.toLocaleString();
-const day = (iso: string) =>
-  new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(iso));
 const quoted = (title: string | null, resolve: MessageResolver) =>
   resolve(msg("“{title}”", { title: title?.trim() || resolve(msg("Untitled source")) }));
 
@@ -58,16 +47,19 @@ const INTAKE_WORDS: Record<
   file: msg("a reference file"),
 };
 
-/** Who made the change, as the record says; an automatic merge keeps the name of who ran it. */
+/**
+ * Who made the change and when: the person's own changes show only the time, an agent's say so,
+ * and an automatic merge keeps the word.
+ */
 export function recentChangeBy(
   change: ScientSourcesRecentChange,
   resolve: MessageResolver = m,
+  now = new Date(),
 ): string {
-  const automatic = change.kind === "merge" && change.automatic;
-  if (change.by === "agent") {
-    return automatic ? resolve(msg("Agent · automatic merge")) : resolve(msg("Agent"));
-  }
-  return automatic ? resolve(msg("You · automatic merge")) : resolve(msg("You"));
+  const when = byLine(change.by, change.at, resolve, now);
+  return change.kind === "merge" && change.automatic
+    ? resolve(msg("Automatic merge · {when}", { when }))
+    : when;
 }
 
 function bulkEditSentence(
@@ -174,7 +166,7 @@ export function recentChangeSentence(
             msg(
               "{count, plural, one {Put back the Library that was replaced on {day}: {shown} source} other {Put back the Library that was replaced on {day}: {shown} sources}}",
               {
-                day: day(change.backupCreatedAt),
+                day: dayLabel(change.backupCreatedAt),
                 count: change.sources,
                 shown: count(change.sources),
               },
@@ -184,7 +176,7 @@ export function recentChangeSentence(
             msg(
               "{count, plural, one {Restored the Library from the backup of {day}: {shown} source} other {Restored the Library from the backup of {day}: {shown} sources}}",
               {
-                day: day(change.backupCreatedAt),
+                day: dayLabel(change.backupCreatedAt),
                 count: change.sources,
                 shown: count(change.sources),
               },
@@ -193,7 +185,7 @@ export function recentChangeSentence(
     case "join": {
       const from =
         change.from === "backup" && change.backupCreatedAt
-          ? resolve(msg("the backup of {day}", { day: day(change.backupCreatedAt) }))
+          ? resolve(msg("the backup of {day}", { day: dayLabel(change.backupCreatedAt) }))
           : change.from === "backup"
             ? resolve(msg("a backup"))
             : resolve(msg("the Library a restore replaced"));

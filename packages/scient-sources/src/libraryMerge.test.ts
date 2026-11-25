@@ -26,7 +26,6 @@ import { runScientLibraryMove } from "./libraryMove.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import type { ScientSourceRecord } from "./model.ts";
 import {
-  deleteScientSourcesPermanently,
   deleteTrashedScientSource,
   importScientSource,
   inspectScientLibrarySources,
@@ -46,6 +45,7 @@ import {
   SCIENT_PIN_OPTIONAL_CITATION_FIELDS,
   scientPinCitationKnownFields,
 } from "./pinCitation.ts";
+import { emptyScientSourceTrash, trashRemovalId } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 const originalRename = NodeFS.promises.rename;
@@ -1680,7 +1680,7 @@ describe("library merge engine", () => {
       (await listScientSourceTrash(library)).entries.map((entry) => entry.sourceId);
     expect(await listed()).toEqual(["source_other"]);
     expect(await inspectScientLibrarySources(library)).toMatchObject({ trashedCount: 1 });
-    expect(await deleteScientSourcesPermanently({ root: library })).toMatchObject({
+    expect(await emptyScientSourceTrash(library)).toMatchObject({
       deletedSourceIds: ["source_other"],
     });
     expect(await inspectScientLibrarySources(library)).not.toHaveProperty("trashedCount");
@@ -1705,7 +1705,7 @@ describe("library merge engine", () => {
     const deleted = await deleteTrashedScientSource({
       root: library,
       sourceId: kept.sourceId,
-      expectedRevision: kept.revision,
+      removalId: await trashRemovalId(library, kept.sourceId),
     });
     expect(deleted).toMatchObject({ outcome: "deleted" });
     expect(await readScientSourceTrashEntries(library)).toEqual([]);

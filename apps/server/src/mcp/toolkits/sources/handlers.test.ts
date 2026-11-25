@@ -55,7 +55,27 @@ import {
   updateScientSourceForInvocation,
 } from "./handlers.ts";
 
-vi.mock("../../../scient/sources/metadataHttp.ts", { spy: true });
+// Public abstract services answer as for an unknown DOI (HTTP 404); any other request is an escape.
+const metadataRequests = vi.hoisted(() => ({ abstracts: [] as string[], escaped: [] as string[] }));
+vi.mock("../../../scient/sources/metadataHttp.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../scient/sources/metadataHttp.ts")>();
+  const abstractHosts = new Set(["api.crossref.org", "www.ebi.ac.uk", "api.openalex.org"]);
+  const noRecord = async (url: URL): Promise<never> => {
+    (abstractHosts.has(url.hostname) ? metadataRequests.abstracts : metadataRequests.escaped).push(
+      url.href,
+    );
+    throw new Error("The metadata service returned HTTP 404.");
+  };
+  return {
+    ...actual,
+    requestMetadata: async (url: URL) => {
+      metadataRequests.escaped.push(url.href);
+      return { status: 404, body: "", url };
+    },
+    requestMetadataText: noRecord,
+    requestMetadataJson: noRecord,
+  };
+});
 
 const fixtures: string[] = [];
 const now = "2026-08-13T12:00:00.000Z";
@@ -293,6 +313,8 @@ afterEach(async () => {
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
+  metadataRequests.abstracts.splice(0);
+  expect(metadataRequests.escaped.splice(0)).toEqual([]);
 });
 
 describe("Scient Sources MCP handlers", () => {
@@ -771,12 +793,18 @@ describe("Scient Sources MCP handlers", () => {
         removeScientSourceForInvocation({ sourceId: "source_kept", expectedRevision: 4 }),
         context,
       );
+      const [trashed] = (yield* provideContext(
+        listScientSourcesForInvocation({ inTrash: true }),
+        context,
+      )).records;
+      expect(trashed).toMatchObject({ sourceId: "source_kept", removalId: expect.any(String) });
       expect(
         yield* provideContext(
           removeScientSourceForInvocation({
             sourceId: "source_kept",
-            expectedRevision: 3,
+            expectedRevision: 4,
             permanent: true,
+            removalId: "an-earlier-removal",
           }),
           context,
         ),
@@ -787,6 +815,7 @@ describe("Scient Sources MCP handlers", () => {
             sourceId: "source_kept",
             expectedRevision: 4,
             permanent: true,
+            removalId: trashed!.removalId!,
           }),
           context,
         ),
@@ -851,7 +880,11 @@ describe("Scient Sources MCP handlers", () => {
         Effect.provideService(AnalyticsService, analytics),
         Effect.provideService(ScientAnalyticsAvailability, { available: true }),
       );
-      expect(added).toMatchObject({ outcome: "imported", verification: "unchecked" });
+      expect(added).toMatchObject({
+        outcome: "imported",
+        verification: "unchecked",
+        duplicate: { kind: "new" },
+      });
       expect(added.sourceId).toMatch(/^source_/);
       expect(added.revision).toBe(1);
       expect(added.validationIssues).toEqual([]);
@@ -864,6 +897,7 @@ describe("Scient Sources MCP handlers", () => {
       expect(repeated.sourceId).toBe(added.sourceId);
       expect(repeated.revision).toBe(1);
       expect(repeated.duplicate.kind).toBe("same-identifier");
+      expect(repeated.duplicate.matchingSourceIds).toEqual([added.sourceId]);
       expect(events.map((event) => event.name)).toEqual([
         "scient.operation.started",
         "scient.operation.completed",
@@ -887,6 +921,10 @@ describe("Scient Sources MCP handlers", () => {
         intake: "identifier",
         review: "none",
       });
+      expect(detail.verification).toEqual({
+        state: "unchecked",
+        identifier: { scheme: "doi", value: "10.1000/agent-source" },
+      });
       expect(detail.fieldProvenance.some((entry) => entry.origin === "agent")).toBe(true);
       expect(detail.fieldProvenance).toEqual(
         expect.arrayContaining([
@@ -894,6 +932,14 @@ describe("Scient Sources MCP handlers", () => {
         ]),
       );
       expect(detail.attachments).toEqual([]);
+
+      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
+      expect(listed.records).toHaveLength(1);
+      expect(listed.records[0]).toMatchObject({
+        addedBy: "agent",
+        verification: "unchecked",
+        hasPdf: false,
+      });
 
       const updated = yield* provideContext(
         updateScientSourceForInvocation({
@@ -1528,6 +1574,10 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(added).toMatchObject({ outcome: "imported", verification: "verified" });
+      // The omitted `enrich` option still asks for the missing abstract.
+      expect(metadataRequests.abstracts).toContain(
+        "https://api.crossref.org/works/10.1000/registered",
+      );
       const detail = yield* provideContext(
         getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
         context,

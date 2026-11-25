@@ -55,7 +55,15 @@ import {
   updateScientSourceMetadata,
   sourceAttachmentAbsolutePath,
 } from "./store.ts";
-import { atomicWriteJson, ensureDirectory, isNodeError, readBoundedJson } from "./storeFiles.ts";
+import {
+  absolute,
+  atomicWriteJson,
+  ensureDirectory,
+  formatJson,
+  hashFile,
+  isNodeError,
+  readBoundedJson,
+} from "./storeFiles.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { scientLibraryIdentityProblem } from "./sourceIdentity.ts";
 import { scientPinCitationKnownFields } from "./pinCitation.ts";
@@ -130,19 +138,6 @@ const PackageOrganization = Schema.Struct({
 const decodeReview = Schema.decodeUnknownSync(ScientSystematicReview);
 const decodePackageSource = Schema.decodeUnknownSync(PackageSource);
 const decodeOrganization = Schema.decodeUnknownSync(PackageOrganization);
-const absolute = (base: string, relative: string) => NodePath.join(base, ...relative.split("/"));
-const formatJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-
-async function hashFile(filePath: string): Promise<string | null> {
-  const hash = NodeCrypto.createHash("sha256");
-  try {
-    for await (const chunk of NodeFS.createReadStream(filePath)) hash.update(chunk as Buffer);
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return null;
-    throw error;
-  }
-  return hash.digest("hex");
-}
 
 async function readText(filePath: string): Promise<string | null> {
   try {

@@ -183,9 +183,8 @@ const UNREADABLE: ReadOutcome<never> = { _tag: "unreadable" };
  * lock, a permission, a device that went away — is `unreadable`, because the
  * one thing this call has established is that it does not know.
  */
-const classifyError = (error: {
-  readonly reason: { readonly _tag: string };
-}): ReadOutcome<never> => (error.reason._tag === "NotFound" ? ABSENT : UNREADABLE);
+const classifyError = (error: { readonly reason: { readonly _tag: string } }): ReadOutcome<never> =>
+  error.reason._tag === "NotFound" ? ABSENT : UNREADABLE;
 
 const statOf = Effect.fn("latexBuildEvidence.statOf")(function* (absolutePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;

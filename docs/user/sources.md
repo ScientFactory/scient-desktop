@@ -31,11 +31,15 @@ the Library shown is that computer's, and the line under the title names it
 
 Use **This project / My Library** above the list to choose what to browse.
 The choice stays available in an empty project and when you can only read.
-An empty project says **No sources in this project** and how to add some:
-import PDFs, a reference file or sources from Zotero. When My Library has
+An empty project says **No sources in this project**; **Import sources** at
+the top adds PDFs, a reference file or sources from Zotero. When My Library has
 sources, **Choose from Library** lets you add them to this project. Collections
-in **Filter** only narrow that scope. Rows show authors, year, unread status and real
-warnings. Hover a row or card for when it was added. In **My Library**, the hover also
+in **Filter** only narrow that scope. Rows show authors, year and a dot for
+unread papers; what a paper's details lack shows in its details, not on the
+row. Hover a row or card for when it was added; a paper that arrived after this
+window first showed the Library and that no view here has shown yet, for example
+one an agent added while you were away or looking at the other scope, says
+**Just added** for ten minutes. In **My Library**, the hover also
 says **In this project** when linked here. Open its details for provenance and verification.
 
 Source details and imported PDFs are stored in your personal Library on the
@@ -86,7 +90,8 @@ switching between This project and My Library does not change it.
 - Records: **Recent changes**, and **Trash** with its count when it holds papers.
 - **Backup and recovery**: **Back up My Library…**, **Restore from a backup…**,
   **Add from another Library…**, then **Recover sources from before the move**
-  and **Keep this project's sources in its folder** where they apply.
+  (only in a project that keeps a copy from before its move) and **Keep this
+  project's sources in its folder** where they apply.
 
 ### Connect your university
 
@@ -103,7 +108,8 @@ When an action you started finishes, its result appears once, just above the
 list, in at most two lines, with **Details** and **Dismiss**: for an import, how
 many references came in and were added to this project first, then anything
 that did not come and why. It stays while you open papers and come back, until
-you dismiss it, start another action, or switch project. A new result replaces
+you dismiss it, start another action, or switch project. On a paper's own page
+it waits under **Activity**, so the page's buttons are only that paper's. A new result replaces
 the previous one; nothing stacks above the list.
 
 **Activity** in the header, with a count, gathers what is still running and
@@ -116,7 +122,9 @@ changes nothing. Something that needs a choice stays there until you make it.
 ### This project and My Library
 
 The Library panel starts with this project's sources. Choose **My Library**
-above the list to browse papers from every project. Use
+above the list to browse papers from every project; the choice shows at once,
+with a spinner until the list arrives, and an import started meanwhile goes to
+the list still shown. Use
 **Add to project** to bring a paper from your Library into this project, and
 **Remove from this project** to take it out; the paper stays in your Library
 and in other projects. Importing or adding by identifier while **My Library** is shown
@@ -125,6 +133,10 @@ after adding by identifier, offer **Add to project**. In **My Library**, select
 papers and choose **Add to project** in the selection bar to add those not yet in
 this project; on a paper that is not in this project, its **⋯** menu lists **Add to
 project** first.
+
+Hover **This project** to see which project it is. With no project open (a chat
+under **No project**), the Library shows **My Library** only and offers nothing
+to add to a project.
 
 A paper this project cites that is in the Trash says "Not in this Library":
 the project keeps its citation details, so it can still be cited, but it has no
@@ -149,8 +161,10 @@ gives the list its headings:
 
 Type, reading state, tags and collections are filters, not orders. **Show as
 cards** shows the papers as cards in one flow, at most a comfortable width
-however wide the panel is; a heading that continues onto a new row of cards is
-repeated there, dimmed. Each card keeps its journal and year. **Show as a list**
+however wide the panel is; a heading is shown once, where its papers start, and
+a thin line runs on over the rows that follow. Each card keeps its journal and
+year, and shows as much of the title as fits in whole lines; hover the card for
+the full title and journal. **Show as a list**
 goes back. Each row and card starts with the publisher's icon (BMJ, Elsevier,
 Springer and so on, named on hover), worked out from the paper's DOI, publisher or
 link. A few journals with their own icon, such as The Lancet, Cell and Nature,
@@ -166,8 +180,10 @@ immediately before **Open PDF** when a PDF is available.
 
 Each paper has a **Note for this project**, for why you cite it here, kept with
 the project, and **My note**, which follows the paper into every project and is
-not saved in any project folder. Agents read and write My note too. A paper
-that is not in this project has only My note.
+not saved in any project folder. An agent allowed to change things reads and
+writes My note too, so it adds to your note rather than replacing it; a Read
+only connection does not see it. An export, yours or an agent's, carries only
+the note for this project. A paper that is not in this project has only My note.
 
 A note is Markdown. When you read it, headings, lists, links, quotes, tables
 and code are shown as such; when you edit it, you see and type the Markdown
@@ -411,15 +427,19 @@ had chosen before it.
    save a Zotero API key in **Accounts** (see below).
 2. In the **Library**, choose **Import sources → Import from Zotero**.
 3. Select **My Library**, one of your Zotero groups, or a specific collection.
+   A collection shows, and imports, its references and those in its
+   subcollections.
 4. Select individual references, import the selected collection, or import the
-   complete library. A collection or library of any size can be imported: more
+   complete library. **Import all** and **Import collection** always take the
+   whole library or collection, and the number they show counts all of it, not
+   only what a search shows. A collection or library of any size can be imported: more
    than 500 references come in parts of 500, one after the other, and the
    summary counts them as one import and says how many are still to come. If
    Scient closes in the middle, the import goes on when you open the Library
    again. If you stop it, **Import the rest** goes on from where it was, now
    or later from the import's line in **Recent changes**, which lists the
    whole import as one and says how many references are still to come.
-   **Try failed items again** takes the failures of every part. Nothing is
+   **Try again** takes the failures of every part. Nothing is
    imported twice. After Scient was closed in the middle, the summary counts
    from where the import went on; the line in Recent changes counts all of it.
    A retry completes remaining PDFs and import steps for a source that this
@@ -429,8 +449,8 @@ had chosen before it.
    after the partial import. Highlights you deleted stay deleted.
 
 Scient copies each reference's metadata, tags, notes and every PDF attachment
-into your Library, and adds the references to this project unless **All** is
-shown. A reference's notes become its **My note**, as Markdown you can go on
+into your Library, and adds the references to this project unless **My Library**
+is shown. A reference's notes become its **My note**, as Markdown you can go on
 editing: headings, links, lists, quotes, tables, code, bold and italic are
 kept, and a citation placed in a note becomes its text. Several notes on one
 reference stay one note, each under its first line as a heading, in the order
@@ -550,7 +570,13 @@ too long to keep. In a project the refresh reads the project's Zotero
 sources; in **My Library**, every Zotero source in the Library. A large
 Library is read again 200 sources at a time, and the dialog says how far it
 is; closing it stops
-there and keeps what was read. If Zotero cannot be read (for example it is
+there and keeps what was read. With zotero.org, a source whose Zotero item,
+notes and PDFs did not change since its last refresh is not read again, so a
+second refresh is quick; Zotero on this computer is read in full each time.
+Each change from Zotero is one version in the source's History, plus one for
+each new PDF. A source you edit here while it is being refreshed is listed as
+changed during the refresh: refresh again. An agent's refresh reads the whole
+Library or project in one go, whatever its size. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it. A refresh does not file sources again: a reference you moved
 between collections in Zotero stays in its collections here.
@@ -785,9 +811,11 @@ files. If a project had not finished moving into or out of your Library when
 the backup was made, the message at the end says so: keep that project's
 folder too, because some of its sources may be only there.
 
-While the backup runs, changes to the Library wait, and the Library says so;
-a change that waits longer than half a minute is refused and can be made
-again afterwards. A large Library with many PDFs can take a few minutes.
+You can keep working while the backup runs: it copies the files first, then
+briefly holds changes back while it copies what changed meanwhile, so the backup
+is your Library as it was at one moment. A large Library with many PDFs can take
+a few minutes. If a backup is stopped (Scient quits or the computer sleeps), the
+next backup into the same folder removes what it left there.
 
 A Library backup is not a backup of your projects. Each project's citation
 keys, project notes, systematic reviews and citation style live in the
@@ -806,7 +834,9 @@ the Library what a backup holds.
    it beside your Library. Your Library is not changed while this runs.
 2. The Library then says the backup is ready. It takes the Library's place
    the next time Scient starts, so quit and reopen Scient when you are ready.
-   Until then **Cancel** drops the copy and nothing happens.
+   Until then **Cancel** drops the copy and nothing happens. If Scient stops
+   part way through putting it in place, the Library says to restart Scient to
+   finish; until then no project can move its sources into the Library.
 3. After the restart the Library is the backup: every source with its
    versions, notes, PDFs, highlights, collections, Trash and merges, as they
    were when the backup was made. Scient says what it restored.
@@ -823,7 +853,7 @@ If you restored by mistake, or restored the wrong backup, open **Recent
 changes**: the line of the restore has **Put it back**. The Library that was
 replaced then takes its place again the next time Scient starts, as it was
 kept, and the Library you restored is kept in a folder in its turn, so this
-too can be taken back. A **Move back into this project** you chose in between
+too can be taken back. A **Keep this project's sources in its folder** you chose in between
 is kept. A source you added to a project in between is still cited there from
 the details the project saved, and returns to the Library when the project is
 next changed; its PDF and personal note stay in the kept folder. Until you restart, **Cancel** leaves everything as it
@@ -850,7 +880,7 @@ Three things to know:
   already waiting, it still waits, and the message says so.
 - Extracted PDF text is not in a backup; searching inside PDFs works again as
   Scient reads them.
-- If you chose **Move back into this project** for a project after the backup
+- If you chose **Keep this project's sources in its folder** for a project after the backup
   was made, that choice is kept: the restore takes it over from the Library it
   replaces, and the project goes on keeping its own sources. Only when that
   Library is gone altogether (a lost disk, another computer) is the choice
@@ -1041,9 +1071,10 @@ PDF uses Scient's normal [PDF reader](pdf-reader.md), so you can move between
 the library, source details, the document, and your conversation. **Back**
 returns to the list as you left it: search, order, view and selection.
 
-Incomplete metadata is marked by a small warning icon beside the source type,
-not a banner or an extra row. Hover or focus it to see the missing details;
-click it to keep those details open. **Edit** remains the place to correct them.
+When details could not be found, one quiet line under the authors names them,
+for example "Not found: date, identifiers"; a PDF titled by its file name says
+"Not found: title" until its details are found. **Edit** is the place to add
+them.
 
 Under the authors, one row holds **Mark read**, the star, **+ Tag** and **+
 Collection**, then the source's tags and collections. When the page is wide,
@@ -1110,9 +1141,13 @@ what it has beyond its main details: edition, place of publication, series,
 number of pages, a report's number, the date you accessed a page and the
 like. Change one, remove it, or choose **Add a detail…** to add one from the
 list. These are used when the source is cited (a book's edition, a report's
-number), and each is recorded in the source's History like any other edit. Use **Refresh metadata** when you want
-Scient to recheck the existing PDF and exact DOI, PMID or arXiv ID; review the warning
-first because refreshed fields can replace manual corrections. Scient blocks
+number), and each is recorded in the source's History like any other edit. If
+the paper changes while you edit it (a PDF arrives, or an agent or another
+window edits it), the editor stays open: the fields you changed keep your text,
+the others show the latest version, and **Save** works as usual. Use **Refresh metadata** when you want
+Scient to recheck the existing PDF and exact DOI, PMID or arXiv ID. Refreshed
+fields replace what you edited by hand in them, and the PDF stays as it is;
+History keeps the version before. Scient blocks
 conflicting exact identifiers and asks before accepting a possible duplicate
 as a separate source. An agent can refresh a source's metadata the same way;
 the change is credited to the agent, and **History** can restore the earlier
@@ -1127,22 +1162,36 @@ Use **Move to Trash** from the source actions to remove a source from your
 Library; in **This project** a row's menu also offers **Remove from this
 project**, which keeps the paper in your Library. Choose
 **Undo** in the message that appears to put it straight back, or choose
-**Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
-your Library while it is in the trash. **Empty trash** deletes the sources in
+**Trash** in the **⋯** menu at the top of the Library later to restore it. When
+you move several at once, or undo that, the message says how many did not move
+and why. Its PDFs stay in
+your Library while it is in the trash. Importing a paper that is in the Trash
+again brings it back with the details you import, and keeps its PDFs, its star,
+its citation key and your note (unless the import brings a note of its own; the
+earlier one stays in its History). **Empty trash** deletes the sources in
 it for good, with their saved versions, what Scient kept of their Zotero items
-(Zotero's notes among it) and any PDF no other source uses.
+(Zotero's notes among it) and any PDF no other source in your Library or the
+Trash has; saved versions keep no PDF, since restoring one never brings a PDF
+back. Deleting one source for good removes such PDFs the same way. It
+deletes only what the list showed you: if something was moved to the Trash or
+restored after you opened it, nothing is deleted and the list is read again for
+you to confirm.
 When the last retained reference to a collected PDF is gone, Scient also removes
-its extracted text and highlights. This is not secure erasure: an interrupted
-cleanup or an unreadable file can leave orphaned material, and existing backups,
-sealed migration copies and project snapshots are not erased.
+its extracted text and highlights; if a file is in use, it tries again at the
+next deletion. A deletion that was interrupted is no longer listed: the Trash
+shows **Finish deleting** for it, and the next deletion of anything finishes it
+too. A request to delete a paper for good names that one removal, so it never
+deletes a copy you imported again later. This is not secure erasure: an
+unreadable file can leave orphaned material, and existing backups, sealed
+migration copies and project snapshots are not erased.
 Removing a source never changes Zotero. Moving a paper to the Trash removes it
 from your Library, not only from this project. Projects that have it, this one
 included, keep its citation details and list it as "Not in this Library" until
-you restore it; the message says how many other projects have it. Before
-**Empty trash** deletes anything, it names the projects that still cite a paper
-in the trash: deleted for good, the paper stays out of your Library, and those
-projects keep citing it from their own copy of its citation details, listed as
-"Not in this Library". An agent that deletes a paper for good is told the same.
+you restore it; the message says how many other projects have it. **Empty
+trash** asks "Delete _N_ papers for good?" and nothing more. A paper deleted for
+good stays out of your Library, and projects that still cite it keep citing it
+from their own copy of its citation details, listed as "Not in this Library".
+An agent that deletes a paper for good is told which projects still cite it.
 Only a deliberate import puts it back: adding the paper again, or importing a
 project package that has it. Moving another project into your Library, or an
 old copy of a project, brings back neither the paper nor its PDF. Opening a
@@ -1153,9 +1202,11 @@ merged paper itself is deleted for good.
 
 Every change to a source is kept as a version. Choose **History** from the
 source actions to see who changed what and when, and **Restore** an earlier
-version; restoring saves it as the newest version, so nothing is lost. Scient
-keeps the first version and the latest 49 of each source. A PDF removed from a
-source stays available to restore until the trash is emptied.
+version; restoring saves it as the newest version, so nothing is lost. Restoring
+brings back the paper's details only: **My note** and the paper's PDFs stay as
+they are now, so a version that changed only those offers no **Restore**. Typing in **My note** saves as you go, and one stretch of typing
+(up to ten minutes) is one version. Scient keeps the first version and the
+latest 49 of each source.
 
 If a source's file cannot be read, the Library still lists the others and says
 which file it skipped.
@@ -1362,14 +1413,15 @@ change to sources is refused until this one finishes. The latest 250 bulk change
 be undone; a change to more than 500 sources counts as one for every 100 of them.
 
 Collections, saved searches, study designs and topics are kept in your
-Library, so they show in every project; choose **All** to see every source in
+Library, so they show in every project; choose **My Library** to see every source in
 a collection.
 
 ### Recent changes
 
 Choose **Recent changes** (in the **⋯** menu at the top of the Library) to see
 the changes to your whole Library that are still on record, newest first, with
-who made each one (you or an agent) and what can be done about it now:
+when each was made ("Today, 9:31 PM"; an agent's say **Agent**) and what can be
+done about it now:
 
 - **A bulk change:** what it did and to how many sources, with **Undo**. A
   change that was sent in several parts is one line and is undone as one. Undo
@@ -1391,8 +1443,9 @@ who made each one (you or an agent) and what can be done about it now:
 This is not a full history, and it shows the 400 newest changes at most. Edits
 to one paper are in that paper's **History**.
 Changes to reading status and stars, and removals from a project, are not
-recorded. A restored source leaves the Trash and this list. Package imports
-are at the end of the list, under **Package imports**; the move of a project
+recorded. A restored source leaves the Trash and this list, and emptying the
+Trash leaves no line. Package imports are at the end of the list, under
+**Package imports**, when the project has any; the move of a project
 into your Library and "not duplicates" decisions stay where they are (**⋯** >
 **Backup and recovery** and **Possible duplicates**).
 
@@ -1509,7 +1562,8 @@ update it yourself.
 
 Scient keeps `references.bib` and `references.json` (CSL-JSON) at the project
 root up to date with the Library, so LaTeX, Pandoc and Overleaf can use them.
-Add `\bibliography{references}` to a LaTeX document, or
+When you change a paper, every project on this computer that cites it gets the
+change in these files right away, not only the project you have open. Add `\bibliography{references}` to a LaTeX document, or
 `bibliography: references.bib` to a Markdown document's front matter. If you
 edit one of these files yourself, Scient keeps your edits and says so in the
 Library: choose **Import new entries** to add entries you typed to the Library,
@@ -1643,8 +1697,9 @@ the citation in Word, or in your reference manager, and check again. Older
 In a project conversation, an agent can search and read the same Library you
 see, this project's sources or all of them, maintain both notes, add papers to
 this project or remove them, mark them read or starred, merge duplicates, update metadata, attach or detach a project PDF,
-move a source to the trash and restore it, restore an earlier version, or add a
-new one. It can also organize the Library the way you can: create, rename and
+move a source to the Library Trash (which takes it out of every project; to
+take it out of this project only, it removes it from the project) and restore
+it, restore an earlier version, or add a new one. It can also organize the Library the way you can: create, rename and
 delete collections and subcollections, save searches, list a collection, a
 tag, a study design or a topic, change tags, type or collections on many
 sources at once, sort sources into themes (it creates the collections and
@@ -1652,8 +1707,8 @@ fills them in one change, which **Undo** reverses whole, removing the
 collections it made), and run a systematic review. It
 can import a reference file from the project (`scient_sources_import_file`),
 which attaches the same linked PDFs and reports the same unreadable entries and
-fields not kept, and write the
-Library to a project file in any of the four formats (`scient_sources_export`),
+fields not kept, and write this
+project's sources, or the ones it names, to a project file in any of the four formats (`scient_sources_export`),
 never replacing an existing file unless asked to. It saves and imports project
 packages, lists this project’s imports with dates, counts and what stayed,
 and undoes an import by its receipt and restores the copy from
@@ -1661,7 +1716,8 @@ before a move with `scient_sources_organize`. To change a note for this project
 it must say which note it read; if the note changed since, nothing is written
 and it gets the current note to reconcile. When this project cites one paper under two keys (after
 a merge), it names the citation key to read or change that key's
-note and its earlier versions. Everything an agent changes is credited to it
+note and its earlier versions; taking that paper out of the project removes
+both keys, as you do. Everything an agent changes is credited to it
 and can be undone the same way as your own changes.
 
 An agent cites sources with `scient_sources_cite`: it gets the citation to
@@ -1685,7 +1741,8 @@ authors, date and journal instead of the agent's. The source's details show
 that an agent added it and whether its identifier was verified, not yet checked
 because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
-like any other.
+like any other. The Library panel shows what an agent added or changed as soon
+as that agent's turn ends.
 
 Agents check references with the same tool the dialog uses
 (`scient_references_check`), and apply fixes or ignore findings with
@@ -1727,8 +1784,8 @@ spacing or line breaks differ, and tells the agent when they appear more than
 once. An agent can also change, remove or restore a highlight. Its highlights
 appear in the open PDF when you come back to the window.
 
-Agents also search and read the PDFs' text, and check quotes against it before
-they give them to you: `scient_sources_search` finds passages,
+Agents also search and read the PDFs' text, in this project's papers or the
+whole Library, and check quotes against it before they give them to you: `scient_sources_search` finds passages,
 `scient_sources_read_text` reads a paper page by page, and
 `scient_sources_quote_check` says whether a quote is exactly in a paper (or the
 same once spacing, ligatures and line-break hyphens are evened out), on which

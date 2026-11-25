@@ -80,16 +80,18 @@ function record(index: number, overrides: Partial<SourceRecord> = {}): SourceRec
 }
 
 /** A personal Library's "This project" view; one deep row is a pin's snapshot this Library lacks. */
-function overview(retitled?: string): ScientSourcesOverviewResult {
+/** `count` rows; the two cases that do not depend on the list's size use a short one. */
+function overview(retitled?: string, count = SOURCE_COUNT): ScientSourcesOverviewResult {
+  const snapshotIndex = Math.min(SNAPSHOT_INDEX, count - 1);
   return {
     projectState: "initialized",
     issues: [],
     recordDiagnostics: [],
     activeOperation: null,
-    scopes: { listed: "project", project: SOURCE_COUNT, library: SOURCE_COUNT },
+    scopes: { listed: "project", project: count, library: count },
     libraryBackend: true,
-    records: Array.from({ length: SOURCE_COUNT }, (_, index) => {
-      if (index === SNAPSHOT_INDEX) {
+    records: Array.from({ length: count }, (_, index) => {
+      if (index === snapshotIndex) {
         const {
           readingStatus: _status,
           starred: _starred,
@@ -130,7 +132,6 @@ function Harness() {
           listed: sources.overview?.scopes?.listed,
           selection: new Set(),
           recentlyAddedSourceIds: new Set(),
-          diagnosticsBySourceId: new Map(),
           onToggleSelected: ignore,
           onOpenDetails: ignore,
           onOpenPdf: ignore,
@@ -236,7 +237,7 @@ describe("Sources list at Library size", () => {
 
   it("keeps a row's star when an overview read before the change arrives after it", async () => {
     setup();
-    mocks.readScientSources.mockResolvedValueOnce(overview());
+    mocks.readScientSources.mockResolvedValueOnce(overview(undefined, 20));
     await using screen = await render(<Harness />, { router: false });
     await expect.element(screen.getByText("Source 0000")).toBeVisible();
 
@@ -252,7 +253,7 @@ describe("Sources list at Library size", () => {
       .toBeVisible();
 
     // The older answer still has the row unstarred; its other change shows that it landed.
-    olderAnswer.resolve(overview("Source 0001 read again"));
+    olderAnswer.resolve(overview("Source 0001 read again", 20));
     await expect.element(screen.getByText("Source 0001 read again")).toBeVisible();
     expect(screen.getByRole("button", { name: "Remove star: Source 0000" }).query()).not.toBeNull();
   });
@@ -282,7 +283,7 @@ describe("Sources list at Library size", () => {
 
   it("offers Move to Trash on a row of this project, but not on a saved copy the Library lacks", async () => {
     setup();
-    mocks.readScientSources.mockResolvedValue(overview());
+    mocks.readScientSources.mockResolvedValue(overview(undefined, 20));
     mocks.showContextMenu.mockResolvedValue(null);
     await using screen = await render(<Harness />, { router: false });
     await expect.element(screen.getByText("Source 0000")).toBeVisible();
@@ -299,8 +300,6 @@ describe("Sources list at Library size", () => {
     await vi.waitFor(() => expect(mocks.showContextMenu).toHaveBeenCalledTimes(1));
     expect(offered(0).slice(-2)).toEqual(["remove-from-project", "remove"]);
 
-    const scroller = scrollerOf(rowTitled(screen.container, "Source 0000")!);
-    scroller.scrollTop = SNAPSHOT_INDEX * SOURCE_ROW_ESTIMATED_SIZE - 120;
     await expect.element(screen.getByText("Snapshot source")).toBeVisible();
     await userEvent.click(
       rowTitled(screen.container, "Snapshot source")!.querySelector<HTMLElement>(
@@ -322,7 +321,6 @@ describe("Sources list at Library size", () => {
       listed: undefined,
       selection: new Set<string>(),
       recentlyAddedSourceIds: new Set<string>(),
-      diagnosticsBySourceId: new Map(),
       onToggleSelected: ignore,
       onOpenDetails: ignore,
       onOpenPdf: ignore,

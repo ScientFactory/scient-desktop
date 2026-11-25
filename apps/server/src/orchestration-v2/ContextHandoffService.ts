@@ -185,14 +185,12 @@ export function visibleConversationItems<Item extends ContextHandoffItem>(
 type ForkHistorySource = Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "attempts">;
 
 // SCIENT-FORK:START — imported rows and a fork's copied frozen rows belong to no run.
-/** `source`'s runs through `throughRun`, plus null where it holds runless history. */
+/** The ids of `throughRuns`, plus null where `source` holds runless history. */
 const forkHistoryRunIds = (
   source: ForkHistorySource,
-  throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
+  throughRuns: ReadonlyArray<Pick<OrchestrationV2Run, "id">>,
 ) => [
-  ...source.runs
-    .filter((run) => throughRun !== null && run.ordinal <= throughRun.ordinal)
-    .map((run) => run.id),
+  ...throughRuns.map((run) => run.id),
   ...(source.thread.historyOrigin === "v1_import" ||
   source.thread.historyOrigin === "scient_fork" ||
   source.thread.historyOrigin === "conversation_import"
@@ -228,22 +226,53 @@ export const readHandoffItemsSinceContextBoundary = Effect.fn(
 });
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — the bounded fork read shares the runs a fork inherited.
+/** `source`'s runs through `throughRun` that `fork` inherited; a null `throughRun` has none. */
+const forkInheritedThroughRuns = Effect.fn(
+  "orchestrationV2.contextHandoff.forkInheritedThroughRuns",
+)(function* (
+  projectionStore: Pick<ProjectionStoreV2Shape, "getForkSourceRunIds">,
+  source: ForkHistorySource,
+  throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
+  fork: OrchestrationV2AppThread,
+) {
+  if (throughRun === null) return [];
+  // Only a run fork records its membership; a Scient fork's frozen rows are its own record.
+  const inheritedRunIds =
+    fork.lineage.sideChat || fork.forkedFrom?.type !== "run"
+      ? null
+      : new Set(yield* projectionStore.getForkSourceRunIds(fork.id));
+  return source.runs
+    .filter((run) => run.ordinal <= throughRun.ordinal && (inheritedRunIds?.has(run.id) ?? true))
+    .map((run) =>
+      run.status === "rolled_back" && inheritedRunIds !== null
+        ? {
+            ...run,
+            status: run.startedAt === null ? ("cancelled" as const) : ("completed" as const),
+          }
+        : run,
+    );
+});
+// SCIENT-FORK:END
+
 /** Visible rows of `source`'s own runs through `throughRun` since its latest `/clear` boundary. */
 const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHistoryItems")(
   function* (
-    projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+    projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkSourceRunIds">,
     source: ForkHistorySource,
     throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
+    fork: OrchestrationV2AppThread,
   ) {
-    // SCIENT-FORK: a null `throughRun` reads only the runless history.
-    const throughRuns =
-      throughRun === null ? [] : source.runs.filter((run) => run.ordinal <= throughRun.ordinal);
+    const throughRuns = yield* forkInheritedThroughRuns(projectionStore, source, throughRun, fork);
     const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
-      turnItemRunIds: forkHistoryRunIds(source, throughRun),
+      turnItemRunIds: forkHistoryRunIds(source, throughRuns),
     });
     const bounded = turnItemsSinceContextBoundary({ runs: throughRuns, turnItems });
     return {
-      items: visibleConversationItems(source, bounded.turnItems),
+      items: visibleConversationItems(
+        { runs: throughRuns, attempts: source.attempts },
+        bounded.turnItems,
+      ),
       cleared: bounded.boundary > 0,
     };
   },
@@ -254,7 +283,7 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
 export const readRunForkAncestorItems = Effect.fn(
   "orchestrationV2.contextHandoff.readRunForkAncestorItems",
 )(function* (
-  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkSourceRunIds">,
   thread: OrchestrationV2AppThread,
 ) {
   const segments: Array<ReadonlyArray<OrchestrationV2TurnItem>> = [];
@@ -272,7 +301,7 @@ export const readRunForkAncestorItems = Effect.fn(
       .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
     const forkRun = source?.runs.find((run) => run.id === runId);
     if (source === null || forkRun === undefined) break;
-    const own = yield* readOwnHistoryItems(projectionStore, source, forkRun);
+    const own = yield* readOwnHistoryItems(projectionStore, source, forkRun, current);
     segments.unshift(own.items);
     if (own.cleared) break;
     current = source.thread;
@@ -284,7 +313,10 @@ export const readRunForkAncestorItems = Effect.fn(
 export const readInheritedHandoffItems = Effect.fn(
   "orchestrationV2.contextHandoff.readInheritedHandoffItems",
 )(function* (
-  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkHistoryItems">,
+  projectionStore: Pick<
+    ProjectionStoreV2Shape,
+    "getThreadRecords" | "getForkHistoryItems" | "getForkSourceRunIds"
+  >,
   thread: OrchestrationV2AppThread,
 ) {
   // SCIENT-FORK:START — a Scient fork has no `forkedFrom`; its frozen rows are its whole past.
@@ -298,11 +330,15 @@ export const readInheritedHandoffItems = Effect.fn(
 export const readForkHistoryItems = Effect.fn(
   "orchestrationV2.contextHandoff.readForkHistoryItems",
 )(function* (
-  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkHistoryItems">,
+  projectionStore: Pick<
+    ProjectionStoreV2Shape,
+    "getThreadRecords" | "getForkHistoryItems" | "getForkSourceRunIds"
+  >,
   source: ForkHistorySource,
   throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
+  fork: OrchestrationV2AppThread,
 ) {
-  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun);
+  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun, fork);
   if (own.cleared) return own.items;
   const inherited = yield* readInheritedHandoffItems(projectionStore, source.thread);
   // SCIENT-FORK:START — copied frozen rows are also the thread's own runless rows.
@@ -318,24 +354,32 @@ export const readPortableForkItems = Effect.fn(
 )(function* (
   projectionStore: Pick<
     ProjectionStoreV2Shape,
-    "getThreadRecords" | "getForkHistoryItems" | "getContextHistoryCandidates"
+    | "getThreadRecords"
+    | "getForkHistoryItems"
+    | "getContextHistoryCandidates"
+    | "getForkSourceRunIds"
   >,
   source: ForkHistorySource,
   throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
   bounded: boolean,
+  fork: OrchestrationV2AppThread,
 ) {
-  if (!bounded) return yield* readForkHistoryItems(projectionStore, source, throughRun);
+  if (!bounded) return yield* readForkHistoryItems(projectionStore, source, throughRun, fork);
+  const throughRuns = yield* forkInheritedThroughRuns(projectionStore, source, throughRun, fork);
   const candidates = yield* projectionStore.getContextHistoryCandidates(
     source.thread.id,
-    forkHistoryRunIds(source, throughRun),
+    forkHistoryRunIds(source, throughRuns),
   );
   const own = yield* readHandoffItemsSinceContextBoundary(
     projectionStore,
     source.thread.id,
-    throughRun === null ? [] : source.runs.filter((run) => run.ordinal <= throughRun.ordinal),
+    throughRuns,
     candidates,
   );
-  const ownItems = visibleConversationItems(source, own.items);
+  const ownItems = visibleConversationItems(
+    { runs: throughRuns, attempts: source.attempts },
+    own.items,
+  );
   if (own.boundary > 0) return ownItems;
   const inherited = yield* readRunForkAncestorItems(projectionStore, source.thread);
   return [...inherited, ...ownItems];

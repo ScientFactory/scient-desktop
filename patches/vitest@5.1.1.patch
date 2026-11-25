@@ -1,0 +1,12 @@
+diff --git a/dist/chunks/index.DNcttN5a.js b/dist/chunks/index.DNcttN5a.js
+index b200b36..0164244 100644
+--- a/dist/chunks/index.DNcttN5a.js
++++ b/dist/chunks/index.DNcttN5a.js
+@@ -5028,6 +5028,7 @@ function requireFakeTimersSrc () {
+ 	            const timer = getTimer(clock, id);
+ 	            if (
+ 	                timer.type === ttype ||
++	                (ttype === "IdleCallback" && timer.requestIdleCallback) ||
+ 	                (timer.type === "Timeout" && ttype === "Interval") ||
+ 	                (timer.type === "Interval" && ttype === "Timeout")
+ 	            ) {

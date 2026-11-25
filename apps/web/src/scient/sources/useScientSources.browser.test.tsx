@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   uploadLocalSourcePdf: vi.fn(),
   beginLocalSourcesImport: vi.fn(),
   discardLocalSourcePdfs: vi.fn(),
+  beginZoteroScopeImport: vi.fn(),
+  readZoteroLibrary: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
@@ -27,7 +29,7 @@ vi.mock("./client", () => ({
   importScientSourcesFile: mocks.importScientSourcesFile,
   beginLocalSourcesImport: mocks.beginLocalSourcesImport,
   beginZoteroItemsImport: vi.fn(),
-  beginZoteroScopeImport: vi.fn(),
+  beginZoteroScopeImport: mocks.beginZoteroScopeImport,
   cancelSourcesImport: vi.fn(),
   discardLocalSourcePdfs: mocks.discardLocalSourcePdfs,
   preflightZoteroItems: mocks.preflightZoteroItems,
@@ -35,7 +37,7 @@ vi.mock("./client", () => ({
   removeScientSource: vi.fn(),
   retrySourcesImport: vi.fn(),
   updateScientSourceNote: vi.fn(),
-  readZoteroLibrary: vi.fn(),
+  readZoteroLibrary: mocks.readZoteroLibrary,
   readZoteroCollections: vi.fn(),
   readZoteroStatus: vi.fn(),
   uploadLocalSourcePdf: mocks.uploadLocalSourcePdf,
@@ -74,9 +76,12 @@ interface HookProbe {
   importing: boolean;
   overviewLoading: boolean;
   error: string | null;
+  retryError: ReturnType<typeof useScientSources>["retryError"];
   overviewError: string | null;
   reloadOverview: () => Promise<unknown>;
   previewImport: (itemKeys: ReadonlyArray<string>) => Promise<unknown>;
+  selectZoteroScope: ReturnType<typeof useScientSources>["selectZoteroScope"];
+  importZoteroScope: ReturnType<typeof useScientSources>["importZoteroScope"];
   importReferenceFile: ReturnType<typeof useScientSources>["importReferenceFile"];
   uploadLocalFiles: ReturnType<typeof useScientSources>["uploadLocalFiles"];
   operation: ReturnType<typeof useScientSources>["operation"];
@@ -604,6 +609,67 @@ describe("useScientSources mounted behavior", () => {
       });
       expect(probe.current.importing).toBe(false);
       expect(probe.current.busy).toBe(false);
+    });
+  });
+
+  it("tries a failed Zotero import again, not the Zotero search", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.readScientSources.mockResolvedValue(overviewWith([]));
+    mocks.preflightZoteroItems
+      .mockRejectedValueOnce(new Error("Zotero is closed."))
+      .mockResolvedValueOnce({ items: [] });
+
+    await withMountedHook(_fixture, async (probe) => {
+      await act(async () => {
+        await probe.current.previewImport(["zotero-item-1"]);
+      });
+      expect(probe.current.error).not.toBeNull();
+      await act(async () => {
+        await probe.current.retryError?.();
+      });
+      expect(mocks.preflightZoteroItems).toHaveBeenCalledTimes(2);
+      expect(mocks.preflightZoteroItems.mock.calls[1]?.[1]).toMatchObject({
+        itemKeys: ["zotero-item-1"],
+      });
+      expect(probe.current.error).toBeNull();
+      expect(probe.current.retryError).toBeNull();
+    });
+  });
+
+  it("tries Import all again as the same import, so one already begun goes on", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.readScientSources.mockResolvedValue(overviewWith([]));
+    mocks.readZoteroLibrary.mockResolvedValue({
+      scope: { kind: "library" },
+      items: [],
+      start: 0,
+      nextStart: 0,
+      total: 2,
+      hasMore: false,
+    });
+    mocks.beginZoteroScopeImport.mockReset();
+    // The import began, but its answer was lost.
+    mocks.beginZoteroScopeImport.mockRejectedValueOnce(new Error("The connection was lost."));
+    mocks.beginZoteroScopeImport.mockRejectedValueOnce(new Error("Still offline."));
+
+    await withMountedHook(_fixture, async (probe) => {
+      await act(async () => {
+        await probe.current.selectZoteroScope({ kind: "library" });
+      });
+      await act(async () => {
+        await probe.current.importZoteroScope();
+      });
+      expect(probe.current.error).not.toBeNull();
+      await act(async () => {
+        await probe.current.retryError?.();
+      });
+      const [first, again] = mocks.beginZoteroScopeImport.mock.calls.map((call) => call[1]);
+      expect(first?.operationId).toEqual(expect.any(String));
+      expect(again?.operationId).toBe(first?.operationId);
     });
   });
 

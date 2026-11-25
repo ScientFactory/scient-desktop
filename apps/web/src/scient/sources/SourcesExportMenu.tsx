@@ -17,7 +17,7 @@ import {
 import { downloadBlob } from "../../components/preview/staticImageActions";
 import { toastManager } from "../../components/ui/toast";
 import { exportScientSources } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import { settleAfter } from "./settleAfter";
 
 const FORMATS: ReadonlyArray<{
@@ -95,7 +95,7 @@ export function useSourcesExport(props: {
           toastManager.add({
             type: "error",
             title: gt("Export failed"),
-            description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+            description: sourcesErrorMessage(cause),
           });
         }
       },

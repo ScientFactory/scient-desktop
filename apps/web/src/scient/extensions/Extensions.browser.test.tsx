@@ -66,6 +66,7 @@ const state = vi.hoisted(() => ({
   providersByEnvironment: {} as Record<string, ServerProvider[]>,
   inventory: null as ExtensionsInventory | null,
   catalog: null as DiscoverCatalog | null,
+  catalogError: null as string | null,
   discoverPages: {} as Record<string, DiscoverPageResult>,
   /** A discover query still waiting, or failed with this message; keyed like `discoverPages`. */
   discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
@@ -280,7 +281,7 @@ vi.mock("../../state/query", async () => {
           error: null,
         };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
-      if (atom.kind === "catalog") return { data: state.catalog, error: null };
+      if (atom.kind === "catalog") return { data: state.catalog, error: state.catalogError };
       if (atom.kind === "entry") {
         const name = String(atom.input?.name);
         const found =
@@ -766,6 +767,7 @@ function setup() {
   };
   state.inventory = inventory();
   state.catalog = catalog;
+  state.catalogError = null;
   state.discoverPages = {};
   state.discoverOutcomes = {};
   state.entries = {};
@@ -857,8 +859,11 @@ describe("Discover", () => {
       "Google Drive",
       "Outlook Email",
       "Outlook Calendar",
+      "Microsoft Teams",
       "iMessage",
       "Telegram",
+      "Figma",
+      "Zotero",
       "Linear",
       "Notion",
       "Local tool",
@@ -874,6 +879,56 @@ describe("Discover", () => {
       "/settings/extensions/item/connector/con_linear0001",
     );
     expect(fixture.row("Notion").textContent).toContain("Notes and docs");
+  });
+
+  it("ends each field section on a full row, at most four rows, and leaves the rest to its page", async () => {
+    await using fixture = setup();
+    const field = (
+      category: "data" | "papers" | "communication",
+      title: string,
+      count: number,
+    ) => ({
+      category,
+      title,
+      total: count,
+      entries: Array.from({ length: count }, (_, index) =>
+        entry(`io.example/${category}-${index + 1}`, {
+          title: `${title} ${index + 1}`,
+          categories: [category],
+        }),
+      ),
+    });
+    state.catalog = {
+      ...catalog,
+      sections: [
+        ...catalog.sections,
+        field("data", "Data", 5),
+        field("papers", "Papers", 6),
+        field("communication", "Chat", 3),
+      ],
+    };
+    await fixture.render(<DiscoverPage />);
+    // Five picks and no account services: the fifth waits on the category page.
+    expect(fixture.rowNames(fixture.section("Data"))).toEqual([
+      "Data 1",
+      "Data 2",
+      "Data 3",
+      "Data 4",
+    ]);
+    // Papers' account services lead; with six picks after them, four rows hold eight.
+    const papers = fixture.rowNames(fixture.section("Papers"));
+    expect(papers).toHaveLength(8);
+    expect(papers).toContain("Zotero");
+    expect(papers.slice(-5)).toEqual(["Papers 1", "Papers 2", "Papers 3", "Papers 4", "Papers 5"]);
+    // Telegram leaves the chat preview to its first pick; it stays on the page and in Most used.
+    const chat = fixture.rowNames(fixture.section("Chat"));
+    expect(chat).toHaveLength(8);
+    expect(chat).not.toContain("Telegram");
+    expect(chat.at(-1)).toBe("Chat 1");
+    // Most used still shows every item.
+    expect(fixture.rowNames(fixture.section("Popular"))).toEqual(
+      expect.arrayContaining(["Telegram", "Local tool"]),
+    );
   });
 
   it("offers + for servers not added and ⋯ for added ones", async () => {
@@ -1227,7 +1282,7 @@ describe("Discover", () => {
     const plugin = (name: string): ProviderStoreEntry => ({
       id: name,
       name,
-      displayName: name === "scite" ? "Scite" : "Zotero",
+      displayName: name === "scite" ? "Scite" : "Mendeley",
       marketplace: "test",
       description: "Reference library",
       kind: "codex",
@@ -1235,29 +1290,29 @@ describe("Discover", () => {
       includes: [],
       apps: [],
     });
-    state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
+    state.storePages[codex] = { entries: [plugin("scite"), plugin("mendeley")], total: 2 };
     state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<CategoryPage category="papers" />);
-    // Readwise is Scient's own service in Papers; the store plugins follow it.
-    expect(fixture.rowNames()).toEqual(["Readwise", "Scite", "Zotero"]);
+    // Scient's own services in Papers lead; the store plugins follow them.
+    expect(fixture.rowNames()).toEqual(["Zotero", "Readwise", "LaTeX", "Scite", "Mendeley"]);
     // The store versions are on the item's own page, not under its row.
     expect(fixture.container.textContent).not.toContain("Also add from");
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     // Each store has its own section, which says the agent once; the rows just say Add.
     expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
-    expect(fixture.row("Zotero").textContent).not.toContain("Codex only");
-    await userEvent.click(buttonIn(fixture.row("Zotero"), "Add")!);
+    expect(fixture.row("Mendeley").textContent).not.toContain("Codex only");
+    await userEvent.click(buttonIn(fixture.row("Mendeley"), "Add")!);
     expect(state.commands.providerAct).toHaveBeenCalledWith(
       expect.objectContaining({
         environmentId: "local",
-        input: { instanceId: codex, action: { type: "install", entryId: "zotero" } },
+        input: { instanceId: codex, action: { type: "install", entryId: "mendeley" } },
       }),
     );
     const search = fixture.container.querySelector<HTMLInputElement>(
       'input[aria-label="Search this category"]',
     )!;
-    await userEvent.fill(search, "Zotero");
-    expect(fixture.rowNames()).toEqual(["Zotero"]);
+    await userEvent.fill(search, "Mendeley");
+    expect(fixture.rowNames()).toEqual(["Mendeley"]);
     expect(fixture.container.textContent).toContain("No picks match this search.");
   });
 
@@ -1355,8 +1410,11 @@ describe("Discover", () => {
       "Google Drive",
       "Outlook Email",
       "Outlook Calendar",
+      "Microsoft Teams",
       "iMessage",
       "Telegram",
+      "Figma",
+      "Zotero",
       "Notion",
     ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
@@ -1364,6 +1422,40 @@ describe("Discover", () => {
 
     await fixture.render(<CategoryPage category="nonsense" />);
     expect(fixture.container.textContent).toContain("This category does not exist.");
+  });
+
+  it("opens a newer category only once the machine's catalog lists it", async () => {
+    await using fixture = setup();
+    // The default catalog has no Cloud section, as from a server that predates it.
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).toContain(
+      "Scient on this machine doesn’t have this category yet. Update it to browse here.",
+    );
+    expect(fixture.container.textContent).not.toContain("Scient’s picks");
+
+    // Until a catalog lists it, nothing is requested: not while loading, not after a failure.
+    state.catalog = null;
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).not.toContain("Scient’s picks");
+    state.catalogError = "The catalog could not be loaded.";
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).toContain("The catalog could not be loaded.");
+    expect(fixture.container.textContent).not.toContain("Scient’s picks");
+    expect(state.queryTargets.some((target) => JSON.stringify(target).includes("cloud"))).toBe(
+      false,
+    );
+    state.catalogError = null;
+
+    state.catalog = {
+      ...catalog,
+      sections: [
+        ...catalog.sections,
+        { category: "cloud", title: "Cloud, DevOps & security", entries: [], total: 0 },
+      ],
+    };
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).not.toContain("doesn’t have this category yet");
+    expect(fixture.section("Scient’s picks")).toBeTruthy();
   });
 });
 
@@ -2271,9 +2363,11 @@ describe("Detail pages", () => {
     const card = agentsCard()!;
     expect(card).not.toBeNull();
     expect(trigger.getAttribute("aria-controls")).toBe(card.id);
-    // Focus moves into the card, onto the limited agent, which tells why.
-    expect(document.activeElement).toBe(buttonIn(card, `OpenCode: ${OPENCODE_REASON}`));
-    expect(reasonTooltip()).not.toBeNull();
+    // Focus moves into the card, onto the limited agent, which tells why. The card moves focus on
+    // the next frame, which can come after Enter has returned.
+    const limited = buttonIn(card, `OpenCode: ${OPENCODE_REASON}`)!;
+    await expect.element(page.elementLocator(limited)).toHaveFocus();
+    await vi.waitFor(() => expect(reasonTooltip()).not.toBeNull());
     await userEvent.keyboard("{Escape}");
     await userEvent.keyboard("{Escape}");
     expect(agentsCard()).toBeNull();

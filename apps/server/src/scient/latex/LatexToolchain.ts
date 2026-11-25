@@ -457,8 +457,10 @@ export const make = Effect.gen(function* () {
                   available: true,
                   executable,
                   version:
-                    (COMPILER_VERSION_PATTERNS[compiler].exec(banner) ??
-                      LOOSE_VERSION_PATTERN.exec(banner))?.[1] ?? null,
+                    (
+                      COMPILER_VERSION_PATTERNS[compiler].exec(banner) ??
+                      LOOSE_VERSION_PATTERN.exec(banner)
+                    )?.[1] ?? null,
                 };
               }),
             ),

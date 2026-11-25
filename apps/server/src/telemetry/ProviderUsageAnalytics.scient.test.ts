@@ -16,10 +16,11 @@ const providers = [
   {
     instanceId: ProviderInstanceId.make("claudeAgent"),
     driver: "claudeAgent",
+    auth: { status: "authenticated" },
     models: [{ slug: "claude-opus-5-5", isCustom: false }],
   } as unknown as ServerProvider,
 ];
-const label = (model: string) => reportedModelLabel(providers, model);
+const label = (_driver: string, model: string) => reportedModelLabel(providers, model);
 
 const turnProperties = (driver: string, selected: string, models?: ReadonlyArray<string>) =>
   providerTurnProperties(

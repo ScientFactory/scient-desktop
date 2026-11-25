@@ -1478,7 +1478,7 @@ export const layer: Layer.Layer<
           if (
             yield* (
               input.session.droidSteerTerminalHeld?.(input.attempt.id, terminal.status) ??
-                Effect.succeed(false)
+              Effect.succeed(false)
             )
           )
             return;
@@ -1845,7 +1845,7 @@ export const layer: Layer.Layer<
             terminal !== null &&
             (yield* (
               input.session.droidSteerTerminalHeld?.(input.attempt.id, terminal.status) ??
-                Effect.succeed(false)
+              Effect.succeed(false)
             ))
           )
             return false;

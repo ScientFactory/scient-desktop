@@ -68,9 +68,10 @@ const layerDesktopClerk = (
     // SCIENT-FORK:END desktop-shell-copy-png
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
+  stateDir = clerkStateDir,
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: clerkStateDir,
+    stateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     // SCIENT-FORK:START desktop-state-isolation
@@ -119,15 +120,12 @@ const layerDesktopClerk = (
   );
 };
 
-// SCIENT-FORK:START restored-sole-guards - the bridge takes upstream's owner-only store around Clerk's storage.
+// SCIENT-FORK:START restored-sole-guards - the bridge takes Clerk's own owner-only storage.
 const assertBridgeConfigured = (renderer: { readonly scheme: string; readonly host: string }) => {
   assert.equal(createClerkBridgeMock.mock.calls.length, 1);
   const { storage, ...options } = createClerkBridgeMock.mock.calls[0]![0];
   assert.deepEqual(options, { manageSingleInstanceLock: false, passkeys: true, renderer });
-  assert.notStrictEqual(storage, storageAdapter);
-  storageAdapter.getItem.mockReturnValueOnce("stored-token");
-  assert.equal(storage.getItem("session"), "stored-token");
-  assert.deepEqual(storageAdapter.getItem.mock.lastCall, ["session"]);
+  assert.strictEqual(storage, storageAdapter);
 };
 // SCIENT-FORK:END restored-sole-guards
 
@@ -193,9 +191,24 @@ describe("DesktopClerk", () => {
       assert.deepEqual(storageMock.mock.calls, [
         [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
       ]);
-      assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
+      assert.strictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
   );
+
+  it.effect("keeps Clerk tokens under a relative state directory instead of userData", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+
+    return Effect.sync(() => {
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.resolve("relative-state", "clerk") }],
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerDesktopClerk(true, [], "darwin", undefined, undefined, undefined, "relative-state"),
+      ),
+    );
+  });
 
   it.effect.each(["before configure", "after configure"] as const)(
     "reveals the running window when a second instance launches %s",

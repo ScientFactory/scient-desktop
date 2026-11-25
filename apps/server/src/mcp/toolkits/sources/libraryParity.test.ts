@@ -37,7 +37,21 @@ const pluginToolNames = new Set(
 const namedTools = (entry: LibraryParityEntry): ReadonlyArray<LibraryAgentTool> =>
   entry.kind === "tool" ? entry.tools : "tool" in entry ? [{ tool: entry.tool }] : [];
 
-it("gives every Library command and read endpoint an agent tool or a stated reason", () => {
+// Every run lists what an agent cannot do yet; the tables hold each reason.
+const gaps = [
+  ...Object.entries({ ...LIBRARY_COMMAND_PARITY, ...LIBRARY_READ_PARITY }),
+  ...Object.entries(LIBRARY_ORGANIZE_ACTION_PARITY).map(
+    ([action, entry]) => [`organize ${action}`, entry] as const,
+  ),
+].flatMap(([tag, entry]) =>
+  "kind" in entry && entry.kind === "gap" ? [`${tag}: ${entry.reason}`] : [],
+);
+
+it("gives every Library command and read endpoint an agent tool or a stated reason", async ({
+  annotate,
+}) => {
+  // The gaps are reported before the checks, so a failing run still lists them.
+  await Promise.all(gaps.map((gap) => annotate(`agent gap: ${gap}`)));
   const commands: ReadonlyArray<string> = Object.values(SCIENT_SOURCES_HTTP_COMMANDS);
   const skipped: ReadonlyArray<string> = NON_LIBRARY_ENDPOINTS;
   const reads = LIBRARY_ENDPOINT_GROUPS.flatMap((group) =>
@@ -95,15 +109,3 @@ it("gives every Library-only organize action an action of the library organize t
   );
   expect(missing).toEqual([]);
 });
-
-// Every run lists what an agent cannot do yet; the tables above hold each reason.
-const gaps = [
-  ...Object.entries({ ...LIBRARY_COMMAND_PARITY, ...LIBRARY_READ_PARITY }),
-  ...Object.entries(LIBRARY_ORGANIZE_ACTION_PARITY).map(
-    ([action, entry]) => [`organize ${action}`, entry] as const,
-  ),
-].flatMap(([tag, entry]) =>
-  "kind" in entry && entry.kind === "gap" ? [`${tag}: ${entry.reason}`] : [],
-);
-it("reports what an agent cannot do yet", ({ annotate }) =>
-  Promise.all(gaps.map((gap) => annotate(`agent gap: ${gap}`))));
