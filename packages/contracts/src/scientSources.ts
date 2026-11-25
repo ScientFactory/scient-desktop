@@ -44,6 +44,8 @@ import {
   ZoteroGroupId,
   ZoteroImportScope,
   ZoteroLibraryPage,
+  LiteratureWatchBriefing,
+  LiteratureWatchService,
 } from "@scientfactory/scient-sources";
 import {
   BibliographyFormatSchema,
@@ -800,6 +802,81 @@ export const ScientSystematicReviewChangeRequest = Schema.Struct({
   change: ScientSystematicReviewAction,
 });
 export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewChangeRequest.Type;
+
+/** Literature watches: the Library's list of them, with how many briefing papers are unread. */
+export const ScientLiteratureWatchesRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientLiteratureWatchesRequest = typeof ScientLiteratureWatchesRequest.Type;
+
+export const ScientLiteratureWatchSummary = Schema.Struct({
+  watchId: NonEmptyString,
+  title: Schema.String,
+  everyDays: Schema.Int,
+  paused: Schema.Boolean,
+  lastBriefingAt: Schema.optionalKey(Schema.String),
+  /** Papers in briefings the person has not opened yet. */
+  unread: Schema.Int,
+});
+export type ScientLiteratureWatchSummary = typeof ScientLiteratureWatchSummary.Type;
+
+export const ScientLiteratureWatchesResult = Schema.Struct({
+  watches: Schema.Array(ScientLiteratureWatchSummary),
+  unread: Schema.Int,
+});
+export type ScientLiteratureWatchesResult = typeof ScientLiteratureWatchesResult.Type;
+
+export const ScientLiteratureWatchRequest = Schema.Struct({
+  root: NonEmptyString,
+  watchId: NonEmptyString,
+});
+export type ScientLiteratureWatchRequest = typeof ScientLiteratureWatchRequest.Type;
+
+export const ScientLiteratureWatchResult = Schema.Struct({
+  watch: Schema.Struct({
+    ...ScientLiteratureWatchSummary.fields,
+    request: Schema.String,
+    details: Schema.optionalKey(Schema.String),
+    services: Schema.Array(LiteratureWatchService),
+    /** The thread its runs work in, once one has run. */
+    threadId: Schema.optionalKey(NonEmptyString),
+    running: Schema.Boolean,
+    briefings: Schema.Array(LiteratureWatchBriefing),
+  }),
+});
+export type ScientLiteratureWatchResult = typeof ScientLiteratureWatchResult.Type;
+
+const WatchItemTarget = { briefingId: NonEmptyString, candidateId: NonEmptyString };
+
+export const ScientLiteratureWatchChange = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("keep"), ...WatchItemTarget }),
+  Schema.Struct({ action: Schema.Literal("dismiss"), ...WatchItemTarget }),
+  Schema.Struct({ action: Schema.Literal("clear"), ...WatchItemTarget }),
+  Schema.Struct({
+    action: Schema.Literal("note"),
+    ...WatchItemTarget,
+    note: Schema.String.check(Schema.isMaxLength(4_000)),
+  }),
+  Schema.Struct({ action: Schema.Literal("opened"), briefingId: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literals(["pause", "resume", "run-now", "delete"]) }),
+]);
+export type ScientLiteratureWatchChange = typeof ScientLiteratureWatchChange.Type;
+
+export const ScientLiteratureWatchChangeRequest = Schema.Struct({
+  root: NonEmptyString,
+  watchId: NonEmptyString,
+  change: ScientLiteratureWatchChange,
+});
+export type ScientLiteratureWatchChangeRequest = typeof ScientLiteratureWatchChangeRequest.Type;
+
+export const ScientLiteratureWatchChangeResult = Schema.Struct({
+  /** For keep: the Library source it now is, or why it could not be added. */
+  kept: Schema.optionalKey(
+    Schema.Struct({
+      outcome: Schema.Literals(["imported", "duplicate", "unavailable", "not-found"]),
+      sourceId: Schema.optionalKey(NonEmptyString),
+    }),
+  ),
+});
+export type ScientLiteratureWatchChangeResult = typeof ScientLiteratureWatchChangeResult.Type;
 
 export const ScientSystematicReviewConflictsRequest = Schema.Struct({
   ...ScientSystematicReviewRequest.fields,

@@ -8,6 +8,7 @@ import {
   scientLibraryLocation,
   scientLibraryRootFor,
 } from "@scientfactory/scient-sources/library-root";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Path from "effect/Path";
@@ -128,6 +129,22 @@ import {
   searchCitationStyles,
   setProjectCitationStyle,
 } from "./CitationStyles.ts";
+import { deleteLiteratureWatch } from "@scientfactory/scient-sources/literature-watch-store";
+import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
+import type { ScheduledTaskError } from "@t3tools/contracts";
+import {
+  changeLiteratureWatchItem,
+  literatureWatchList,
+  literatureWatchView,
+  setLiteratureWatchPaused,
+} from "./literatureWatch/LiteratureWatchRoutes.ts";
+import {
+  deleteLiteratureWatchSchedule,
+  literatureWatchTaskId,
+  restoreLiteratureWatchSchedules,
+  runLiteratureWatchNow,
+  syncLiteratureWatchSchedule,
+} from "./literatureWatch/LiteratureWatchSchedule.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -203,6 +220,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
     const projectStore = yield* ProjectStoreV2;
+    const scheduledTasks = yield* ScheduledTaskService;
     startManagedBibliographySync();
     const zotero = {
       ...(yield* ZoteroTransports),
@@ -453,6 +471,95 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
             library ? libraryReview(library, args.payload) : getSystematicReview(args.payload),
           ),
+        )
+        .handle("literatureWatches", (args) =>
+          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, async (library) =>
+            library ? literatureWatchList(library.library) : { watches: [], unread: 0 },
+          ),
+        )
+        .handle("literatureWatch", (args) =>
+          Effect.gen(function* () {
+            const { watch, view } = yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              async (library) => {
+                if (!library) throw new Error("Literature watches need the personal Library.");
+                return literatureWatchView(library.library, args.payload.watchId);
+              },
+            );
+            yield* restoreLiteratureWatchSchedules([watch]).pipe(
+              Effect.provideService(ScheduledTaskService, scheduledTasks),
+              Effect.ignore,
+            );
+            const { tasks } = yield* scheduledTasks
+              .list()
+              .pipe(Effect.orElseSucceed(() => ({ tasks: [] })));
+            const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watch.watchId));
+            return {
+              watch: {
+                ...view,
+                ...(task?.threadId ? { threadId: task.threadId } : {}),
+                running: task?.lastRunStatus === "running",
+              },
+            };
+          }),
+        )
+        .handle("literatureWatchChange", (args) =>
+          Effect.gen(function* () {
+            const { watchId, change } = args.payload;
+            const now = DateTime.toDateUtc(yield* DateTime.now);
+            const result = yield* route(
+              args.endpoint.name,
+              AuthOrchestrationOperateScope,
+              args.payload.root,
+              async (library) => {
+                if (!library) throw new Error("Literature watches need the personal Library.");
+                switch (change.action) {
+                  case "pause":
+                  case "resume":
+                    return {
+                      watch: await setLiteratureWatchPaused(
+                        library.library,
+                        watchId,
+                        change.action === "pause",
+                        now,
+                      ),
+                    };
+                  case "delete":
+                    await deleteLiteratureWatch(library.library, watchId);
+                    return {};
+                  case "run-now":
+                    return {};
+                  default:
+                    return {
+                      result: await changeLiteratureWatchItem(
+                        library.library,
+                        watchId,
+                        change,
+                        keyed.resolveIdentifiers,
+                        now,
+                      ),
+                    };
+                }
+              },
+            );
+            const schedule: Effect.Effect<unknown, ScheduledTaskError, ScheduledTaskService> =
+              "watch" in result && result.watch
+                ? syncLiteratureWatchSchedule(result.watch)
+                : change.action === "delete"
+                  ? deleteLiteratureWatchSchedule(watchId)
+                  : change.action === "run-now"
+                    ? runLiteratureWatchNow(watchId)
+                    : Effect.void;
+            yield* schedule.pipe(
+              Effect.provideService(ScheduledTaskService, scheduledTasks),
+              Effect.catch((cause) =>
+                failEnvironmentInternal("scient_sources_operation_failed", cause),
+              ),
+            );
+            return "result" in result && result.result ? result.result : {};
+          }),
         )
         .handle("systematicReviewConflicts", (args) =>
           route(

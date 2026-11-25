@@ -9,6 +9,7 @@ import type * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 import type { ScientAnnotationsToolkit } from "../annotations/tools.ts";
 import type { ScientReferencesToolkit } from "../references/tools.ts";
+import type { ScientLiteratureWatchToolkit } from "../literatureWatch/tools.ts";
 import type { ScientSystematicReviewsToolkit } from "../systematicReviews/tools.ts";
 import type { ScientSourcesToolkit } from "./tools.ts";
 
@@ -16,6 +17,7 @@ export type LibraryToolName =
   | keyof typeof ScientSourcesToolkit.tools
   | keyof typeof ScientReferencesToolkit.tools
   | keyof typeof ScientSystematicReviewsToolkit.tools
+  | keyof typeof ScientLiteratureWatchToolkit.tools
   | keyof typeof ScientAnnotationsToolkit.tools;
 
 type EnvironmentGroups =
@@ -65,6 +67,11 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientSources.organize": tool("scient_sources_organize"),
   "scientSources.systematicReviewChange": tool("scient_sources_systematic_review_update"),
   "scientSources.systematicReviewConflict": tool("scient_sources_systematic_review_update"),
+  "scientSources.literatureWatchChange": {
+    kind: "gap",
+    reason:
+      "Keeping and dismissing briefing papers is the person's call; agents pause or change a watch with scient_watch_save and add papers with scient_sources_add.",
+  },
   "scientSources.bulkUpdate": tool("scient_sources_bulk_update"),
   "scientSources.addByIdentifier": tool("scient_sources_add", "identifierList"),
   "scientSources.restore": tool("scient_sources_restore"),
@@ -202,6 +209,8 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   "scientSources.systematicReviews": tool("scient_sources_systematic_reviews"),
   "scientSources.systematicReview": tool("scient_sources_systematic_reviews", "reviewId"),
   "scientSources.systematicReviewConflicts": tool("scient_sources_systematic_reviews", "reviewId"),
+  "scientSources.literatureWatches": tool("scient_watches"),
+  "scientSources.literatureWatch": tool("scient_watches", "watchId"),
   // Library mode only: the list tool's duplicates.
   "scientSources.duplicates": tool("scient_sources_list"),
   "scientSources.moveStatus": tool("scient_sources_list"),
