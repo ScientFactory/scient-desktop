@@ -1,7 +1,7 @@
-// SCIENT-FORK:START — Compute roles that share one runner, each from a clean start: `begin` gives a
-// role its own temporary files, R library and owner mark; `end` stops what it owns, puts per-user
-// state back and checks shared packages unchanged; `summary` names roles that failed or skipped a
-// proof. Steps of role `r` have ids `r` (begin), PROOFS[r] and `end-r`; STEPS is toJSON(steps).
+// SCIENT-FORK:START — Compute roles on one runner, each from a clean start: `begin` gives a role
+// its own temporary files, R library and owner mark; `end` fails a role that left its processes
+// running or changed a shared R library, and never signals or writes either. `summary` names roles
+// that failed or skipped a proof: role `r`'s steps are `r`, PROOFS[r] and `end-r` in toJSON(steps).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -93,8 +93,8 @@ const writeState = (env, name, value) => {
 // Short, so paths under it stay well within Windows' and Unix sockets' length limits.
 export const roleTemp = (env, role) => NodePath.join(env.RUNNER_TEMP, "cr", role);
 const seedDirectory = (env) => NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed");
-// Setup's R libraries as it left them, by their index in the seed's list; roles never write here.
-const savedLibrary = (env, index) => NodePath.join(seedDirectory(env), "R", String(index));
+// Setup's R user library as it left it, which each role's own starts from.
+const seedLibrary = (env) => NodePath.join(seedDirectory(env), "R-library");
 const TEMP_VARIABLES = ["TMPDIR", "TMP", "TEMP"];
 
 // `ps -o pid=,ppid=,uid=,stat=,lstart=,comm=` in the C locale, without zombies: exited, they wait
@@ -261,45 +261,45 @@ function listProcesses(platform, owner) {
 }
 
 /**
- * This user's new processes outside this step's tree. `owned`: marked, recorded owned, or the child
- * of an owned parent seen with it. `unverified`: other orphans (OS helpers, Apple's programs hiding
- * their environment, a child whose parent's pid may since be reused) and their children: reported.
+ * This user's processes started since `before`, outside this step's own tree. `owned`: carries the
+ * role's mark, or is the child of an owned process listed with it. `unverified`: other orphans (OS
+ * helpers, Apple's programs hiding their environment, a child whose parent has exited) and their
+ * children. A parent counts only if it started no later than the child: a pid can be reused.
  */
-export function leftovers({ before, after, self, uid, recorded = new Map() }) {
+export function leftovers({ before, after, self, uid }) {
   const known = new Set(before.map((entry) => entry.key));
   const byPid = new Map(after.map((entry) => [entry.pid, entry]));
-  const step = new Set();
-  for (let pid = self; pid > 0 && !step.has(pid); pid = byPid.get(pid)?.ppid ?? 0) step.add(pid);
-  for (const queue = [self]; queue.length;) {
-    const parent = queue.pop();
-    for (const entry of after)
-      if (entry.ppid === parent && !step.has(entry.pid)) {
-        step.add(entry.pid);
-        queue.push(entry.pid);
-      }
-  }
-  // Started after the given pid's process: a pid reused after the real parent exited is not it.
-  const startedAfter = (entry, parent) => !(parent.created > entry.created);
   const parentOf = (entry) => {
-    const candidate = byPid.get(entry.ppid);
-    return candidate && entry.ppid > 1 && startedAfter(entry, candidate) ? candidate : null;
+    const parent = byPid.get(entry.ppid);
+    return parent && entry.ppid > 1 && parent !== entry && !(parent.created > entry.created)
+      ? parent
+      : null;
   };
-  const candidate = (entry) =>
-    !known.has(entry.key) && !step.has(entry.pid) && (entry.uid === null || entry.uid === uid);
+  const ancestors = new Set();
+  for (
+    let entry = parentOf(byPid.get(self) ?? {});
+    entry && !ancestors.has(entry);
+    entry = parentOf(entry)
+  )
+    ancestors.add(entry);
   const verdicts = new Map();
-  // "owned", "unverified" or "other".
+  // "step" (this step or what it started), "owned", "unverified" or "other".
   const verdict = (entry) => {
-    if (verdicts.has(entry.pid)) return verdicts.get(entry.pid);
-    verdicts.set(entry.pid, "other");
-    let result = "other";
-    if (candidate(entry)) {
-      const parent = parentOf(entry);
-      const inherited = parent ? verdict(parent) : null;
-      if (entry.marked === true || recorded.has(entry.key) || inherited === "owned")
-        result = "owned";
-      else if ((!parent || inherited === "unverified") && !entry.service) result = "unverified";
-    }
-    verdicts.set(entry.pid, result);
+    if (verdicts.has(entry)) return verdicts.get(entry);
+    verdicts.set(entry, "other");
+    const parent = parentOf(entry);
+    const inherited = parent ? verdict(parent) : null;
+    const result =
+      entry.pid === self || inherited === "step"
+        ? "step"
+        : ancestors.has(entry) || known.has(entry.key) || (entry.uid !== null && entry.uid !== uid)
+          ? "other"
+          : entry.marked === true || inherited === "owned"
+            ? "owned"
+            : (!parent || inherited === "unverified") && !entry.service
+              ? "unverified"
+              : "other";
+    verdicts.set(entry, result);
     return result;
   };
   return {
@@ -324,44 +324,6 @@ function ownedOnWindows(candidates, user) {
   return candidates.filter((entry) => mine.has(entry.pid));
 }
 
-const signalProcess = (pid, name, platform) => {
-  if (platform === "win32")
-    NodeChildProcess.spawnSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore" });
-  else
-    try {
-      process.kill(pid, name);
-    } catch {
-      // Already gone.
-    }
-};
-
-/**
- * Asks `processes` to stop, then forces any left. Each signal goes only to those still the same
- * process (pid and start time) just before it: an exited process's pid can be reused.
- */
-export async function stop(
-  processes,
-  platform,
-  {
-    list = () => listProcesses(platform),
-    signal = (pid, name) => signalProcess(pid, name, platform),
-    wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  } = {},
-) {
-  const running = () => {
-    const current = new Set(list().map((entry) => entry.key));
-    return processes.filter((entry) => current.has(entry.key));
-  };
-  const send = (name) => {
-    for (const { pid } of running()) signal(pid, name);
-  };
-  if (platform !== "win32") {
-    send("SIGTERM");
-    for (let waited = 0; waited < 5000 && running().length; waited += 100) await wait(100);
-  }
-  send("SIGKILL");
-}
-
 export function homeEntries(home, parents = HOME_PARENTS) {
   return parents.flatMap((parent) => {
     try {
@@ -383,24 +345,35 @@ export function addedEntries(before, after) {
   );
 }
 
-// Julia makes installed artifacts read-only, which a plain recursive removal cannot delete.
+// Owner-writable directories: Julia makes installed artifacts read-only, and R installs into a
+// role's copy of a library that may be read-only.
+function makeWritable(path) {
+  const stat = NodeFS.lstatSync(path);
+  if (!stat.isDirectory()) return;
+  NodeFS.chmodSync(path, stat.mode | 0o700);
+  for (const name of NodeFS.readdirSync(path)) makeWritable(NodePath.join(path, name));
+}
+
 function remove(path) {
   try {
     NodeFS.rmSync(path, { recursive: true, force: true });
   } catch {
-    const writable = (entry) => {
-      const stat = NodeFS.lstatSync(entry);
-      if (!stat.isDirectory()) return;
-      NodeFS.chmodSync(entry, stat.mode | 0o700);
-      for (const name of NodeFS.readdirSync(entry)) writable(NodePath.join(entry, name));
-    };
-    writable(path);
+    makeWritable(path);
     NodeFS.rmSync(path, { recursive: true, force: true });
   }
 }
 
 const copy = (from, to) =>
   NodeFS.cpSync(from, to, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+
+// Contents, never links, so nothing written into the copy reaches the original.
+const copyContents = (from, to) =>
+  NodeFS.cpSync(from, to, {
+    recursive: true,
+    dereference: true,
+    preserveTimestamps: true,
+    filter: (source) => NodeFS.existsSync(source),
+  });
 
 /** Puts each HOME_STATE entry back as the seed saved it, or removes it where there was none. */
 function restoreHomeState(env, home, seed) {
@@ -424,10 +397,7 @@ const packageVersion = (directory) => {
   }
 };
 
-/**
- * Each package's version in an R library: its folder name and DESCRIPTION's Version field. Only
- * name and version: a package rewritten at the same version is not seen.
- */
+/** Each package's version in an R library: its folder name and DESCRIPTION's Version field. */
 export function rPackages(library) {
   let names = [];
   try {
@@ -493,10 +463,8 @@ const host = {
   platform,
   home: () => NodeOS.homedir(),
   processes: (owner) => listProcesses(platform, owner),
-  stop: (processes) => stop(processes, platform),
-  owned: (processes) =>
+  mine: (processes) =>
     platform === "win32" ? ownedOnWindows(processes, NodeOS.userInfo().username) : processes,
-  wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   python: () => run("python", ["-c", "import sys; print(sys.executable)"]).trim(),
   packages: (python) => pythonPackages(python),
   pip: (python, args) =>
@@ -527,7 +495,6 @@ const allows = (path, mode) => {
   }
 };
 
-// The directory itself, so a copy of a symlinked library is independent of it.
 const realPath = (path) => {
   try {
     return NodeFS.realpathSync(path);
@@ -537,9 +504,8 @@ const realPath = (path) => {
 };
 
 /**
- * Saved when the first role begins: what setup left in HOME_STATE, its temporary-file paths, and
- * R's libraries, with a copy of each one a role could write and of setup's user library, which
- * seeds each role's own.
+ * Saved when the first role begins: what setup left in HOME_STATE, its temporary-file paths, a copy
+ * of its R user library, and each R library's packages, which no role may change.
  */
 function seed(env, system) {
   if (NodeFS.existsSync(stateFile(env, "seed"))) return { setup: readState(env, "seed") };
@@ -554,31 +520,21 @@ function seed(env, system) {
     saved.push(entry);
   }
   const rUser = env.R_LIBS_USER || null;
-  // Each once, as first named: setup's user library keeps its own spelling at index 0.
-  const libraries = [];
-  const resolved = new Set();
-  for (const library of [...(rUser ? [rUser] : []), ...system.rLibraries()])
-    if (!resolved.has(realPath(library))) {
-      resolved.add(realPath(library));
-      libraries.push(library);
-    }
-  // Restorable: the ones a role could write, which an end puts back from their copy.
-  const copies = [];
-  for (const [index, library] of libraries.entries()) {
-    if (!NodeFS.existsSync(library)) continue;
-    const restorable = allows(library, NodeFS.constants.W_OK);
-    const seeds = Boolean(rUser) && index === 0 && allows(library, NodeFS.constants.R_OK);
-    if (!restorable && !seeds) continue;
-    copy(realPath(library), savedLibrary(env, index));
-    if (restorable) copies.push(library);
+  if (rUser && allows(rUser, NodeFS.constants.R_OK)) {
+    copyContents(realPath(rUser), seedLibrary(env));
+    makeWritable(seedLibrary(env));
+  }
+  const rLibraries = {};
+  for (const library of [...(rUser ? [rUser] : []), ...system.rLibraries()]) {
+    const real = realPath(library);
+    if (!Object.hasOwn(rLibraries, real)) rLibraries[real] = rPackages(real);
   }
   const fallback = env.TMPDIR || env.TEMP || env.TMP || NodeOS.tmpdir();
   const setup = {
     home: saved,
     temp: Object.fromEntries(TEMP_VARIABLES.map((name) => [name, env[name] || fallback])),
     rUser,
-    rLibraries: Object.fromEntries(libraries.map((library) => [library, rPackages(library)])),
-    rCopies: copies,
+    rLibraries,
   };
   writeState(env, "seed", setup);
   return { setup, fresh: true };
@@ -593,14 +549,11 @@ export function begin(role, args, env, system = host) {
   if (!fresh) restoreHomeState(env, system.home(), setup);
   const owner = `${role}-${NodeCrypto.randomUUID()}`;
   const lines = [...TEMP_VARIABLES.map((name) => [name, temp]), [OWNER_VARIABLE, owner]];
-  // The role's own R user library, seeded from setup's copy, never from the live library.
+  // The role's own R user library, from setup's copy, never the live library.
   if (setup.rUser) {
     const library = NodePath.join(temp, "R-library");
-    if (NodeFS.existsSync(savedLibrary(env, 0))) {
-      copy(savedLibrary(env, 0), library);
-      // Setup's may be read-only; the role installs into its own.
-      NodeFS.chmodSync(library, NodeFS.statSync(library).mode | 0o700);
-    } else NodeFS.mkdirSync(library, { recursive: true });
+    if (NodeFS.existsSync(seedLibrary(env))) copyContents(seedLibrary(env), library);
+    else NodeFS.mkdirSync(library, { recursive: true });
     lines.push(["R_LIBS_USER", library]);
   }
   // Later steps, until the next role begins, see only this role's temporary files and library.
@@ -634,56 +587,33 @@ export function venv(role, packages, env, system = host) {
   return python;
 }
 
-export async function end(role, args, env, system = host) {
+export function end(role, args, env, system = host) {
   const label = ROLES[role] ?? role;
   const before = readState(env, role);
   const setup = readState(env, "seed");
   const problems = [];
 
-  // Ownership found once is kept: a child outlives its parent's shutdown as the role's.
-  const recorded = new Map();
-  const reported = new Set();
-  const find = () => {
-    const { owned, unverified } = leftovers({
-      before: before.processes,
-      after: system.processes(before.owner),
-      self: process.pid,
-      uid: system.platform === "win32" ? null : process.getuid(),
-      recorded,
-    });
-    const mine = system.owned(owned);
-    for (const entry of mine) recorded.set(entry.key, entry);
-    // Each once, whenever first seen: a role's process can leave one as it stops.
-    for (const entry of system.owned(unverified))
-      if (!reported.has(entry.key)) {
-        reported.add(entry.key);
-        console.log(
-          `::warning::${label}: ${entry.command} (${entry.pid}) started meanwhile and lost its parent; nothing shows it is the role's, so it is left running`,
-        );
-      }
-    return { owned: mine };
-  };
-  const first = find();
-  for (const entry of first.owned)
-    console.log(`::warning::${label} left ${entry.command} (${entry.pid}) running`);
-  // Stop the owned set until none is left, re-listing it each time so children started during
-  // shutdown are stopped too; whatever is still owned at the deadline fails the end.
-  let remaining = first.owned;
-  const stopped = new Set();
-  for (let round = 0; remaining.length && round < 3; round++) {
-    await system.stop(remaining);
-    for (const entry of remaining) stopped.add(entry.key);
-    for (let waited = 0; ; waited += 200) {
-      remaining = find().owned;
-      if (!remaining.length || remaining.some((entry) => !stopped.has(entry.key))) break;
-      if (waited >= 3000) break;
-      await system.wait(200);
-    }
-  }
-  if (remaining.length)
-    problems.push(
-      `processes still running after being stopped: ${remaining.map((entry) => `${entry.command} (${entry.pid})`).join(", ")}`,
+  const { owned, unverified } = leftovers({
+    before: before.processes,
+    after: system.processes(before.owner),
+    self: process.pid,
+    uid: system.platform === "win32" ? null : process.getuid(),
+  });
+  for (const entry of system.mine(unverified))
+    console.log(
+      `::warning::${label}: ${entry.command} (${entry.pid}) started meanwhile and lost its parent; nothing shows it is the role's, so it is left running`,
     );
+  if (owned.length)
+    problems.push(
+      `${label} left its processes running: ${owned.map((entry) => `${entry.command} (${entry.pid})`).join(", ")}`,
+    );
+
+  // Before HOME_STATE is put back: a role installs only into its own library.
+  for (const [library, packages] of Object.entries(setup.rLibraries)) {
+    const changes = packageChanges(packages, rPackages(library));
+    if (changes.length)
+      problems.push(`${label} changed the R library ${library}: ${changes.join(", ")}`);
+  }
 
   const home = system.home();
   restoreHomeState(env, home, setup);
@@ -704,38 +634,6 @@ export async function end(role, args, env, system = host) {
   for (const entry of changed.filter((entry) => entry.code === "??"))
     remove(NodePath.join(cwd, entry.path));
   for (const entry of changed) console.log(`Restored ${entry.path} in the checkout`);
-
-  // Roles install into their own library; one that wrote into these would reach the next role,
-  // so each changed package is put back from setup's copy.
-  for (const [index, [library, packages]] of Object.entries(setup.rLibraries).entries()) {
-    const changes = packageChanges(packages, rPackages(library));
-    if (!changes.length) continue;
-    problems.push(`${label} changed the R library ${library}: ${changes.join(", ")}`);
-    if (!setup.rCopies.includes(library)) continue;
-    const now = rPackages(library);
-    for (const name of Object.keys({ ...packages, ...now }).filter(
-      (name) => packages[name] !== now[name],
-    )) {
-      const live = NodePath.join(library, name);
-      // Setup's copy is staged and checked first: a live package goes only once it can be replaced.
-      const staged = NodePath.join(library, `.${name}.restoring`);
-      try {
-        if (packages[name] !== undefined) {
-          remove(staged);
-          copy(NodePath.join(savedLibrary(env, index), name), staged);
-          if (packageVersion(staged) !== packages[name])
-            throw new Error(`setup's copy is ${packageVersion(staged) || "missing"}`);
-        }
-        remove(live);
-        if (packages[name] !== undefined) NodeFS.renameSync(staged, live);
-      } catch (error) {
-        remove(staged);
-        problems.push(`${live} could not be put back: ${error.message}`);
-      }
-    }
-    const after = packageChanges(packages, rPackages(library));
-    if (after.length) problems.push(`${library} could not be put back: ${after.join(", ")}`);
-  }
 
   const checked = option(args, "--check-python");
   if (checked) {
@@ -810,7 +708,7 @@ if (
   else if (!Object.hasOwn(ROLES, role ?? "")) throw new Error(`Unknown Compute role: ${role}`);
   else if (command === "begin") begin(role, args, process.env);
   else if (command === "venv") venv(role, args, process.env);
-  else if (command === "end") await end(role, args, process.env);
+  else if (command === "end") end(role, args, process.env);
   else throw new Error("Use begin <role>, venv <role>, end <role> or summary.");
 }
 // SCIENT-FORK:END

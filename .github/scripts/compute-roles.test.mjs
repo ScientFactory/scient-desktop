@@ -20,7 +20,6 @@ import {
   parseWindowsProcesses,
   roleTemp,
   summarize,
-  stop,
   venv,
 } from "./compute-roles.mjs";
 
@@ -92,6 +91,13 @@ NodeTest.test("never counts this step, its ancestors or the process lister it st
     owned: [],
     unverified: [],
   });
+  // This step got the pid of a role's exited process, whose marked child is still running.
+  const self = unix(300, 10, 501, "node", { marked: true, created: 300 });
+  const child = unix(301, 300, 501, "/usr/bin/R", { marked: true, created: 200 });
+  NodeAssert.deepEqual(verdicts({ before, after: [...before, self, child], self: 300, uid: 501 }), {
+    owned: [301],
+    unverified: [],
+  });
 });
 
 NodeTest.test("on Linux, the role owns what carries its mark and what descends from it", () => {
@@ -113,8 +119,6 @@ NodeTest.test("on Linux, the role owns what carries its mark and what descends f
     unix(34, 5, 501, "/usr/lib/dbus-daemon", { marked: false }),
     // Another user's.
     unix(35, 1, 0, "/usr/bin/sudo", { marked: null }),
-    // The same pid started again is a new process.
-    unix(10, 1, 501, "python3", { marked: true, created: 9 }),
   ];
   NodeAssert.deepEqual(verdicts({ before, after, self: 21, uid: 501 }), {
     owned: [30, 31, 33],
@@ -149,55 +153,6 @@ NodeTest.test("on macOS, an orphan whose environment is hidden is only reported"
     owned: [42, 43],
     unverified: [30, 31, 32],
   });
-  // Seen under R before R exited, it stays the role's once launchd adopts it.
-  const adopted = unix(43, 1, 501, "/usr/bin/make", { marked: null, service: false });
-  NodeAssert.deepEqual(
-    verdicts({
-      before,
-      after: [...before, after[1], adopted],
-      self: 21,
-      uid: 501,
-      recorded: new Map([[adopted.key, adopted]]),
-    }),
-    { owned: [43], unverified: [] },
-  );
-});
-
-NodeTest.test("a reused pid is not the process recorded under it", () => {
-  const before = [unix(1, 0, 0, "/sbin/launchd"), unix(10, 1, 501, "Runner.Worker")];
-  const node = unix(21, 10, 501, "node", { marked: true });
-  const kernel = unix(30, 1, 501, "/usr/bin/python3", { marked: true, created: 100 });
-  const recorded = new Map([[kernel.key, kernel]]);
-  // The kernel exited and an unrelated program of the same name got its pid.
-  const reused = unix(30, 1, 501, "/usr/bin/python3", { marked: false, created: 160 });
-  NodeAssert.deepEqual(
-    verdicts({ before, after: [...before, node, reused], self: 21, uid: 501, recorded }),
-    {
-      owned: [],
-      unverified: [30],
-    },
-  );
-});
-
-NodeTest.test("each stop signal goes only to a process still the one asked for", async () => {
-  const kernel = unix(4242, 1, uid, "/usr/bin/python3", { created: 100 });
-  const reused = unix(4242, 1, uid, "/usr/bin/python3", { created: 160 });
-  let lists = 0;
-  const signals = [];
-  await stop([kernel], "linux", {
-    // The kernel exits during the wait and a new process gets its pid.
-    list: () => (++lists <= 3 ? [kernel] : [reused]),
-    signal: (pid, name) => signals.push([pid, name]),
-    wait: async () => {},
-  });
-  NodeAssert.deepEqual(signals, [[4242, "SIGTERM"]]);
-  // On Windows the one forced stop is checked the same way.
-  signals.length = 0;
-  await stop([kernel], "win32", {
-    list: () => [reused],
-    signal: (pid, name) => signals.push([pid, name]),
-  });
-  NodeAssert.deepEqual(signals, []);
 });
 
 NodeTest.test("on Windows, the role owns what carries its mark or was seen as its own", () => {
@@ -226,19 +181,6 @@ NodeTest.test("on Windows, the role owns what carries its mark or was seen as it
     owned: [34, 35],
     unverified: [30, 31, 32],
   });
-  // A parent the role owned when this step saw it, which has exited since: a later process may
-  // have had its pid, so a child not seen with it is still only reported.
-  const parent = windows(25, 10, "C:\\julia\\bin\\julia.exe", 15, true);
-  NodeAssert.deepEqual(
-    verdicts({ before, after, self: 21, uid: null, recorded: new Map([[parent.key, parent]]) }),
-    { owned: [34, 35], unverified: [30, 31, 32] },
-  );
-  // Seen as the role's earlier, under that parent, it stays the role's.
-  const seen = after.find((entry) => entry.pid === 30);
-  NodeAssert.deepEqual(
-    verdicts({ before, after, self: 21, uid: null, recorded: new Map([[seen.key, seen]]) }),
-    { owned: [30, 31, 34, 35], unverified: [32] },
-  );
 });
 
 NodeTest.test("removes only the outermost added per-user entry", () => {
@@ -349,17 +291,11 @@ function sandbox() {
   // Pythons by interpreter path: each its own package versions.
   const pythons = { "/toolcache/python": { pip: "24.0", setuptools: "70.0" } };
   let running = [];
-  const stopped = [];
   const system = {
     platform: "linux",
     home: () => home,
     processes: () => [unix(process.pid, 1, uid, "node", { marked: true }), ...running],
-    stop: async (processes) => {
-      stopped.push(...processes.map((entry) => entry.pid));
-      running = running.filter((entry) => !processes.includes(entry));
-    },
-    owned: (processes) => processes,
-    wait: async () => {},
+    mine: (processes) => processes,
     python: () => "/toolcache/python",
     packages: (python) => ({ ...pythons[python] }),
     pip: (python, [command, ...args]) => {
@@ -393,7 +329,6 @@ function sandbox() {
     home,
     env,
     pythons,
-    stopped,
     system,
     stepEnv,
     run: (entries) => (running = entries),
@@ -412,7 +347,7 @@ const installR = (library, name, version) => {
 
 NodeTest.test(
   "a role leaves no temporary files, per-user entries or checkout changes behind",
-  async () => {
+  () => {
     const box = sandbox();
     const { env, home, workspace, system } = box;
     try {
@@ -430,7 +365,7 @@ NodeTest.test(
       NodeFS.mkdirSync(NodePath.join(workspace, "out"));
       NodeFS.writeFileSync(NodePath.join(workspace, "out", "figure.png"), "");
 
-      await end("kernels", ["--check-python", "bare"], env, system);
+      end("kernels", ["--check-python", "bare"], env, system);
       NodeAssert.equal(NodeFS.existsSync(temp), false);
       NodeAssert.deepEqual(NodeFS.readdirSync(home), [".cache"]);
       NodeAssert.deepEqual(NodeFS.readdirSync(NodePath.join(home, ".cache")), []);
@@ -443,14 +378,13 @@ NodeTest.test(
         NodeFS.readFileSync(NodePath.join(workspace, "kept.txt"), "utf8"),
         "changed before\n",
       );
-      NodeAssert.deepEqual(box.stopped, []);
     } finally {
       box.cleanup();
     }
   },
 );
 
-NodeTest.test("packages one role installs or upgrades are not there for the next", async () => {
+NodeTest.test("packages one role installs or upgrades are not there for the next", () => {
   const box = sandbox();
   const { env, home, system, pythons } = box;
   try {
@@ -461,10 +395,8 @@ NodeTest.test("packages one role installs or upgrades are not there for the next
     NodeFS.mkdirSync(NodePath.join(home, ".local", "share", "jupyter", "kernels"), {
       recursive: true,
     });
-    const site = NodePath.join(box.root, "site-library");
-    installR(site, "base64enc", "0.1-3");
     // R names setup's library again, spelled its own way.
-    system.rLibraries = () => [`${setupLibrary}${NodePath.sep}`, site];
+    system.rLibraries = () => [`${setupLibrary}${NodePath.sep}`];
     env.R_LIBS_USER = setupLibrary;
 
     begin("people", ["--save-python", "bare"], env, system);
@@ -482,7 +414,7 @@ NodeTest.test("packages one role installs or upgrades are not there for the next
     // Julia leaves installed artifacts read-only.
     NodeFS.chmodSync(NodePath.join(home, ".julia", "compiled", "v1.11"), 0o500);
     NodeFS.mkdirSync(NodePath.join(home, ".local", "share", "jupyter", "kernels", "ir"));
-    await end("people", ["--check-python", "bare"], env, system);
+    end("people", ["--check-python", "bare"], env, system);
 
     begin("kernels", [], env, system);
     const kernels = box.stepEnv();
@@ -509,153 +441,190 @@ NodeTest.test("packages one role installs or upgrades are not there for the next
       "jupyter-client",
       "pip",
     ]);
-    await end("kernels", ["--check-python", "bare"], env, system);
+    end("kernels", ["--check-python", "bare"], env, system);
     NodeAssert.equal(NodeFS.existsSync(NodePath.dirname(NodePath.dirname(bridge))), false);
     NodeAssert.deepEqual(pythons["/toolcache/python"], { pip: "24.0", setuptools: "70.0" });
 
-    // A role that upgrades a package of the saved Python, or writes into a shared R library,
-    // fails its end, and the next role still gets the Python and the libraries as they were.
+    // A role that upgrades a package of the saved Python fails its end, and the next role still
+    // gets the Python as it was.
     begin("files", [], env, system);
     pythons["/toolcache/python"].pip = "25.0";
     pythons["/toolcache/python"].ipykernel = "6.29";
-    installR(site, "IRkernel", "1.3.2");
-    installR(site, "base64enc", "0.1-4");
-    installR(setupLibrary, "IRkernel", "1.3.2");
-    await NodeAssert.rejects(
-      end("files", ["--check-python", "bare"], env, system),
-      (error) =>
-        error.message.includes(
-          "changed /toolcache/python: ipykernel 6.29 added, pip 24.0 -> 25.0",
-        ) &&
-        error.message.includes(
-          `changed the R library ${site}: IRkernel 1.3.2 added, base64enc 0.1-3 -> 0.1-4`,
-        ) &&
-        error.message.includes(`changed the R library ${setupLibrary}: IRkernel 1.3.2 added`) &&
-        !error.message.includes("could not be put back"),
+    NodeAssert.throws(
+      () => end("files", ["--check-python", "bare"], env, system),
+      /changed \/toolcache\/python: ipykernel 6\.29 added, pip 24\.0 -> 25\.0/,
     );
     NodeAssert.deepEqual(pythons["/toolcache/python"], { pip: "24.0", setuptools: "70.0" });
-    NodeAssert.deepEqual(NodeFS.readdirSync(setupLibrary), ["jsonlite"]);
-    NodeAssert.deepEqual(NodeFS.readdirSync(site), ["base64enc"]);
-    NodeAssert.match(
-      NodeFS.readFileSync(NodePath.join(site, "base64enc", "DESCRIPTION"), "utf8"),
-      /Version: 0\.1-3/,
-    );
 
     // Managed Python sits between the R and Julia roles and real Python, which reuses that 3.12.
     begin("managed", [], env, system);
     NodeAssert.deepEqual(NodeFS.readdirSync(box.stepEnv().R_LIBS_USER), ["jsonlite"]);
     pythons["/toolcache/python"].pip = "25.1";
-    await NodeAssert.rejects(
-      end("managed", ["--check-python", "bare"], env, system),
+    NodeAssert.throws(
+      () => end("managed", ["--check-python", "bare"], env, system),
       /changed \/toolcache\/python: pip 24\.0 -> 25\.1/,
     );
     begin("python", [], env, system);
     NodeAssert.deepEqual(pythons["/toolcache/python"], { pip: "24.0", setuptools: "70.0" });
-    await end("python", [], env, system);
+    end("python", [], env, system);
   } finally {
     box.cleanup();
   }
 });
 
-NodeTest.test("a role's processes are stopped, and an end fails if one survives", async () => {
+NodeTest.test("a change to a shared R library fails the end and is left as found", () => {
+  const box = sandbox();
+  const { env, system } = box;
+  try {
+    const root = NodeFS.realpathSync(box.root);
+    const setupLibrary = NodePath.join(root, "Library");
+    installR(setupLibrary, "jsonlite", "1.8.0");
+    const site = NodePath.join(root, "site-library");
+    installR(site, "base64enc", "0.1-3");
+    // As `cat(.libPaths(), sep = "\n")` prints on Windows.
+    system.rLibraries = () => libraryPaths(`${setupLibrary}\r\n${site}\r\n`);
+    env.R_LIBS_USER = setupLibrary;
+    begin("files", [], env, system);
+    installR(site, "IRkernel", "1.3.2");
+    installR(site, "base64enc", "0.1-4");
+    installR(setupLibrary, "IRkernel", "1.3.2");
+    NodeAssert.throws(
+      () => end("files", [], env, system),
+      (error) =>
+        error.message.includes(
+          `changed the R library ${site}: IRkernel 1.3.2 added, base64enc 0.1-3 -> 0.1-4`,
+        ) && error.message.includes(`changed the R library ${setupLibrary}: IRkernel 1.3.2 added`),
+    );
+    NodeAssert.deepEqual(NodeFS.readdirSync(site), ["IRkernel", "base64enc"]);
+    NodeAssert.deepEqual(NodeFS.readdirSync(setupLibrary), ["IRkernel", "jsonlite"]);
+  } finally {
+    box.cleanup();
+  }
+});
+
+NodeTest.test(
+  "a symlinked or read-only R user library seeds a copy of its own for each role",
+  () => {
+    const box = sandbox();
+    const { env, system } = box;
+    const real = NodePath.join(box.root, "real-library");
+    const outside = NodePath.join(box.root, "elsewhere", "IRkernel");
+    try {
+      installR(real, "jsonlite", "1.8.0");
+      // A package linked in from elsewhere, and the library itself reached through a link.
+      installR(NodePath.dirname(outside), "IRkernel", "1.3.2");
+      NodeFS.symlinkSync(outside, NodePath.join(real, "IRkernel"), "junction");
+      const linked = NodePath.join(box.root, "linked-library");
+      NodeFS.symlinkSync(real, linked, "junction");
+      NodeFS.chmodSync(NodePath.join(real, "jsonlite", "DESCRIPTION"), 0o444);
+      NodeFS.chmodSync(NodePath.join(real, "jsonlite"), 0o555);
+      NodeFS.chmodSync(real, 0o555);
+      env.R_LIBS_USER = linked;
+      system.rLibraries = () => [linked];
+      for (const role of ["people", "files"]) {
+        begin(role, [], env, system);
+        const own = box.stepEnv().R_LIBS_USER;
+        NodeAssert.deepEqual(NodeFS.readdirSync(own), ["IRkernel", "jsonlite"], role);
+        for (const name of ["IRkernel", "jsonlite"])
+          NodeAssert.equal(NodeFS.lstatSync(NodePath.join(own, name)).isSymbolicLink(), false);
+        // R replaces an upgraded package's folder; a file can also be rewritten in place.
+        NodeFS.rmSync(NodePath.join(own, "jsonlite"), { recursive: true });
+        installR(own, "jsonlite", "2.0.0");
+        NodeFS.writeFileSync(NodePath.join(own, "IRkernel", "DESCRIPTION"), "Version: 9\n");
+        end(role, [], env, system);
+      }
+      NodeAssert.match(
+        NodeFS.readFileSync(NodePath.join(real, "jsonlite", "DESCRIPTION"), "utf8"),
+        /Version: 1\.8\.0/,
+      );
+      NodeAssert.match(
+        NodeFS.readFileSync(NodePath.join(outside, "DESCRIPTION"), "utf8"),
+        /Version: 1\.3\.2/,
+      );
+    } finally {
+      NodeFS.chmodSync(real, 0o755);
+      NodeFS.chmodSync(NodePath.join(real, "jsonlite"), 0o755);
+      box.cleanup();
+    }
+  },
+);
+
+NodeTest.test("a role's process left running fails its end and is not signalled", () => {
   const box = sandbox();
   const { env, system } = box;
   try {
     begin("python", [], env, system);
     const kernel = unix(4242, 1, uid, "/usr/bin/python3", { marked: true });
-    box.run([kernel]);
-    await end("python", [], env, system);
-    NodeAssert.deepEqual(box.stopped, [4242]);
-
-    begin("python", [], env, system);
-    box.run([kernel]);
-    system.stop = async (processes) => box.stopped.push(...processes.map((entry) => entry.pid));
-    await NodeAssert.rejects(
-      end("python", [], env, system),
+    // Apple's program the kernel started: its parent makes it the role's.
+    const child = unix(4243, 4242, uid, "/bin/sleep", { marked: null });
+    box.run([kernel, child]);
+    NodeAssert.throws(
+      () => end("python", [], env, system),
       new RegExp(
-        `${ROLES.python}: processes still running after being stopped: /usr/bin/python3 \\(4242\\)`,
+        `${ROLES.python} left its processes running: /usr/bin/python3 \\(4242\\), /bin/sleep \\(4243\\)`,
       ),
     );
+    NodeAssert.deepEqual(box.running(), [kernel, child]);
+    // The script cannot signal anything: no call that would is in it.
+    const source = NodeFS.readFileSync(new URL("./compute-roles.mjs", import.meta.url), "utf8");
+    NodeAssert.doesNotMatch(source, /\.kill\(|taskkill|Stop-Process|SIG(TERM|KILL)|"kill"/);
   } finally {
     box.cleanup();
   }
 });
 
-NodeTest.test("an orphan nothing shows is the role's is reported and left running", async (t) => {
+NodeTest.test("an orphan nothing shows is the role's is reported and left running", (t) => {
   const box = sandbox();
   const { env, system } = box;
   const log = t.mock.method(console, "log", () => {});
   try {
-    begin("files", [], env, system);
-    // Same user, started meanwhile, parent gone: QuickLook's helper on a Mac (its environment
-    // hidden), and a program whose environment shows no mark.
-    box.run([
-      unix(5151, 1, uid, "/System/Library/Frameworks/QuickLookUI.framework/QuickLookUIService", {
-        marked: null,
-      }),
-      unix(5152, 1, uid, "/usr/libexec/someone-elses-helper", { marked: false }),
-    ]);
-    await end("files", [], env, system);
-    NodeAssert.deepEqual(box.stopped, []);
-    NodeAssert.deepEqual(pids(box.running()), [5151, 5152]);
-    const warnings = log.mock.calls.map((call) => String(call.arguments[0]));
-    for (const pid of [5151, 5152])
-      NodeAssert.ok(
-        warnings.some((line) => line.startsWith("::warning::") && line.includes(`(${pid})`)),
-        String(pid),
-      );
+    for (const [platform, self, orphans] of [
+      [
+        "linux",
+        unix(process.pid, 1, uid, "node", { marked: true }),
+        // Same user, started meanwhile, parent gone: QuickLook's helper on a Mac (its environment
+        // hidden), and a program whose environment shows no mark.
+        [
+          unix(
+            5151,
+            1,
+            uid,
+            "/System/Library/Frameworks/QuickLookUI.framework/QuickLookUIService",
+            {
+              marked: null,
+            },
+          ),
+          unix(5152, 1, uid, "/usr/libexec/someone-elses-helper", { marked: false }),
+        ],
+      ],
+      [
+        "win32",
+        windows(process.pid, 1, "node.exe", 0, true),
+        // Its parent's pid now names a later process: nothing ties it to the parent it had.
+        [
+          windows(5151, 5150, "C:\\rtools45\\usr\\bin\\sh.exe", 101),
+          windows(5150, 1, "C:\\Windows\\System32\\svchost.exe", 200),
+        ],
+      ],
+    ]) {
+      system.platform = platform;
+      system.processes = () => [self, ...box.running()];
+      log.mock.resetCalls();
+      begin("files", [], env, system);
+      box.run(orphans);
+      end("files", [], env, system);
+      const warnings = log.mock.calls.map((call) => String(call.arguments[0]));
+      const orphan = (pid) =>
+        warnings.filter((line) => line.startsWith("::warning::") && line.includes(`(${pid})`));
+      for (const pid of platform === "linux" ? [5151, 5152] : [5151])
+        NodeAssert.equal(orphan(pid).length, 1, `${platform} ${pid}`);
+    }
   } finally {
     box.cleanup();
   }
 });
 
-NodeTest.test("a child seen under the role's process stays the role's after it exits", async () => {
-  const box = sandbox();
-  const { env, system } = box;
-  try {
-    // On Windows a child keeps naming its exited parent.
-    system.platform = "win32";
-    system.processes = () => [windows(process.pid, 1, "node.exe", 0, true), ...box.running()];
-    begin("kernels", [], env, system);
-    const r = windows(4300, 77, "C:\\R\\bin\\x64\\Rterm.exe", 100, true);
-    const child = windows(4301, 4300, "C:\\rtools45\\usr\\bin\\sh.exe", 101);
-    box.run([r, child]);
-    system.stop = async (processes) => {
-      box.stopped.push(...processes.map((entry) => entry.pid));
-      // R exits; its child ignores being stopped.
-      if (processes.includes(r)) box.run([child]);
-    };
-    await NodeAssert.rejects(
-      end("kernels", [], env, system),
-      /processes still running after being stopped: C:\\rtools45\\usr\\bin\\sh\.exe \(4301\)/,
-    );
-    NodeAssert.deepEqual([...new Set(box.stopped)], [4300, 4301]);
-
-    // On Linux and macOS the OS adopts it, environment hidden: seen under R, it stays the role's.
-    system.platform = "linux";
-    system.processes = () => [
-      unix(process.pid, 1, uid, "node", { marked: true }),
-      ...box.running(),
-    ];
-    box.stopped.length = 0;
-    begin("kernels", [], env, system);
-    const kernel = unix(4400, 1, uid, "/opt/R/bin/exec/R", { marked: true });
-    const make = unix(4401, 4400, uid, "/usr/bin/make", { marked: null });
-    box.run([kernel, make]);
-    system.stop = async (processes) => {
-      box.stopped.push(...processes.map((entry) => entry.pid));
-      if (processes.includes(kernel)) box.run([{ ...make, ppid: 1 }]);
-    };
-    await NodeAssert.rejects(
-      end("kernels", [], env, system),
-      /processes still running after being stopped: \/usr\/bin\/make \(4401\)/,
-    );
-  } finally {
-    box.cleanup();
-  }
-});
-
-NodeTest.test("the steps after a role get setup's temporary files back", async () => {
+NodeTest.test("the steps after a role get setup's temporary files back", () => {
   const box = sandbox();
   const { env, system } = box;
   try {
@@ -663,7 +632,7 @@ NodeTest.test("the steps after a role get setup's temporary files back", async (
     NodeFS.mkdirSync(env.TMP);
     begin("people", [], env, system);
     NodeAssert.equal(box.stepEnv().TMPDIR, roleTemp(env, "people"));
-    await end("people", [], env, system);
+    end("people", [], env, system);
     const next = box.stepEnv();
     for (const name of ["TMPDIR", "TMP", "TEMP"]) {
       NodeAssert.equal(next[name], env.TMP, name);
@@ -674,7 +643,7 @@ NodeTest.test("the steps after a role get setup's temporary files back", async (
   }
 });
 
-NodeTest.test("Windows' R profile and user library under Documents are put back", async () => {
+NodeTest.test("Windows' R profile and user library under Documents are put back", () => {
   const box = sandbox();
   const { env, home, system } = box;
   try {
@@ -685,7 +654,7 @@ NodeTest.test("Windows' R profile and user library under Documents are put back"
     begin("people", [], env, system);
     NodeFS.rmSync(NodePath.join(documents, ".Rprofile"));
     installR(NodePath.join(documents, "R", "win-library", "4.5"), "IRkernel", "1.3.2");
-    await end("people", [], env, system);
+    end("people", [], env, system);
     begin("files", [], env, system);
     NodeAssert.deepEqual(NodeFS.readdirSync(documents), [".Rprofile"]);
     NodeAssert.equal(
@@ -693,128 +662,6 @@ NodeTest.test("Windows' R profile and user library under Documents are put back"
       "options(repos = 'rspm')\n",
     );
   } finally {
-    box.cleanup();
-  }
-});
-
-NodeTest.test("a library R reports with CRLF line ends is still checked", async () => {
-  const box = sandbox();
-  const { env, system } = box;
-  try {
-    const site = NodePath.join(box.root, "site-library");
-    installR(site, "base64enc", "0.1-3");
-    // As `cat(.libPaths(), sep = "\n")` prints on Windows.
-    system.rLibraries = () => libraryPaths(`${site}\r\n`);
-    begin("people", [], env, system);
-    installR(site, "base64enc", "0.1-4");
-    await NodeAssert.rejects(
-      end("people", [], env, system),
-      new RegExp(`changed the R library .*base64enc 0\\.1-3 -> 0\\.1-4`),
-    );
-  } finally {
-    box.cleanup();
-  }
-});
-
-NodeTest.test("an orphan first seen while the role's processes stop is reported", async (t) => {
-  const box = sandbox();
-  const { env, system } = box;
-  const log = t.mock.method(console, "log", () => {});
-  try {
-    // A marked parent exits as it stops and leaves a shell without the mark, adopted by pid 1 or,
-    // on Windows, still naming its parent's pid, which nothing ties to the parent seen.
-    for (const [platform, parent, orphan] of [
-      [
-        "linux",
-        unix(4500, 1, uid, "/opt/R/bin/exec/R", { marked: true }),
-        unix(4501, 1, uid, "/bin/sh", { marked: false }),
-      ],
-      [
-        "win32",
-        windows(4500, 77, "C:\\R\\bin\\x64\\Rterm.exe", 100, true),
-        windows(4501, 4500, "C:\\rtools45\\usr\\bin\\sh.exe", 101),
-      ],
-    ]) {
-      system.platform = platform;
-      const self =
-        platform === "win32"
-          ? windows(process.pid, 1, "node.exe", 0, true)
-          : unix(process.pid, 1, uid, "node", { marked: true });
-      system.processes = () => [self, ...box.running()];
-      box.stopped.length = 0;
-      log.mock.resetCalls();
-      begin("kernels", [], env, system);
-      box.run([parent]);
-      system.stop = async (processes) => {
-        box.stopped.push(...processes.map((entry) => entry.pid));
-        if (processes.includes(parent)) box.run([orphan]);
-      };
-      await end("kernels", [], env, system);
-      NodeAssert.deepEqual(box.stopped, [4500], platform);
-      NodeAssert.deepEqual(pids(box.running()), [4501], platform);
-      const warnings = log.mock.calls.map((call) => String(call.arguments[0]));
-      NodeAssert.equal(
-        warnings.filter((line) => line.includes("lost its parent") && line.includes("(4501)"))
-          .length,
-        1,
-        platform,
-      );
-    }
-  } finally {
-    box.cleanup();
-  }
-});
-
-NodeTest.test(
-  "a symlinked R user library is copied, and kept if it cannot be put back",
-  async () => {
-    const box = sandbox();
-    const { env, system } = box;
-    try {
-      const real = NodePath.join(box.root, "real-library");
-      installR(real, "jsonlite", "1.8.0");
-      const linked = NodePath.join(box.root, "linked-library");
-      NodeFS.symlinkSync(real, linked, "junction");
-      env.R_LIBS_USER = linked;
-      begin("people", [], env, system);
-      // An upgrade in the role's own library leaves setup's alone.
-      installR(box.stepEnv().R_LIBS_USER, "jsonlite", "2.0.0");
-      await end("people", [], env, system);
-      NodeAssert.match(
-        NodeFS.readFileSync(NodePath.join(real, "jsonlite", "DESCRIPTION"), "utf8"),
-        /Version: 1\.8\.0/,
-      );
-      // A role writes into setup's library and setup's copy of that package is gone: the end fails
-      // and leaves the package there rather than removing it.
-      begin("files", [], env, system);
-      installR(linked, "jsonlite", "2.0.0");
-      NodeFS.rmSync(NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed", "R", "0", "jsonlite"), {
-        recursive: true,
-      });
-      await NodeAssert.rejects(end("files", [], env, system), /could not be put back/);
-      NodeAssert.deepEqual(NodeFS.readdirSync(real), ["jsonlite"]);
-    } finally {
-      box.cleanup();
-    }
-  },
-);
-
-NodeTest.test("a read-only R user library still seeds the role's own", async () => {
-  const box = sandbox();
-  const { env, system } = box;
-  const library = NodePath.join(box.root, "read-only-library");
-  try {
-    installR(library, "jsonlite", "1.8.0");
-    NodeFS.chmodSync(library, 0o555);
-    env.R_LIBS_USER = library;
-    begin("people", [], env, system);
-    const own = box.stepEnv().R_LIBS_USER;
-    NodeAssert.deepEqual(NodeFS.readdirSync(own), ["jsonlite"]);
-    installR(own, "IRkernel", "1.3.2");
-    await end("people", [], env, system);
-  } finally {
-    NodeFS.chmodSync(library, 0o755);
-    NodeFS.chmodSync(NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed", "R", "0"), 0o755);
     box.cleanup();
   }
 });
