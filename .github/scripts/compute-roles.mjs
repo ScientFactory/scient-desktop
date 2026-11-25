@@ -90,12 +90,13 @@ const writeState = (env, name, value) => {
 export const roleTemp = (env, role) => NodePath.join(env.RUNNER_TEMP, "cr", role);
 const seedDirectory = (env) => NodePath.join(env.RUNNER_TEMP, "compute-roles", "seed");
 
+// `ps -o pid=,ppid=,uid=,stat=,comm=`, without zombies: exited, they wait only to be reaped.
 export function parseUnixProcesses(text) {
   return text
     .split("\n")
-    .map((line) => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line))
-    .filter(Boolean)
-    .map(([, pid, ppid, uid, command]) => ({
+    .map((line) => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line))
+    .filter((match) => match && !match[4].startsWith("Z"))
+    .map(([, pid, ppid, uid, , command]) => ({
       pid: Number(pid),
       ppid: Number(ppid),
       uid: Number(uid),
@@ -114,15 +115,66 @@ export function parseWindowsProcesses(text) {
     command: entry.command ?? "",
     created: Number(entry.created),
     key: `${entry.pid} ${entry.created}`,
+    ...(entry.marked === undefined
+      ? {}
+      : { marked: entry.marked === 1 ? true : entry.marked === 0 ? false : null }),
   }));
 }
 
-const WINDOWS_LIST = String.raw`Get-CimInstance Win32_Process | ForEach-Object {
+// Windows shows no process's environment to other programs; this reads it from the process's
+// own memory (PEB -> RTL_USER_PROCESS_PARAMETERS, x64 offsets), as the runner's orphan cleanup
+// does. 1 when it holds the entry, 0 when not, -1 when it cannot be read.
+const WINDOWS_ENVIRONMENT = String.raw`Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class RoleEnvironment {
+  [StructLayout(LayoutKind.Sequential)]
+  struct Basic { public IntPtr ExitStatus; public IntPtr Peb; public IntPtr Affinity; public IntPtr Priority; public IntPtr Pid; public IntPtr ParentPid; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int type, ref Basic info, int size, out int returned);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int access, bool inherit, int pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr process, IntPtr address, byte[] buffer, IntPtr size, out IntPtr read);
+  static byte[] Read(IntPtr process, IntPtr address, long size) {
+    var buffer = new byte[size];
+    IntPtr read;
+    return ReadProcessMemory(process, address, buffer, (IntPtr)size, out read) && (long)read == size ? buffer : null;
+  }
+  static IntPtr Pointer(IntPtr process, IntPtr address) {
+    var bytes = Read(process, address, 8);
+    return bytes == null ? IntPtr.Zero : (IntPtr)BitConverter.ToInt64(bytes, 0);
+  }
+  public static int Holds(int pid, string entry) {
+    var process = OpenProcess(0x0410, false, pid);
+    if (process == IntPtr.Zero) return -1;
+    try {
+      var basic = new Basic();
+      int returned;
+      if (NtQueryInformationProcess(process, 0, ref basic, Marshal.SizeOf(basic), out returned) != 0 || basic.Peb == IntPtr.Zero) return -1;
+      var parameters = Pointer(process, basic.Peb + 0x20);
+      if (parameters == IntPtr.Zero) return -1;
+      var block = Pointer(process, parameters + 0x80);
+      var size = (long)Pointer(process, parameters + 0x3F0);
+      if (block == IntPtr.Zero || size <= 0 || size > (1 << 24)) return -1;
+      var bytes = Read(process, block, size);
+      if (bytes == null) return -1;
+      foreach (var variable in Encoding.Unicode.GetString(bytes).Split('\0'))
+        if (variable == entry) return 1;
+      return 0;
+    } finally { CloseHandle(process); }
+  }
+}
+'@`;
+const windowsList = (marked) => String.raw`Get-CimInstance Win32_Process | ForEach-Object {
   [pscustomobject]@{ pid = $_.ProcessId; ppid = $_.ParentProcessId; command = $_.ExecutablePath;
-    created = if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 } } } |
+    created = if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 }${marked ? "; marked = [RoleEnvironment]::Holds([int]$_.ProcessId, $env:COMPUTE_ROLE_MARK)" : ""} } } |
   ConvertTo-Json -Compress`;
-const powershell = (script) =>
-  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+const powershell = (script, env) =>
+  run(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    env ? { env: { ...process.env, ...env } } : {},
+  );
 
 const environOnLinux = (pid) => {
   try {
@@ -154,7 +206,7 @@ function environOnDarwin() {
   return byPid;
 }
 
-// launchd's own jobs, such as Spotlight's on-demand mdworker_shared: launchd started them.
+// launchd's own jobs, such as Spotlight's on-demand mdworker_shared: not worth a warning.
 const launchdJobs = () =>
   new Set(
     run("launchctl", ["list"])
@@ -166,13 +218,19 @@ const launchdJobs = () =>
 
 /**
  * The processes, each marked with whether it carries `owner` in its environment: true or false
- * where the environment can be read, null where it cannot (Windows, Apple's programs on macOS).
+ * where the environment can be read, null where it cannot (Apple's programs on macOS, and any
+ * process Windows will not open).
  */
 function listProcesses(platform, owner) {
-  if (platform === "win32") return parseWindowsProcesses(powershell(WINDOWS_LIST));
-  const entries = parseUnixProcesses(run("ps", ["-A", "-o", "pid=,ppid=,uid=,comm="]));
-  if (!owner) return entries;
   const mark = `${OWNER_VARIABLE}=${owner}`;
+  if (platform === "win32")
+    return parseWindowsProcesses(
+      owner
+        ? powershell(`${WINDOWS_ENVIRONMENT}\n${windowsList(true)}`, { COMPUTE_ROLE_MARK: mark })
+        : powershell(windowsList(false)),
+    );
+  const entries = parseUnixProcesses(run("ps", ["-A", "-o", "pid=,ppid=,uid=,stat=,comm="]));
+  if (!owner) return entries;
   const darwin = platform === "darwin" ? environOnDarwin() : null;
   const services = platform === "darwin" ? launchdJobs() : new Set();
   return entries.map((entry) => {
@@ -186,11 +244,12 @@ function listProcesses(platform, owner) {
 }
 
 /**
- * Processes this user started since `before` that the role owns: those carrying its mark, children
- * of those it owns, and orphans (only role steps leave any) the service manager did not start.
- * Never this step's own process tree, which includes the process lister.
+ * This user's new processes outside this step's tree. `owned`: carrying the mark, recorded owned
+ * earlier, or descended from one (a Windows child still names its dead parent). `unverified`: the
+ * other orphans and their children, only reported, since OS helpers (QuickLook, Spotlight, Windows
+ * services) are this user's orphans too and Apple's programs hide their environment.
  */
-export function leftovers({ before, after, self, uid }) {
+export function leftovers({ before, after, self, uid, recorded = new Map() }) {
   const known = new Set(before.map((entry) => entry.key));
   const byPid = new Map(after.map((entry) => [entry.pid, entry]));
   const step = new Set();
@@ -203,27 +262,38 @@ export function leftovers({ before, after, self, uid }) {
         queue.push(entry.pid);
       }
   }
-  const owned = new Map();
-  const owns = (entry) => {
-    if (owned.has(entry.pid)) return owned.get(entry.pid);
-    owned.set(entry.pid, false);
-    let result = false;
-    if (
-      !known.has(entry.key) &&
-      !step.has(entry.pid) &&
-      (entry.uid === null || entry.uid === uid) &&
-      !entry.service
-    ) {
-      // A pid reused after its real parent exited is not the parent.
-      const candidate = byPid.get(entry.ppid);
-      const parent =
-        candidate && entry.ppid > 1 && !(candidate.created > entry.created) ? candidate : null;
-      result = entry.marked === true || (parent ? owns(parent) : true);
+  // Started after the given pid's process: a pid reused after the real parent exited is not it.
+  const startedAfter = (entry, parent) => !(parent.created > entry.created);
+  const parentOf = (entry) => {
+    const candidate = byPid.get(entry.ppid);
+    return candidate && entry.ppid > 1 && startedAfter(entry, candidate) ? candidate : null;
+  };
+  const recordedParent = (entry) =>
+    entry.ppid > 1 &&
+    [...recorded.values()].some((owner) => owner.pid === entry.ppid && startedAfter(entry, owner));
+  const candidate = (entry) =>
+    !known.has(entry.key) && !step.has(entry.pid) && (entry.uid === null || entry.uid === uid);
+  const verdicts = new Map();
+  // "owned", "unverified" or "other".
+  const verdict = (entry) => {
+    if (verdicts.has(entry.pid)) return verdicts.get(entry.pid);
+    verdicts.set(entry.pid, "other");
+    let result = "other";
+    if (candidate(entry)) {
+      const parent = parentOf(entry);
+      const inherited = parent ? verdict(parent) : null;
+      if (entry.marked === true || recorded.has(entry.key) || inherited === "owned")
+        result = "owned";
+      else if (!parent && recordedParent(entry)) result = "owned";
+      else if ((!parent || inherited === "unverified") && !entry.service) result = "unverified";
     }
-    owned.set(entry.pid, result);
+    verdicts.set(entry.pid, result);
     return result;
   };
-  return after.filter((entry) => owns(entry));
+  return {
+    owned: after.filter((entry) => verdict(entry) === "owned"),
+    unverified: after.filter((entry) => verdict(entry) === "unverified"),
+  };
 }
 
 // Windows lists every user's processes; keep the ones this user started.
@@ -399,6 +469,7 @@ const host = {
   stop: (processes) => stop(processes, platform),
   owned: (processes) =>
     platform === "win32" ? ownedOnWindows(processes, NodeOS.userInfo().username) : processes,
+  wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   python: () => run("python", ["-c", "import sys; print(sys.executable)"]).trim(),
   packages: (python) => pythonPackages(python),
   pip: (python, args) =>
@@ -506,34 +577,45 @@ export async function end(role, args, env, system = host) {
   const setup = readState(env, "seed");
   const problems = [];
 
-  const owned = () =>
-    system.owned(
-      leftovers({
-        before: before.processes,
-        after: system.processes(before.owner),
-        self: process.pid,
-        uid: system.platform === "win32" ? null : process.getuid(),
-      }),
+  // Ownership found once is kept: a child outlives its parent's shutdown as the role's.
+  const recorded = new Map();
+  const find = () => {
+    const { owned, unverified } = leftovers({
+      before: before.processes,
+      after: system.processes(before.owner),
+      self: process.pid,
+      uid: system.platform === "win32" ? null : process.getuid(),
+      recorded,
+    });
+    const mine = system.owned(owned);
+    for (const entry of mine) recorded.set(entry.key, entry);
+    return { owned: mine, unverified: system.owned(unverified) };
+  };
+  const first = find();
+  for (const entry of first.unverified)
+    console.log(
+      `::warning::${label}: ${entry.command} (${entry.pid}) started meanwhile and lost its parent; nothing shows it is the role's, so it is left running`,
     );
-  const left = owned();
-  for (const entry of left)
+  for (const entry of first.owned)
     console.log(`::warning::${label} left ${entry.command} (${entry.pid}) running`);
-  if (left.length) {
-    await system.stop(left);
-    // What was stopped, and anything carrying the role's mark started meanwhile.
-    const stopped = new Set(left.map((entry) => entry.key));
-    const surviving = () =>
-      owned().filter((entry) => stopped.has(entry.key) || entry.marked === true);
-    let survivors = surviving();
-    for (let waited = 0; waited < 3000 && survivors.length; waited += 200) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      survivors = surviving();
+  // Stop the owned set until none is left, re-listing it each time so children started during
+  // shutdown are stopped too; whatever is still owned at the deadline fails the end.
+  let remaining = first.owned;
+  const stopped = new Set();
+  for (let round = 0; remaining.length && round < 3; round++) {
+    await system.stop(remaining);
+    for (const entry of remaining) stopped.add(entry.key);
+    for (let waited = 0; ; waited += 200) {
+      remaining = find().owned;
+      if (!remaining.length || remaining.some((entry) => !stopped.has(entry.key))) break;
+      if (waited >= 3000) break;
+      await system.wait(200);
     }
-    if (survivors.length)
-      problems.push(
-        `processes still running after being stopped: ${survivors.map((entry) => `${entry.command} (${entry.pid})`).join(", ")}`,
-      );
   }
+  if (remaining.length)
+    problems.push(
+      `processes still running after being stopped: ${remaining.map((entry) => `${entry.command} (${entry.pid})`).join(", ")}`,
+    );
 
   const home = system.home();
   restoreHomeState(env, home, setup);
