@@ -7,6 +7,7 @@ import {
 import {
   changeLiteratureWatch,
   createLiteratureWatch,
+  discardLiteratureWatchRun,
   listLiteratureWatches,
   LiteratureWatchNotFoundError,
   readLiteratureWatch,
@@ -19,6 +20,7 @@ import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts"
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
+  LiteratureWatchRunError,
   literatureWatchAbstracts,
   literatureWatchTitles,
   publishLiteratureWatch,
@@ -45,6 +47,7 @@ const attempt = <A>(run: () => Promise<A>) =>
       error instanceof LiteratureWatchNotFoundError
         ? fail("not-found", error.message)
         : error instanceof LiteratureWatchPublishError ||
+            error instanceof LiteratureWatchRunError ||
             (error instanceof Error && error.message.startsWith("That run"))
           ? fail("operation-failed", error.message)
           : fail("operation-failed", "The literature watch operation could not be completed."),
@@ -124,6 +127,8 @@ const saveWatch = Effect.fn("LiteratureWatchToolkit.save")(function* (
         };
       }),
     );
+    // A run fetched with the old queries must not move the edited watch's searched days.
+    yield* attempt(() => discardLiteratureWatchRun(library, watchId));
     yield* syncLiteratureWatchSchedule(watch).pipe(Effect.mapError(scheduleFailure));
     return { watchId, created: false, firstRunStarted: false };
   }
@@ -141,15 +146,13 @@ const saveWatch = Effect.fn("LiteratureWatchToolkit.save")(function* (
   yield* syncLiteratureWatchSchedule(watch).pipe(Effect.mapError(scheduleFailure));
   const started = paused
     ? false
-    : yield* runLiteratureWatchNow(watch.watchId).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
+    : yield* runLiteratureWatchNow(watch.watchId).pipe(Effect.orElseSucceed(() => false));
   return { watchId: watch.watchId, created: true, firstRunStarted: started };
 });
 
 const runWatch = Effect.fn("LiteratureWatchToolkit.run")(function* (input: {
   readonly watchId: string;
+  readonly runId?: string;
   readonly offset?: number;
   readonly abstractsFor?: ReadonlyArray<string>;
 }) {
@@ -163,6 +166,12 @@ const runWatch = Effect.fn("LiteratureWatchToolkit.run")(function* (input: {
       now,
     }),
   );
+  if (input.runId && input.runId !== run.runId) {
+    return yield* fail(
+      "operation-failed",
+      `Run ${input.runId} is no longer open; this is a new run (${run.runId}). Start its titles from offset 0.`,
+    );
+  }
   const head = {
     runId: run.runId,
     services: run.services,
@@ -188,12 +197,19 @@ const publishWatch = Effect.fn("LiteratureWatchToolkit.publish")(function* (inpu
   }>;
 }) {
   const { library } = yield* resolveWholeLibrary("write");
+  const picks = input.picks.map((pick) => ({
+    ...pick,
+    why: pick.why.trim(),
+    details: pick.details.map((line) => line.trim()).filter(Boolean),
+  }));
+  const blank = picks.find((pick) => !pick.why);
+  if (blank) return yield* fail("operation-failed", `${blank.candidateId} needs a why.`);
   const now = DateTime.toDateUtc(yield* DateTime.now);
   const watch = yield* attempt(() =>
     publishLiteratureWatch(library, {
       watchId: input.watchId,
       runId: input.runId,
-      picks: input.picks,
+      picks,
       ...(input.summary ? { summary: input.summary } : {}),
       now,
     }),

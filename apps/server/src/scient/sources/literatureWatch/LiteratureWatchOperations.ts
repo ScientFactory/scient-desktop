@@ -13,18 +13,19 @@ import {
 } from "@scientfactory/scient-sources";
 import {
   changeLiteratureWatchRun,
+  claimLiteratureWatchRun,
   finishLiteratureWatchRun,
   readLiteratureWatch,
-  readLiteratureWatchRun,
-  writeLiteratureWatchRun,
+  resumableLiteratureWatchRun,
 } from "@scientfactory/scient-sources/literature-watch-store";
 import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
 
 import { searchWatchService, type WatchSearchOptions } from "./watchSearch.ts";
 
-/** An open run older than this is fetched again rather than resumed. */
-const RUN_REUSE_MS = 24 * 60 * 60 * 1000;
-export const WATCH_TITLES_PAGE = 400;
+export const WATCH_TITLES_PAGE = 200;
+
+// @effect-diagnostics-next-line extendsNativeError:off - The watch store is Promise-based; handlers catch native errors.
+export class LiteratureWatchRunError extends Error {}
 
 /** Resumes the watch's open run, or fetches every service's window into a new one. */
 export async function startLiteratureWatchRun(
@@ -32,8 +33,8 @@ export async function startLiteratureWatchRun(
   watchId: string,
   options: WatchSearchOptions & { readonly now: Date },
 ): Promise<LiteratureWatchRun> {
-  const open = await readLiteratureWatchRun(library, watchId);
-  if (open && options.now.getTime() - Date.parse(open.startedAt) < RUN_REUSE_MS) return open;
+  const open = await resumableLiteratureWatchRun(library, watchId, options.now);
+  if (open) return open;
   const watch = await readLiteratureWatch(library, watchId);
   const results = await Promise.all(
     LITERATURE_WATCH_SERVICES.flatMap((service) => {
@@ -64,8 +65,7 @@ export async function startLiteratureWatchRun(
     candidates,
     delivered: 0,
   };
-  await writeLiteratureWatchRun(library, run);
-  return run;
+  return claimLiteratureWatchRun(library, run, options.now);
 }
 
 /** A compact line per candidate, for title screening. */
@@ -86,6 +86,10 @@ export async function literatureWatchTitles(
   run: LiteratureWatchRun,
   offset: number,
 ) {
+  // Pages are read in order, so a title counts as screened only once it was handed out.
+  if (offset > run.delivered) {
+    throw new LiteratureWatchRunError(`Read the titles from offset ${run.delivered} first.`);
+  }
   const page = run.candidates.slice(offset, offset + WATCH_TITLES_PAGE);
   const end = offset + page.length;
   if (end > run.delivered) {

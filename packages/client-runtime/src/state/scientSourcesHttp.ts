@@ -551,9 +551,9 @@ export const changeEnvironmentScientSystematicReview = Effect.fn(
   });
 });
 
-export const listEnvironmentScientLiteratureWatches = Effect.fn("clientRuntime.state.listEnvironmentScientLiteratureWatches")(function* (
-  input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchesRequest,
-) {
+export const listEnvironmentScientLiteratureWatches = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientLiteratureWatches",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchesRequest) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   const { prepared, ...payload } = input;
@@ -569,9 +569,9 @@ export const listEnvironmentScientLiteratureWatches = Effect.fn("clientRuntime.s
   });
 });
 
-export const getEnvironmentScientLiteratureWatch = Effect.fn("clientRuntime.state.getEnvironmentScientLiteratureWatch")(function* (
-  input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchRequest,
-) {
+export const getEnvironmentScientLiteratureWatch = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientLiteratureWatch",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchRequest) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   const { prepared, ...payload } = input;
@@ -587,7 +587,9 @@ export const getEnvironmentScientLiteratureWatch = Effect.fn("clientRuntime.stat
   });
 });
 
-export const changeEnvironmentScientLiteratureWatch = Effect.fn("clientRuntime.state.changeEnvironmentScientLiteratureWatch")(function* (
+export const changeEnvironmentScientLiteratureWatch = Effect.fn(
+  "clientRuntime.state.changeEnvironmentScientLiteratureWatch",
+)(function* (
   input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchChangeRequest,
 ) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);

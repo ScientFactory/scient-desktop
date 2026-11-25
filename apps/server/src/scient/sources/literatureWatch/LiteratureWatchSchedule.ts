@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 
 /** The thread settings a watch's scheduled runs use, taken from the thread that set it up. */
@@ -42,8 +43,19 @@ export const syncLiteratureWatchSchedule = Effect.fn("LiteratureWatch.syncSchedu
   const runner = decodeRunner(watch.runner);
   if (Option.isNone(runner)) return null;
   const tasks = yield* ScheduledTaskService;
+  const id = literatureWatchTaskId(watch.watchId);
+  const bound = (yield* tasks.list()).tasks.find((task) => task.id === id)?.threadId ?? null;
+  // An archived or deleted run thread refuses scheduled messages; the next run starts a new one.
+  const shell =
+    bound === null
+      ? null
+      : yield* (yield* ProjectionStoreV2)
+          .getThreadShell(bound)
+          .pipe(Effect.orElseSucceed(() => null));
+  const unbindThread = bound !== null && (shell === null || shell.archivedAt !== null);
   const { task } = yield* tasks.upsert({
-    id: literatureWatchTaskId(watch.watchId),
+    id,
+    ...(unbindThread ? { unbindThread: true } : {}),
     title: `Literature watch: ${watch.title}`.slice(0, 200),
     prompt: literatureWatchPrompt(watch),
     enabled: watch.paused !== true,
@@ -60,17 +72,10 @@ export const syncLiteratureWatchSchedule = Effect.fn("LiteratureWatch.syncSchedu
   return task;
 });
 
-/** Rebuilds the task of any watch that lost it, such as when its thread was deleted. */
+/** Rewrites each watch's task, rebuilding one that was lost and rebinding an archived thread. */
 export const restoreLiteratureWatchSchedules = Effect.fn("LiteratureWatch.restoreSchedules")(
   function* (watches: ReadonlyArray<LiteratureWatch>) {
-    const tasks = yield* ScheduledTaskService;
-    const { tasks: existing } = yield* tasks.list();
-    const ids = new Set(existing.map((task) => task.id));
-    for (const watch of watches) {
-      if (!ids.has(literatureWatchTaskId(watch.watchId))) {
-        yield* syncLiteratureWatchSchedule(watch);
-      }
-    }
+    for (const watch of watches) yield* syncLiteratureWatchSchedule(watch);
   },
 );
 
@@ -78,7 +83,8 @@ export const runLiteratureWatchNow = Effect.fn("LiteratureWatch.runNow")(functio
   watchId: string,
 ) {
   const tasks = yield* ScheduledTaskService;
-  return yield* tasks.runNow({ id: literatureWatchTaskId(watchId) });
+  const { threadId } = yield* tasks.runNow({ id: literatureWatchTaskId(watchId) });
+  return threadId !== null;
 });
 
 export const deleteLiteratureWatchSchedule = Effect.fn("LiteratureWatch.deleteSchedule")(function* (

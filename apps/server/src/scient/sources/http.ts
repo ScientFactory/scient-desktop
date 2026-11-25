@@ -132,6 +132,8 @@ import {
 import { deleteLiteratureWatch } from "@scientfactory/scient-sources/literature-watch-store";
 import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import type { ScheduledTaskError } from "@t3tools/contracts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import type { OrchestratorV2Error } from "../../orchestration-v2/Orchestrator.ts";
 import {
   changeLiteratureWatchItem,
   literatureWatchList,
@@ -221,6 +223,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
     const observeImport = yield* makeSourceImportAnalytics("user");
     const projectStore = yield* ProjectStoreV2;
     const scheduledTasks = yield* ScheduledTaskService;
+    const projections = yield* ProjectionStoreV2;
     startManagedBibliographySync();
     const zotero = {
       ...(yield* ZoteroTransports),
@@ -473,8 +476,12 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("literatureWatches", (args) =>
-          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, async (library) =>
-            library ? literatureWatchList(library.library) : { watches: [], unread: 0 },
+          route(
+            args.endpoint.name,
+            AuthOrchestrationReadScope,
+            args.payload.root,
+            async (library) =>
+              library ? literatureWatchList(library.library) : { watches: [], unread: 0 },
           ),
         )
         .handle("literatureWatch", (args) =>
@@ -490,6 +497,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             );
             yield* restoreLiteratureWatchSchedules([watch]).pipe(
               Effect.provideService(ScheduledTaskService, scheduledTasks),
+              Effect.provideService(ProjectionStoreV2, projections),
               Effect.ignore,
             );
             const { tasks } = yield* scheduledTasks
@@ -544,7 +552,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 }
               },
             );
-            const schedule: Effect.Effect<unknown, ScheduledTaskError, ScheduledTaskService> =
+            const schedule: Effect.Effect<
+              unknown,
+              ScheduledTaskError | OrchestratorV2Error,
+              ScheduledTaskService | ProjectionStoreV2
+            > =
               "watch" in result && result.watch
                 ? syncLiteratureWatchSchedule(result.watch)
                 : change.action === "delete"
@@ -554,6 +566,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                     : Effect.void;
             yield* schedule.pipe(
               Effect.provideService(ScheduledTaskService, scheduledTasks),
+              Effect.provideService(ProjectionStoreV2, projections),
               Effect.catch((cause) =>
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),

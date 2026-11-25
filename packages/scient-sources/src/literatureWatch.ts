@@ -180,12 +180,16 @@ function daysBefore(day: string, days: number): string {
 
 /** The days a run searches one service, inclusive. */
 export function literatureWatchWindow(
-  watch: Pick<LiteratureWatch, "covered">,
+  watch: Pick<LiteratureWatch, "covered" | "createdAt">,
   service: LiteratureWatchService,
   now: Date,
 ): { readonly from: string; readonly to: string } {
   const to = literatureWatchDay(now);
-  const first = daysBefore(to, LITERATURE_WATCH_FIRST_DAYS);
+  // Until a service answers once, every run reaches back to the month before the watch began.
+  const first = daysBefore(
+    [to, watch.createdAt.slice(0, 10)].toSorted()[0]!,
+    LITERATURE_WATCH_FIRST_DAYS,
+  );
   const covered = watch.covered[service];
   const resume = covered ? daysBefore(covered, OVERLAP_DAYS) : first;
   // After a long closure the gap reaches past the usual rescan, so it starts at the gap instead.
@@ -218,6 +222,10 @@ export function literatureWatchKeys(found: Pick<LiteratureWatchFound, "ids" | "t
   return keys;
 }
 
+function sameDoi(left: string, right: string) {
+  return normalizePersistentIdentifier("doi", left) === normalizePersistentIdentifier("doi", right);
+}
+
 function mergeFound(into: LiteratureWatchFound, other: LiteratureWatchFound): LiteratureWatchFound {
   const longer = (other.abstract?.length ?? 0) > (into.abstract?.length ?? 0);
   return {
@@ -242,7 +250,14 @@ export function literatureWatchCandidates(
   const byKey = new Map<string, number>();
   for (const record of found) {
     const keys = literatureWatchKeys(record);
-    const index = keys.map((key) => byKey.get(key)).find((at) => at !== undefined);
+    const index = keys
+      .map((key) => byKey.get(key))
+      .find(
+        (at) =>
+          at !== undefined &&
+          // Same title, different DOIs: two papers, such as an erratum and its article.
+          !(record.ids.doi && merged[at]!.ids.doi && !sameDoi(record.ids.doi, merged[at]!.ids.doi)),
+      );
     if (index === undefined) {
       merged.push(record);
       for (const key of keys) byKey.set(key, merged.length - 1);

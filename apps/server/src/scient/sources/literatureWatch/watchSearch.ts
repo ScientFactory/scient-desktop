@@ -40,9 +40,19 @@ interface Window {
   readonly to: string;
 }
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+// Raw XML text (PubMed's titles and abstracts keep their inline markup) loses tags and entities.
 const clean = (value: string | null | undefined) => {
   const text = (value ?? "")
     .replace(/<[^>]+>/gu, " ")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (whole, name: string) =>
+      name.startsWith("#x") || name.startsWith("#X")
+        ? String.fromCodePoint(Number.parseInt(name.slice(2), 16))
+        : name.startsWith("#")
+          ? String.fromCodePoint(Number.parseInt(name.slice(1), 10))
+          : (ENTITIES[name.toLowerCase()] ?? whole),
+    )
     .replace(/\s+/gu, " ")
     .trim();
   return text || undefined;
@@ -102,10 +112,22 @@ const nodes = (value: unknown): ReadonlyArray<Node> =>
 const text = (value: unknown): string | undefined =>
   typeof value === "string" ? clean(value) : clean(node(value)["#text"] as string | undefined);
 
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const two = (value: number) => String(value).padStart(2, "0");
+
+/** The electronic date when PubMed has one, else the issue's; a missing day or month is the 1st. */
 function pubmedDate(article: Node): string | undefined {
-  const date = node(node(node(article["Journal"])["JournalIssue"])["PubDate"]);
+  const electronic = nodes(article["ArticleDate"])[0] ?? node(article["ArticleDate"]);
+  const issue = node(node(node(article["Journal"])["JournalIssue"])["PubDate"]);
+  const date = text(electronic["Year"]) ? electronic : issue;
   const year = text(date["Year"]);
-  return year && /^\d{4}$/u.test(year) ? `${year}-01-01` : undefined;
+  if (!year || !/^\d{4}$/u.test(year)) return undefined;
+  const rawMonth = text(date["Month"]) ?? "1";
+  const month = /^\d+$/u.test(rawMonth)
+    ? Number(rawMonth)
+    : MONTHS.indexOf(rawMonth.slice(0, 3).toLowerCase()) + 1;
+  const day = Number(text(date["Day"]) ?? "1");
+  return `${year}-${two(month || 1)}-${two(day || 1)}`;
 }
 
 function parsePubmed(xml: string): ReadonlyArray<LiteratureWatchFound> {

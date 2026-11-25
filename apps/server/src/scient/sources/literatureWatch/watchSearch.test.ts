@@ -28,7 +28,8 @@ const EFETCH = `<?xml version="1.0"?>
       <PMID>43078099</PMID>
       <Article>
         <Journal><Title>Current biology</Title><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal>
-        <ArticleTitle>Ventral striatal dopamine increases after <i>hippocampal</i> sharp-wave ripples.</ArticleTitle>
+        <ArticleDate DateType="Electronic"><Year>2026</Year><Month>11</Month><Day>20</Day></ArticleDate>
+        <ArticleTitle>Ventral striatal dopamine increases after <i>hippocampal</i> sharp-wave ripples &amp; reward.</ArticleTitle>
         <Abstract><AbstractText>Ripples drive dopamine release.</AbstractText></Abstract>
         <AuthorList><Author><LastName>Janssen</LastName><Initials>MA</Initials></Author></AuthorList>
         <PublicationTypeList><PublicationType>Journal Article</PublicationType></PublicationTypeList>
@@ -67,7 +68,8 @@ describe("searchWatchService", () => {
     expect(urls[0]!.searchParams.get("mindate")).toBe("2026/11/19");
     expect(result.run).toMatchObject({ status: "complete", found: 2, total: 2 });
     expect(result.found[0]).toMatchObject({
-      title: "Ventral striatal dopamine increases after hippocampal sharp-wave ripples.",
+      title: "Ventral striatal dopamine increases after hippocampal sharp-wave ripples & reward.",
+      published: "2026-11-20",
       abstract: "Ripples drive dopamine release.",
       ids: { pmid: "43078099", doi: "10.1016/j.cub.2026.10.074" },
       venue: "Current biology",

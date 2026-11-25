@@ -106,12 +106,13 @@ const TitleLine = Schema.Struct({
 
 const ScientWatchRunTool = Tool.make("scient_watch_run", {
   description:
-    "Start or resume a watch's run. Scient searches each service from the day it was searched up to, removes duplicates and papers earlier runs judged, and returns the services' status and the candidate titles from offset (page with nextOffset; every title handed out counts as screened). Pass abstractsFor with candidate ids to read their abstracts and details.",
+    "Start or resume a watch's run. Scient searches each service from the day it was searched up to, removes duplicates and papers earlier runs judged, and returns the services' status and the candidate titles from offset (page with nextOffset, in order; every title handed out counts as screened). Pass abstractsFor with candidate ids to read their abstracts and details. Pass the runId on every call after the first.",
   parameters: Schema.Struct({
     watchId: Id,
+    runId: Schema.optionalKey(Id),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     abstractsFor: Schema.optionalKey(
-      Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(60)),
+      Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(30)),
     ),
   }),
   success: Schema.Struct({

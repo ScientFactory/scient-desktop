@@ -27,8 +27,7 @@ function unread(watch: LiteratureWatch): number {
   return watch.briefings
     .filter((briefing) => !briefing.openedAt)
     .reduce(
-      (count, briefing) =>
-        count + Math.min(briefing.items.length, LITERATURE_WATCH_FEATURED_ITEMS),
+      (count, briefing) => count + Math.min(briefing.items.length, LITERATURE_WATCH_FEATURED_ITEMS),
       0,
     );
 }

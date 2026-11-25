@@ -79,6 +79,19 @@ describe("literatureWatchCandidates", () => {
   });
 });
 
+describe("literatureWatchCandidates title fallback", () => {
+  it("keeps two papers that share a title but not a DOI", () => {
+    const result = literatureWatchCandidates(
+      [
+        found("Hippocampal replay supports flexible planning in rats", { ids: { doi: "10.1/a" } }),
+        found("Hippocampal replay supports flexible planning in rats", { ids: { doi: "10.1/b" } }),
+      ],
+      [],
+    );
+    expect(result.candidates).toHaveLength(2);
+  });
+});
+
 describe("literatureWatchWindow", () => {
   it("looks back a month first, then resumes from the covered day with overlap", () => {
     expect(literatureWatchWindow(watch(), "pubmed", now)).toEqual({
@@ -88,6 +101,11 @@ describe("literatureWatchWindow", () => {
     const covered = watch({ covered: { pubmed: "2026-11-19", openalex: "2026-11-19" } });
     expect(literatureWatchWindow(covered, "pubmed", now).from).toBe("2026-11-17");
     expect(literatureWatchWindow(covered, "openalex", now).from).toBe("2026-10-27");
+  });
+
+  it("keeps reaching back to the watch's first month until a service answers once", () => {
+    const failedFirst = watch({ createdAt: "2026-11-12T09:00:00.000Z", covered: {} });
+    expect(literatureWatchWindow(failedFirst, "pubmed", now).from).toBe("2026-10-13");
   });
 
   it("reaches back to the gap when the app was closed longer than the OpenAlex rescan", () => {
