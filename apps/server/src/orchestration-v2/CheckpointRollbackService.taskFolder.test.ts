@@ -33,6 +33,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as TaskFolders from "../workspace/TaskFolders.ts";
 import {
+  approveLayoutCommands,
   layerTaskFoldersWithGit,
   taskFoldersTestProjectId as projectId,
   type TaskFoldersTestState,
@@ -1022,6 +1023,8 @@ it.live(
             },
           }),
         );
+        // A layout command runs only once a person has approved its text.
+        yield* approveLayoutCommands;
         const { checkpointScopes } = yield* thread.records;
         const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
         const checkpointId = yield* ids.allocate

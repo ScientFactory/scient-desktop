@@ -179,7 +179,8 @@ describe("McpAppFrame", () => {
     await expect
       .element(
         screen.getByText(
-          "The Demo app needs a newer T3 Code server on this environment. Update the server to use it.",
+          // SCIENT-FORK: the copy names Scient.
+          "The Demo app needs a newer Scient server on this environment. Update the server to use it.",
         ),
       )
       .toBeInTheDocument();

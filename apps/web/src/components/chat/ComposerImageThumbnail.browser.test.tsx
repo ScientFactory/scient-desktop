@@ -17,6 +17,51 @@ function previewEdges(image: HTMLImageElement) {
   return [sample(0), sample(Math.floor(canvas.width / 2)), sample(canvas.width - 1)];
 }
 
+it("keeps a native preview available after thumbnail generation has failed", async () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 2;
+  canvas.height = 2;
+  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!)));
+  const file = new File([blob], "screenshot.png", { type: "image/png" });
+  using _bitmap = vi
+    .spyOn(window, "createImageBitmap")
+    .mockRejectedValue(new Error("Thumbnail decoder unavailable"));
+  vi.stubGlobal("Worker", undefined);
+  try {
+    expect(await createComposerImageThumbnail(file)).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+
+  const container = document.createElement("div");
+  const holdLoad = (event: Event) => event.stopPropagation();
+  container.addEventListener("load", holdLoad, true);
+  using complete = vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(false);
+  await using screen = await render(
+    <ComposerImageThumbnail
+      file={file}
+      alt={file.name}
+      className="size-16 object-cover"
+      fallback={<span>Preview unavailable</span>}
+    />,
+    { container },
+  );
+  using revoke = vi.spyOn(URL, "revokeObjectURL");
+  await expect.element(screen.getByText("Preview unavailable")).toBeVisible();
+  const loadingImage = screen.container.querySelector("img")!;
+  await loadingImage.decode();
+  complete.mockRestore();
+  container.removeEventListener("load", holdLoad, true);
+  await act(() => loadingImage.dispatchEvent(new Event("load")));
+  const image = screen.getByRole("img", { name: file.name });
+  await expect.element(image).toBeVisible();
+  await expect.element(screen.getByText("Preview unavailable")).not.toBeInTheDocument();
+  const src = image.element().getAttribute("src");
+  expect(src).toMatch(/^blob:/);
+  await screen.unmount();
+  expect(revoke).toHaveBeenCalledWith(src);
+});
+
 it("keeps both screenshot edges visible after switching from a cached square preview", async () => {
   const source = document.createElement("canvas");
   source.width = 960;
@@ -78,51 +123,6 @@ it("keeps both screenshot edges visible after switching from a cached square pre
   const restoredSquare = screen.container.querySelector("img")!;
   expect(restoredSquare.src).toBe(squareSrc);
   expect(getComputedStyle(restoredSquare).objectFit).toBe("cover");
-});
-
-it("keeps a native preview available after thumbnail generation has failed", async () => {
-  const canvas = document.createElement("canvas");
-  canvas.width = 2;
-  canvas.height = 2;
-  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!)));
-  const file = new File([blob], "screenshot.png", { type: "image/png" });
-  using _bitmap = vi
-    .spyOn(window, "createImageBitmap")
-    .mockRejectedValue(new Error("Thumbnail decoder unavailable"));
-  vi.stubGlobal("Worker", undefined);
-  try {
-    expect(await createComposerImageThumbnail(file)).toBeNull();
-  } finally {
-    vi.unstubAllGlobals();
-  }
-
-  const container = document.createElement("div");
-  const holdLoad = (event: Event) => event.stopPropagation();
-  container.addEventListener("load", holdLoad, true);
-  using complete = vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(false);
-  await using screen = await render(
-    <ComposerImageThumbnail
-      file={file}
-      alt={file.name}
-      className="size-16 object-cover"
-      fallback={<span>Preview unavailable</span>}
-    />,
-    { container },
-  );
-  using revoke = vi.spyOn(URL, "revokeObjectURL");
-  await expect.element(screen.getByText("Preview unavailable")).toBeVisible();
-  const loadingImage = screen.container.querySelector("img")!;
-  await loadingImage.decode();
-  complete.mockRestore();
-  container.removeEventListener("load", holdLoad, true);
-  await act(() => loadingImage.dispatchEvent(new Event("load")));
-  const image = screen.getByRole("img", { name: file.name });
-  await expect.element(image).toBeVisible();
-  await expect.element(screen.getByText("Preview unavailable")).not.toBeInTheDocument();
-  const src = image.element().getAttribute("src");
-  expect(src).toMatch(/^blob:/);
-  await screen.unmount();
-  expect(revoke).toHaveBeenCalledWith(src);
 });
 
 it("shows the fallback while HEIC preparation is pending", async () => {

@@ -193,7 +193,21 @@ describe("BrowserImport.importCookies", () => {
             scope: "persist:t3code-preview-test",
             persistent: true,
           }),
-          { imported: 1, skipped: 0, skippedDomains: [] },
+          {
+            imported: 1,
+            skipped: 0,
+            skippedDomains: [],
+            // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+            importedSites: 1,
+            skippedByReason: {
+              appBoundEncryption: 0,
+              decryptFailed: 0,
+              partitionUnsupported: 0,
+              writeFailed: 0,
+            },
+            importedGoogle: false,
+            // SCIENT-FORK:END
+          },
         );
         assert.deepEqual(written, [
           {

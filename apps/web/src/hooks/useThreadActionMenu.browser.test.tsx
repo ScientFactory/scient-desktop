@@ -71,6 +71,7 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: vi.fn() },
   readEnvironmentScope: () => true,
+  readEnvironmentScopeDenied: () => false,
 }));
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => "header-env",

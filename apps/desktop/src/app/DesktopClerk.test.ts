@@ -120,15 +120,12 @@ const layerDesktopClerk = (
   );
 };
 
-// SCIENT-FORK:START restored-sole-guards - the bridge takes upstream's owner-only store around Clerk's storage.
+// SCIENT-FORK:START restored-sole-guards - the bridge takes Clerk's own owner-only storage.
 const assertBridgeConfigured = (renderer: { readonly scheme: string; readonly host: string }) => {
   assert.equal(createClerkBridgeMock.mock.calls.length, 1);
   const { storage, ...options } = createClerkBridgeMock.mock.calls[0]![0];
   assert.deepEqual(options, { manageSingleInstanceLock: false, passkeys: true, renderer });
-  assert.notStrictEqual(storage, storageAdapter);
-  storageAdapter.getItem.mockReturnValueOnce("stored-token");
-  assert.equal(storage.getItem("session"), "stored-token");
-  assert.deepEqual(storageAdapter.getItem.mock.lastCall, ["session"]);
+  assert.strictEqual(storage, storageAdapter);
 };
 // SCIENT-FORK:END restored-sole-guards
 

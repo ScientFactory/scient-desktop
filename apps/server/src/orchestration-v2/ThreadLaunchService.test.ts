@@ -4484,7 +4484,12 @@ it.effect.each(
                 detail: "private Git failure details",
               }),
             )
-          : Effect.succeed({ commitSha: "parent-local-commit" }),
+          : // The parent's branch has moved on since, so the child starts from the parent's commit.
+            Effect.succeed({
+              commitSha: input.revision.startsWith("refs/heads/")
+                ? "branch-tip"
+                : "parent-local-commit",
+            }),
       );
       const harness = makeHarness({
         closeTerminal: () => Deferred.succeed(terminalClosed, undefined).pipe(Effect.asVoid),
@@ -4659,11 +4664,12 @@ it.effect.each(
         assert.deepEqual(resolveCommit.mock.calls, [
           [{ cwd: parentWorktree ?? "/repo", revision: "HEAD" }],
           ...(parentWorktree === null ? [] : [[{ cwd: "/repo", revision: "parent-local-commit" }]]),
+          [{ cwd: "/repo", revision: "refs/heads/parent-feature" }],
         ]);
         assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, "parent-local-commit");
         assert.equal((yield* service.delegateTask(scope, input)).taskId, delegated.taskId);
         assert.equal(harness.createWorktree.mock.calls.length, 1);
-        assert.equal(resolveCommit.mock.calls.length, parentWorktree === null ? 1 : 2);
+        assert.equal(resolveCommit.mock.calls.length, parentWorktree === null ? 2 : 3);
         if (!cancelAsync) assert.isEmpty(child.checkpointScopes);
         const parent = yield* threads.getThreadProjection(parentThreadId);
         assert.equal(parent.thread.worktreePath, parentWorktree);
