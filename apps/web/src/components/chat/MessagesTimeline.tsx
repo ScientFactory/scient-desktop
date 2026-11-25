@@ -136,7 +136,8 @@ import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
-import { forwardWheelToTimeline } from "./timelineMinimapWheel";
+// SCIENT-FORK: cancelTimelineWheelGlide ends a wheel glide when the scroller shows another thread.
+import { cancelTimelineWheelGlide, forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
 import {
   type TimelineRowSharedState,
@@ -187,6 +188,9 @@ function timelineListStateFor(identity: string): {
   };
 }
 
+// SCIENT-FORK: the longest an opening stays covered waiting for its restore
+// (about the restore's own settle budget, useTimelinePositionRestore.ts).
+const OPENING_REVEAL_FALLBACK_MS = 1000;
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
@@ -567,6 +571,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the thread whose positioning ran out of frames before it held
   // still (scient-fork/forkLanding.ts). No settling identity: nothing pins the end.
   const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
+  // The thread whose opening was shown before it reported positioned (OPENING_REVEAL_FALLBACK_MS).
+  const [openingShownKey, setOpeningShownKey] = useState<string | null>(null);
   // SCIENT-FORK:END
   const [playingAudioRows, setPlayingAudioRows] = useState<ReadonlyMap<HTMLAudioElement, string>>(
     () => new Map(),
@@ -592,6 +598,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setPositionedThreadKey(null);
     // SCIENT-FORK:START — a new thread's positioning starts over; no settling identity.
     setAbandonedPositionKey(null);
+    setOpeningShownKey(null);
     // SCIENT-FORK:END
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
@@ -1042,6 +1049,33 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows.length > 0 &&
     !positionHistoryLoading &&
     !waitingForReadingHistory;
+  // The unkeyed list positions an opening frames after its rows commit, so it would first paint
+  // at the previous thread's offset. Until it reports positioned (at most OPENING_REVEAL_FALLBACK_MS)
+  // a cover hides it, shields it from blind presses and passes the wheel on; the list stays
+  // readable and focusable.
+  const hiddenForOpening =
+    restoringThreadPosition && rows.length > 0 && openingShownKey !== listIdentityKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bounds how long an opening stays covered if it never reports positioned
+  useEffect(() => {
+    if (!hiddenForOpening) return;
+    const timer = window.setTimeout(
+      () => setOpeningShownKey(listIdentityKey),
+      OPENING_REVEAL_FALLBACK_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [hiddenForOpening, listIdentityKey]);
+  // A wheel glide (from the cover or the minimap) belongs to the thread it started on: when the
+  // retained scroller shows another thread, it would treat the new restore as drift and move it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the scroller's DOM wheel glide to the thread it shows
+  useLayoutEffect(() => {
+    // The attached scroller, not the ref: a list can mount or remount while the thread is shown.
+    const scrollNode = attachedViewport?.scrollNode;
+    if (scrollNode) return () => cancelTimelineWheelGlide(scrollNode);
+  }, [
+    attachedViewport,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch ends the outgoing thread's glide.
+    listIdentityKey,
+  ]);
   // SCIENT-FORK:END
 
   // Z: syncs LegendList's scroll position with which thread it shows. The list
@@ -1952,6 +1986,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setListState({ ...timelineListStateFor(listIdentityKey), findOpenAtOpening: findOpen });
       setPositionedThreadKey(null);
     }
+    // A list that never reported loaded remounts too: its new opening is covered again.
+    if (openingShownKey !== null) setOpeningShownKey(null);
     // SCIENT-FORK:END
     if (hideEmptyPlaceholder) {
       return (
@@ -2064,6 +2100,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
                   });
                 }}
               />
+              {/* SCIENT-FORK:START — covers an opening until it is positioned. */}
+              {hiddenForOpening ? (
+                <div
+                  aria-hidden
+                  data-timeline-opening-cover=""
+                  className="absolute inset-0 z-50 bg-background"
+                  // The wheel still reaches the timeline, so the reader can take over.
+                  ref={(cover) => {
+                    if (!cover) return;
+                    cover.addEventListener("wheel", forwardMinimapWheel, { passive: false });
+                    return () => cover.removeEventListener("wheel", forwardMinimapWheel);
+                  }}
+                />
+              ) : null}
+              {/* SCIENT-FORK:END */}
             </TooltipScrollDismissArea>
           </div>
         </TimelineRowActivityCtx>

@@ -892,11 +892,13 @@ describe("MessagesTimeline messages", () => {
     // has landed counts the child's unfinished end scroll, corrected before any paint; the parent's
     // opening is observed from the child's positioning receipt instead.
     const base = baseProps();
-    const childPositioned = Promise.withResolvers<void>();
+    let childPositioned = false;
+    let parentPositioned = false;
     const props = {
       ...base,
       onPositionedThreadKeyChange: (key: string | null) => {
-        if (key === base.routeThreadKey) childPositioned.resolve();
+        if (key === base.routeThreadKey) childPositioned = true;
+        if (key === `${base.routeThreadKey}-parent`) parentPositioned = true;
       },
     };
     // SCIENT-FORK:END
@@ -916,7 +918,7 @@ describe("MessagesTimeline messages", () => {
     );
     expect(screen.text()).toContain("Subagent of");
     // SCIENT-FORK:START
-    await childPositioned.promise;
+    await vi.waitFor(() => expect(childPositioned).toBe(true));
     // SCIENT-FORK:END
     const viewport = props.listRef.current!.getScrollableNode()!;
     const end = () => viewport.scrollHeight - viewport.clientHeight;
@@ -925,6 +927,26 @@ describe("MessagesTimeline messages", () => {
     viewport.addEventListener("scroll", () =>
       shortfalls.push(Math.round(end() - viewport.scrollTop)),
     );
+    // SCIENT-FORK:START — sampled at each DOM change and scroll until the parent is positioned:
+    // once the parent's rows are shown, the timeline is covered or at its end, never showing the
+    // parent's top first.
+    const covered = () => screen.container.querySelector("[data-timeline-opening-cover]") !== null;
+    const shownAwayFromEnd: number[] = [];
+    let shownSamples = 0;
+    const sample = () => {
+      if (!screen.container.textContent?.includes("Parent turn") || covered()) return;
+      shownSamples += 1;
+      const shortfall = Math.round(end() - viewport.scrollTop);
+      if (shortfall > 1) shownAwayFromEnd.push(shortfall);
+    };
+    const commits = new MutationObserver(sample);
+    commits.observe(screen.container, { subtree: true, childList: true, attributes: true });
+    viewport.addEventListener("scroll", sample);
+    onTestFinished(() => {
+      commits.disconnect();
+      viewport.removeEventListener("scroll", sample);
+    });
+    // SCIENT-FORK:END
 
     // A working parent's footer (queued turns, its subagents) is taller than the child's.
     await screen.rerender(
@@ -939,10 +961,25 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() => {
       expect(screen.text()).toContain("Parent turn 29:");
       expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
+      // SCIENT-FORK:START — scroll events fire on the next frame, after scrollTop has moved, so
+      // a landing within one frame is seen at the end before any scroll has been recorded.
+      expect(shortfalls.length).toBeGreaterThan(0);
+      // SCIENT-FORK:END
     });
 
-    expect(shortfalls.length).toBeGreaterThan(0);
     expect(shortfalls).toEqual(shortfalls.map(() => 0));
+    // SCIENT-FORK:START
+    await vi.waitFor(() => {
+      expect(parentPositioned).toBe(true);
+      expect(covered()).toBe(false);
+    });
+    commits.disconnect();
+    viewport.removeEventListener("scroll", sample);
+    expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
+    expect(shortfalls).toEqual(shortfalls.map(() => 0));
+    expect(shownSamples).toBeGreaterThan(0);
+    expect(shownAwayFromEnd).toEqual([]);
+    // SCIENT-FORK:END
   });
 
   it("puts rows back in item order soon after a continuous scroll stops", async () => {
