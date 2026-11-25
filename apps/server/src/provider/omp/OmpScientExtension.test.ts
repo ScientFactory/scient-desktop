@@ -435,19 +435,23 @@ describe("Scient's Oh My Pi extension", () => {
       ]);
     });
 
+    // A request still held when a test ends fails, so discovery sends nothing after teardown.
     const holds: Array<() => void> = [];
     afterEach(() => {
-      for (const release of holds.splice(0)) release();
+      for (const refuse of holds.splice(0)) refuse();
     });
 
     /** Holds every request to `url` until the returned function is called. */
     const holdServer = (url: string) => {
       const answer = globalThis.fetch;
       let release!: () => void;
-      const held = new Promise<void>((resolve) => {
+      let refuse!: () => void;
+      const held = new Promise<void>((resolve, reject) => {
         release = resolve;
+        refuse = () => reject(new Error("The test ended while this request was held."));
       });
-      holds.push(release);
+      held.catch(() => undefined);
+      holds.push(refuse);
       vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
         if (input === url) await held;
         return answer(input, init);
@@ -566,6 +570,40 @@ describe("Scient's Oh My Pi extension", () => {
       expect(calledTools(requests).at(-1)).toEqual([ALPHA, "beta__lookup"]);
     });
 
+    it.each([
+      ["1password", "1password__vault"],
+      ["github", "github_"],
+    ])("gives %s and %s the same tool names whichever answers first", async (shorter, longer) => {
+      const SHORT = "http://127.0.0.1/mcp/connectors/connector-short";
+      const LONG = "http://127.0.0.1/mcp/connectors/connector-long";
+      // Each server's tool would otherwise take the other's plain name.
+      const shortTool = longer.slice(shorter.length) === "__vault" ? "vault__lookup" : "_lookup";
+      const names = async (first: string) => {
+        vi.unstubAllGlobals();
+        stubServers({ [SHORT]: [shortTool], [LONG]: ["lookup"] });
+        const release = holdServer(first === "short" ? LONG : SHORT);
+        const extension = await loadExtension(
+          (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+          {
+            ...SESSION,
+            connectors: [
+              { serverName: shorter, displayName: "Short", url: SHORT },
+              { serverName: longer, displayName: "Long", url: LONG },
+            ],
+          },
+        );
+        const host = makeApi();
+        await loadPastStartupWait(await extension.importFresh(), host.api);
+        release();
+        await vi.waitFor(() => expect(host.tools.size).toBe(3));
+        return [...host.tools.keys()].toSorted();
+      };
+
+      const shortFirst = await names("short");
+      expect(await names("long")).toEqual(shortFirst);
+      expect(shortFirst).toContain(`${/^[A-Za-z_]/u.test(longer) ? "" : "_"}${longer}__lookup`);
+    });
+
     it("keeps a subagent's re-run degraded, not failed, when Scient fails after its parent started", async () => {
       stubServers({ [SESSION.endpoint]: "fail", [GITHUB]: ["search"] });
       const release = holdServer(SESSION.endpoint);
@@ -633,16 +671,17 @@ describe("Scient's Oh My Pi extension", () => {
         await extension.importFresh()
       )(host.api);
 
-      // "a.b" becomes "github__a_b", so the later "a_b" takes a hashed alias, as do
-      // the 68-character name and the later "github___x".
+      // "a.b" becomes "github__a_b", so the later "a_b" takes a hashed alias, as does the
+      // 68-character name. "github___x" lies in "github_"'s namespace, so it is that server's
+      // whichever catalog arrives first, and "github"'s "_x" takes the alias.
       expect([...host.tools.keys()]).toEqual([
         "scient_fixture",
         "github__ok",
         "github__a_b",
         "github__a_b_44fdc099",
-        "github___x",
+        "github___x_ff2ab3db",
         "github__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_592e2afd",
-        "github___x_4b9a77d4",
+        "github___x",
         "github___list",
       ]);
       expect(await status(host)).toEqual([
@@ -652,11 +691,13 @@ describe("Scient's Oh My Pi extension", () => {
       await host.tools
         .get("github__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_592e2afd")!
         .execute("call-2", {});
-      await host.tools.get("github___x_4b9a77d4")!.execute("call-3", {});
+      await host.tools.get("github___x")!.execute("call-3", {});
+      await host.tools.get("github___x_ff2ab3db")!.execute("call-4", {});
       expect(calledTools(requests)).toEqual([
         [GITHUB, "a_b"],
         [GITHUB, "x".repeat(60)],
         [LINEAR, "x"],
+        [GITHUB, "_x"],
       ]);
     });
 

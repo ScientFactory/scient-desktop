@@ -208,16 +208,21 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
   return { tools, request, description };
 };
 
+/** The prefix every plain tool name of the server starts with. */
+const scientConnectorPrefix = (serverName) =>
+  (/^[A-Za-z_]/u.test(serverName) ? serverName : "_" + serverName) + "__";
+
 /** The tool's model-facing name, or undefined when none is usable. */
 const scientConnectorToolName = (serverName, toolName, taken, serverNames = []) => {
-  let name = serverName + "__" + toolName.replace(/[^A-Za-z0-9_-]/gu, "_");
-  if (!/^[A-Za-z_]/u.test(name)) name = "_" + name;
+  const prefix = scientConnectorPrefix(serverName);
+  const name = prefix + toolName.replace(/[^A-Za-z0-9_-]/gu, "_");
   // An alias keeps the name's first 55 characters, so it stays in OMP's namespace too.
   if (name.startsWith("mcp__")) return undefined;
   // Catalogs arrive in any order: a name inside a longer server's namespace is that server's.
-  const foreign = serverNames.some(
-    (other) => other.startsWith(serverName + "__") && name.startsWith(other + "__"),
-  );
+  const foreign = serverNames.some((other) => {
+    const otherPrefix = scientConnectorPrefix(other);
+    return otherPrefix.length > prefix.length && name.startsWith(otherPrefix);
+  });
   if (name.length <= 64 && !foreign && !taken.has(name)) return name;
   const digest = scientCreateHash("sha256").update(serverName + "\\u0000" + toolName).digest("hex");
   const alias = name.slice(0, 55) + "_" + digest.slice(0, 8);
