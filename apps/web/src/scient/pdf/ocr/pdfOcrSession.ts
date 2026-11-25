@@ -75,14 +75,33 @@ export type PdfOcrPageState = "native" | "unknown" | "pending" | "recognized" | 
 interface PageEntry {
   scanned: boolean | null;
   classifying: Promise<boolean> | null;
+  /** The page's own non-space characters, once its text has been read. */
+  characters: number | null;
   content: PdfOcrTextContent | null;
   failed: boolean;
   task: Promise<PdfOcrTextContent | null> | null;
   job: PdfOcrQueueJob | null;
   priority: number;
+  /** A search's look-ahead wants it read. */
   search: boolean;
+  /** A caller of the page's `getTextContent` waits for it. */
+  asked: boolean;
   visible: number;
 }
+
+/** A search's pass over the pages, from where its reader was. */
+interface SearchPass {
+  readonly start: number;
+  offset: number;
+  active: number;
+  finished: boolean;
+}
+
+/**
+ * Pages a search looks at, or waits to have read, at once. Each holds its page (and, while
+ * queued, a job) until done, so a book is never queued whole.
+ */
+export const PDF_OCR_SEARCH_AHEAD = 4;
 
 /** Words with this much confidence count towards how readable a reading is. */
 const READABLE_CONFIDENCE = 60;
@@ -125,7 +144,11 @@ async function collect(
   }
 }
 
-function compose(native: PdfTextContentLike, ocr: PdfOcrTextContent): PdfTextContentLike {
+/** A page's own text followed by its recognized text, as the text layer draws them. */
+export function composePdfTextContent(
+  native: PdfTextContentLike,
+  ocr: PdfOcrTextContent,
+): PdfTextContentLike {
   return {
     ...native,
     items: [...native.items, ...ocr.items],
@@ -140,22 +163,29 @@ export interface PdfOcrSession {
   pageState(page: number): PdfOcrPageState;
   /** True when the page's text includes recognized text. */
   recognized(page: number): boolean;
-  /** Looks at every page and reads the scanned ones, for a search. */
-  recognizeAll(): void;
+  /**
+   * The page one reader's search starts from, or null once its query is cleared or its search
+   * closed. While any reader searches, the scanned pages are read a few at a time from there.
+   */
+  setSearch(viewer: object, from: number | null): void;
   /** The pages one reader shows; pages nobody shows or searches stop waiting. */
   setVisible(viewer: object, pages: ReadonlySet<number>): void;
   /** Stops waiting work for a reader that closed; the last one stops everything. */
   release(viewer: object): void;
   /** The PDF's own text, without recognized text. */
   nativeTextContent(page: PdfOcrPage, params?: object): Promise<PdfTextContentLike>;
+  /** The page's own text and its recognized text if it is already read; never waits for it. */
+  findTextContent(
+    page: PdfOcrPage,
+    params?: object,
+  ): Promise<{ native: PdfTextContentLike; recognized: PdfOcrTextContent | null }>;
   dispose(): void;
 }
 
 /**
- * Text recognition for one open PDF. Pages are patched so their text content includes the
- * recognized words of scanned pages: find waits for them, the text layer shows what is ready
- * and is redrawn when a page is read. A page counts as scanned when it has little text of its
- * own and is mostly image; its own text, such as a stamp, stays first.
+ * Text recognition for one open PDF. Patched pages' text includes scanned pages' recognized
+ * words after their own: `getTextContent` waits for them, the text layer shows what is ready
+ * and is redrawn when a page is read, and find (`findTextContent`) never waits.
  */
 export function createPdfOcrSession(
   document: PdfOcrDocument,
@@ -167,10 +197,10 @@ export function createPdfOcrSession(
   const originals = new WeakMap<PdfOcrPage, Pick<PdfOcrPage, "getTextContent">>();
   const listeners = new Set<(page: number | null) => void>();
   const viewers = new Map<object, ReadonlySet<number>>();
+  const searchers = new Map<object, number>();
   let disposed = false;
-  let sweeping: Promise<void> | null = null;
-  let sweepGeneration = 0;
-  let searching = false;
+  let pass: SearchPass | null = null;
+  let scannedKnown = false;
   let checked = false;
   let consecutiveFailures = 0;
   let snapshot: PdfOcrCoverage | null = null;
@@ -182,12 +212,14 @@ export function createPdfOcrSession(
       found = {
         scanned: null,
         classifying: null,
+        characters: null,
         content: null,
         failed: false,
         task: null,
         job: null,
         priority: 0,
         search: false,
+        asked: false,
         visible: 0,
       };
       entries.set(page, found);
@@ -216,8 +248,14 @@ export function createPdfOcrSession(
     const found = entry(page.pageNumber);
     if (found.scanned !== null) return Promise.resolve(found.scanned);
     found.classifying ??= (async () => {
-      const text = content ?? (await native(page).getTextContent({ disableNormalization: true }));
-      if (textContentCharacters(text.items) >= PDF_NATIVE_TEXT_LIMIT) return false;
+      const characters = content
+        ? textContentCharacters(content.items)
+        : (found.characters ??
+          textContentCharacters(
+            (await native(page).getTextContent({ disableNormalization: true })).items,
+          ));
+      found.characters = characters;
+      if (characters >= PDF_NATIVE_TEXT_LIMIT) return false;
       const operators = await page.getOperatorList({
         annotationMode: dependencies.annotationMode,
       });
@@ -230,8 +268,9 @@ export function createPdfOcrSession(
       (scanned) => {
         found.scanned = scanned;
         if (scanned) {
+          scannedKnown = true;
           emit(page.pageNumber);
-          if (searching) sweep();
+          startSearch();
         }
         return scanned;
       },
@@ -294,7 +333,11 @@ export function createPdfOcrSession(
   };
 
   const priorityOf = (found: PageEntry) =>
-    found.visible > 0 ? PDF_OCR_PRIORITY.visible : found.search ? PDF_OCR_PRIORITY.search : 0;
+    found.visible > 0
+      ? PDF_OCR_PRIORITY.visible
+      : found.search || found.asked
+        ? PDF_OCR_PRIORITY.search
+        : 0;
 
   const recognize = (page: PdfOcrPage): Promise<PdfOcrTextContent | null> => {
     const found = entry(page.pageNumber);
@@ -311,11 +354,19 @@ export function createPdfOcrSession(
       return Promise.resolve(null);
     }
     emit(page.pageNumber);
-    found.task = (async () => {
+    // A cancelled job frees the page at once, so a search that starts again queues it anew.
+    let current = true;
+    const release = () => {
+      if (!current) return;
+      current = false;
+      found.task = null;
+      found.job = null;
+    };
+    const task = (async () => {
       const key = pageKey(page);
       const stored = key === null ? null : await dependencies.cache.byPage(key);
       if (stored) return settle(page, stored);
-      if (disposed) return null;
+      if (disposed || !current) return null;
       return new Promise<PdfOcrTextContent | null>((resolve) => {
         found.priority = priorityOf(found);
         let ran = false;
@@ -336,17 +387,18 @@ export function createPdfOcrSession(
           setPriority: job.setPriority,
           cancel: () => {
             if (ran || !job.cancel()) return false;
+            release();
             resolve(null);
             return true;
           },
         };
       });
     })().finally(() => {
-      found.task = null;
-      found.job = null;
+      release();
       emit(page.pageNumber);
     });
-    return found.task;
+    found.task = task;
+    return task;
   };
 
   const textFor = async (
@@ -354,7 +406,7 @@ export function createPdfOcrSession(
     content: PdfTextContentLike,
   ): Promise<PdfOcrTextContent | null> => {
     if (!(await classify(page, content))) return null;
-    entry(page.pageNumber).search = true;
+    entry(page.pageNumber).asked = true;
     return recognize(page);
   };
 
@@ -371,7 +423,7 @@ export function createPdfOcrSession(
       const content = await getTextContent(params);
       if (disposed || textContentCharacters(content.items) >= PDF_NATIVE_TEXT_LIMIT) return content;
       const ocr = await textFor(page, content);
-      return ocr ? compose(content, ocr) : content;
+      return ocr ? composePdfTextContent(content, ocr) : content;
     };
     patched.streamTextContent = (params) => {
       const source = streamTextContent(params);
@@ -446,33 +498,76 @@ export function createPdfOcrSession(
     }
   };
 
+  /** Looks at one page for a search and, if it is a scan, waits for its reading. */
+  const look = async (number: number, live: () => boolean) => {
+    const page = await document.getPage(number);
+    try {
+      if (!live() || !(await classify(page)) || !live()) return;
+      entry(number).search = true;
+      await recognize(page);
+    } finally {
+      // A page read for a search is not kept parsed unless someone shows it.
+      if (entry(number).visible === 0) page.cleanup();
+    }
+  };
+
   /**
-   * Once a search is open and a scanned page is known, every page is looked at and the
-   * scanned ones queued, so several are read at once ahead of the search reaching them. A
-   * PDF with no scanned page is never swept: find reads its text as it always has.
+   * While a reader searches and a scanned page is known, the pages are looked at from where it
+   * was, a few at a time, and the scanned ones read. A PDF with no scanned page is never swept:
+   * find reads its own text as it always has.
    */
-  function sweep() {
-    if (disposed || sweeping !== null) return;
-    const generation = ++sweepGeneration;
-    const current = () => !disposed && generation === sweepGeneration;
-    sweeping = (async () => {
-      for (let number = 1; number <= document.numPages && current(); number += 1) {
-        const page = await document.getPage(number);
-        if (!current()) return;
-        if (await classify(page)) {
-          entry(number).search = true;
-          void recognize(page);
-        } else if (entry(number).visible === 0) {
-          page.cleanup();
-        }
+  const pump = () => {
+    const current = pass;
+    if (!current || disposed) return;
+    const live = () => pass === current && !disposed;
+    const count = document.numPages;
+    while (current.active < PDF_OCR_SEARCH_AHEAD && current.offset < count) {
+      const number = ((current.start - 1 + current.offset) % count) + 1;
+      current.offset += 1;
+      const found = entry(number);
+      if (found.scanned === false || found.content || found.failed) continue;
+      if (found.task) {
+        // Already being read for a reader that shows it.
+        found.search = true;
+        continue;
       }
-      if (!current()) return;
+      current.active += 1;
+      void look(number, live)
+        .catch(() => undefined)
+        .finally(() => {
+          current.active -= 1;
+          pump();
+        });
+    }
+    if (!current.finished && current.active === 0 && current.offset >= count) {
+      current.finished = true;
       checked = true;
       emit(null);
-    })().catch(() => {
-      if (generation === sweepGeneration) sweeping = null;
-    });
+    }
+  };
+
+  function startSearch() {
+    if (disposed || pass || !scannedKnown) return;
+    const [from] = searchers.values();
+    if (from === undefined) return;
+    const count = Math.max(1, document.numPages);
+    pass = {
+      start: Math.min(Math.max(1, Math.trunc(from) || 1), count),
+      offset: 0,
+      active: 0,
+      finished: false,
+    };
+    pump();
   }
+
+  /** No reader searches: waiting pages stop, and pages being read finish. */
+  const stopSearch = () => {
+    if (!pass) return;
+    pass = null;
+    for (const found of entries.values()) found.search = false;
+    updatePriorities();
+    emit(null);
+  };
 
   const setVisible = (viewer: object, pages: ReadonlySet<number>) => {
     const before = viewers.get(viewer) ?? new Set<number>();
@@ -509,29 +604,39 @@ export function createPdfOcrSession(
       return found.failed ? "failed" : "unknown";
     },
     recognized: (page) => Boolean(entries.get(page)?.content),
-    recognizeAll() {
+    setSearch(viewer, from) {
+      if (from === null) {
+        if (searchers.delete(viewer) && searchers.size === 0) stopSearch();
+        return;
+      }
       if (disposed) return;
-      searching = true;
-      if ([...entries.values()].some((found) => found.scanned)) sweep();
+      searchers.set(viewer, from);
+      startSearch();
     },
     setVisible,
     release(viewer) {
       setVisible(viewer, new Set());
       viewers.delete(viewer);
-      if (viewers.size > 0) return;
-      // Nobody reads this PDF now: waiting pages stop, and a later search starts again.
-      sweepGeneration += 1;
-      sweeping = null;
-      searching = false;
-      checked = false;
-      for (const found of entries.values()) found.search = false;
+      if (searchers.delete(viewer) && searchers.size === 0) stopSearch();
+      if (viewers.size > 0 || searchers.size > 0) return;
+      // Nobody reads this PDF now: pages waiting for a text reader stop too.
+      for (const found of entries.values()) found.asked = false;
       updatePriorities();
       emit(null);
     },
     nativeTextContent: (page, params) => native(page).getTextContent(params),
+    async findTextContent(page, params) {
+      const content = await native(page).getTextContent(params);
+      const found = entry(page.pageNumber);
+      found.characters ??= textContentCharacters(content.items);
+      if (found.scanned === null && found.characters >= PDF_NATIVE_TEXT_LIMIT)
+        found.scanned = false;
+      return { native: content, recognized: found.content };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
+      pass = null;
       for (const found of entries.values()) found.job?.cancel();
       listeners.clear();
     },

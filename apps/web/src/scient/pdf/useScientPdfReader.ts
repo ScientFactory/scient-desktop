@@ -23,7 +23,7 @@ import { type PdfViewAreaLocation } from "./pdfReaderSessionStore";
 import { createPdfReaderViewportSession } from "./pdfReaderViewportSession";
 import { createPdfPresentationLayer, preparePdfPresentation } from "./pdfPresentation";
 import { attachPdfOcr, pdfNativeTextContent, pdfOcrSession } from "./ocr/pdfOcr";
-import type { PdfOcrCoverage, PdfOcrSession } from "./ocr/pdfOcrSession";
+import type { PdfOcrCoverage } from "./ocr/pdfOcrSession";
 
 export type PdfReaderPhase = "loading" | "password" | "ready" | "error";
 export type PdfFindPhase = "idle" | "pending" | "found" | "not-found";
@@ -149,7 +149,6 @@ export function useScientPdfReader(input: {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
   const shelfPlace = useShelfPlace();
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
-  const ocrRef = useRef<PdfOcrSession | null>(null);
   const [presentation, setPresentation] = useState<PresentedPdfSource | null>(null);
   // Mirrors presentationRef for render: the request whose PDF is painted, or null.
   const [presentedRequest, setPresentedRequest] = useState<{
@@ -384,7 +383,6 @@ export function useScientPdfReader(input: {
         detachOcr = () => {
           unsubscribeOcr();
           detachRecognition();
-          if (ocrRef.current === ocr) ocrRef.current = null;
         };
         let preparedOutline: PDFOutline = [];
         let preparedScanned: boolean | null = null;
@@ -417,7 +415,6 @@ export function useScientPdfReader(input: {
               readonly loadAttempt: number;
             };
             runtimeRef.current = runtime;
-            ocrRef.current = ocr;
             responsiveZoomRef.current = responsiveZoom;
             presentationRef.current = nextPresentation;
             disposePresentedRef.current = dispose;
@@ -471,7 +468,6 @@ export function useScientPdfReader(input: {
 
             const activeQuery = activeSearchQueryRef.current;
             if (activeQuery.length > 0) {
-              ocr.recognizeAll();
               runtime.eventBus.dispatch("find", {
                 source: runtime,
                 type: "",
@@ -812,7 +808,6 @@ export function useScientPdfReader(input: {
       const runtime = runtimeRef.current;
       if (!runtime) return;
       activeSearchQueryRef.current = query;
-      if (query.length > 0) ocrRef.current?.recognizeAll();
       runtime.eventBus.dispatch("find", {
         source: runtime,
         type,
@@ -856,8 +851,7 @@ export function useScientPdfReader(input: {
   const prepareSearch = useStableCallback(() => {
     const runtime = runtimeRef.current;
     if (!runtime || activeSearchQueryRef.current.length > 0) return;
-    // Scanned pages are read while the query is typed; nothing waits for a keystroke.
-    ocrRef.current?.recognizeAll();
+    // The PDF's own text is extracted while the query is typed; scanned pages wait for one.
     runtime.eventBus.dispatch("find", {
       source: runtime,
       type: "",

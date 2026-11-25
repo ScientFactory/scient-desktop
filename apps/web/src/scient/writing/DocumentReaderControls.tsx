@@ -157,8 +157,26 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
         />
         {searching ? (
           <>
-            <span className="scient-reader-search-count" aria-live="polite">
-              {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
+            <span className="scient-reader-search-navigation">
+              <span className="scient-reader-search-count" aria-live="polite">
+                {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
+              </span>
+              <button
+                type="button"
+                aria-label={gt("Previous result")}
+                disabled={props.total === 0}
+                onClick={() => props.onNavigate(true)}
+              >
+                <ChevronDown className="rotate-180" />
+              </button>
+              <button
+                type="button"
+                aria-label={gt("Next result")}
+                disabled={props.total === 0}
+                onClick={() => props.onNavigate(false)}
+              >
+                <ChevronDown />
+              </button>
             </span>
             {props.status ? (
               <ScientTooltip content={props.status.description}>
@@ -167,22 +185,6 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
                 </span>
               </ScientTooltip>
             ) : null}
-            <button
-              type="button"
-              aria-label={gt("Previous result")}
-              disabled={props.total === 0}
-              onClick={() => props.onNavigate(true)}
-            >
-              <ChevronDown className="rotate-180" />
-            </button>
-            <button
-              type="button"
-              aria-label={gt("Next result")}
-              disabled={props.total === 0}
-              onClick={() => props.onNavigate(false)}
-            >
-              <ChevronDown />
-            </button>
           </>
         ) : null}
       </div>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { textContentText } from "../anchors/pdfTextLayer";
 import { createMemoryPdfOcrCache, type PdfOcrCache } from "./pdfOcrCache";
@@ -7,6 +7,7 @@ import type { PdfImageOps } from "./pdfOcrPageImage";
 import { createPdfOcrQueue } from "./pdfOcrQueue";
 import {
   createPdfOcrSession,
+  PDF_OCR_SEARCH_AHEAD,
   type PdfOcrDependencies,
   type PdfOcrDocument,
   type PdfOcrPage,
@@ -30,13 +31,25 @@ const NATIVE = "This page has its own text, long enough to be read as a PDF's ow
 
 interface FakePage extends PdfOcrPage {
   operatorLists: number;
+  cleanups: number;
 }
 
-/** Page 1 is a scan carrying a small stamp of its own text; page 2 is an ordinary page. */
-function fakePdf(rotation = 0) {
+/**
+ * By default page 1 is a scan carrying a small stamp of its own text and page 2 an ordinary
+ * page. `fetched` lists the pages asked for, in order.
+ */
+function fakePdf(
+  options: {
+    readonly rotation?: number;
+    readonly numPages?: number;
+    readonly scanned?: (page: number) => boolean;
+  } = {},
+) {
   const pages = new Map<number, FakePage>();
+  const fetched: number[] = [];
+  const isScan = options.scanned ?? ((page: number) => page === 1);
   const page = (pageNumber: number): FakePage => {
-    const scanned = pageNumber === 1;
+    const scanned = isScan(pageNumber);
     const content = (): PdfTextContentLike => ({
       items: [{ str: scanned ? "Downloaded 2024" : NATIVE, hasEOL: true }],
       styles: {},
@@ -44,9 +57,10 @@ function fakePdf(rotation = 0) {
     });
     const fake: FakePage = {
       pageNumber,
-      rotate: rotation,
+      rotate: options.rotation ?? 0,
       view: [0, 0, 612, 792],
       operatorLists: 0,
+      cleanups: 0,
       getTextContent: async () => content(),
       streamTextContent: () =>
         new ReadableStream({
@@ -69,13 +83,17 @@ function fakePdf(rotation = 0) {
         height: rotation % 180 === 0 ? 792 : 612,
         convertToPdfPoint: (x, y) => (rotation % 180 === 0 ? [x, 792 - y] : [y, x]),
       }),
-      cleanup: () => true,
+      cleanup: () => {
+        fake.cleanups += 1;
+        return true;
+      },
     };
     return fake;
   };
   const document: PdfOcrDocument = {
-    numPages: 2,
+    numPages: options.numPages ?? 2,
     getPage: async (pageNumber) => {
+      fetched.push(pageNumber);
       let found = pages.get(pageNumber);
       if (!found) {
         found = page(pageNumber);
@@ -84,7 +102,7 @@ function fakePdf(rotation = 0) {
       return found;
     },
   };
-  return { document, pages };
+  return { document, pages, fetched };
 }
 
 const readable: PdfOcrLine[] = [
@@ -125,23 +143,25 @@ function setup(
   options: {
     readonly cache?: PdfOcrCache;
     readonly read?: (rotation: number) => ReadonlyArray<PdfOcrLine>;
+    readonly engine?: PdfOcrEngine;
   } = {},
 ) {
   const calls = { renders: [] as number[], recognitions: 0 };
-  const engine: PdfOcrEngine = {
+  const engine: PdfOcrEngine = options.engine ?? {
     recognize: async (image) => {
       calls.recognitions += 1;
       const rotation = Number(await image.text());
       return (options.read ?? (() => readable))(rotation);
     },
   };
+  const queue = createPdfOcrQueue(1);
   const dependencies: PdfOcrDependencies = {
     engine: () => engine,
-    queue: createPdfOcrQueue(1),
+    queue,
     cache: options.cache ?? createMemoryPdfOcrCache(),
     render: async (page, rotation) => {
       calls.renders.push(rotation);
-      const blob = new Blob([String(rotation)]);
+      const blob = new Blob([options.engine ? String(page.pageNumber) : String(rotation)]);
       return {
         blob,
         bytes: new TextEncoder().encode(`page ${page.pageNumber} ${rotation}`),
@@ -153,7 +173,26 @@ function setup(
     ops,
     annotationMode: 2,
   };
-  return { calls, dependencies };
+  return { calls, dependencies, queue };
+}
+
+/** An engine whose readings wait until the test releases them, by page. */
+function heldEngine() {
+  const waiting = new Map<number, () => void>();
+  const asked: number[] = [];
+  const engine: PdfOcrEngine = {
+    recognize: async (image) => {
+      const page = Number(await image.text());
+      asked.push(page);
+      await new Promise<void>((resolve) => waiting.set(page, resolve));
+      return readable;
+    },
+  };
+  const release = (page: number) => {
+    waiting.get(page)?.();
+    waiting.delete(page);
+  };
+  return { engine, asked, release, waiting };
 }
 
 async function streamed(page: PdfOcrPage): Promise<string> {
@@ -237,7 +276,7 @@ describe("PDF text recognition session", () => {
   it("keeps word geometry correct when identical pixels have different PDF rotations", async () => {
     const cache = createMemoryPdfOcrCache();
     for (const rotation of [0, 90]) {
-      const { document } = fakePdf(rotation);
+      const { document } = fakePdf({ rotation });
       const { dependencies } = setup({ cache });
       createPdfOcrSession(document, null, {
         ...dependencies,
@@ -285,7 +324,7 @@ describe("PDF text recognition session", () => {
     expect(session.coverage()).toMatchObject({ scanned: 1, recognized: 0, failed: 1 });
   });
 
-  it("looks at every page for a search only once a scanned page is known", async () => {
+  it("looks at the pages for a search only once a scanned page is known", async () => {
     // A PDF with no scanned page in view is never swept: find reads its text as before.
     const native = fakePdf();
     let fetched = 0;
@@ -297,7 +336,7 @@ describe("PDF text recognition session", () => {
       },
     };
     const quiet = createPdfOcrSession(nativeDocument, "native", setup().dependencies);
-    quiet.recognizeAll();
+    quiet.setSearch({}, 1);
     await streamed(await nativeDocument.getPage(1));
     expect(fetched).toBe(1);
     expect(quiet.coverage()).toMatchObject({ checked: false, scanned: 0 });
@@ -311,10 +350,96 @@ describe("PDF text recognition session", () => {
         if (coverage.checked && coverage.recognized === 1) resolve();
       }),
     );
-    session.recognizeAll();
-    // The page in view is found to be a scan, which starts the sweep.
+    session.setSearch({}, 1);
+    // The page in view is found to be a scan, which starts the search's pass.
     await streamed(await document.getPage(1));
     await checked;
     expect(session.coverage()).toMatchObject({ pageCount: 2, scanned: 1, recognized: 1 });
+  });
+
+  it("gives find a page's text at once, with its reading only once it is ready", async () => {
+    const { document } = fakePdf();
+    const held = heldEngine();
+    const { dependencies } = setup({ engine: held.engine });
+    const session = createPdfOcrSession(document, "doc", dependencies);
+    const scan = await document.getPage(1);
+    void streamed(scan);
+    await vi.waitFor(() => expect(held.asked).toEqual([1]));
+
+    const pending = await session.findTextContent(scan);
+    expect(textContentText(pending.native.items)).toBe("Downloaded 2024\n");
+    expect(pending.recognized).toBeNull();
+
+    held.release(1);
+    await vi.waitFor(() => expect(session.recognized(1)).toBe(true));
+    const read = await session.findTextContent(scan);
+    expect(textContentText(read.recognized!.items)).toBe("Recognized words\n");
+  });
+
+  it("reads a search's scanned pages a few at a time from its reader's page", async () => {
+    const pageCount = 12;
+    const { document, pages, fetched } = fakePdf({ numPages: pageCount, scanned: () => true });
+    const held = heldEngine();
+    const { dependencies, queue } = setup({ engine: held.engine });
+    const session = createPdfOcrSession(document, "doc", dependencies);
+    const reader = {};
+    // The page in view is known to be a scan.
+    session.setVisible(reader, new Set([5]));
+    void streamed(await document.getPage(5));
+    await vi.waitFor(() => expect(held.asked).toEqual([5]));
+    fetched.length = 0;
+
+    session.setSearch(reader, 5);
+    // Page 5 is already being read; the next pages wait, a few at a time, and none past them.
+    await vi.waitFor(() => expect(queue.size).toBe(1 + PDF_OCR_SEARCH_AHEAD));
+    expect(fetched).toEqual([6, 7, 8, 9]);
+    expect(session.pageState(10)).toBe("unknown");
+    // Each keystroke keeps the same search: nothing is looked at again.
+    for (let key = 0; key < 5; key += 1) session.setSearch(reader, 5);
+    expect(fetched).toEqual([6, 7, 8, 9]);
+
+    // A page the search read lets it take the next one.
+    held.release(5);
+    await vi.waitFor(() => expect(held.asked).toEqual([5, 6]));
+    expect(fetched).toEqual([6, 7, 8, 9]);
+    held.release(6);
+    await vi.waitFor(() => expect(held.asked).toEqual([5, 6, 7]));
+    await vi.waitFor(() => expect(fetched).toEqual([6, 7, 8, 9, 10]));
+    expect(pages.get(6)!.cleanups).toBeGreaterThan(0);
+    expect(pages.get(5)!.cleanups).toBe(0);
+    expect(queue.size).toBe(PDF_OCR_SEARCH_AHEAD);
+  });
+
+  it("stops a search's waiting pages when its query is cleared, and only the last reader's", async () => {
+    const { document, fetched } = fakePdf({ numPages: 12, scanned: () => true });
+    const held = heldEngine();
+    const { dependencies, queue } = setup({ engine: held.engine });
+    const session = createPdfOcrSession(document, "doc", dependencies);
+    const first = {};
+    const second = {};
+    session.setVisible(first, new Set([1]));
+    void streamed(await document.getPage(1));
+    await vi.waitFor(() => expect(held.asked).toEqual([1]));
+    session.setSearch(first, 1);
+    session.setSearch(second, 1);
+    await vi.waitFor(() => expect(queue.size).toBe(1 + PDF_OCR_SEARCH_AHEAD));
+
+    // One reader's search ends; the other still searches.
+    session.setSearch(first, null);
+    expect(queue.size).toBe(1 + PDF_OCR_SEARCH_AHEAD);
+
+    // The other reader closes: queued pages stop at once, the page being read finishes.
+    session.release(second);
+    expect(queue.size).toBe(1);
+    expect(session.pageState(2)).toBe("unknown");
+    fetched.length = 0;
+    held.release(1);
+    await vi.waitFor(() => expect(session.recognized(1) && queue.size === 0).toBe(true));
+    expect(held.asked).toEqual([1]);
+    expect(fetched).toEqual([]);
+
+    // A new search queues the stopped pages again.
+    session.setSearch(first, 1);
+    await vi.waitFor(() => expect(held.asked).toEqual([1, 2]));
   });
 });

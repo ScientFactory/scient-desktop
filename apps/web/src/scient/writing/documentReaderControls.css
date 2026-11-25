@@ -134,7 +134,7 @@
 .scient-reader-search {
   position: relative;
   display: flex;
-  height: 26px;
+  min-height: 26px;
   min-width: 112px;
   flex: 0 1 150px;
   margin-inline: 2px;
@@ -142,10 +142,11 @@
 }
 .scient-reader-search-box {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 1px 6px;
   overflow: hidden;
   border-radius: 6px;
   padding-inline: 7px;
@@ -165,8 +166,8 @@
   flex: none;
 }
 .scient-reader-search input {
-  min-width: 0;
-  flex: 1;
+  min-width: 6ch;
+  flex: 1 1 6ch;
   border: 0;
   padding: 0;
   background: transparent;
@@ -177,6 +178,11 @@
 }
 .scient-reader-search input::placeholder {
   color: var(--muted-foreground);
+}
+.scient-reader-search-navigation {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 .scient-reader-search-count,
 .scient-reader-search-status {

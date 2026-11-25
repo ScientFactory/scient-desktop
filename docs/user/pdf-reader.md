@@ -139,12 +139,15 @@ select and copy its words, quote them with **Ask in chat**, and highlight them o
 add a note, as on any other page. If a page already contains substantial text,
 Scient uses it even when an older transcription has mistakes.
 
-Search (`Cmd/Ctrl+F`) reads the document's other scanned pages too. While it
-does, the search field shows how many have been read so far, for example
-**Reading 12/40**, and matches on those pages appear as they are read. A search
-reports when scanned pages could not be read. Scient reuses recognized text when
-you zoom or change your search. Reopening a PDF also reuses pages still in this
-computer’s cache. A page unlocked with a password is cached only in memory.
+Type a query in Find (`Cmd/Ctrl+F`) to search the PDF. Matches in native text
+and on previously recognized pages can appear while Scient reads other scans.
+It starts near the current page. **Reading 12/40** means results are still
+incomplete. Clearing or closing Find cancels queued work on offscreen pages.
+A page already being read can finish.
+
+Scient reuses recognized text when you zoom or change your search. Reopening a
+PDF also reuses pages still in this computer’s cache. A page unlocked with a
+password is cached only in memory.
 
 Recognition reads English and Hebrew, including Hebrew sentences with English
 words, units and numbers. It reads the page as a picture, so expect mistakes,

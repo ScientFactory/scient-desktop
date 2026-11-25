@@ -11,6 +11,7 @@ import { m } from "~/i18n/messages";
 import type { ScientPdfRuntime } from "../pdfRuntime";
 import { createIndexedDbPdfOcrCache, createMemoryPdfOcrCache } from "./pdfOcrCache";
 import { createTesseractOcrEngine, pdfOcrConcurrency, type PdfOcrEngine } from "./pdfOcrEngine";
+import { attachPdfOcrFind } from "./pdfOcrFind";
 import { createPdfOcrQueue } from "./pdfOcrQueue";
 import {
   createPdfOcrSession,
@@ -165,9 +166,9 @@ interface VisibleViewer {
 }
 
 /**
- * Connects a reader to its PDF's recognition: reports the pages it shows, labels pages being
- * read, and redraws a page's text layer once it has been read, except under a selection,
- * which is left alone until it moves.
+ * Connects a reader to its PDF's recognition: reports the pages it shows and its search, labels
+ * pages being read, redraws a page's text layer once it has been read, except under a
+ * selection, which is left alone until it moves, and adds the reading to its find results.
  */
 export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession): () => void {
   const viewer = runtime.viewer;
@@ -220,17 +221,44 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
     );
   };
 
+  const find = attachPdfOcrFind({
+    controller: runtime.findController,
+    eventBus: runtime.eventBus,
+    document: runtime.document as unknown as PdfOcrDocument,
+    session,
+    staleLayer: (page) => {
+      const layer = view(page)?.textLayer?.div;
+      return (
+        !!layer &&
+        layer.childElementCount > 0 &&
+        session.recognized(page) &&
+        !pdfTextLayerHasOcr(layer)
+      );
+    },
+  });
+
   const onChange = (page: number | null) => {
     if (page === null) return;
     badge(page);
     redraw(page);
+    if (session.recognized(page)) find.recognized(page);
   };
   // A layer drawn while its page was being read is drawn again once the reading is ready.
-  const onTextLayer = ({ pageNumber }: { pageNumber: number }) => redraw(pageNumber);
+  const onTextLayer = ({ pageNumber }: { pageNumber: number }) => {
+    redraw(pageNumber);
+    find.layersChanged();
+  };
   const onPageRendered = ({ pageNumber }: { pageNumber: number }) => badge(pageNumber);
   const onViewArea = () => {
     session.setVisible(owner, new Set((viewer as unknown as VisibleViewer)._getVisiblePages().ids));
+    find.layersChanged();
   };
+  // Scanned pages are read for a search only while it has a query; focus alone reads none.
+  const onFind = ({ type, query }: { type?: string; query?: string | ReadonlyArray<string> }) => {
+    if (type === "highlightallchange") return;
+    session.setSearch(owner, query && query.length > 0 ? viewer.currentPageNumber : null);
+  };
+  const onFindBarClose = () => session.setSearch(owner, null);
   const onSelection = () => {
     for (const page of deferred) {
       const layer = view(page)?.textLayer?.div;
@@ -242,6 +270,8 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
   runtime.eventBus.on("pagerendered", onPageRendered);
   runtime.eventBus.on("updateviewarea", onViewArea);
   runtime.eventBus.on("pagesloaded", onViewArea);
+  runtime.eventBus.on("find", onFind);
+  runtime.eventBus.on("findbarclose", onFindBarClose);
   const unsubscribe = session.subscribe(onChange);
   const ownerDocument = runtime.viewer.container.ownerDocument;
   ownerDocument.addEventListener("selectionchange", onSelection);
@@ -252,6 +282,9 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
     runtime.eventBus.off("pagerendered", onPageRendered);
     runtime.eventBus.off("updateviewarea", onViewArea);
     runtime.eventBus.off("pagesloaded", onViewArea);
+    runtime.eventBus.off("find", onFind);
+    runtime.eventBus.off("findbarclose", onFindBarClose);
+    find.detach();
     session.release(owner);
   };
 }
