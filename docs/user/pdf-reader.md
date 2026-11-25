@@ -134,21 +134,22 @@ page. Imported internal links are retained when their target is also inserted.
 
 When a page is a scan, an image with little or no text of its own, Scient reads
 its words on your computer while you look at it. The page shows **Reading text…**
-in its corner until it is done, usually within a few seconds. You can then
+in its corner while recognition runs. You can then
 select and copy its words, quote them with **Ask in chat**, and highlight them or
-add a note, as on any other page. Pages that have text of their own are never
-read again this way.
+add a note, as on any other page. If a page already contains substantial text,
+Scient uses it even when an older transcription has mistakes.
 
 Search (`Cmd/Ctrl+F`) reads the document's other scanned pages too. While it
 does, the search field shows how many have been read so far, for example
 **Reading 12/40**, and matches on those pages appear as they are read. A search
-says nothing was found only after every page has been searched. Each page is read
-once: the recognized text is kept on this computer, so reopening the PDF, zooming
-or searching again does not read it again.
+reports when scanned pages could not be read. Scient reuses recognized text when
+you zoom or change your search. Reopening a PDF also reuses pages still in this
+computer’s cache. A page unlocked with a password is cached only in memory.
 
 Recognition reads English and Hebrew, including Hebrew sentences with English
 words, units and numbers. It reads the page as a picture, so expect mistakes,
-especially in tables, formulas, handwriting, and small or faint print. On a
+especially in tables, formulas, handwriting, and small or faint print. Check
+decimal points, minus signs and units against the image before quoting a value. On a
 scanned page, selections and highlights cover whole words. A quote from a scanned
 page tells the agent that its text was recognized and may contain errors. A page
 scanned sideways is read the way round that gives the most legible text.

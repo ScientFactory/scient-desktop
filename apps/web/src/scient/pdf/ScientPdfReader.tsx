@@ -92,7 +92,7 @@ function searchRecognitionStatus(state: PdfReaderState, gt: Translate) {
   return {
     label: gt("Reading {done}/{total}", { done, total: ocr.scanned }),
     description: gt("Text recognized on {done} of {total} scanned pages so far", {
-      done,
+      done: ocr.recognized,
       total: ocr.scanned,
     }),
   };
