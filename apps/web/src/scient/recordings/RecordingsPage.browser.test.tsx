@@ -30,6 +30,7 @@ const fixtures = vi.hoisted(() => {
     openPanel: vi.fn(),
     maximize: vi.fn(),
     setMaximized: vi.fn(),
+    importFile: vi.fn(),
   };
 });
 
@@ -120,7 +121,7 @@ vi.mock("../../state/use-atom-query-runner", () => ({
     value: { relativeUrl: lectureVideoUrl },
   }),
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => fixtures.importFile }));
 
 function PanelHarness({ fromThread }: { fromThread?: string } = {}) {
   const [tab, setTab] = useState<{
@@ -707,6 +708,44 @@ it("renames a recording in its row, shows its info and moves it to the Trash", a
   await page.getByRole("menuitem", { name: "Move to Trash" }).click();
   expect(fixtures.command).toHaveBeenCalledWith("recording-trash", "/class", { source });
   await expect.element(screen.getByText("Week 3", { exact: true })).not.toBeInTheDocument();
+});
+
+it("adds a file already in the project where it is, without copying it", async () => {
+  const source = "/class/Downloads/Talk.mp4";
+  vi.stubGlobal("desktopBridge", {
+    getPathForFile: () => source,
+    getLocalEnvironmentBootstraps: () => [],
+  });
+  fixtures.importFile.mockReset();
+  fixtures.command.mockReset().mockImplementation(async (action: string) => {
+    if (action === "list") return [];
+    if (action === "media-list") return { media: [] };
+    if (action === "media-register") return { media: [{ source, size: 5, created: 1 }] };
+    if (action === "inventory")
+      return {
+        local: [],
+        chatgpt: { enabled: false, signedIn: false },
+        cloud: [],
+        recommendations: {},
+      };
+    return { detectedLanguage: null };
+  });
+  try {
+    await using screen = await render(<RecordingsPage lockedProject="class" />);
+    const picker = screen.container.querySelector<HTMLInputElement>('input[accept^="audio/"]')!;
+    const files = new DataTransfer();
+    files.items.add(new File(["video"], "Talk.mp4", { type: "video/mp4" }));
+    picker.files = files.files;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(fixtures.command).toHaveBeenCalledWith("media-register", "/class", {
+      source,
+      onlyInProject: true,
+    });
+    expect(fixtures.importFile).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it("groups independent runs of the same source and opens the newest version with older versions available", async () => {

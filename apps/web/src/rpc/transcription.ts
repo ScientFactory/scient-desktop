@@ -220,7 +220,11 @@ type Commands = {
     lesson?: { language: string };
     response: { source?: string; transcription?: "started" | "queued" | "unavailable" };
   };
-  "media-register": { source: string; response: { media: RecordingSource[] } };
+  "media-register": {
+    source: string;
+    onlyInProject?: true;
+    response: { media: RecordingSource[] };
+  };
   "media-list": { response: { media: RecordingSource[] } };
   "recording-rename": { source: string; title: string; response: { media: RecordingSource[] } };
   "recording-trash": { source: string; response: { trashed: true } };

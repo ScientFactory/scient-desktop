@@ -252,25 +252,40 @@ export function RecordingsPage({
     await andFinally(
       async () => {
         try {
-          const result = await importFile({
-            environmentId: target.environmentId,
-            input: {
-              cwd: target.workspaceRoot,
-              change: { _tag: "import", sources, folder: "", collision: "keep-both" },
-            },
-          });
-          if (result._tag !== "Success") fail("Recording import failed");
-          const registered = await Promise.all(
-            result.value.entries.flatMap(({ to }) =>
-              to
-                ? [
-                    transcriptionCommand("media-register", target.workspaceRoot, {
-                      source: resolveWorkspaceFilePath(to, target.workspaceRoot),
-                    }),
-                  ]
-                : [],
+          // A file already in the project is used where it is; others are copied into it.
+          const inPlace = await Promise.all(
+            sources.map((source) =>
+              transcriptionCommand("media-register", target.workspaceRoot, {
+                source,
+                onlyInProject: true,
+              }),
             ),
           );
+          const outside = sources.filter((_, index) => !inPlace[index]!.media.length);
+          const copied = outside.length
+            ? await importFile({
+                environmentId: target.environmentId,
+                input: {
+                  cwd: target.workspaceRoot,
+                  change: { _tag: "import", sources: outside, folder: "", collision: "keep-both" },
+                },
+              })
+            : undefined;
+          if (copied && copied._tag !== "Success") fail("Recording import failed");
+          const registered = [
+            ...inPlace,
+            ...(await Promise.all(
+              (copied?.value.entries ?? []).flatMap(({ to }) =>
+                to
+                  ? [
+                      transcriptionCommand("media-register", target.workspaceRoot, {
+                        source: resolveWorkspaceFilePath(to, target.workspaceRoot),
+                      }),
+                    ]
+                  : [],
+              ),
+            )),
+          ];
           const added = registered.flatMap(({ media }) => media.map(({ source }) => source));
           if (!added.length) fail("Recording registration failed");
           if (added.length <= 20)
