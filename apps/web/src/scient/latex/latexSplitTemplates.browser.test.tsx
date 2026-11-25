@@ -18,6 +18,7 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { scrollLatexVisualTestEditor, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
+import { revealFileEditorSelection } from "~/components/files/fileEditorSourceReveal";
 import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import { pagedLayoutIncludesRendered, pagedLayoutSettled } from "./latexPagedGeometry";
@@ -497,10 +498,20 @@ async function selectWordWithoutJumping(
     )
     .toBe("visible");
   const sourceHit = wordPosition(container.shadowRoot!, word);
-  // Source already holds the word from Visual; a caret first means only the double-click selects it.
+  // Source already holds the word from Visual; a caret first means only the double-click selects
+  // it. Set the way a Visual reveal does, so Source neither scrolls nor takes focus before the click.
   const caret = selection![0]!.start;
-  state.source().setSelections([{ start: caret, end: caret, direction: "forward" }]);
-  await vi.waitFor(() => expect(state.source().getViewState().selections?.[0]?.end).toEqual(caret));
+  const caretOffset = sourceOffset(source, caret);
+  expect(
+    revealFileEditorSelection(state.source(), {
+      source,
+      from: caretOffset,
+      to: caretOffset,
+      requestId: 0,
+    }),
+  ).toBe(true);
+  expect(state.source().getViewState().selections?.[0]?.end).toEqual(caret);
+  expect(state.visual.view.dom.contains(document.activeElement)).toBe(true);
   state.sourceSelections.mockClear();
   await userEvent.dblClick(sourceHit.element, { position: sourceHit.position });
   await vi.waitFor(() => {

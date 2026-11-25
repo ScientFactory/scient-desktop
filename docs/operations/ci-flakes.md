@@ -87,8 +87,8 @@ Forcing that tick reproduced it in both the main and the table editor. The gestu
 the browser's own clock. At `SCIENT_TEST_CPU_THROTTLE=6` the word-selection cases lost the selection in 1 of 63
 runs before (the CI signature) and in none of 99 after. Separately, one of those 99 hit the
 30 s test limit while the machine was busy; round timings varied both ways, so they show no
-clear slowdown. The Source handoff now starts from a caret, so only the double-click in Source
-can select the word there.
+clear slowdown. The Source handoff now starts from a caret, set without moving focus or scrolling,
+so only the double-click in Source can select the word there.
 
 The Windows voice qualification (Windows packaging › Installer and native runtime ›
 Transcribe with the installed voice runtime) timed out eight times from 2026-11-09 to 11-19
