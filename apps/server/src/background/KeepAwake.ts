@@ -193,8 +193,7 @@ export const layer = Layer.effectDiscard(
     // re-read on any thread event (batched), and each minute for what changes without one: a
     // provider session ending, and a run's start grace running out.
     const scientWork = yield* ScientKeepAwakeWork.KeepAwakeService;
-    const hasActiveRun = scientWork.work.pipe(
-      Effect.map((work) => work.working.length > 0),
+    const hasActiveRun = scientWork.anyWorking.pipe(
       retryWithBackoff("keep-awake could not read active runs"),
     );
     // SCIENT-FORK:END
