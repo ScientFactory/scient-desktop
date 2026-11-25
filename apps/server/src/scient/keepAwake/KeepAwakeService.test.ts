@@ -81,3 +81,121 @@ describe("KeepAwakeService", () => {
     }),
   );
 });
+
+// The server hold asks only whether anything works; it must answer as `work` would, with as few
+// owner reads as possible.
+const shellFor = (id: string, overrides: Partial<Record<string, unknown>> = {}) =>
+  ({
+    ...runningThread(LONG_AGO),
+    id: ThreadId.make(id),
+    activeProviderThreadId: ProviderThreadId.make(`provider-${id}`),
+    ...overrides,
+  }) as unknown as OrchestrationV2ThreadShell;
+
+const observeMany = (
+  shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  live: ReadonlySet<string>,
+) =>
+  Effect.gen(function* () {
+    let ownerReads = 0;
+    const provide = <A, E>(effect: Effect.Effect<A, E, KeepAwakeService>) =>
+      effect.pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provide(
+              Layer.mock(ProjectionStoreV2, {
+                listActiveShellIndex: () =>
+                  Effect.succeed(
+                    shells.map((shell) => ({
+                      id: shell.id,
+                      mayBeLive: true,
+                      lineage: { relationshipToParent: null },
+                    })) as never,
+                  ),
+                getShellSnapshot: () => Effect.succeed({ threads: shells } as never),
+                getThreadRecords: (id: ThreadId) =>
+                  Effect.sync(() => {
+                    ownerReads++;
+                    return {
+                      providerThreads: [
+                        {
+                          id: ProviderThreadId.make(`provider-${id}`),
+                          providerSessionId: ProviderSessionId.make(`session-${id}`),
+                        },
+                      ],
+                    } as never;
+                  }),
+              }),
+            ),
+            Layer.provide(
+              Layer.mock(ProviderSessionManagerV2, {
+                isLive: (session: ProviderSessionId) => Effect.succeed(live.has(session)),
+              }),
+            ),
+          ),
+        ),
+      );
+    const full = yield* provide(
+      Effect.gen(function* () {
+        return yield* (yield* KeepAwakeService).work;
+      }),
+    );
+    const fullReads = ownerReads;
+    ownerReads = 0;
+    const any = yield* provide(
+      Effect.gen(function* () {
+        return yield* (yield* KeepAwakeService).anyWorking;
+      }),
+    );
+    return { full, fullReads, any, anyReads: ownerReads };
+  });
+
+describe("KeepAwakeService.anyWorking", () => {
+  it.effect("answers exactly as work would, for every mix of threads", () =>
+    Effect.gen(function* () {
+      const finished = shellFor("finished", {
+        activityRunStatus: null,
+        activityRunStartedAt: null,
+      });
+      const asking = shellFor("asking", {
+        pendingRuntimeRequest: { kind: "approval", blocking: true },
+      });
+      const cases: ReadonlyArray<
+        readonly [string, ReadonlyArray<OrchestrationV2ThreadShell>, ReadonlyArray<string>]
+      > = [
+        ["nothing", [], []],
+        ["an owned run", [shellFor("a")], ["session-a"]],
+        ["a run without its session", [shellFor("a")], []],
+        ["a starting run", [shellFor("a", { activityRunStartedAt: DateTime.makeUnsafe(0) })], []],
+        ["unowned then owned", [shellFor("a"), shellFor("b")], ["session-b"]],
+        ["finished and asking only", [finished, asking], ["session-finished", "session-asking"]],
+      ];
+      for (const [name, shells, live] of cases) {
+        const result = yield* observeMany(shells, new Set(live));
+        assert.strictEqual(result.any, result.full.working.length > 0, name);
+      }
+    }),
+  );
+
+  it.effect("stops at the first owned thread instead of reading every owner", () =>
+    Effect.gen(function* () {
+      const shells = Array.from({ length: 8 }, (_, index) => shellFor(`t${String(index)}`));
+      const result = yield* observeMany(shells, new Set(shells.map((s) => `session-${s.id}`)));
+      assert.strictEqual(result.fullReads, 8);
+      assert.isTrue(result.any);
+      assert.strictEqual(result.anyReads, 1);
+    }),
+  );
+
+  it.effect("answers for a starting run without reading any owner", () =>
+    Effect.gen(function* () {
+      const shells = [
+        ...Array.from({ length: 7 }, (_, index) => shellFor(`t${String(index)}`)),
+        shellFor("new", { activityRunStartedAt: DateTime.makeUnsafe(0) }),
+      ];
+      const result = yield* observeMany(shells, new Set());
+      assert.isTrue(result.any);
+      assert.strictEqual(result.anyReads, 0);
+    }),
+  );
+});

@@ -468,7 +468,8 @@ The app-wide hold is T3's `apps/server/src/background/KeepAwake.ts` and its serv
 `keepAwakeWhileAgentsWork`. One marked seam there swaps T3's run-status query for Scient's work
 (`apps/server/src/scient/keepAwake/`: executing threads with a live provider session or inside the
 start grace, not monitors, PR watches or threads waiting on a person or another thread), re-read on
-any thread event (batched) and each minute; another names the inhibitor "Scient". `server.ts` wires
+any thread event (batched) and each minute. The hold asks only `anyWorking`, which stops at the first
+owned thread (start grace needs no read), while the desktop endpoint reads the full `work`; another names the inhibitor "Scient". `server.ts` wires
 the service in. The per-thread "Keep computer awake until done" stays on the desktop
 (`apps/desktop/src/scient/keepAwake/`): it polls the same work endpoint and holds Electron's
 `powerSaveBlocker` for chosen threads only; choices stay in memory, because quitting ends the work

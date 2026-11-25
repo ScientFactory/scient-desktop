@@ -20,7 +20,15 @@ export class KeepAwakeWorkError extends Schema.TaggedError<KeepAwakeWorkError>()
 
 export class KeepAwakeService extends Context.Service<
   KeepAwakeService,
-  { readonly work: Effect.Effect<KeepAwakeWork, KeepAwakeWorkError> }
+  {
+    /** Every thread's work, with the parents it reports to: the desktop's per-thread holds. */
+    readonly work: Effect.Effect<KeepAwakeWork, KeepAwakeWorkError>;
+    /**
+     * Whether `work` would list any thread as working, the server hold's whole question. It stops
+     * at the first owned thread: start grace needs no read, and owner reads go one at a time.
+     */
+    readonly anyWorking: Effect.Effect<boolean, KeepAwakeWorkError>;
+  }
 >()("t3/scient/keepAwake/KeepAwakeService") {}
 
 export const layer = Layer.effect(
@@ -29,14 +37,16 @@ export const layer = Layer.effect(
     const store = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
 
+    const inStartGrace = (shell: OrchestrationV2ThreadShell, now: number) => {
+      const startedAt = shell.activityRunStartedAt ?? null;
+      return startedAt !== null && now - DateTime.toEpochMillis(startedAt) < START_GRACE_MS;
+    };
     /** A saved run can outlive whatever ran it. A provider session ends, on its idle timeout at most. */
     const hasOwner = Effect.fn("KeepAwakeService.hasOwner")(function* (
       shell: OrchestrationV2ThreadShell,
       now: number,
     ) {
-      const startedAt = shell.activityRunStartedAt ?? null;
-      if (startedAt !== null && now - DateTime.toEpochMillis(startedAt) < START_GRACE_MS)
-        return true;
+      if (inStartGrace(shell, now)) return true;
       const { providerThreads } = yield* store.getThreadRecords(shell.id, ["providerThreads"]);
       const session = providerThreads.find(
         (thread) => thread.id === shell.activeProviderThreadId,
@@ -44,13 +54,25 @@ export const layer = Layer.effect(
       return session != null && (yield* sessions.isLive(session));
     });
 
+    const observe = Effect.gen(function* () {
+      const index = yield* store.listActiveShellIndex();
+      const threadIds = index.filter((entry) => entry.mayBeLive).map((entry) => entry.id);
+      if (threadIds.length === 0) return { index, threads: [], now: 0 };
+      const { threads } = yield* store.getShellSnapshot({ threadIds });
+      return { index, threads, now: yield* Clock.currentTimeMillis };
+    });
+
     return KeepAwakeService.of({
+      anyWorking: Effect.gen(function* () {
+        const { threads, now } = yield* observe;
+        const executing = threads.filter((shell) => threadWork(shell) === "executing");
+        if (executing.some((shell) => inStartGrace(shell, now))) return true;
+        for (const shell of executing) if (yield* hasOwner(shell, now)) return true;
+        return false;
+      }).pipe(Effect.mapError((cause) => new KeepAwakeWorkError({ cause }))),
       work: Effect.gen(function* () {
-        const index = yield* store.listActiveShellIndex();
-        const threadIds = index.filter((entry) => entry.mayBeLive).map((entry) => entry.id);
-        if (threadIds.length === 0) return { working: [], waiting: [] };
-        const { threads } = yield* store.getShellSnapshot({ threadIds });
-        const now = yield* Clock.currentTimeMillis;
+        const { index, threads, now } = yield* observe;
+        if (threads.length === 0) return { working: [], waiting: [] };
         const work = yield* Effect.forEach(threads, (shell) =>
           Effect.gen(function* () {
             const state = threadWork(shell);
