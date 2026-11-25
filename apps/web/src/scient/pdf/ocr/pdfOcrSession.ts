@@ -259,7 +259,8 @@ export function createPdfOcrSession(
   const read = async (page: PdfOcrPage): Promise<PdfOcrPageText> => {
     const rotation = page.rotate;
     const image = await dependencies.render(page, rotation);
-    const imageHash = hex(sha256(image.bytes));
+    // Equal pixels in PDFs with different intrinsic rotations map to different page coordinates.
+    const imageHash = `${rotation}:${hex(sha256(image.bytes))}`;
     const cached = await dependencies.cache.byImage(imageHash);
     if (cached) {
       void dependencies.cache.put(imageHash, pageKey(page), cached);

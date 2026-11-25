@@ -20,7 +20,6 @@ export interface PdfOcrCache {
 const PAGES = "pages";
 const ALIASES = "aliases";
 const MAX_PAGES = 4_000;
-const PRUNE_EVERY = 50;
 const TOUCH_AFTER_MS = 24 * 60 * 60 * 1000;
 
 interface StoredPage {
@@ -83,7 +82,6 @@ export function createIndexedDbPdfOcrCache(recognizer: string): PdfOcrCache {
     },
   });
   const key = (value: string) => `${recognizer}\n${value}`;
-  let writes = 0;
   const read = (imageKey: string) =>
     database.transaction(PAGES, "readonly", (transaction) =>
       request(transaction.objectStore(PAGES).get(imageKey) as IDBRequest<StoredPage | undefined>),
@@ -95,8 +93,12 @@ export function createIndexedDbPdfOcrCache(recognizer: string): PdfOcrCache {
       // Recency only orders eviction; a day's precision spares a write per page read.
       if (Date.now() - stored.usedAt > TOUCH_AFTER_MS) {
         void database
-          .transaction(PAGES, "readwrite", (transaction) => {
-            transaction.objectStore(PAGES).put({ ...stored, usedAt: Date.now() }, key(imageHash));
+          .transaction(PAGES, "readwrite", async (transaction) => {
+            const store = transaction.objectStore(PAGES);
+            // A writer may have evicted the page since the read.
+            if ((await request(store.getKey(key(imageHash)))) !== undefined) {
+              store.put({ ...stored, usedAt: Date.now() }, key(imageHash));
+            }
             return done(transaction);
           })
           .catch(() => undefined);
@@ -119,7 +121,7 @@ export function createIndexedDbPdfOcrCache(recognizer: string): PdfOcrCache {
     },
     async put(imageHash, pageKey, text) {
       try {
-        await database.transaction([PAGES, ALIASES], "readwrite", (transaction) => {
+        await database.transaction([PAGES, ALIASES], "readwrite", async (transaction) => {
           const usedAt = Date.now();
           transaction.objectStore(PAGES).put({ text, usedAt } satisfies StoredPage, key(imageHash));
           if (pageKey !== null) {
@@ -127,11 +129,7 @@ export function createIndexedDbPdfOcrCache(recognizer: string): PdfOcrCache {
               .objectStore(ALIASES)
               .put({ image: imageHash, usedAt } satisfies StoredAlias, key(pageKey));
           }
-          return done(transaction);
-        });
-        writes += 1;
-        if (writes % PRUNE_EVERY !== 0) return;
-        await database.transaction([PAGES, ALIASES], "readwrite", async (transaction) => {
+          // Enforce the shared limit in this write, including after an app restart.
           for (const name of [PAGES, ALIASES]) {
             const store = transaction.objectStore(name);
             const count = await request(store.count());

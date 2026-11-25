@@ -33,7 +33,7 @@ interface FakePage extends PdfOcrPage {
 }
 
 /** Page 1 is a scan carrying a small stamp of its own text; page 2 is an ordinary page. */
-function fakePdf() {
+function fakePdf(rotation = 0) {
   const pages = new Map<number, FakePage>();
   const page = (pageNumber: number): FakePage => {
     const scanned = pageNumber === 1;
@@ -44,7 +44,7 @@ function fakePdf() {
     });
     const fake: FakePage = {
       pageNumber,
-      rotate: 0,
+      rotate: rotation,
       view: [0, 0, 612, 792],
       operatorLists: 0,
       getTextContent: async () => content(),
@@ -232,6 +232,24 @@ describe("PDF text recognition session", () => {
     createPdfOcrSession(three.document, "edited copy", copy.dependencies);
     await (await three.document.getPage(1)).getTextContent();
     expect(copy.calls).toEqual({ renders: [0], recognitions: 0 });
+  });
+
+  it("keeps word geometry correct when identical pixels have different PDF rotations", async () => {
+    const cache = createMemoryPdfOcrCache();
+    for (const rotation of [0, 90]) {
+      const { document } = fakePdf(rotation);
+      const { dependencies } = setup({ cache });
+      createPdfOcrSession(document, null, {
+        ...dependencies,
+        render: async (page, angle) => ({
+          ...(await dependencies.render(page, angle)),
+          bytes: new Uint8Array([42]),
+        }),
+      });
+      const items = (await (await document.getPage(1)).getTextContent()).items;
+      const word = items[1] as { transform: number[] };
+      expect(Math.abs(word.transform[0]!) < 1e-9).toBe(rotation === 90);
+    }
   });
 
   it("reads a page scanned sideways the way it reads best", async () => {

@@ -230,7 +230,7 @@ stop after a minute idle; two run at once on computers with eight or more cores.
   text among many words is read at the other three quarter turns and the most
   legible reading kept.
 - **Cache.** Readings are kept in IndexedDB (`scient-pdf-ocr`), keyed by the
-  recognizer and the SHA-256 of the rendered page image, with an alias from the
+  recognizer, intrinsic PDF rotation and SHA-256 of the rendered page image, with an alias from the
   document cache key, page and rotation so a reopened PDF is not rendered again.
   At most 4,000 pages are kept, least recently used dropped first. This is the
   only PDF content the client persists, and it stays in this browser profile. Pages
