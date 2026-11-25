@@ -1049,9 +1049,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     !positionHistoryLoading &&
     !waitingForReadingHistory;
   // The unkeyed list positions an opening frames after its rows commit, so it would first paint
-  // at the previous thread's offset. From its first rows until it reports positioned, a cover
-  // hides it and takes presses; the list stays readable and focusable. At most
-  // OPENING_REVEAL_FALLBACK_MS. Restyling the scroller's ancestors instead undoes reader scrolls.
+  // at the previous thread's offset. Until it reports positioned (at most OPENING_REVEAL_FALLBACK_MS)
+  // a cover hides it, takes presses and passes the wheel on; the list stays readable and
+  // focusable. Restyling the scroller's ancestors instead undid reader scrolls.
   const hiddenForOpening =
     restoringThreadPosition && rows.length > 0 && openingShownKey !== listIdentityKey;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bounds how long an opening stays covered if it never reports positioned
@@ -1972,6 +1972,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setReadingListLoaded(false);
       setListState({ ...timelineListStateFor(listIdentityKey), findOpenAtOpening: findOpen });
       setPositionedThreadKey(null);
+      setOpeningShownKey(null);
     }
     // SCIENT-FORK:END
     if (hideEmptyPlaceholder) {
@@ -2091,6 +2092,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
                   aria-hidden
                   data-timeline-opening-cover=""
                   className="absolute inset-0 z-50 bg-background"
+                  // The wheel still reaches the timeline, so the reader can take over.
+                  ref={(cover) => {
+                    if (!cover) return;
+                    cover.addEventListener("wheel", forwardMinimapWheel, { passive: false });
+                    return () => cover.removeEventListener("wheel", forwardMinimapWheel);
+                  }}
                 />
               ) : null}
               {/* SCIENT-FORK:END */}

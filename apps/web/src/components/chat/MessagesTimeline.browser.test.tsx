@@ -892,12 +892,12 @@ describe("MessagesTimeline messages", () => {
     // has landed counts the child's unfinished end scroll, corrected before any paint; the parent's
     // opening is observed from the child's positioning receipt instead.
     const base = baseProps();
-    const childPositioned = Promise.withResolvers<void>();
+    let childPositioned = false;
     let parentPositioned = false;
     const props = {
       ...base,
       onPositionedThreadKeyChange: (key: string | null) => {
-        if (key === base.routeThreadKey) childPositioned.resolve();
+        if (key === base.routeThreadKey) childPositioned = true;
         if (key === `${base.routeThreadKey}-parent`) parentPositioned = true;
       },
     };
@@ -918,7 +918,7 @@ describe("MessagesTimeline messages", () => {
     );
     expect(screen.text()).toContain("Subagent of");
     // SCIENT-FORK:START
-    await childPositioned.promise;
+    await vi.waitFor(() => expect(childPositioned).toBe(true));
     // SCIENT-FORK:END
     const viewport = props.listRef.current!.getScrollableNode()!;
     const end = () => viewport.scrollHeight - viewport.clientHeight;
@@ -976,6 +976,7 @@ describe("MessagesTimeline messages", () => {
     commits.disconnect();
     viewport.removeEventListener("scroll", sample);
     expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
+    expect(shortfalls).toEqual(shortfalls.map(() => 0));
     expect(shownSamples).toBeGreaterThan(0);
     expect(shownAwayFromEnd).toEqual([]);
     // SCIENT-FORK:END

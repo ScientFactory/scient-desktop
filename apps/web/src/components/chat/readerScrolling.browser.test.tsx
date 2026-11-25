@@ -12,6 +12,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { StrictMode, createRef, useLayoutEffect, useState } from "react";
 
 import { expect, it, vi, type TestContext } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -1086,6 +1087,18 @@ it("leaves a scroll without reader input where it is while a fresh open settles 
 
   const key = "geometry:open-settling-scroll";
   const onPositioned = vi.fn();
+  // The watcher knows an offset only from a scroll event, which the browser fires a frame after
+  // scrollTop moves: the reader's move is made once it has seen the opening leave the top.
+  await mountHost(_fixture);
+  let nativeScrolledDown = false;
+  const onNativeScroll = (event: Event) => {
+    const target = event.target as HTMLElement;
+    if (event.isTrusted && target.scrollTop > 0) nativeScrolledDown = true;
+  };
+  _fixture.host!.addEventListener("scroll", onNativeScroll, { capture: true });
+  _fixture.cleanup.defer(() =>
+    _fixture.host?.removeEventListener("scroll", onNativeScroll, { capture: true }),
+  );
   await render(
     _fixture,
     key,
@@ -1095,6 +1108,7 @@ it("leaves a scroll without reader input where it is while a fresh open settles 
   const node = _fixture.listRef.current!.getScrollableNode()!;
   await vi.waitFor(() => {
     expect(node.scrollTop).toBeGreaterThan(0);
+    expect(nativeScrolledDown).toBe(true);
   });
   expect(onPositioned).not.toHaveBeenCalledWith(key);
   // A screen reader moving to the first heading scrolls with no wheel, touch, press or key.
@@ -1185,6 +1199,51 @@ it("shows an opening that never reports positioned after a second, and hides the
   });
   await render(_fixture, "geometry:opening-stalled", stalled, { positionHistoryLoading: true });
   expect(timelineCovered(node)).toBe(true);
+});
+
+it("lets a wheel over a covered opening take over where the reader is", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:opening-wheel";
+  const onPositioned = vi.fn();
+  await render(
+    _fixture,
+    key,
+    Array.from({ length: 30 }, (_, i) => entry(i + 400)),
+    { positionHistoryLoading: true, onPositionedThreadKeyChange: onPositioned },
+  );
+  const cover = () => _fixture.host!.querySelector<HTMLElement>("[data-timeline-opening-cover]");
+  expect(cover()).not.toBeNull();
+  // A real wheel lands on the cover, which passes it on to the timeline: the reader's navigation
+  // ends the wait and the thread reports positioned (the fallback only uncovers, it reports nothing).
+  await userEvent.wheel(cover()!, { delta: { y: 200 } });
+  await vi.waitFor(() => {
+    expect(onPositioned).toHaveBeenCalledWith(key);
+  });
+  expect(cover()).toBeNull();
+});
+
+it("covers a list that mounts again on the same thread after an expired opening", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:opening-remount";
+  const rows = Array.from({ length: 30 }, (_, i) => entry(i + 500));
+  const covered = () => _fixture.host!.querySelector("[data-timeline-opening-cover]") !== null;
+  await render(_fixture, key, rows, { positionHistoryLoading: true });
+  expect(covered()).toBe(true);
+  await advanceClock(_fixture, 1000);
+  await vi.waitFor(() => {
+    expect(covered()).toBe(false);
+  });
+  // The thread empties (its list unmounts) and fills again: the new list's opening is covered.
+  await render(_fixture, key, []);
+  await vi.waitFor(() => {
+    expect(_fixture.listRef.current?.getScrollableNode() ?? null).toBeNull();
+  });
+  await render(_fixture, key, rows, { positionHistoryLoading: true });
+  expect(covered()).toBe(true);
 });
 
 function _createFixture(context: TestContext) {
