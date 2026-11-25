@@ -2,6 +2,9 @@ import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
+// SCIENT-FORK:START — the React Compiler sweep starts first in its CI shard.
+import { ReactCompilerFirstSequencer } from "./src/reactCompilerFirstSequencer";
+// SCIENT-FORK:END
 
 const reactTests = [
   "src/features/browser/LocalPreviewRouteScreen.test.tsx",
@@ -117,6 +120,9 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 60_000,
+    // SCIENT-FORK:START — the React Compiler sweep starts first in its CI shard.
+    sequence: { sequencer: ReactCompilerFirstSequencer },
+    // SCIENT-FORK:END
     projects: [
       {
         extends: true,

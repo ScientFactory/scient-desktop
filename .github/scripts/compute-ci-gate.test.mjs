@@ -95,6 +95,13 @@ NodeTest.test("Compute's own code and how it runs select both suites on every pl
     "apps/server/scripts/compute-recipes.ts",
     ".github/workflows/scient-compute-python-kernel.yml",
     ".github/scripts/match-windows-llvm.sh",
+    ".github/scripts/compute-roles.mjs",
+    "apps/server/src/scient/analysis/RunTableAdapter.ts",
+    "apps/server/src/scient/analysis/RunTableAdapter.live.test.ts",
+    "apps/server/src/scient/analysis/StanRun.ts",
+    "apps/server/src/scient/analysis/batchLogOutput.ts",
+    "packages/contracts/src/scient/computeRunTable.ts",
+    "packages/scient-analysis/src/index.ts",
   ])
     NodeAssert.deepEqual(computeQualificationSuites([path]), both, path);
 });

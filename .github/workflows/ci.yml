@@ -356,14 +356,31 @@ jobs:
       # but ACP process-tree live tests compile a small pthread fixture with `cc`
       # and soft-skip when it is missing. Install build-essential so that path
       # always runs in CI instead of silently no-oping.
+      # SCIENT-FORK:START — only when the image's `cc` cannot build and run a pthread program, so
+      # desktop's libsecret install below is usually its only apt transaction.
+      - name: Check C toolchain for process-tree fixtures
+        id: toolchain
+        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        run: |
+          if bash .github/scripts/pthread-cc.sh; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      # SCIENT-FORK:END
       - name: Install C toolchain for process-tree fixtures
         # SCIENT-FORK:START — Scient's own runner for desktop.
-        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        if: ${{ (matrix.part == 1 || matrix.part == 6) && steps.toolchain.outputs.ready != 'true' }}
         # SCIENT-FORK:END
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
+      # SCIENT-FORK:START — the fixtures soft-skip without it, so its absence fails here.
+      - name: Require C toolchain for process-tree fixtures
+        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        run: bash .github/scripts/pthread-cc.sh
+      # SCIENT-FORK:END
 
       - uses: ./.github/actions/setup-apt-mirrors
         # SCIENT-FORK:START — Scient's own runner for desktop.
@@ -501,6 +518,7 @@ jobs:
         run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
 
       - name: Install missing Chromium system dependencies
+        id: browser
         run: |
           browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
           test -n "$browser"
@@ -508,7 +526,28 @@ jobs:
             node apps/web/node_modules/playwright/cli.js install-deps chromium
           fi
 
+      # SCIENT-FORK:START — the last shard runs the performance checks first, on the runner's
+      # clean start, then clears what they cached; its tests run whatever the checks found.
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        if: ${{ matrix.shard == strategy.job-total }}
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
+      - name: Test scientific editor performance
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' && matrix.shard == strategy.job-total }}
+        env:
+          SCIENT_MARKDOWN_PERF_STRICT: "1"
+        run: vp run --filter @t3tools/web test:performance
+
+      - name: Clear what the performance checks cached
+        if: ${{ !cancelled() && matrix.shard == strategy.job-total }}
+        run: rm -rf apps/web/dist apps/web/node_modules/.vite node_modules/.vite node_modules/.vitest-cache
+      # SCIENT-FORK:END
+
       - name: Test
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         env:
           TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
           # SCIENT-FORK:START — attribute browser socket loss to lifecycle, heartbeat or Chromium exit.
@@ -566,7 +605,7 @@ jobs:
   # step turns it back on with one worker per vCPU, as upstream's server shards do; each file
   # still runs in its own process.
   test_server:
-    # The organization allows 60 concurrent jobs; sixteen runners keep each near three minutes.
+    # The organization allows 60 concurrent jobs; twelve runners keep each near four minutes.
     needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
@@ -577,7 +616,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -652,6 +691,7 @@ jobs:
       # SCIENT-FORK:END
 
       - name: Install missing Chromium system dependencies
+        id: browser
         run: |
           browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
           test -n "$browser"
@@ -659,11 +699,31 @@ jobs:
             node apps/server/node_modules/playwright-core/cli.js install-deps chromium
           fi
 
+      # SCIENT-FORK:START — the last shard runs the Python bridge tests and the server timing
+      # budgets first, on the runner's clean start, then clears what they cached; its tests run
+      # whatever they found.
+      - name: Test compute session Python bridge
+        if: ${{ steps.browser.outcome == 'success' && matrix.shard == strategy.job-total }}
+        working-directory: apps/server/src/scient/compute/bridge
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover --pattern 'test_*.py' --verbose
+
+      - name: Test scientific server performance
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' && matrix.shard == strategy.job-total }}
+        run: vp run --filter t3 test:performance
+
+      - name: Clear what the performance checks cached
+        if: ${{ !cancelled() && matrix.shard == strategy.job-total }}
+        run: rm -rf node_modules/.vitest-cache node_modules/.vite apps/server/node_modules/.vite
+      # SCIENT-FORK:END
+
       # Each server test file runs in its own Vitest process, and a fresh install starts
       # Vitest's content-keyed module cache empty, so every file re-transformed its imports.
       # Only pushes to main save it, so pull requests never evict each other's entries.
       # Scient has no per-job changes step here; a reused queue run skips these shards.
       - name: Restore Vitest module cache
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: node_modules/.vitest-cache
@@ -671,6 +731,7 @@ jobs:
           restore-keys: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Test
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
@@ -738,118 +799,6 @@ jobs:
           overwrite: true
           retention-days: 30
 
-  # SCIENT-FORK:END
-
-  # SCIENT-FORK:START — the production boot and timing budgets, beside the correctness shards.
-  test_web_performance:
-    needs: [queue_ci, changes]
-    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
-    name: Test Web performance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: ./.github/actions/setup-ci-deps
-
-      - name: Resolve Playwright version
-        id: playwright_version
-        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Chromium
-        id: chromium_cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
-
-      - name: Install Chromium for web performance tests
-        if: steps.chromium_cache.outputs.cache-hit != 'true'
-        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
-
-      - name: Install missing Chromium system dependencies
-        run: |
-          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
-          test -n "$browser"
-          if ldd "$browser" | grep '=> not found'; then
-            node apps/web/node_modules/playwright/cli.js install-deps chromium
-          fi
-
-      # Browser tests run source modules; this boots the production chunk graph.
-      - name: Boot the built web client
-        run: |
-          vp run --filter @t3tools/web build
-          node apps/web/scripts/verify-built-boot.ts
-
-      - name: Test scientific editor performance
-        if: ${{ !cancelled() }}
-        env:
-          SCIENT_MARKDOWN_PERF_STRICT: "1"
-        run: vp run --filter @t3tools/web test:performance
-  # SCIENT-FORK:END
-
-  # SCIENT-FORK:START — server measurements and the Python bridge, beside the correctness shards.
-  test_server_performance:
-    needs: [queue_ci, changes]
-    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
-    name: Test Server performance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: ./.github/actions/setup-ci-deps
-
-      - name: Seal Compute candidate metadata
-        run: node apps/server/scripts/compute-recipes.ts seal
-
-      - name: Resolve Playwright version
-        id: playwright_version
-        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Chromium
-        id: chromium_cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
-
-      - name: Install Chromium for server performance tests
-        if: steps.chromium_cache.outputs.cache-hit != 'true'
-        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
-
-      - name: Install missing Chromium system dependencies
-        run: |
-          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
-          test -n "$browser"
-          if ldd "$browser" | grep '=> not found'; then
-            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
-          fi
-
-      - name: Test compute session Python bridge
-        working-directory: apps/server/src/scient/compute/bridge
-        run: python3 -m unittest discover --pattern 'test_*.py' --verbose
-
-      - name: Test scientific server performance
-        if: ${{ !cancelled() }}
-        run: vp run --filter t3 test:performance
   # SCIENT-FORK:END
 
   rust:
@@ -1001,7 +950,7 @@ jobs:
         run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
-      # Each case must finish its sync; 300 files runs in Test Server performance's test:performance.
+      # Each case must finish its sync; 300 files runs in the last server shard's test:performance.
       - name: Time a one-file Overleaf sync each way on Windows
         working-directory: apps/server
         run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=300000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) 1$"
@@ -1103,8 +1052,36 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
+      # When main's exact store and lockfile verification are saved already, there is nothing to
+      # refresh: look both up without downloading them. The keys and paths are setup-ci-deps' own
+      # (scripts/ci-workflows.test.ts keeps them equal); a miss or a failed lookup refreshes.
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install: "false"
+      - name: Resolve the pnpm store
+        id: store
+        run: echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+      - name: Look up main's exact store
+        id: exact_store
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          lookup-only: true
+      - name: Look up main's exact lockfile verification
+        id: exact_verified
+        if: steps.exact_store.outcome == 'success' && steps.exact_store.outputs.cache-hit == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          lookup-only: true
       # Restores the full store and saves it under a new key when the lockfile changed.
       - name: Refresh the Linux store
+        if: steps.exact_store.outcome != 'success' || steps.exact_store.outputs.cache-hit != 'true' || steps.exact_verified.outcome != 'success' || steps.exact_verified.outputs.cache-hit != 'true'
         uses: ./.github/actions/setup-ci-deps
   # SCIENT-FORK:END
 
@@ -1188,7 +1165,7 @@ jobs:
 
   qualification:
     name: Qualification receipt
-    needs: [queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
+    needs: [queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1223,7 +1200,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
+    needs: [queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     # SCIENT-FORK:START — the quarantine reads failed jobs' logs.

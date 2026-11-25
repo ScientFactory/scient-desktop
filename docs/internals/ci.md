@@ -33,14 +33,17 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   server, web app, and monorepo root, dropping the dependency-ordering wait that only bought idle
   runner time. Six runners share it: `Test` runs every package the others don't name, so a new
   package always runs; `Test 3` runs client-runtime, scripts, provider-runtime and shared;
-  `Test 2` and `Test 4` run halves of mobile (`--shard 1/2`, `2/2`); `Test 5` runs the oxlint
+  `Test 2` and `Test 4` run halves of mobile (`--shard 1/2`, `2/2`), and whichever half has the
+  React Compiler sweep, mobile's longest file, starts it first; `Test 5` runs the oxlint
   plugin; and `Test 6` runs desktop with its Electron runtime, browser secret helper libraries and
   export smokes. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
 - **Test Web**: twelve shards of `vp run --filter @t3tools/web test --shard N/12`, each on its own
   runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
-  the large web suite from competing with other workspace packages. **Test Web performance** runs
-  beside them: it builds and boots the production web client and runs the editor timing budgets. The Test step sets
+  the large web suite from competing with other workspace packages. The last shard first builds
+  and boots the production web client and runs the editor timing budgets, on the runner's clean
+  start, then clears what they cached and runs its tests whatever they found, so a failure names
+  its own step and the shard's tests still report. The Test step sets
   `SCIENT_BROWSER_LIFECYCLE_DIAGNOSTICS`, so the Playwright provider
   (`apps/web/src/testUtils/browserLifecycleDiagnostics.ts`) records page close/crash, navigation
   category, browser disconnect and browser-API socket open/close/error as fixed event names and
@@ -49,11 +52,11 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   as `browser-lifecycle-<shard>-attempt-<n>` for 14 days; it is evidence for investigating a
   lost browser connection, not a qualification input, and does not change test results. Raw
   TCP close carries no WebSocket close code or reason.
-- **Test Server**: sixteen shards of `vp run --filter t3 test --shard N/16 --fileParallelism
+- **Test Server**: twelve shards of `vp run --filter t3 test --shard N/12 --fileParallelism
   --maxWorkers=4`. The server config keeps `fileParallelism: false` for local runs; CI runs four
   files at a time, each in its own process, and spends no Electron download on these shards.
-  **Test Server performance** runs beside them: the compute session Python bridge tests and the
-  server timing budgets. Both suites split by the durations of recent main runs (see
+  The last shard first runs the compute session Python bridge tests and the server timing
+  budgets the same way. Both suites split by the durations of recent main runs (see
   [Shard weights](#shard-weights)). Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
   report; a presence-gated upload keeps a single `thread-transfer-results` artifact, the exact name
   [`thread-transfer-report.yml`](../../.github/workflows/thread-transfer-report.yml) resolves when
@@ -64,6 +67,10 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
 - **Dependency caches**: `.github/actions/setup-ci-deps` restores the pnpm store and lockfile
   verification record. Merge-queue runs never save them: a `gh-readonly-queue/...` ref's caches
   serve only reruns of that entry, and their ~1 GB stores would evict main's within the 10 GB limit.
+  A reused main push saves main's store in `Main dependency store`, which first looks up the
+  exact store and verification record without downloading them and refreshes only when one is
+  missing. `Test` and `Test 6` install build-essential only when the image's `cc` cannot build
+  and run a pthread program (`.github/scripts/pthread-cc.sh`), then require that it can.
 - **Rust**: `cargo fmt --check` and `cargo test --locked` for the native resource monitor, split
   out of Check and Test so neither lane pays a ~7-9s Rust toolchain install for checks that take
   under 3s.
@@ -126,7 +133,9 @@ A matrix job skipped as a whole reports one unexpanded name, so a reusing queue 
 small `Test Web N` and `Test Server N` jobs that report the required shard names.
 
 Before confirming reuse, the run validates and republishes `thread-transfer-results` and every
-shard's Vitest JSON report under the normal artifact names, using its own run attempt. The reuse job and
+shard's Vitest JSON report under the normal artifact names, using its own run attempt. It reads
+reports only from a source that ran the same workflow content (the same tree, or for a push the
+same commit), so the source always has the shards this run's matrix names. The reuse job and
 `Test` summaries link to the source run. This preserves the successful main-push baseline
 consumed by the transfer reporter. Native packaging artifacts remain on the linked source run;
 releases still build their own artifacts.
@@ -191,9 +200,10 @@ cp "$out/server.json" apps/server/src/testUtils/shardWeights.json
 node .github/scripts/verify-ci-shards.mjs
 ```
 
-A suite takes a main run only when that run has a successful report from every shard, using each
-shard's latest attempt; otherwise its file is not written and its `cp` fails, so the checked-in
-weights stay. The verifier loads the actual Vitest configurations, discovers every test
+A suite takes a main run only when the `ci.yml` that run ran, read at its commit, had today's
+shard count for the suite, and the run has a successful report from every shard, using each shard's
+latest attempt, and from no other shard. A run from before a shard-count change is therefore not
+used, even when only its lower-numbered shards passed; otherwise its file is not written and its `cp` fails, so the checked-in weights stay. The verifier loads the actual Vitest configurations, discovers every test
 specification, and checks that the configured partitions cover each exactly once. Vitest's
 `list --filesOnly --shard` does not apply the sequencer.
 
@@ -218,6 +228,26 @@ The required `Check` gate includes applicable native Compute suites, selected by
 Both suites stay enabled on every platform by default for reusable callers and manual dispatch,
 which can also select either suite. The nightly run, and any main push that cannot reuse queue
 qualification, runs both on all four computers.
+
+Mac runner slots are the scarcest (the organization runs five macOS jobs at a time), so a full
+run uses three of them. `Compute on Mac / macos-15` runs real R and Julia, managed Python and
+real Python one after another; `Compute on Mac / macos-15-intel` runs managed and real Python,
+and the Intel Mac's R and Julia keep their own job. Each role runs the same steps as its own job
+(`scripts/compute-ci-workflows.test.ts` compares them) and runs even after an earlier role
+failed. R and Julia run the same way on every computer: one job each on Linux, Windows and the
+Intel Mac, whose three proofs (plain Python, real files, R and Julia kernels) are roles too. [`compute-roles.mjs`](../../.github/scripts/compute-roles.mjs) starts each one clean: its
+own temporary directory, its own R user library (a copy of the one setup made, which no role
+writes), per-user package and kernel state (`~/.julia`, Jupyter and IPython folders, `pip --user`
+sites, R's default user libraries) as setup left it, and a variable that marks the processes its
+steps start. When it ends, the processes it owns are stopped and checked gone: those carrying its
+mark, their children, and those orphaned while it ran that launchd did not start. What it added to
+per-user directories and the checkout (the sealed recipe metadata) is removed. The real-kernel
+role installs the bridge's packages into a disposable environment of its own; after each R and
+Julia role the plain Python, and R's shared libraries, are compared with what setup left, package
+by package and version by version, and an end that finds a change fails. R and Julia go first, so
+their plain-Python proof sees a Python nothing was installed into. Tools a setup step
+put on `PATH` stay there for later roles: GitHub cannot take a path back off. The job's last
+step names each role that failed, and fails when an expected role did not run.
 
 The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. For a pull request, the seam check reads GitHub's merge of the pull request into its base, so commits that reached main after the branch left it are not counted as its changes. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
 

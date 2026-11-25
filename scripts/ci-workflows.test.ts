@@ -479,25 +479,25 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 42],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 48],
-    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 42],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 36],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 42],
+    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 36],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 58],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 57],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 50],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 49],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      66,
+      53,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 51],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 43],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 45],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 37],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 71],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 70],
+    ["main push", "docs/operations/00_development.md", "push", false, 58],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 57],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(
@@ -517,6 +517,120 @@ describe("CI workflow decisions", () => {
       }
     },
   );
+
+  it("runs the performance checks first on the last shard, and its tests whatever they found", () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string; env?: object };
+    for (const [id, checks] of [
+      ["test_web", ["Boot the built web client", "Test scientific editor performance"]],
+      ["test_server", ["Test compute session Python bridge", "Test scientific server performance"]],
+    ] as const) {
+      const steps = workflow.jobs[id]!.steps! as Array<Step>;
+      const at = (name: string) => steps.findIndex((step) => step.name === name);
+      const clear = at("Clear what the performance checks cached");
+      for (const name of checks) {
+        expect(steps[at(name)]!.if, name).toContain("matrix.shard == strategy.job-total");
+        expect(at(name), name).toBeGreaterThan(at("Install missing Chromium system dependencies"));
+        expect(at(name), name).toBeLessThan(clear);
+      }
+      expect(steps[clear]!.if).toBe("${{ !cancelled() && matrix.shard == strategy.job-total }}");
+      expect(clear).toBeLessThan(at("Test"));
+      expect(steps[at("Test")]!.if).toBe(
+        "${{ !cancelled() && steps.browser.outcome == 'success' }}",
+      );
+      expect(steps.find((step) => step.id === "browser")!.name).toBe(
+        "Install missing Chromium system dependencies",
+      );
+    }
+    expect(
+      (workflow.jobs.test_web!.steps! as Array<Step>).find(
+        (step) => step.name === "Test scientific editor performance",
+      )!.env,
+    ).toEqual({ SCIENT_MARKDOWN_PERF_STRICT: "1" });
+    expect(Object.keys(workflow.jobs).filter((id) => id.includes("performance"))).toEqual([]);
+  });
+
+  it("refreshes main's store only when its exact store or verification is missing", () => {
+    type Step = {
+      name?: string;
+      id?: string;
+      if?: string;
+      uses?: string;
+      run?: string;
+      "continue-on-error"?: boolean;
+      with?: Record<string, string>;
+    };
+    const action = YAML.parse(
+      NodeFS.readFileSync(
+        new URL("../.github/actions/setup-ci-deps/action.yml", import.meta.url),
+        "utf8",
+      ),
+    ) as { runs: { steps: Array<Step> } };
+    const own = (name: string) => action.runs.steps.find((step) => step.name === name)!;
+    const steps = workflow.jobs.main_caches!.steps! as Array<Step>;
+    const step = (id: string) => steps.find((candidate) => candidate.id === id)!;
+    // The same entries setup-ci-deps restores and saves, for the whole-workspace store.
+    expect(step("exact_store").with).toEqual({
+      path: "${{ steps.store.outputs.path }}",
+      key: own("Restore pnpm store").with!.key!.replace(
+        "${{ steps.pnpm_store.outputs.namespace }}",
+        "full",
+      ),
+      "lookup-only": true,
+    });
+    expect(step("exact_verified").with).toEqual({
+      path: "${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl",
+      key: own("Restore lockfile verification").with!.key,
+      "lookup-only": true,
+    });
+    expect(step("exact_store").uses).toBe(own("Restore pnpm store").uses);
+    expect(step("store").run).toBe('echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"');
+    const refresh = steps.find((candidate) => candidate.name === "Refresh the Linux store")!;
+    expect(refresh).toMatchObject({ uses: "./.github/actions/setup-ci-deps" });
+    expect(refresh.with).toBeUndefined();
+    // A lookup that fails is a miss: it neither fails the job nor skips the refresh.
+    for (const id of ["exact_store", "exact_verified"])
+      expect(step(id)["continue-on-error"], id).toBe(true);
+    // `cache-hit` is one name in an Actions expression, a subtraction in JavaScript.
+    const evaluate = (condition: string, steps: object) =>
+      NodeVM.runInNewContext(condition.replaceAll(".cache-hit", '["cache-hit"]'), { steps });
+    const lookup = (outcome: string, hit: string) => ({ outcome, outputs: { "cache-hit": hit } });
+    expect(evaluate(step("exact_verified").if!, { exact_store: lookup("failure", "") })).toBe(
+      false,
+    );
+    for (const [store, verified, runs] of [
+      [lookup("success", "true"), lookup("success", "true"), false],
+      [lookup("success", "true"), lookup("success", "false"), true],
+      [lookup("success", "true"), lookup("failure", ""), true],
+      [lookup("success", "false"), lookup("skipped", ""), true],
+      [lookup("success", ""), lookup("skipped", ""), true],
+      [lookup("failure", ""), lookup("skipped", ""), true],
+      // A failure after the lookup set its output is still a miss.
+      [lookup("failure", "true"), lookup("success", "true"), true],
+      [lookup("success", "true"), lookup("failure", "true"), true],
+    ] as const)
+      expect(
+        evaluate(refresh.if!, { exact_store: store, exact_verified: verified }),
+        JSON.stringify([store, verified]),
+      ).toBe(runs);
+  });
+
+  it("installs the C toolchain only when the image's cannot build a pthread program", () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string };
+    const steps = workflow.jobs.test!.steps! as Array<Step>;
+    const at = (name: string) => steps.findIndex((step) => step.name === name);
+    const check = at("Check C toolchain for process-tree fixtures");
+    const install = at("Install C toolchain for process-tree fixtures");
+    const require = at("Require C toolchain for process-tree fixtures");
+    expect(check).toBeLessThan(install);
+    expect(install).toBeLessThan(require);
+    expect(steps[install]!.if).toBe(
+      "${{ (matrix.part == 1 || matrix.part == 6) && steps.toolchain.outputs.ready != 'true' }}",
+    );
+    for (const index of [check, require])
+      expect(steps[index]!.run).toContain("bash .github/scripts/pthread-cc.sh");
+    // Before any workspace install, as the unconditional install was.
+    expect(require).toBeLessThan(at("Setup Vite+"));
+  });
 
   it("installs CI-script dependencies before Node tests and always tests every workspace", () => {
     const steps = workflow.jobs.lint!.steps!;

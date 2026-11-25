@@ -4,7 +4,7 @@ description: Re-publish only the suites recorded by the exact-content qualificat
 inputs:
   web_reports:
     required: true
-    description: Whether the source ran the six web shards.
+    description: Whether the source ran the twelve web shards.
   server_reports:
     required: true
     description: Whether the source ran the twelve server shards and transfer scenario.
@@ -236,42 +236,6 @@ runs:
       with:
         name: vitest-server-12-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-12.json
-        if-no-files-found: error
-        retention-days: 14
-        overwrite: true
-    - name: Preserve vitest-server-13.json
-      if: inputs.server_reports == 'true'
-      uses: actions/upload-artifact@v7
-      with:
-        name: vitest-server-13-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-13.json
-        if-no-files-found: error
-        retention-days: 14
-        overwrite: true
-    - name: Preserve vitest-server-14.json
-      if: inputs.server_reports == 'true'
-      uses: actions/upload-artifact@v7
-      with:
-        name: vitest-server-14-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-14.json
-        if-no-files-found: error
-        retention-days: 14
-        overwrite: true
-    - name: Preserve vitest-server-15.json
-      if: inputs.server_reports == 'true'
-      uses: actions/upload-artifact@v7
-      with:
-        name: vitest-server-15-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-15.json
-        if-no-files-found: error
-        retention-days: 14
-        overwrite: true
-    - name: Preserve vitest-server-16.json
-      if: inputs.server_reports == 'true'
-      uses: actions/upload-artifact@v7
-      with:
-        name: vitest-server-16-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-16.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true
