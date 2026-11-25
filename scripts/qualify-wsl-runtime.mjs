@@ -1,17 +1,34 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { buildWslRuntimeInstallScript } from "../apps/desktop/src/wsl/DesktopWslEnvironment.ts";
+import {
+  hashFile,
+  verifyWslInstallScript,
+  WSL_INSTALL_BINDING,
+  WSL_INSTALL_SCRIPT,
+  WSL_QUALIFICATION_ARCHIVE,
+} from "./scient-wsl-qualification.mjs";
 
 // eslint-disable-next-line t3code/no-global-process-runtime -- Standalone target-host qualification is outside the Effect application runtime.
 NodeAssert.equal(process.platform, "linux", "Qualify the WSL payload on a Linux host");
-NodeAssert.ok(process.argv[2], "Pass the exact packaged WSL tarball");
-const asset = NodePath.resolve(process.argv[2]);
+// <tarball> <attempt> <tarball SHA-256> <install-script SHA-256>, as the installer job recorded them;
+// production's install script and its binding were uploaded beside the tarball.
+const [download, attempt, expectedSha, scriptSha] = process.argv.slice(2);
+NodeAssert.ok(download, "Pass the exact packaged WSL tarball");
+const downloaded = NodePath.dirname(NodePath.resolve(download));
+const installScript = NodeFS.readFileSync(NodePath.join(downloaded, WSL_INSTALL_SCRIPT), "utf8");
+verifyWslInstallScript({
+  script: installScript,
+  binding: JSON.parse(NodeFS.readFileSync(NodePath.join(downloaded, WSL_INSTALL_BINDING), "utf8")),
+  archiveSha256: expectedSha,
+  attempt,
+  scriptSha256: scriptSha,
+});
+const asset = WSL_QUALIFICATION_ARCHIVE;
 const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-wsl-qualification-"));
 const env = { ...process.env, HOME: root, NODE_PATH: "" };
 for (const key of Object.keys(env)) {
@@ -31,15 +48,20 @@ const run = (command, args) => {
   return result.stdout;
 };
 let server;
+let placed = false;
 try {
+  NodeFS.mkdirSync(NodePath.dirname(asset), { recursive: true });
+  NodeFS.copyFileSync(NodePath.resolve(download), asset, NodeFS.constants.COPYFILE_EXCL);
+  placed = true;
   const members = run("tar", ["-tzf", asset]);
   NodeAssert.doesNotMatch(
     members,
     /node_modules\/(?:@napi-rs\/(?:canvas|keyring)|@cursor\/sdk)-win32-/u,
   );
-  const sha = NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(asset)).digest("hex");
+  const sha = hashFile(asset);
+  NodeAssert.equal(sha, expectedSha, "WSL tarball differs from the installer's recorded SHA-256");
   const installed = NodePath.join(root, ".t3/wsl-runtime", `sha256-${sha}`);
-  run("bash", ["-c", buildWslRuntimeInstallScript(asset, `sha256-${sha}`, sha, null)]);
+  run("bash", ["-c", installScript]);
   cwd = installed;
   // The extracted payload must supply every module; do not install replacements.
   NodeFS.writeFileSync(
@@ -147,4 +169,5 @@ process.stdout.write('Packaged WSL canvas, keyring, Cursor, file search and 10 t
     await exited;
   }
   NodeFS.rmSync(root, { recursive: true, force: true });
+  if (placed) NodeFS.rmSync(asset, { force: true });
 }
