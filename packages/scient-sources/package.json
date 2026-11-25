@@ -72,6 +72,10 @@
       "types": "./src/libraryChanges.ts",
       "import": "./src/libraryChanges.ts"
     },
+    "./literature-watch-store": {
+      "types": "./src/literatureWatchStore.ts",
+      "import": "./src/literatureWatchStore.ts"
+    },
     "./library-notice-watch": {
       "types": "./src/libraryNoticeWatch.ts",
       "import": "./src/libraryNoticeWatch.ts"
