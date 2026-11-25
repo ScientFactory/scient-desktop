@@ -151,6 +151,9 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
     yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
     const lock = yield* Semaphore.make(1);
     const lastRead = yield* Ref.make<number | undefined>(undefined);
+    // The last configured servers and apps read, for a refresh whose live listing succeeds while
+    // that read fails (the agent skips a config file it cannot parse).
+    const lastStandalone = yield* Ref.make<ReadonlyArray<ServerProviderMcpServer>>([]);
     const path = yield* Path.Path;
     const scope = yield* Effect.scope;
     const list = Effect.fn("ScientAgentPluginInventory.list")(
@@ -203,15 +206,23 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
           const now = yield* Clock.currentTimeMillis;
           const previous = yield* Ref.get(lastRead);
           if (!force && previous !== undefined && now - previous < 600_000) return;
-          const [listing, configured, agentServers] = yield* Effect.all(
+          const [listing, standaloneRead, agentServers] = yield* Effect.all(
             [
               list(undefined),
-              standalone(),
+              Effect.result(standalone()),
               // A failed live listing leaves the configured servers in place.
               listAgentMcp().pipe(Effect.orElseSucceed(() => undefined)),
             ],
             { concurrency: "unbounded" },
           );
+          // Without a live listing the read is all there is, so its failure fails the refresh.
+          if (standaloneRead._tag === "Failure" && agentServers === undefined)
+            return yield* Effect.fail(standaloneRead.failure);
+          const configured =
+            standaloneRead._tag === "Success"
+              ? standaloneRead.success
+              : yield* Ref.get(lastStandalone);
+          if (standaloneRead._tag === "Success") yield* Ref.set(lastStandalone, configured);
           const pluginServers = (yield* Effect.forEach(listing.plugins, (plugin) =>
             pluginMcpServers(plugin).pipe(Effect.provideService(Path.Path, path)),
           )).flat();

@@ -127,6 +127,35 @@ describe("Scient Agent plugin inventory", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("publishes the live MCP listing when the configuration read fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let configReadable = true;
+        const live = JSON.stringify({
+          servers: [{ name: "cloudflare", status: "needs-auth", canStartSignIn: true }],
+        });
+        const native = yield* makeScientAgentPluginInventory(
+          () => Effect.succeed(JSON.stringify(listing)),
+          undefined,
+          () =>
+            configReadable
+              ? Effect.succeed([{ name: "Gmail", scope: "chatgpt", status: "connected" as const }])
+              : Effect.fail({ message: "Could not read Scient Agent's MCP configuration." }),
+          { list: () => Effect.succeed(live), login: () => Effect.undefined },
+        );
+        yield* native.actions.refreshInventory!({ force: true });
+        configReadable = false;
+        yield* native.actions.refreshInventory!({ force: true });
+        const report = yield* native.reports.pipe(Stream.runHead);
+        // The live rows publish, and the apps last read stay beside them.
+        expect(report._tag === "Some" && report.value.mcpServers).toMatchObject([
+          { name: "cloudflare", status: "needs-auth", canStartSignIn: true },
+          { name: "Gmail", scope: "chatgpt", status: "connected" },
+        ]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("rejects partial listings and does not act on a vanished plugin", () =>
     Effect.scoped(
       Effect.gen(function* () {
