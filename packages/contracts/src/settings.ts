@@ -88,7 +88,12 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
 } from "./providerInstance.ts";
-import { VoiceDictationEngine, VoiceLanguagePreference } from "./voice.ts";
+import {
+  LegacyVoiceLanguagePreference,
+  VoiceDictationEngine,
+  VoiceLanguagePreference,
+  VoiceTranscriptionLanguage,
+} from "./voice.ts";
 import { CustomModelsSettings } from "./customModels.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 // SCIENT-FORK: conversation-fork preferences.
@@ -669,6 +674,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_LANGUAGE_PREFERENCE)),
   ),
   // SCIENT-FORK:START — dictation with ChatGPT through a provider's ChatGPT sign-in.
+  voiceExtendedLanguagePreference: Schema.optionalKey(Schema.NullOr(VoiceTranscriptionLanguage)),
   voiceCloudSelection: Schema.NullOr(
     Schema.Struct({
       environmentId: EnvironmentId,
@@ -2519,7 +2525,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   voiceTranscriptCorrectionEnabled: Schema.optionalKey(Schema.Boolean),
-  voiceLanguagePreference: Schema.optionalKey(VoiceLanguagePreference),
+  voiceLanguagePreference: Schema.optionalKey(LegacyVoiceLanguagePreference),
+  voiceExtendedLanguagePreference: Schema.optionalKey(Schema.NullOr(VoiceTranscriptionLanguage)),
   // SCIENT-FORK:START — dictation with ChatGPT through Scient Agent's sign-in.
   voiceCloudSelection: Schema.optionalKey(
     Schema.NullOr(

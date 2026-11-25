@@ -46,7 +46,8 @@ export interface ProviderVoiceDictation {
   readonly dictate: (input: {
     /** A 16-bit mono WAV recording. */
     readonly wav: Uint8Array;
-    readonly language?: VoiceTranscriptionLanguage | undefined;
+    /** The two-letter language hint sent to the provider. */
+    readonly language?: string | undefined;
   }) => Effect.Effect<{ readonly text: string }, ChatGptDictationError>;
 }
 

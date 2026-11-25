@@ -87,7 +87,7 @@ export function AskRecordingButton({
         disabled={!segments.length || pending}
         onClick={() => void ask()}
       >
-        {gt("Ask about this recording")}
+        {gt("Ask in chat")}
       </Button>
       {error && (
         <span className="text-xs text-muted-foreground" role="status">

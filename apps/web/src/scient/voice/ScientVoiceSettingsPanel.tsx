@@ -1,7 +1,5 @@
 import { TranscriptionSelect } from "./TranscriptionSelect";
-import { useThreadShells } from "../../state/entities";
-import { useEnvironmentProviders } from "../../state/environments";
-import { resolveThreadActivityTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import { VoiceLanguagePicker } from "./VoiceLanguagePicker";
 import { CloudDictationSettings } from "./cloudDictation";
 import { DictationChoices } from "./DictationChoices";
 import { DictationInputSettings } from "../../components/settings/DictationInputSettings";
@@ -19,22 +17,20 @@ import { WordsSettingsSection } from "../transcription/WordsPanel";
 // SCIENT-OWNED: Transcription settings for Scient dictation.
 import { T, useGT } from "gt-react";
 
-import { CheckIcon, Mic2Icon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { Mic2Icon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   AuthSettingsWriteScope,
+  voiceLanguageRequestFields,
   type EnvironmentId,
-  VOICE_LANGUAGE_NAMES,
+  VOICE_TRANSCRIPTION_LANGUAGE_CODES,
   ProviderInstanceId,
-  type VoiceLanguagePreference,
 } from "@t3tools/contracts";
 
 import { useChatGptDictation } from "./chatGptDictation";
 import { describeVoiceError } from "./voiceErrorPresentation";
 import { getVoiceBridge } from "./voiceClient";
-import { Badge } from "../../components/ui/badge";
-import { Popover, PopoverTrigger, PopoverPopup } from "../../components/ui/popover";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import {
@@ -100,180 +96,27 @@ function TranscriptionPrivacy({ environmentId }: { environmentId: EnvironmentId 
   );
 }
 
-const PRIMARY_VOICE_LANGUAGES = [
-  "auto",
-  "en",
-  "he",
-] as const satisfies ReadonlyArray<VoiceLanguagePreference>;
-const MORE_VOICE_LANGUAGES = [
-  "ar",
-  "zh",
-  "fr",
-  "de",
-  "it",
-  "ja",
-  "ko",
-  "pt",
-  "ru",
-  "es",
-] as const satisfies ReadonlyArray<VoiceLanguagePreference>;
-
-function isPrimaryVoiceLanguage(language: VoiceLanguagePreference): boolean {
-  return language === "auto" || language === "en" || language === "he";
-}
-
-function VoiceLanguagePicker({
-  value,
-  onChange,
-}: {
-  readonly value: VoiceLanguagePreference;
-  readonly onChange: (language: VoiceLanguagePreference) => void;
-}): ReactNode {
-  const gt = useGT();
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [moreLanguagesOpen, setMoreLanguagesOpen] = useState(!isPrimaryVoiceLanguage(value));
-
-  const selectLanguage = (language: VoiceLanguagePreference): void => {
-    onChange(language);
-    setPickerOpen(false);
-    if (isPrimaryVoiceLanguage(language)) setMoreLanguagesOpen(false);
-  };
-
-  return (
-    <div className="relative border-border/60 border-t pt-3 md:border-t-0 md:pl-8 md:pt-1 md:before:absolute md:before:top-1 md:before:left-0 md:before:h-10 md:before:w-px md:before:bg-border/60">
-      <div className="flex items-center gap-1">
-        <h3 className="font-medium text-sm">
-          <T context="voice dictation language">Language</T>
-        </h3>
-        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-          <PopoverTrigger
-            render={
-              <Button
-                aria-label={gt("Choose voice language")}
-                className="relative top-0.5"
-                size="xs"
-                variant="ghost-muted"
-              />
-            }
-          >
-            {VOICE_LANGUAGE_NAMES[value]}
-            <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
-          </PopoverTrigger>
-          <PopoverPopup
-            align="start"
-            className="w-56 max-w-[calc(100vw-1rem)]"
-            padding="none"
-            side="bottom"
-            sideOffset={4}
-          >
-            <div className="p-1">
-              <div className="space-y-0.5">
-                {PRIMARY_VOICE_LANGUAGES.map((language) => {
-                  const selected = value === language;
-                  return (
-                    <Button
-                      key={language}
-                      aria-pressed={selected}
-                      className="w-full justify-start"
-                      onClick={() => selectLanguage(language)}
-                      size="sm-multiline"
-                      variant={selected ? "selected" : "ghost-muted"}
-                    >
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>{VOICE_LANGUAGE_NAMES[language]}</span>
-                        {language === "auto" ? (
-                          <Badge size="sm" variant="info">
-                            <T>Recommended</T>
-                          </Badge>
-                        ) : null}
-                      </span>
-                      {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                    </Button>
-                  );
-                })}
-                <div className="mt-1 border-border/60 border-t pt-1">
-                  <Button
-                    aria-expanded={moreLanguagesOpen}
-                    className="w-full justify-start"
-                    onClick={() => setMoreLanguagesOpen((open) => !open)}
-                    size="xs"
-                    variant="ghost-muted"
-                  >
-                    <span className="flex-1 text-left">
-                      <T>More languages</T>
-                    </span>
-                    <ChevronRightIcon
-                      className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
-                    />
-                  </Button>
-                  {moreLanguagesOpen ? (
-                    <div className="mt-0.5 space-y-0.5">
-                      {MORE_VOICE_LANGUAGES.map((language) => {
-                        const selected = value === language;
-                        return (
-                          <Button
-                            key={language}
-                            aria-pressed={selected}
-                            className="w-full justify-start"
-                            onClick={() => selectLanguage(language)}
-                            size="xs"
-                            variant={selected ? "selected" : "ghost-muted"}
-                          >
-                            <span className="flex-1 text-left">
-                              {VOICE_LANGUAGE_NAMES[language]}
-                            </span>
-                            {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </PopoverPopup>
-        </Popover>
-      </div>
-    </div>
-  );
-}
-
 export function ScientVoiceSettingsPanel(): ReactNode {
   const gt = useGT();
   const settingsScope = useOptionalSettingsScope();
   const silenceFiltering = useClientSettings((settings) => settings.speechSilenceFiltering);
   const removeFillerWords = useClientSettings((settings) => settings.speechRemoveFillerWords);
   const [cloudRevision, setCloudRevision] = useState(0);
+  const [engineSelectionPending, setEngineSelectionPending] = useState(false);
   const [client] = useState(() => getVoiceBridge());
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
-  const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const languagePreference = useClientSettings(
+    (settings) => settings.voiceExtendedLanguagePreference ?? settings.voiceLanguagePreference,
+  );
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const localDictation = engine === "local" || engine === "auto";
   const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
   const prepared = Option.getOrNull(usePreparedConnection(localEnvironmentId));
   const catalog = useVoiceModels(prepared);
   const environmentId = usePrimaryEnvironmentId();
-  const threads = useThreadShells();
-  const providersByEnvironment = useEnvironmentProviders();
-  const providers = environmentId ? providersByEnvironment.get(environmentId) : undefined;
-  const recentChat = threads
-    .filter((thread) => thread.environmentId === environmentId && !thread.archivedAt)
-    .reduce<(typeof threads)[number] | undefined>(
-      (latest, thread) =>
-        !latest ||
-        (resolveThreadActivityTimestamp(thread) ?? "") >
-          (resolveThreadActivityTimestamp(latest) ?? "")
-          ? thread
-          : latest,
-      undefined,
-    );
-  const recentProvider = recentChat?.modelSelection?.instanceId ?? recentChat?.providerInstanceId;
-  const activeCodex = providers?.find(
-    (provider) =>
-      provider.instanceId === recentProvider && provider.driver === "codex" && provider.enabled,
-  )?.instanceId;
-  const chatGpt = useChatGptDictation(environmentId ?? undefined, activeCodex);
+  const chatGpt = useChatGptDictation(environmentId ?? undefined);
   const chatGptSignedIn = chatGpt.transcriber !== null;
   const catalogDictated = useClientSettings((settings) => settings.voiceCatalogDictated);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -325,93 +168,94 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        id="voice-transcription-destination"
         title={gt("Dictation")}
         icon={<Mic2Icon className="size-4 text-muted-foreground" />}
-        variant="plain"
       >
-        <div className="space-y-3 px-3 sm:px-4">
-          <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
-            <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
-              <div className="min-w-0">
-                <h3 className="font-medium text-sm">
-                  <T>Clean up dictation</T>
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  <T>Fix spelling and punctuation after dictation.</T>
-                </p>
-              </div>
-              <Switch
-                aria-label={gt("Clean up dictation")}
-                checked={correctionEnabled}
-                onCheckedChange={(checked) =>
-                  updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
-                }
-              />
-            </div>
+        {environmentId ? (
+          <DictationChoices
+            catalog={catalog}
+            chatGptSignedIn={chatGptSignedIn}
+            environmentId={environmentId}
+            pending={engineSelectionPending}
+            onPendingChange={setEngineSelectionPending}
+          />
+        ) : null}
+        <SettingsRow
+          id="speech-language"
+          title={gt("Language", { $context: "voice dictation language" })}
+          control={
             <VoiceLanguagePicker
+              label={gt("Choose voice language")}
+              languages={VOICE_TRANSCRIPTION_LANGUAGE_CODES}
+              special={{ value: "auto", label: gt("Automatic"), recommended: true }}
               value={languagePreference}
-              onChange={(language) => updateClientSettings({ voiceLanguagePreference: language })}
+              onChange={(language) => {
+                const fields = voiceLanguageRequestFields(
+                  language === "auto" ? undefined : language,
+                );
+                return updateClientSettings({
+                  voiceLanguagePreference: fields.language ?? "auto",
+                  voiceExtendedLanguagePreference: fields.extendedLanguage ?? null,
+                });
+              }}
             />
-          </div>
-          {correctionEnabled && settingsScope ? <CleanupModelRow /> : null}
-          {prepared && (engine === "local" || engine === "auto") ? (
-            <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
-              <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
-                <div className="min-w-0">
-                  <h3 className="font-medium text-sm">
-                    <T>Silence filtering</T>
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    <T>Skip pauses before transcribing.</T>
-                  </p>
-                </div>
+          }
+        />
+        <SettingsRow
+          id="speech-post-processing"
+          title={gt("Clean up dictation")}
+          description={gt("Fix spelling and punctuation after dictation.")}
+          descriptionSize="compact"
+          control={
+            <Switch
+              aria-label={gt("Clean up dictation")}
+              checked={correctionEnabled}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ voiceTranscriptCorrectionEnabled: checked })
+              }
+            />
+          }
+        />
+        {settingsScope ? (
+          <CleanupModelRow disabled={!correctionEnabled} keepControlsVisible />
+        ) : null}
+        {prepared ? (
+          <>
+            <SettingsRow
+              id="speech-silence-filtering"
+              title={gt("Silence filtering")}
+              description={gt("Skip pauses in local dictation.")}
+              descriptionSize="compact"
+              control={
                 <Switch
                   aria-label={gt("Silence filtering")}
                   checked={silenceFiltering}
+                  disabled={!localDictation}
                   onCheckedChange={(speechSilenceFiltering) =>
                     void updateClientSettings({ speechSilenceFiltering })
                   }
                 />
-              </div>
-              <div className="flex items-start justify-between gap-4 py-1 md:pl-8">
-                <div className="min-w-0">
-                  <h3 className="font-medium text-sm">
-                    <T>Remove filler words</T>
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    <T>Drop “um” and “uh” from the text.</T>
-                  </p>
-                </div>
+              }
+            />
+            <SettingsRow
+              id="remove-filler-words"
+              title={gt("Remove filler words")}
+              description={gt("Drop “um” and “uh” from local dictation.")}
+              descriptionSize="compact"
+              control={
                 <Switch
                   aria-label={gt("Remove filler words")}
                   checked={removeFillerWords}
+                  disabled={!localDictation}
                   onCheckedChange={(speechRemoveFillerWords) =>
                     void updateClientSettings({ speechRemoveFillerWords })
                   }
                 />
-              </div>
-            </div>
-          ) : null}
-          <div className="border-border/60 border-t pt-3">
-            <h3 className="font-medium text-sm">
-              <T>Dictate with</T>
-            </h3>
-            <p className="text-muted-foreground text-xs">
-              <T>ChatGPT, a model on this computer, or a cloud engine you added.</T>
-            </p>
-          </div>
-          {environmentId ? (
-            <DictationChoices
-              catalog={catalog}
-              chatGptSignedIn={chatGptSignedIn}
-              environmentId={environmentId}
-              language={languagePreference}
+              }
             />
-          ) : null}
-        </div>
+          </>
+        ) : null}
       </SettingsSection>
-      <DictationInputSettings />
       {prepared ? (
         <RecordingDefaultsSettings prepared={prepared} catalog={catalog} key={cloudRevision} />
       ) : null}
@@ -421,6 +265,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             catalog={catalog}
             prepared={prepared}
             language={languagePreference}
+            selectionPending={engineSelectionPending}
           />
         </SettingsSection>
       ) : null}
@@ -428,11 +273,17 @@ export function ScientVoiceSettingsPanel(): ReactNode {
         <SettingsSection id="voice-cloud" title={gt("Cloud engines")}>
           <SettingsRow
             title="ChatGPT"
+            alignControl="start"
             description={
-              !chatGpt.pinned && activeCodex && chatGpt.connection.selected
-                ? gt("Follows your active chat, currently {connection}", {
-                    connection: chatGpt.connection.selected.displayName,
-                  })
+              !chatGpt.pinned && chatGpt.connection.ready && chatGpt.connection.selected
+                ? gt(
+                    "Dictation uses your chat’s connection when available. Otherwise uses {connection}.",
+                    {
+                      connection:
+                        chatGpt.connection.selected.displayName ??
+                        chatGpt.connection.selected.driver,
+                    },
+                  )
                 : chatGpt.connection.selected
                   ? chatGpt.connection.ready
                     ? gt("Signed in with {connection}", {
@@ -441,39 +292,38 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                     : gt("Sign in again with {connection}", {
                         connection: chatGpt.connection.selected.displayName,
                       })
-                  : chatGpt.connection.ambiguous
-                    ? gt("Choose a connection to use for ChatGPT.")
-                    : gt("Use your ChatGPT sign-in.")
+                  : gt("Use your ChatGPT sign-in.")
             }
             control={
-              <Button size="sm" variant="outline" render={<Link to="/settings/providers" />}>
-                {chatGpt.connection.ready
-                  ? gt("Manage sign-in…")
-                  : chatGpt.connection.selected
-                    ? gt("Sign in again")
-                    : gt("Sign in")}
-              </Button>
+              <div className="flex min-w-0 flex-wrap items-start gap-2 @min-[32rem]/settings-row:justify-end">
+                {chatGpt.connection.choices.length ? (
+                  <TranscriptionSelect
+                    label={gt("ChatGPT connection")}
+                    value={chatGpt.pinned ?? ""}
+                    options={[
+                      { value: "", label: gt("Automatic") },
+                      ...chatGpt.connection.choices.map((provider) => ({
+                        value: provider.instanceId,
+                        label: provider.displayName ?? provider.instanceId,
+                      })),
+                    ]}
+                    onChange={(value) =>
+                      void updateClientSettings({
+                        voiceChatGptInstanceId: value ? ProviderInstanceId.make(value) : null,
+                      })
+                    }
+                  />
+                ) : null}
+                <Button size="sm" variant="outline" render={<Link to="/settings/providers" />}>
+                  {chatGpt.connection.ready
+                    ? gt("Manage sign-in…")
+                    : chatGpt.connection.selected
+                      ? gt("Sign in again")
+                      : gt("Sign in")}
+                </Button>
+              </div>
             }
-          >
-            {chatGpt.connection.choices.length ? (
-              <TranscriptionSelect
-                label={gt("Use a different connection…")}
-                value={chatGpt.pinned ?? ""}
-                options={[
-                  { value: "", label: gt("Follow the active chat connection") },
-                  ...chatGpt.connection.choices.map((provider) => ({
-                    value: provider.instanceId,
-                    label: provider.displayName ?? provider.instanceId,
-                  })),
-                ]}
-                onChange={(value) =>
-                  void updateClientSettings({
-                    voiceChatGptInstanceId: value ? ProviderInstanceId.make(value) : null,
-                  })
-                }
-              />
-            ) : null}
-          </SettingsRow>
+          />
           {environmentId ? (
             <CloudDictationSettings
               key={environmentId}
@@ -484,7 +334,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           ) : null}
           <SettingsRow
             title={gt("Speech accounts")}
-            description={gt("Keys for cloud engines live in Accounts & secrets.")}
+            description={gt("Manage saved API keys or reuse a compatible key from Custom models.")}
             control={
               <Button size="sm" variant="outline" render={<Link to="/settings/accounts" />}>
                 <T>Open</T>
@@ -516,6 +366,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           ) : null}
         </SettingsSection>
       ) : null}
+      <DictationInputSettings />
       <WordsSettingsSection />
       {environmentId ? (
         <SettingsSection id="voice-agents" title={gt("Agents")}>

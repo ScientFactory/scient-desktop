@@ -5,6 +5,43 @@ import lectureVideoUrl from "../../../test/fixtures/recording-lecture.mp4?url";
 import "../../index.css";
 import { RecordingPlayer } from "./RecordingPlayer";
 
+it("restores playback volume and mute when the media element is reopened", async () => {
+  await page.viewport(1280, 800);
+  const preferenceKey = "scient:recording-playback:v1";
+  const player = (key: string) => (
+    <RecordingPlayer
+      key={key}
+      onReady={() => {}}
+      onMedia={() => {}}
+      src={lectureVideoUrl}
+      video
+      time={0}
+      onTime={() => {}}
+      onStale={() => {}}
+      theater={false}
+      onTheater={() => {}}
+      caption=""
+    />
+  );
+  localStorage.removeItem(preferenceKey);
+  try {
+    await using screen = await render(player("first"));
+    const volume = screen.getByRole("slider", { name: "Volume", exact: true });
+    await volume.fill("0.35");
+    await screen.getByRole("button", { name: "Mute (M)" }).click();
+    await screen.rerender(player("second"));
+    await expect.element(volume).toHaveValue("0.35");
+    await expect
+      .element(screen.getByRole("button", { name: "Mute (M)" }))
+      .toHaveAttribute("aria-pressed", "true");
+    const media = screen.container.querySelector("video")!;
+    expect(media.volume).toBe(0.35);
+    expect(media.muted).toBe(true);
+  } finally {
+    localStorage.removeItem(preferenceKey);
+  }
+});
+
 it("covers the viewport and removes the desktop resize inset for recording fullscreen", async () => {
   await page.viewport(1280, 800);
   await using screen = await render(

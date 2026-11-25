@@ -2,9 +2,10 @@ vi.mock("./catalogDictation", () => ({
   useCatalogDictation: () => ({ enabled: true, setup: fixture.catalogConnected ? {} : null }),
 }));
 
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
+import { SettingsScopeProvider } from "../../components/settings/SettingsScopeContext";
 import "../../index.css";
 
 const fixture = vi.hoisted(() => {
@@ -30,6 +31,7 @@ const fixture = vi.hoisted(() => {
   return {
     commands: [] as unknown[],
     catalogConnected: true,
+    catalogLoadFailed: false,
     removeLegacyModels: vi.fn<() => Promise<void>>(),
     languages,
     phase: "recording",
@@ -58,18 +60,6 @@ vi.mock("../../state/primaryEnvironment", async (original) => {
     localEnvironmentIdAtom: Atom.make(EnvironmentId.make(fixture.environmentId)),
   };
 });
-vi.mock("../../state/entities", async (original) => ({
-  ...(await original<typeof import("../../state/entities")>()),
-  useThreadShells: () => [
-    {
-      environmentId: fixture.environmentId,
-      providerInstanceId: "fixture-codex",
-      latestUserMessageAt: "2026-11-22T12:00:00Z",
-      archivedAt: null,
-    },
-  ],
-}));
-
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironmentProviders: () =>
@@ -107,16 +97,22 @@ vi.mock("../../state/session", async (original) => {
 });
 vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
   const Effect = await import("effect/Effect");
+  const whisperLanguages =
+    "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu haw ha he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo yue zh".split(
+      " ",
+    );
   return {
     ...(await original<typeof import("@t3tools/client-runtime/voice-input")>()),
     getEnvironmentSpeechStatus: () =>
-      Effect.succeed({
-        supported: true,
-        benchmarkTier: "cpu",
-        acceleration: "auto",
-        modelUnloadTimeout: "never",
-        gpuDevices: [],
-      }),
+      fixture.catalogLoadFailed
+        ? Effect.fail("Model catalog unavailable")
+        : Effect.succeed({
+            supported: true,
+            benchmarkTier: "cpu",
+            acceleration: "auto",
+            modelUnloadTimeout: "never",
+            gpuDevices: [],
+          }),
     getEnvironmentSpeechModels: () =>
       Effect.succeed({
         models: [
@@ -144,16 +140,73 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
             name: "Whisper Large v3",
             description: "Recording transcription",
             size: 1_668_741_440,
-            languages:
-              "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu haw ha he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo yue zh".split(
-                " ",
-              ),
+            languages: whisperLanguages,
             accuracy: 4,
             speed: 1,
             recommended: false,
             state: "downloadable",
             active: false,
             supportsLanguageDetection: true,
+            supportsTranslation: true,
+            supportsStreaming: false,
+          },
+          {
+            id: "handy-computer/whisper-large-v3-turbo-gguf",
+            name: "Whisper Large v3 Turbo",
+            description: "Multilingual recording transcription",
+            size: 886_381_760,
+            languages: whisperLanguages,
+            accuracy: 4,
+            speed: 2,
+            recommended: false,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: true,
+            supportsTranslation: false,
+            supportsStreaming: false,
+          },
+          {
+            id: "vladkens/ivrit-whisper-large-v3-turbo-gguf",
+            name: "ivrit.ai Whisper Large V3 Turbo",
+            description: "Hebrew recording transcription",
+            size: 845_000_000,
+            languages: ["he"],
+            accuracy: 4,
+            speed: 2,
+            recommended: true,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: false,
+            supportsTranslation: false,
+            supportsStreaming: false,
+          },
+          {
+            id: "handy-computer/whisper-small-gguf",
+            name: "Whisper Small",
+            description: "Wide language support in a relatively small model.",
+            size: 269_751_136,
+            languages: ["en", "fr", "he"],
+            accuracy: 3,
+            speed: 2,
+            recommended: false,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: true,
+            supportsTranslation: true,
+            supportsStreaming: false,
+          },
+          {
+            id: "handy-computer/canary-180m-flash-gguf",
+            name: "Canary 180M Flash",
+            description: "Compact multilingual model",
+            size: 218_447_648,
+            languages: ["de", "en", "es", "fr"],
+            accuracy: 3,
+            speed: 3,
+            recommended: false,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: false,
             supportsTranslation: true,
             supportsStreaming: false,
           },
@@ -285,7 +338,11 @@ vi.mock("./useScientVoiceController", async (original) => ({
 
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl";
 import { ScientVoiceSettingsPanel } from "./ScientVoiceSettingsPanel";
-import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import {
+  __setClientSettingsForTests,
+  getClientSettings,
+  updateClientSettings,
+} from "../../hooks/useSettings";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 const screenshots = import.meta.env.VITE_SCIENT_VOICE_SCREENSHOTS as string | undefined;
@@ -312,17 +369,32 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .element(screen.getByRole("switch", { name: "Agents may send audio to cloud engines" }))
       .toBeChecked();
     await expect.element(screen.getByText("Parakeet TDT 0.6B v3").last()).toBeVisible();
-    await expect.element(screen.getByRole("heading", { name: "gpt-transcribe" })).toBeVisible();
+    await expect.element(screen.getByRole("combobox", { name: "Dictate with" })).toBeVisible();
     await expect
       .element(screen.getByRole("heading", { name: "Recordings", level: 2 }))
       .toBeVisible();
     await expect
-      .element(screen.getByText("Follows your active chat, currently Codex (ChatGPT)"))
+      .element(
+        screen.getByText(
+          "Dictation uses your chat’s connection when available. Otherwise uses Codex (ChatGPT).",
+        ),
+      )
       .toBeVisible();
+    await expect
+      .element(screen.getByRole("combobox", { name: "ChatGPT connection" }))
+      .toHaveTextContent("Automatic");
     await expect.element(screen.getByRole("button", { name: "Choose a saved key…" })).toBeVisible();
-    await expect.element(screen.getByText("25 languages")).toBeVisible();
-    await expect.element(screen.getByText("for dictation", { exact: true })).toBeVisible();
-    await expect.element(screen.getByText("for recordings", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("25 languages")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Recommended for mixed languages", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Download Whisper Large v3 Turbo" }))
+      .toBeVisible();
+    expect(screen.getByRole("button", { name: /^Open details for / }).all()).toHaveLength(4);
+    await expect
+      .element(screen.getByRole("button", { name: "Download Whisper Small" }))
+      .toBeVisible();
     expect(screen.container.querySelector(".bg-warning")).toBeNull();
     if (screenshots) {
       await page.screenshot({ path: `${screenshots}/settings-${theme}.png` });
@@ -340,6 +412,51 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
           .element()
           .closest("section")!,
       });
+    }
+
+    if (theme === "light") {
+      const canary = screen.getByRole("button", { name: "Download Canary 180M Flash" });
+      const largeV3 = screen.getByRole("button", {
+        name: "Download Whisper Large v3",
+        exact: true,
+      });
+      await expect.element(largeV3).not.toBeInTheDocument();
+      await screen.getByRole("button", { name: /Show 2 more models/ }).click();
+      await expect.element(largeV3).toBeVisible();
+      await expect.element(canary).toBeVisible();
+      await screen.getByRole("button", { name: "Show fewer models" }).click();
+      await expect.element(canary).not.toBeInTheDocument();
+    }
+
+    const details = screen.getByRole("button", { name: "Details for Parakeet TDT 0.6B v3" });
+    const cardBody = screen.getByRole("button", {
+      name: "Open details for Parakeet TDT 0.6B v3",
+    });
+    if (theme === "light") {
+      await details.hover();
+    } else {
+      cardBody.element().focus();
+      await userEvent.keyboard("{Enter}");
+    }
+    const modelDetails = page.getByRole("dialog", { name: "Parakeet TDT 0.6B v3" });
+    await expect.element(modelDetails.getByText("for dictation", { exact: true })).toBeVisible();
+    await expect.element(modelDetails.getByText("25 languages")).toBeVisible();
+    await expect.element(modelDetails.getByText("Multilingual dictation")).toBeVisible();
+    await expect.element(modelDetails.getByText(/Speed:/)).toBeVisible();
+    await expect
+      .element(modelDetails.getByRole("button", { name: "Remove download" }))
+      .toBeEnabled();
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(modelDetails.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/speech-model-details-${theme}.png` });
+    }
+    await userEvent.keyboard("{Escape}");
+    await expect.element(modelDetails).not.toBeInTheDocument();
+    if (theme === "light") {
+      await cardBody.click();
+      await expect.element(modelDetails).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(modelDetails).not.toBeInTheDocument();
     }
 
     await screen.getByRole("button", { name: "Add a provider…" }).click();
@@ -397,39 +514,102 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
   }
 });
 
-it.each(["off", "cloud"] as const)(
-  "shows the active engine in one place when dictation is %s",
-  async (engine) => {
-    const previous = getClientSettings();
-    __setClientSettingsForTests({
-      ...previous,
-      voiceDictationEngine: engine,
-      voiceCatalogModelId: "handy-computer/parakeet-tdt-0.6b-v3-gguf",
-      voiceCloudSelection: { environmentId: EnvironmentId.make("local"), engineId: "engine-1" },
-    });
-    try {
-      await using screen = await render(<ScientVoiceSettingsPanel />);
-      const section = screen
-        .getByRole("heading", { name: "Dictation", exact: true })
-        .element()
-        .closest("section")!;
-      const inUse = () =>
-        [...section.querySelectorAll("[data-slot='badge']")].filter((badge) =>
-          badge.textContent?.includes("In use"),
-        );
-      if (engine === "off") {
-        await expect.element(screen.getByText("Dictation is off.")).toBeVisible();
-        expect(inUse()).toHaveLength(0);
-      } else {
-        await expect.element(screen.getByRole("heading", { name: "gpt-transcribe" })).toBeVisible();
-        await expect.poll(() => inUse().length).toBe(1);
-        expect(inUse()[0]?.closest("div.rounded-xl")?.textContent).toContain("gpt-transcribe");
-      }
-    } finally {
-      await act(() => __setClientSettingsForTests(previous));
+it("switches engines and cleanup without moving the settings below Dictation", async () => {
+  const previous = getClientSettings();
+  __setClientSettingsForTests({
+    ...previous,
+    voiceDictationEngine: "auto",
+    voiceTranscriptCorrectionEnabled: false,
+  });
+  try {
+    await page.viewport(1000, 1000);
+    await using screen = await render(
+      <SettingsScopeProvider search={{}} onChange={() => {}}>
+        <ScientVoiceSettingsPanel />
+      </SettingsScopeProvider>,
+    );
+    const engine = screen.getByRole("combobox", { name: "Dictate with" });
+    const silence = screen.getByRole("switch", { name: "Silence filtering" });
+    const cleanup = screen.getByRole("switch", { name: "Clean up dictation" });
+    const model = screen.getByRole("heading", { name: "Cleanup model" });
+    const recordings = screen.getByRole("heading", { name: "Recordings", exact: true });
+    const recordingsTop = () => recordings.element().getBoundingClientRect().top + window.scrollY;
+    await expect.element(engine).toHaveTextContent("Automatic");
+    await expect.element(model).toBeVisible();
+    await expect.element(silence).toBeEnabled();
+    const top = recordingsTop();
+
+    await engine.click();
+    await page.getByRole("option", { name: "Off", exact: true }).click();
+    await expect.element(engine).toHaveTextContent("Off");
+    await expect.element(silence).toBeDisabled();
+    expect(recordingsTop()).toBe(top);
+
+    const name = "Parakeet TDT 0.6B v3";
+    const useModel = screen.getByRole("button", { name: `Use ${name} for dictation` });
+    const cardRow = screen
+      .getByRole("button", { name: `Open details for ${name}` })
+      .element().parentElement!;
+    await useModel.click();
+    await expect.element(engine).toHaveTextContent(name);
+    await expect.poll(() => cardRow.textContent).toContain("In use");
+    expect(getClientSettings().voiceCatalogModelId).toBe(
+      "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+    );
+    expect(recordingsTop()).toBe(top);
+    if (screenshots) {
+      await page.screenshot({
+        path: `${screenshots}/dictation-model-in-use.png`,
+        element: cardRow,
+      });
     }
-  },
-);
+
+    await engine.click();
+    await page.getByRole("option", { name: /gpt-transcribe/ }).click();
+    await expect.element(engine).toHaveTextContent("gpt-transcribe · api.openai.com");
+    await expect.element(useModel).toBeEnabled();
+    expect(cardRow.textContent).not.toContain("In use");
+    expect(getClientSettings().voiceCloudSelection).toEqual({
+      environmentId: fixture.environmentId,
+      engineId: "engine-1",
+    });
+    expect(recordingsTop()).toBe(top);
+
+    await cleanup.click();
+    await expect.element(cleanup).toBeChecked();
+    await expect.element(model).toBeVisible();
+    expect(recordingsTop()).toBe(top);
+  } finally {
+    await act(async () => {
+      await updateClientSettings({
+        voiceDictationEngine: previous.voiceDictationEngine,
+        voiceCatalogModelId: previous.voiceCatalogModelId,
+        voiceCloudSelection: previous.voiceCloudSelection,
+        voiceTranscriptCorrectionEnabled: previous.voiceTranscriptCorrectionEnabled,
+      });
+      __setClientSettingsForTests(previous);
+    });
+  }
+});
+
+it("shows a saved local engine as unavailable after the catalog fails to load", async () => {
+  const previous = getClientSettings();
+  fixture.catalogLoadFailed = true;
+  __setClientSettingsForTests({
+    ...previous,
+    voiceDictationEngine: "local",
+    voiceCatalogModelId: fixture.catalog.models[0]!.id,
+  });
+  try {
+    await using screen = await render(<ScientVoiceSettingsPanel />);
+    await expect
+      .element(screen.getByRole("combobox", { name: "Dictate with" }))
+      .toHaveTextContent("Selected engine unavailable");
+  } finally {
+    fixture.catalogLoadFailed = false;
+    __setClientSettingsForTests(previous);
+  }
+});
 
 it.each(["chatgpt", "cloud", "local"] as const)(
   "shows the %s composer mic without a ready local catalog",
@@ -510,4 +690,121 @@ it("offers ready local, cloud and ChatGPT recording routes and keeps downloadabl
   expect(
     [...document.querySelectorAll('[role="option"]')].map((option) => option.textContent),
   ).not.toContain("Whisper Large v3");
+});
+
+it("shares searchable language menus, with the search beside the trigger on either side", async () => {
+  const previous = getClientSettings();
+  __setClientSettingsForTests({
+    ...previous,
+    voiceLanguagePreference: "auto",
+    voiceExtendedLanguagePreference: null,
+  });
+  try {
+    await page.viewport(1000, 850);
+    await using screen = await render(<ScientVoiceSettingsPanel />);
+    const voice = screen.getByRole("button", { name: "Choose voice language" });
+    const comparison = screen.getByRole("button", { name: "Compare languages" });
+    const recording = screen.getByRole("button", { name: "Recording language" });
+    const recommended = page.getByRole("button", { name: "Automatic Recommended" });
+    const more = page.getByRole("button", { name: "More languages" });
+
+    await voice.click();
+    await expect.element(recommended).toBeVisible();
+    const voicePopup = page.getByRole("dialog", { name: "Choose voice language" });
+    const voiceSearch = voicePopup.getByRole("searchbox", { name: "Search languages" });
+    await expect.element(voiceSearch).toHaveFocus();
+    await expect.element(voicePopup).toHaveAttribute("data-side", "bottom");
+    expect(voiceSearch.element().getBoundingClientRect().bottom).toBeLessThan(
+      recommended.element().getBoundingClientRect().top,
+    );
+    expect(
+      [...voicePopup.element().querySelectorAll("button")].map((button) => button.textContent),
+    ).toEqual(["AutomaticRecommended", "French", "English", "Hebrew", "Arabic", "More languages"]);
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(voicePopup.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/dictation-language-menu.png` });
+    }
+    await more.click();
+    const list = more.element().parentElement!.parentElement!;
+    expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+    const searchTop = () => voiceSearch.element().getBoundingClientRect().top;
+    const originalSearchTop = searchTop();
+    list.scrollTop = list.scrollHeight;
+    expect(searchTop()).toBe(originalSearchTop);
+    await voiceSearch.fill("Tibetan");
+    await expect.element(page.getByRole("button", { name: "Tibetan", exact: true })).toBeVisible();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(voice).toHaveTextContent("Tibetan");
+    expect(getClientSettings().voiceLanguagePreference).toBe("auto");
+    expect(getClientSettings().voiceExtendedLanguagePreference).toBe("bo");
+
+    await comparison.element().scrollIntoView({ block: "end" });
+    await comparison.click();
+    const comparePopup = page.getByRole("dialog", { name: "Compare languages" });
+    const compareSearch = comparePopup.getByRole("searchbox", { name: "Search languages" });
+    await expect.element(compareSearch).toHaveFocus();
+    await expect.element(comparePopup).toHaveAttribute("data-side", "top");
+    const french = comparePopup.getByRole("button", { name: "French" });
+    expect(compareSearch.element().getBoundingClientRect().top).toBeGreaterThan(
+      french.element().getBoundingClientRect().bottom,
+    );
+    await expect.element(recommended).not.toBeInTheDocument();
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(comparePopup.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/compare-language-menu.png` });
+    }
+    await compareSearch.fill("zzzz");
+    await expect.element(comparePopup.getByText("No languages found")).toBeVisible();
+    await compareSearch.fill("Sinhala");
+    await comparePopup.getByRole("button", { name: "Sinhala", exact: true }).click();
+
+    await page.viewport(1000, 360);
+    screen.container.querySelector<HTMLElement>("[data-settings-page-scroll]")!.style.maxWidth =
+      "36rem";
+    await comparison.element().scrollIntoView({ block: "center" });
+    await comparison.click();
+    await expect.element(compareSearch).toHaveFocus();
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(comparePopup.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/compare-short-window.png` });
+    }
+    await expect
+      .poll(
+        () => {
+          const popup = comparePopup.element();
+          const trigger = comparison.element().getBoundingClientRect();
+          const menu = popup.getBoundingClientRect();
+          const side = popup.getAttribute("data-side");
+          if (side === "top") return Math.abs(trigger.top - menu.bottom - 4);
+          if (side === "bottom") return Math.abs(menu.top - trigger.bottom - 4);
+          return Infinity;
+        },
+        { timeout: 1500 },
+      )
+      .toBeLessThan(2);
+
+    await compareSearch.fill("עברית");
+    await page.getByRole("button", { name: "Hebrew", exact: true }).click();
+    const hebrewCard = screen.getByRole("button", {
+      name: "Open details for ivrit.ai Whisper Large V3 Turbo",
+    });
+    await expect.element(hebrewCard.getByText("Recommended for Hebrew")).toBeVisible();
+    expect(screen.getByText("Recommended for Hebrew", { exact: true }).all()).toHaveLength(1);
+
+    await comparison.click();
+    await page.getByRole("button", { name: "Clear comparison" }).click();
+    await expect.element(comparison).toHaveTextContent("Compare languages");
+
+    await page.viewport(420, 850);
+    await recording.click();
+    const recordingPopup = page.getByRole("dialog", { name: "Recording language" });
+    await expect
+      .element(recordingPopup.getByRole("button", { name: "Automatic detection" }))
+      .toBeVisible();
+    await recordingPopup.getByRole("searchbox", { name: "Search languages" }).fill("Bashkir");
+    await page.getByRole("button", { name: "Bashkir", exact: true }).click();
+    await expect.element(recording).toHaveTextContent("Bashkir");
+  } finally {
+    await act(() => __setClientSettingsForTests(previous));
+  }
 });

@@ -2,7 +2,12 @@ import * as Speech from "./SpeechService.ts";
 import { RateLimited } from "../transcription/job.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { dictationPcm, readDictationWav } from "./dictationAudio.ts";
-import { DictationError, ProviderInstanceId, WS_METHODS } from "@t3tools/contracts";
+import {
+  DictationError,
+  ProviderInstanceId,
+  voiceLanguageRequestFields,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect, vi } from "vite-plus/test";
@@ -102,6 +107,26 @@ it.effect("dispatches local, consented cloud and ChatGPT audio while agent uploa
       ServerSettings.layerTest({ transcription: { agentsMayUseCloudEngines: false } }),
     ),
   ),
+);
+
+it.effect("normalizes catalog languages before calling ChatGPT dictation", () =>
+  Effect.gen(function* () {
+    const { invoke, chat } = harness();
+    for (const [language, expected] of [
+      ["fil", "tl"],
+      ["haw", undefined],
+      ["yue", undefined],
+      ["jw", "jv"],
+      ["he", "he"],
+    ] as const) {
+      expect(
+        yield* invoke({ audioBase64, ...voiceLanguageRequestFields(language), selection: chatgpt }),
+      ).toEqual({
+        text: "chatgpt",
+      });
+      expect(chat).toHaveBeenLastCalledWith({ wav, language: expected });
+    }
+  }).pipe(Effect.provide(ServerSettings.layerTest())),
 );
 
 it.effect(

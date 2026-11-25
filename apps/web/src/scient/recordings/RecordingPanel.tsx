@@ -52,7 +52,7 @@ export default function RecordingPanel({
           // The recording opened maximized over its thread; going back leaves that thread as it was.
           useRightPanelStore.getState().setMaximized(threadRef, false);
           onClose();
-          void router.navigate({ to: "/recordings" });
+          void router.navigate({ to: "/recordings", search: { fromThread: threadRef.threadId } });
         }}
         onChange={() => setRefresh((value) => value + 1)}
       />

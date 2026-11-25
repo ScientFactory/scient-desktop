@@ -1,9 +1,9 @@
-import { recordingSpeechModelIds } from "@t3tools/shared/speech";
+import { HEBREW_RECORDING_MODEL_ID, recordingSpeechModelIds } from "@t3tools/shared/speech";
 import * as Schema from "effect/Schema";
 import { SPEECH_MODELS } from "../speech/model.ts";
 
 const ivritTurbo = {
-  id: "vladkens/ivrit-whisper-large-v3-turbo-gguf",
+  id: HEBREW_RECORDING_MODEL_ID,
   name: "ivrit.ai Whisper Large v3 Turbo",
   revision: "5d15b8bc0cf961639ac3d3647157514a24eb0084",
   filename: "ivrit-whisper-large-v3-turbo-Q8_0.gguf",

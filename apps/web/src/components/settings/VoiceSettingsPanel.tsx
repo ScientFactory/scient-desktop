@@ -1,5 +1,5 @@
 import { languageLabel } from "../../lib/languageLabel";
-import { TranscriptionSelect } from "../../scient/voice/TranscriptionSelect";
+import { VoiceLanguagePicker } from "../../scient/voice/VoiceLanguagePicker";
 import { WordsSettingsSection } from "~/scient/transcription/WordsPanel";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -35,6 +35,8 @@ import { createModelSelection, pickModelSelection } from "@t3tools/shared/model"
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 import {
   cloudSpeechLanguages,
+  HEBREW_RECORDING_MODEL_ID,
+  MULTILINGUAL_RECORDING_MODEL_ID,
   recommendSpeechModels,
   recordingSpeechModelIds,
   chooseSetupSpeechModel,
@@ -45,6 +47,7 @@ import {
   AudioLinesIcon,
   CheckIcon,
   DownloadIcon,
+  InfoIcon,
   LanguagesIcon,
   KeyRoundIcon,
   LaptopIcon,
@@ -95,6 +98,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import {
+  Popover,
+  PopoverClose,
+  PopoverDescription,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../ui/popover";
 import {
   Menu,
   MenuCheckboxItem,
@@ -163,20 +174,19 @@ const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
   hour_1: msg("After 1 hour"),
 };
 type ModelCardProps = {
-  /** SCIENT-FORK: draws the card's own border, for a grid of cards. */
-  readonly framed?: boolean;
-  /** SCIENT-FORK: download and remove only; the engine is chosen elsewhere. */
-  readonly manageOnly?: boolean;
+  readonly compact?: boolean;
   readonly model: EnvironmentSpeechModel;
   readonly comparisonLanguages: readonly string[];
   readonly recommendation: SpeechRecommendationRole | undefined;
   readonly recommendationContext?: string | undefined;
+  readonly catalogBadge?: string | undefined;
   readonly recommendationLanguage?: string | null | undefined;
   readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly onDownload: () => void;
   readonly onSelect: () => void;
+  readonly selectionPending?: boolean;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
   readonly testControls?: ReactNode;
@@ -202,16 +212,198 @@ function EngineCard(props: ModelCardProps) {
   const gt = useGT();
   const locale = useLocale();
   const { model } = props;
+  const infoButton = useRef<HTMLButtonElement>(null);
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
-  return (
-    <div
-      className={cn(
-        "@container/model",
-        // SCIENT-FORK: Transcription settings show models as cards, like the Voice page did.
-        props.framed ? "rounded-xl border border-border/70 bg-card/50 p-4" : "px-3 py-3",
-      )}
+  const size = formatSize(model.size);
+  const benchmarks = (
+    <ModelBenchmarks
+      model={model}
+      languages={props.comparisonLanguages}
+      tier={props.benchmarkTier}
+      facts={[
+        ...(model.languages.length > 1
+          ? [
+              gt("{count, plural, one {{count} language} other {{count} languages}}", {
+                count: model.languages.length,
+              }),
+            ]
+          : !model.benchmark && model.languages[0]
+            ? [languageLabel(model.languages[0], locale)]
+            : []),
+        ...(props.compact ? [] : [size]),
+      ]}
+    />
+  );
+  const detailLabel = gt("Details for {model}", { model: model.name });
+  const downloadAction = downloading ? (
+    <Button
+      size="icon-sm"
+      variant="outline"
+      aria-label={gt("Cancel {name} download", { name: model.name })}
+      disabled={!props.canCancel}
+      onClick={props.onCancel}
     >
+      <XIcon className="size-3.5" />
+    </Button>
+  ) : model.state === "downloadable" && props.compact ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={gt("Download {name}", { name: model.name })}
+            disabled={props.busy}
+            onClick={props.onDownload}
+          />
+        }
+      >
+        <DownloadIcon />
+      </TooltipTrigger>
+      <TooltipPopup>{gt("Download")}</TooltipPopup>
+    </Tooltip>
+  ) : model.state === "downloadable" ? (
+    <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
+      <DownloadIcon />
+      <T>Download</T>
+    </Button>
+  ) : null;
+  const progressBar = downloading ? (
+    <div className="mt-2">
+      <div
+        role="progressbar"
+        aria-label={gt("{name} download progress", { name: model.name })}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress)}
+        className="h-1 overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className="h-full bg-primary transition-[width] duration-200"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <p className="mt-1 text-2xs text-muted-foreground">
+        {model.state === "verifying"
+          ? gt("Verifying download…")
+          : gt("{percent}% downloaded", { percent: Math.round(progress) })}
+      </p>
+    </div>
+  ) : null;
+  if (props.compact) {
+    return (
+      <Popover>
+        <div className="relative rounded-xl border border-border/70 bg-card/50 px-3 py-2.5 transition-colors has-[[data-speech-model-body]:hover]:bg-muted/50 has-[[data-speech-model-body]:focus-visible]:outline has-[[data-speech-model-body]:focus-visible]:outline-ring">
+          <div className="flex items-center gap-2">
+            <PopoverTrigger
+              data-speech-model-body
+              aria-label={gt("Open details for {model}", { model: model.name })}
+              render={
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 text-start outline-none after:absolute after:inset-0 after:rounded-xl"
+                />
+              }
+            >
+              <span className="text-sm font-medium leading-5">{model.name}</span>
+              <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <span className="text-xs text-muted-foreground tabular-nums">{size}</span>
+                {props.catalogBadge ? (
+                  <Badge variant="info" size="sm">
+                    <StarIcon />
+                    {props.catalogBadge}
+                  </Badge>
+                ) : null}
+                {props.recommendationContext && !props.catalogBadge ? (
+                  <Badge variant="outline" size="sm">
+                    {props.recommendationContext}
+                  </Badge>
+                ) : null}
+              </span>
+            </PopoverTrigger>
+            <div className="pointer-events-none relative z-10 flex shrink-0 items-center gap-1.5 [&>button]:pointer-events-auto">
+              <PopoverTrigger
+                openOnHover
+                delay={150}
+                closeDelay={100}
+                render={
+                  <Button
+                    ref={infoButton}
+                    tabIndex={-1}
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={detailLabel}
+                  />
+                }
+              >
+                <InfoIcon />
+              </PopoverTrigger>
+              <div className="grid min-w-10 place-items-center [&>button]:pointer-events-auto">
+                {downloadAction ??
+                  (model.state === "installed" ? (
+                    model.active ? (
+                      <Badge size="sm" variant="success">
+                        <T>In use</T>
+                      </Badge>
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        aria-label={gt("Use {model} for dictation", { model: model.name })}
+                        disabled={props.busy || props.selectionPending}
+                        onClick={props.onSelect}
+                      >
+                        <T>Use</T>
+                      </Button>
+                    )
+                  ) : null)}
+              </div>
+            </div>
+          </div>
+          {progressBar}
+        </div>
+        <PopoverPopup anchor={infoButton} width="sm" padding="comfortable" align="end">
+          <div className="space-y-2">
+            <PopoverTitle>{model.name}</PopoverTitle>
+            {props.recommendationContext && props.catalogBadge ? (
+              <Badge variant="outline" size="sm">
+                {props.recommendationContext}
+              </Badge>
+            ) : null}
+            {model.description ? (
+              <PopoverDescription size="compact">{model.description}</PopoverDescription>
+            ) : null}
+            {model.linkedFrom ? (
+              <p className="text-xs text-muted-foreground">
+                <T>Uses a model file already on this computer.</T>
+              </p>
+            ) : null}
+            {benchmarks}
+            {model.state === "installed" ? (
+              <div className="flex justify-end border-t border-border/60 pt-2">
+                <PopoverClose
+                  render={
+                    <Button
+                      size="xs"
+                      variant="ghost-destructive"
+                      disabled={props.busy}
+                      onClick={props.onDelete}
+                    />
+                  }
+                >
+                  {model.linkedFrom ? <UnlinkIcon /> : <Trash2Icon />}
+                  {model.linkedFrom ? <T>Stop using file</T> : <T>Remove download</T>}
+                </PopoverClose>
+              </div>
+            ) : null}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    );
+  }
+  return (
+    <div className="@container/model px-3 py-3">
       <div
         className={cn(
           "flex flex-col gap-2.5",
@@ -249,9 +441,6 @@ function EngineCard(props: ModelCardProps) {
                 }
               />
             ) : null}
-            {props.recommendationContext ? (
-              <Badge variant="outline">{props.recommendationContext}</Badge>
-            ) : null}
             {!props.dictation && model.supportsStreaming ? (
               <ModelBadge
                 icon={<AudioLinesIcon className="mr-1 size-3" />}
@@ -281,78 +470,23 @@ function EngineCard(props: ModelCardProps) {
               <T>Uses a model file already on this computer.</T>
             </p>
           ) : null}
-          <ModelBenchmarks
-            model={model}
-            languages={props.comparisonLanguages}
-            tier={props.benchmarkTier}
-            facts={[
-              ...(model.languages.length > 1
-                ? [
-                    gt("{count, plural, one {{count} language} other {{count} languages}}", {
-                      count: model.languages.length,
-                    }),
-                  ]
-                : model.benchmark
-                  ? []
-                  : [languageLabel(model.languages[0] ?? "", locale)]),
-              formatSize(model.size),
-            ]}
-          />
-          {downloading ? (
-            <div className="mt-2">
-              <div
-                role="progressbar"
-                aria-label={gt("{name} download progress", { name: model.name })}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(progress)}
-                className="h-1 overflow-hidden rounded-full bg-muted"
-              >
-                <div
-                  className="h-full bg-primary transition-[width] duration-200"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="mt-1 text-2xs text-muted-foreground">
-                {model.state === "verifying"
-                  ? gt("Verifying download…")
-                  : gt("{percent}% downloaded", { percent: Math.round(progress) })}
-              </p>
-            </div>
-          ) : null}
+          {benchmarks}
+          {progressBar}
         </div>
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
           {props.testControls}
-          {downloading ? (
-            <Button
-              size="icon-sm"
-              variant="outline"
-              aria-label={gt("Cancel {name} download", { name: model.name })}
-              disabled={!props.canCancel}
-              onClick={props.onCancel}
-            >
-              <XIcon className="size-3.5" />
-            </Button>
-          ) : model.state === "downloadable" ? (
-            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
-              <DownloadIcon />
-              <T>Download</T>
-            </Button>
-          ) : props.manageOnly ? null : model.active ? (
-            <Button size="sm" variant="secondary" disabled>
-              <CheckIcon />
-              <T>Selected</T>
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
-              <T>Use model</T>
-            </Button>
-          )}
-          {model.state === "installed" && props.manageOnly ? (
-            <Button size="sm" variant="ghost-muted" disabled={props.busy} onClick={props.onDelete}>
-              {model.linkedFrom ? <T>Stop using file</T> : <T>Remove</T>}
-            </Button>
-          ) : model.state === "installed" ? (
+          {downloadAction ??
+            (model.active ? (
+              <Button size="sm" variant="secondary" disabled>
+                <CheckIcon />
+                <T>Selected</T>
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
+                <T>Use model</T>
+              </Button>
+            ))}
+          {model.state === "installed" ? (
             <Button
               size="icon-sm"
               variant="outline"
@@ -375,7 +509,15 @@ function EngineCard(props: ModelCardProps) {
 }
 
 /** Cleanup runs on the draft's environment, so its model is an environment setting there. */
-export function CleanupModelRow({ recordings = false }: { recordings?: boolean }) {
+export function CleanupModelRow({
+  recordings = false,
+  disabled = false,
+  keepControlsVisible = false,
+}: {
+  recordings?: boolean;
+  disabled?: boolean;
+  keepControlsVisible?: boolean;
+}) {
   const setting = useSearchableSetting();
   const gt = useGT();
   const { environment, connectedEnvironments } = useSettingsScope();
@@ -437,9 +579,7 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
       settingKeys={[modelKey]}
       {...setting("speech-post-processing-model")}
       title={recordings ? gt("Correction model") : gt("Cleanup model")}
-      description={gt(
-        "Model for transcript cleanup, such as a cheaper or faster one. When disabled, use the text generation model configured for this environment.",
-      )}
+      description={gt("Uses the default text generation model when off.")}
       control={
         connectedEnvironments.length === 0 ? (
           <span className="text-sm text-muted-foreground">
@@ -452,13 +592,14 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
                 <T>No text generation providers available.</T>
               </span>
             ) : null}
-            {dedicated && hasProvider && instanceEntry ? (
+            {(dedicated || keepControlsVisible) && hasProvider && instanceEntry ? (
               <>
                 <ProviderModelPicker
                   environmentId={environment?.environmentId ?? null}
                   activeInstanceId={selection.instanceId}
                   model={selection.model}
                   lockedProvider={null}
+                  disabled={disabled || !dedicated}
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
@@ -473,6 +614,7 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
                   model={selection.model}
                   modelOptions={selection.options ?? []}
                   allowPromptInjectedEffort={false}
+                  disabled={disabled || !dedicated}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     setModel(createModelSelection(selection.instanceId, selection.model, options))
@@ -482,7 +624,7 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
             ) : null}
             <Switch
               checked={dedicated}
-              disabled={!dedicated && !hasProvider}
+              disabled={disabled || (!dedicated && !hasProvider)}
               onCheckedChange={(checked) =>
                 updateSettings({
                   [modelKey]: checked
@@ -508,6 +650,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
   const canManage = useEnvironmentScope(prepared?.environmentId ?? null, AuthSettingsWriteScope);
   const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
   const [status, setStatus] = useState<EnvironmentSpeechStatus | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [requestedDownload, setRequestedDownload] = useState<string | null>(null);
   const [actionConnection, setActionConnection] = useState(prepared);
@@ -517,6 +660,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
     setRequestedDownload(null);
     setModels([]);
     setStatus(null);
+    setLoadFailed(false);
   }
   const epoch = useRef(0);
   const refreshRevision = useRef(0);
@@ -542,6 +686,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
       } catch (error) {
         if (mode === "progress") return;
         if (current !== epoch.current || revision !== refreshRevision.current) return;
+        setLoadFailed(true);
         toastManager.add({
           type: "error",
           title: gt("Could not load transcription models"),
@@ -607,6 +752,7 @@ export function useVoiceModels(prepared: PreparedConnection | null) {
   return {
     models,
     status,
+    loading: prepared !== null && status === null && !loadFailed,
     run,
     controlsDisabled: busy || downloading || !canManage,
     canCancel: canManage && !busy,
@@ -735,18 +881,26 @@ function AdvancedSpeechSettings({
   );
 }
 
+const WHISPER_TURBO_MODEL_ID = "handy-computer/whisper-large-v3-turbo-gguf";
+const WHISPER_SMALL_MODEL_ID = "handy-computer/whisper-small-gguf";
+
 export function DictationEngineCatalog({
   prepared,
   language,
   catalog,
+  selectionPending,
 }: {
   prepared: PreparedConnection | null;
   language: string;
   catalog: VoiceModels;
+  selectionPending: boolean;
 }) {
   const gt = useGT();
   const locale = useLocale();
   const { status, models, run, controlsDisabled, canCancel, requestedDownload } = catalog;
+  const selectedModelId = useClientSettings((settings) =>
+    settings.voiceDictationEngine === "local" ? settings.voiceCatalogModelId : null,
+  );
   const [preferred] = useState(preferredSpeechLanguages);
   const [compareLanguage, setCompareLanguage] = useState("");
   const [showAllModels, setShowAllModels] = useState(false);
@@ -767,22 +921,38 @@ export function DictationEngineCatalog({
     )
     .filter((model) => model !== undefined);
   const recordingModel =
-    recordingChoices.find((model) => model.state === "installed") ??
-    (effectiveLanguage === "he"
-      ? (recordingChoices[1] ?? recordingChoices[0])
-      : recordingChoices[0]);
+    recordingChoices.find((model) => model.state === "installed") ?? recordingChoices[0];
   const recommendedModel = recommendation?.model;
-  const ordered = recommendedModel
-    ? [recommendedModel, ...models.filter(({ id }) => id !== recommendedModel.id)]
-    : models;
-  // Installed and recommended models come first; the rest of the catalog waits behind one button.
-  const featured = (model: (typeof models)[number]) =>
-    model.state !== "downloadable" ||
-    model.id === recommendedModel?.id ||
-    model.id === recordingModel?.id ||
-    model.id === requestedDownload;
-  const visibleModels = showAllModels ? ordered : ordered.filter(featured);
-  const hiddenCount = ordered.length - ordered.filter(featured).length;
+  const multilingualModel =
+    models.find((model) => model.id === WHISPER_TURBO_MODEL_ID) ??
+    models.find((model) => model.id === MULTILINGUAL_RECORDING_MODEL_ID);
+  const ordered = [
+    ...new Set(
+      [
+        recommendedModel,
+        multilingualModel ?? recordingModel,
+        ...[HEBREW_RECORDING_MODEL_ID, WHISPER_SMALL_MODEL_ID].map((id) =>
+          models.find((model) => model.id === id),
+        ),
+        ...models,
+      ].filter((model) => model !== undefined),
+    ),
+  ];
+  const defaultModels = ordered.filter(
+    (model, index) => index < 4 || model.state !== "downloadable" || model.id === requestedDownload,
+  );
+  const visibleModels = showAllModels ? ordered : defaultModels;
+  const hiddenCount = ordered.length - defaultModels.length;
+  const catalogBadge = (model: EnvironmentSpeechModel) => {
+    if (model.id === WHISPER_SMALL_MODEL_ID) return gt("Lightweight multilingual");
+    if (model.id === HEBREW_RECORDING_MODEL_ID) return gt("Recommended for Hebrew");
+    if (model.id === multilingualModel?.id) return gt("Recommended for mixed languages");
+    if (model.id === recommendedModel?.id && effectiveLanguage !== "he")
+      return gt("Recommended for {language}", {
+        language: languageLabel(effectiveLanguage, locale),
+      });
+    return undefined;
+  };
   return (
     <>
       <SettingsRow
@@ -795,16 +965,11 @@ export function DictationEngineCatalog({
           ),
         })}
         control={
-          <TranscriptionSelect
+          <VoiceLanguagePicker
             label={gt("Compare languages")}
             value={compareLanguage}
-            options={[
-              { value: "", label: gt("Compare languages") },
-              ...[...new Set(models.flatMap((model) => model.languages))].sort().map((value) => ({
-                value,
-                label: languageLabel(value, locale),
-              })),
-            ]}
+            languages={models.flatMap((model) => model.languages)}
+            special={{ value: "", label: gt("Clear comparison"), clearOnly: true }}
             onChange={setCompareLanguage}
           />
         }
@@ -812,21 +977,19 @@ export function DictationEngineCatalog({
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {visibleModels.map((model) => (
             <EngineCard
-              framed
-              manageOnly
-              stacked
+              compact
               key={model.id}
               model={{
                 ...model,
-                active: false,
+                active: model.id === selectedModelId,
                 state:
                   model.id === requestedDownload && model.state === "downloadable"
                     ? "downloading"
                     : model.state,
               }}
               comparisonLanguages={recommendation?.language ? [recommendation.language] : []}
-              recommendation={model.id === recommendedModel?.id ? "recommended" : undefined}
-              recommendationLanguage={recommendation?.language}
+              recommendation={undefined}
+              catalogBadge={catalogBadge(model)}
               recommendationContext={
                 recordingModel && recommendedModel && recordingModel.id !== recommendedModel.id
                   ? model.id === recordingModel.id
@@ -838,6 +1001,7 @@ export function DictationEngineCatalog({
               }
               benchmarkTier={status.benchmarkTier}
               busy={controlsDisabled}
+              selectionPending={selectionPending}
               canCancel={canCancel}
               dictation
               onDownload={() =>

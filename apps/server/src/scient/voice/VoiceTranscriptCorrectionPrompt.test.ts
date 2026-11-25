@@ -24,10 +24,13 @@ describe("voice transcript correction prompt", () => {
     expect(prompt).toContain("Keep code-switching");
   });
 
-  it("uses an explicit language only as a correction preference", () => {
-    const prompt = buildVoiceTranscriptCorrectionPrompt("שלומ עולם", "he");
+  it.each([
+    ["he", "Hebrew"],
+    ["bo", "Tibetan"],
+  ] as const)("uses %s only as a correction preference", (language, name) => {
+    const prompt = buildVoiceTranscriptCorrectionPrompt("Example transcript", language);
 
-    expect(prompt).toContain("selected Hebrew");
+    expect(prompt).toContain(`selected ${name}`);
     expect(prompt).toContain("use this only to resolve transcription errors");
   });
 

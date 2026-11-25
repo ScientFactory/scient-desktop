@@ -232,10 +232,13 @@ export function decodeSpeechPcmRequest(body: Uint8Array) {
   return { pcm: body.subarray(4 + length), options };
 }
 
+export const HEBREW_RECORDING_MODEL_ID = "vladkens/ivrit-whisper-large-v3-turbo-gguf";
+export const MULTILINGUAL_RECORDING_MODEL_ID = "handy-computer/whisper-large-v3-gguf";
+
 export function recordingSpeechModelIds(language: string): readonly string[] {
   return [
-    ...(language.split("-")[0] === "he" ? ["vladkens/ivrit-whisper-large-v3-turbo-gguf"] : []),
-    "handy-computer/whisper-large-v3-gguf",
+    ...(language.split("-")[0] === "he" ? [HEBREW_RECORDING_MODEL_ID] : []),
+    MULTILINGUAL_RECORDING_MODEL_ID,
     "handy-computer/whisper-large-v3-turbo-gguf",
     "handy-computer/whisper-medium-gguf",
     "handy-computer/whisper-small-gguf",

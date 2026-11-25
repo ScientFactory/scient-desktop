@@ -318,6 +318,7 @@ export function SettingsRow({
   resetAction,
   onResetOverride,
   control,
+  alignControl = "center",
   serverScoped = false,
   devicePreference = false,
   settingKeys = EMPTY_SETTING_KEYS,
@@ -335,6 +336,7 @@ export function SettingsRow({
   resetAction?: ReactNode;
   onResetOverride?: () => void;
   control?: ReactNode;
+  alignControl?: "center" | "start";
   serverScoped?: boolean;
   /** Saved on this device, so a project cannot override it and the row is read-only there. */
   devicePreference?: boolean;
@@ -537,7 +539,14 @@ export function SettingsRow({
         className,
       )}
     >
-      <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
+      <div
+        className={cn(
+          "flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:gap-8",
+          alignControl === "start"
+            ? "@min-[32rem]/settings-row:items-start"
+            : "@min-[32rem]/settings-row:items-center",
+        )}
+      >
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-subtle text-foreground">{title}</h3>

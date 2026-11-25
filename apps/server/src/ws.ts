@@ -3419,12 +3419,14 @@ export const layerWsRpc = (
           observeRpcEffect(WS_METHODS.voiceReadWords, transcriptionJobs.readDictationWords(input), {
             "rpc.aggregate": "voice",
           }),
-        [WS_METHODS.voiceCorrectTranscript]: (input) =>
-          observeRpcEffect(
+        [WS_METHODS.voiceCorrectTranscript]: ({ extendedLanguage, language, ...input }) => {
+          const hint = extendedLanguage ?? language;
+          return observeRpcEffect(
             WS_METHODS.voiceCorrectTranscript,
-            voiceTranscriptCorrection.correct(input),
+            voiceTranscriptCorrection.correct({ ...input, ...(hint ? { language: hint } : {}) }),
             { "rpc.aggregate": "voice" },
-          ),
+          );
+        },
         ...makeProviderConnectionRpcHandlers({
           observeRpcEffect,
           providerConnectionManager,

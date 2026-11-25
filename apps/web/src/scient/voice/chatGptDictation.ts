@@ -7,10 +7,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   ChatGptDictationError,
+  defaultInstanceIdForDriver,
   type DictationInput,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerProvider,
+  voiceLanguageRequestFields,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -53,25 +55,6 @@ function agentTooOldToDictate(provider: ServerProvider): boolean {
     provider.driver === "scient" &&
     Boolean(version) &&
     compareSemverVersions(version ?? "", SCIENT_AGENT_DICTATION_VERSION) < 0
-  );
-}
-
-/**
- * The provider instance that can dictate with ChatGPT in this environment, if any: an enabled
- * Scient Agent signed in to ChatGPT and new enough to dictate, else an enabled Codex signed in
- * with ChatGPT.
- */
-export function chatGptDictationInstance(
-  providers: ReadonlyArray<ServerProvider> | undefined,
-): ProviderInstanceId | null {
-  const capable = (providers ?? []).filter(
-    (provider) => signedInToChatGpt(provider) && !agentTooOldToDictate(provider),
-  );
-  return (
-    (
-      capable.find((provider) => provider.driver === "scient") ??
-      capable.find((provider) => provider.driver === "codex")
-    )?.instanceId ?? null
   );
 }
 
@@ -121,7 +104,7 @@ export function makeDictationTranscriber<E>(
           ...(selection.kind !== "chatgpt" && request.hints?.length
             ? { hints: request.hints }
             : {}),
-          ...(request.language ? { language: request.language } : {}),
+          ...voiceLanguageRequestFields(request.language),
         },
       };
       const result = signal ? await run(target, { signal }) : await run(target);
@@ -152,16 +135,20 @@ export function resolveChatGptConnection(
   );
   const codex = signedIn.filter((provider) => provider.driver === "codex");
   const candidates = codex.length ? codex : signedIn;
+  const fallback =
+    candidates.find(
+      (provider) => provider.instanceId === defaultInstanceIdForDriver(provider.driver),
+    ) ?? candidates[0];
   const selected = pinned
     ? choices.find((provider) => provider.instanceId === pinned)
-    : (choices.find((provider) => provider.instanceId === active && provider.driver === "codex") ??
-      (candidates.length === 1 ? candidates[0] : choices.length === 1 ? choices[0] : undefined));
+    : (signedIn.find((provider) => provider.instanceId === active) ??
+      fallback ??
+      (choices.length === 1 ? choices[0] : undefined));
   return {
     choices,
     signedIn,
     selected,
     ready: selected !== undefined && signedIn.includes(selected),
-    ambiguous: !pinned && !selected && candidates.length > 1,
   };
 }
 
@@ -194,8 +181,6 @@ export function useChatGptDictation(
       environmentId === undefined || instanceId === null
         ? null
         : makeChatGptDictationTranscriber(run, environmentId, instanceId),
-    unavailableMessage: connection.ambiguous
-      ? m(msg("Choose a ChatGPT connection in Transcription settings."))
-      : chatGptDictationUnavailableMessage(providers),
+    unavailableMessage: chatGptDictationUnavailableMessage(providers),
   };
 }

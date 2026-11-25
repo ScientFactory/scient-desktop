@@ -148,7 +148,11 @@ function AddCloudEngine({
       <DialogPopup>
         <DialogHeader>
           <DialogTitle>{editing ? gt("Change saved key") : gt("Add a cloud engine")}</DialogTitle>
-          <DialogDescription>{gt("Choose an account from Accounts & secrets.")}</DialogDescription>
+          <DialogDescription>
+            {gt(
+              "Choose a key from Accounts & secrets or reuse one from a Custom models connection for this provider.",
+            )}
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <form
@@ -290,16 +294,22 @@ export function useCloudDictation() {
 export function useCloudRecordingChoices(environmentId: EnvironmentId) {
   const list = useStableCallback(useAtomCommand(listChoices, { reportFailure: false }));
   const choose = useAtomCommand(chooseCloud, { reportFailure: false });
-  const [choices, setChoices] = useState<readonly CloudDictationChoice[]>([]);
+  const [inventory, setInventory] = useState<{
+    environmentId: EnvironmentId;
+    choices: readonly CloudDictationChoice[];
+  } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the server inventory after engine changes
   useEffect(() => {
     const controller = new AbortController();
     void list({ environmentId, input: undefined }, { signal: controller.signal }).then((result) => {
-      if (!controller.signal.aborted && result._tag === "Success") setChoices(result.value);
+      if (!controller.signal.aborted) {
+        setInventory({ environmentId, choices: result._tag === "Success" ? result.value : [] });
+      }
     });
     return () => controller.abort();
   }, [environmentId, list]);
-  return { choices, choose };
+  const current = inventory?.environmentId === environmentId ? inventory : null;
+  return { choices: current?.choices ?? [], loading: current === null, choose };
 }
 
 export function CloudDictationSettings({

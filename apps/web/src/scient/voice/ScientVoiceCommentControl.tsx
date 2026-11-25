@@ -11,7 +11,7 @@ import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 
 /**
  * Citation comments consume an already configured voice setup. Model choice,
- * downloads and repair remain in the composer and Settings → Transcription.
+ * downloads and repair remain in the composer and Settings → Voice & Transcription.
  */
 export function ScientVoiceCommentControl({
   disabled = false,
@@ -31,7 +31,9 @@ export function ScientVoiceCommentControl({
   readonly className?: string;
 }): ReactNode {
   const gt = useGT();
-  const language = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const language = useClientSettings(
+    (settings) => settings.voiceExtendedLanguagePreference ?? settings.voiceLanguagePreference,
+  );
   const catalog = useCatalogDictation(language);
   const client = catalog.setup;
   const [ready, setReady] = useState(false);

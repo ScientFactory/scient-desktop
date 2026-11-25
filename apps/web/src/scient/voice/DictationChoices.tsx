@@ -1,182 +1,124 @@
-// SCIENT-OWNED: where dictation runs, as cards like the Voice page's model cards.
-import {
-  type EnvironmentId,
-  VOICE_LANGUAGE_NAMES,
-  type VoiceLanguagePreference,
-} from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
-import { CheckIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import type { useVoiceModels } from "../../components/settings/VoiceSettingsPanel";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
+import { SettingsRow } from "../../components/settings/settingsLayout";
+import { toastManager } from "../../components/ui/toast";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
-import { ChatGptDictationCard } from "./ChatGptDictationCard";
+import { andFinally } from "../../lib/compilerSafe";
+import { TranscriptionSelect } from "./TranscriptionSelect";
 import { useCloudRecordingChoices } from "./cloudDictation";
 
-function ChoiceCard({
-  title,
-  description,
-  detail,
-  selected,
-  onUse,
-}: {
-  readonly title: string;
-  readonly description: string;
-  readonly detail?: string | undefined;
-  readonly selected: boolean;
-  readonly onUse: () => void;
-}): ReactNode {
-  return (
-    <div className="flex flex-col rounded-xl border border-border/70 bg-card/50 p-4">
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="font-medium text-sm">{title}</h3>
-          {selected ? (
-            <Badge variant="success" size="sm">
-              <CheckIcon /> <T context="this dictation engine is the one in use">In use</T>
-            </Badge>
-          ) : null}
-        </div>
-        <p className="text-muted-foreground text-xs">{description}</p>
-        {detail ? <p className="text-muted-foreground/70 text-xs">{detail}</p> : null}
-      </div>
-      {selected ? null : (
-        <div className="mt-3">
-          <Button size="xs" variant="outline" onClick={onUse}>
-            <T>Use</T>
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Automatic, ChatGPT, each installed model and each cloud engine, with Off below. */
 export function DictationChoices({
   catalog,
   chatGptSignedIn,
   environmentId,
-  language,
+  pending,
+  onPendingChange,
 }: {
   readonly catalog: ReturnType<typeof useVoiceModels>;
   readonly chatGptSignedIn: boolean;
   readonly environmentId: EnvironmentId;
-  readonly language: VoiceLanguagePreference;
-}): ReactNode {
+  readonly pending: boolean;
+  readonly onPendingChange: (pending: boolean) => void;
+}) {
   const gt = useGT();
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
   const localModel = useClientSettings((settings) => settings.voiceCatalogModelId);
   const cloud = useClientSettings((settings) => settings.voiceCloudSelection);
-  const { choices, choose } = useCloudRecordingChoices(environmentId);
-  const [failed, setFailed] = useState(false);
-  const chooseCloud = async (choice: (typeof choices)[number]) => {
-    setFailed(false);
-    const result = await choose({
-      environmentId,
-      input: { id: choice.id, origin: choice.origin, model: choice.model },
-    });
-    if (result._tag !== "Success") {
-      setFailed(true);
+  const { choices, choose, loading: cloudLoading } = useCloudRecordingChoices(environmentId);
+  const localModels = catalog.models.filter((model) => model.state === "installed");
+  const cloudEngines = choices.filter((choice) => !choice.reconnect && !choice.needsModel);
+  const value =
+    engine === "local"
+      ? `local:${localModel ?? ""}`
+      : engine === "cloud"
+        ? `cloud:${cloud?.environmentId === environmentId ? cloud.engineId : ""}`
+        : engine;
+  const options: { value: string; label: string; disabled?: boolean }[] = [
+    { value: "auto", label: gt("Automatic") },
+    {
+      value: "chatgpt",
+      label: chatGptSignedIn ? "ChatGPT" : gt("ChatGPT (sign-in required)"),
+      disabled: !chatGptSignedIn,
+    },
+    ...localModels.map((model) => ({ value: `local:${model.id}`, label: model.name })),
+    ...cloudEngines.map((choice) => ({
+      value: `cloud:${choice.id}`,
+      label: `${choice.model} · ${choice.origin.replace(/^https?:\/\//u, "")}`,
+    })),
+    { value: "off", label: gt("Off", { $context: "dictation engine" }) },
+  ];
+  if (!options.some((option) => option.value === value)) {
+    const loading = engine === "local" ? catalog.loading : engine === "cloud" && cloudLoading;
+    const label =
+      engine === "local" && localModel === null
+        ? gt("Local model")
+        : loading
+          ? gt("Loading…")
+          : gt("Selected engine unavailable");
+    options.push({ value, label, disabled: true });
+  }
+
+  const selectEngine = (next: string) => {
+    if (next === "auto" || next === "chatgpt" || next === "off") {
+      void updateClientSettings({
+        voiceDictationEngine: next,
+        ...(next === "auto" ? { voiceCatalogModelId: null } : {}),
+      });
       return;
     }
-    await updateClientSettings({
-      voiceDictationEngine: "cloud",
-      voiceCloudSelection: { environmentId, engineId: choice.id },
-    });
+    const local = localModels.find((model) => `local:${model.id}` === next);
+    if (local) {
+      void updateClientSettings({ voiceDictationEngine: "local", voiceCatalogModelId: local.id });
+      return;
+    }
+    const choice = cloudEngines.find((engine) => `cloud:${engine.id}` === next);
+    if (!choice || pending) return;
+    onPendingChange(true);
+    void andFinally(
+      async () => {
+        const result = await choose({
+          environmentId,
+          input: { id: choice.id, origin: choice.origin, model: choice.model },
+        });
+        if (result._tag !== "Success") {
+          toastManager.add({
+            type: "error",
+            title: gt("Could not select this engine"),
+            description: gt("Check its account in Accounts & secrets."),
+          });
+          return;
+        }
+        await updateClientSettings({
+          voiceDictationEngine: "cloud",
+          voiceCloudSelection: { environmentId, engineId: choice.id },
+        });
+      },
+      () => onPendingChange(false),
+    );
   };
+
   return (
-    <>
-      <div className="grid gap-3 md:grid-cols-2">
-        <ChoiceCard
-          title={gt("Automatic")}
-          description={
-            language === "auto"
-              ? gt("Uses the best installed model for the language you speak.")
-              : gt("Uses the best installed model for {language}.", {
-                  language: VOICE_LANGUAGE_NAMES[language],
-                })
-          }
-          selected={engine === "auto"}
-          onUse={() =>
-            void updateClientSettings({ voiceDictationEngine: "auto", voiceCatalogModelId: null })
-          }
-        />
-        <ChatGptDictationCard
-          selected={engine === "chatgpt"}
-          signedIn={chatGptSignedIn}
-          offeredOnFirstUse={false}
-          onSelect={() => void updateClientSettings({ voiceDictationEngine: "chatgpt" })}
-        />
-        {catalog.models
-          .filter((model) => model.state === "installed")
-          .map((model) => (
-            <ChoiceCard
-              key={model.id}
-              title={model.name}
-              description={model.description ?? gt("Runs on this computer.")}
-              selected={engine === "local" && localModel === model.id}
-              onUse={() =>
-                void updateClientSettings({
-                  voiceDictationEngine: "local",
-                  voiceCatalogModelId: model.id,
-                })
-              }
-            />
-          ))}
-        {choices
-          .filter((choice) => !choice.reconnect && !choice.needsModel)
-          .map((choice) => (
-            <ChoiceCard
-              key={choice.id}
-              title={choice.model}
-              description={gt("Cloud engine · {host}", {
-                host: choice.origin.replace(/^https?:\/\//u, ""),
-              })}
-              selected={
-                engine === "cloud" &&
-                cloud?.environmentId === environmentId &&
-                cloud.engineId === choice.id
-              }
-              onUse={() => void chooseCloud(choice)}
-            />
-          ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {engine === "off" ? (
-          <>
-            <span>
-              <T>Dictation is off.</T>
-            </span>
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              onClick={() =>
-                void updateClientSettings({
-                  voiceDictationEngine: "auto",
-                  voiceCatalogModelId: null,
-                })
-              }
-            >
-              <T>Turn on</T>
-            </Button>
-          </>
-        ) : (
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            onClick={() => void updateClientSettings({ voiceDictationEngine: "off" })}
-          >
-            <T>Turn off dictation</T>
-          </Button>
-        )}
-        {failed ? (
-          <span role="status">
-            <T>Could not select this engine. Check its account in Accounts & secrets.</T>
-          </span>
-        ) : null}
-      </div>
-    </>
+    <SettingsRow
+      id="voice-transcription-destination"
+      title={gt("Dictate with")}
+      description={gt(
+        "Automatic uses a local model. ChatGPT and cloud engines send audio to their providers.",
+      )}
+      descriptionSize="compact"
+      control={
+        <div className="w-full @min-[32rem]/settings-row:w-60">
+          <TranscriptionSelect
+            label={gt("Dictate with")}
+            value={value}
+            options={options}
+            disabled={pending}
+            onChange={selectEngine}
+            width="fluid"
+          />
+        </div>
+      }
+    />
   );
 }

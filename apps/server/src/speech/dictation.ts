@@ -35,8 +35,10 @@ function mapCloudError(error: unknown) {
 
 export const dispatchDictation = Effect.fn("Speech.dispatchDictation")(function* (
   { speech, cloud, providerInstances }: DictationDependencies,
-  { selection, audioBase64, language, hints, silenceFiltering, removeFillerWords }: DictationInput,
+  input: DictationInput,
 ) {
+  const { selection, audioBase64, hints, silenceFiltering, removeFillerWords } = input;
+  const language = input.extendedLanguage ?? input.language;
   const wav = yield* Effect.try({
     try: () => readDictationWav(audioBase64),
     catch: () => new DictationError({ reason: "invalid-audio" }),

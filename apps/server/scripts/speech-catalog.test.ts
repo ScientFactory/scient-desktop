@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 
 import { catalog } from "@handy-computer/models";
+import { VoiceTranscriptionLanguage } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { recommendSpeechModels } from "@t3tools/shared/speech";
 import policy from "../../../packages/shared/src/speechRecommendationPolicy.json" with { type: "json" };
 import { expect, it } from "vite-plus/test";
@@ -26,7 +28,9 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
       manifest.dependencies["transcribe-cpp"],
     ),
   );
+  const isVoiceLanguage = Schema.is(VoiceTranscriptionLanguage);
   for (const model of generate().models) {
+    expect(model.languages.filter((language) => !isVoiceLanguage(language))).toEqual([]);
     const source = catalog.models.find((entry) => entry.repository === model.id)!;
     expect(model).toMatchObject({
       revision: source.revision,

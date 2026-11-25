@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   client: null as null | { getModelsState: ReturnType<typeof vi.fn> },
+  chatGptSignedIn: false,
 }));
 
 vi.mock("../../state/environments", async (original) => ({
@@ -18,7 +19,9 @@ vi.mock("../../state/environments", async (original) => ({
           instanceId,
           enabled: true,
           driver: "codex",
-          auth: { status: "authenticated", type: "chatgpt" },
+          auth: state.chatGptSignedIn
+            ? { status: "authenticated", type: "chatgpt" }
+            : { status: "unauthenticated", required: true },
         })),
       ],
     ]),
@@ -188,6 +191,7 @@ type _Fixture = ReturnType<typeof _createFixture>;
 it("keeps citation dictation available through the source chat's Codex connection", async () => {
   const previous = getClientSettings();
   try {
+    state.chatGptSignedIn = true;
     __setClientSettingsForTests({
       ...previous,
       voiceDictationEngine: "chatgpt",
@@ -204,6 +208,7 @@ it("keeps citation dictation available through the source chat's Codex connectio
     const button = screen.container.querySelector('[aria-label="Dictate citation comment"]');
     expect(button?.getAttribute("data-provider")).toBe("second");
   } finally {
+    state.chatGptSignedIn = false;
     state.client = null;
     await act(() => __setClientSettingsForTests(previous));
   }

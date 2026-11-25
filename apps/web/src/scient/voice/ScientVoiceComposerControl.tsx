@@ -296,7 +296,9 @@ export function ScientVoiceComposerControl({
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
-  const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const languagePreference = useClientSettings(
+    (settings) => settings.voiceExtendedLanguagePreference ?? settings.voiceLanguagePreference,
+  );
   const catalog = useCatalogDictation(languagePreference);
   const client = catalog.setup;
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);

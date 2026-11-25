@@ -11,6 +11,7 @@ it.effect("uses one scoped Codex connection and backs off before pausing later w
     let opens = 0;
     let closes = 0;
     const refresh: boolean[] = [];
+    const languageHints: (string | undefined)[] = [];
     const replies = [401, 200, 429, 429, 429];
     const connection: CodexSignInConnection = {
       version: undefined,
@@ -32,16 +33,20 @@ it.effect("uses one scoped Codex connection and backs off before pausing later w
         }),
     );
     const http = HttpClient.make((request) =>
-      Effect.sync(() =>
-        HttpClientResponse.fromWeb(
+      Effect.sync(() => {
+        const body = request.body;
+        languageHints.push(
+          body._tag === "FormData" ? body.formData.get("language")?.toString() : undefined,
+        );
+        return HttpClientResponse.fromWeb(
           request,
           Response.json({ text: "hello" }, { status: replies.shift() ?? 500 }),
-        ),
-      ),
+        );
+      }),
     );
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const transcribe = yield* openChatGptRecognizer(connect, http, "en");
+        const transcribe = yield* openChatGptRecognizer(connect, http, "fil");
         expect(yield* transcribe(new Float32Array(800))).toEqual([{ text: "hello" }]);
         const work = yield* transcribe(new Float32Array(800)).pipe(
           Effect.result,
@@ -56,6 +61,7 @@ it.effect("uses one scoped Codex connection and backs off before pausing later w
     expect(opens).toBe(1);
     expect(closes).toBe(1);
     expect(refresh).toEqual([false, true, false, false, false]);
+    expect(languageHints).toEqual(["tl", "tl", "tl", "tl", "tl"]);
   }),
 );
 

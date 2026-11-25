@@ -1417,10 +1417,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             if (isMobile) setOpenMobile(false);
             openRecordingCapture(group.id);
             return;
-          case "recordings":
+          case "recordings": {
             if (isMobile) setOpenMobile(false);
-            void router.navigate({ to: "/recordings", search: { project: group.id } });
+            const currentChat = newThreadContext.activeThread ?? newThreadContext.activeDraftThread;
+            const fromThread =
+              currentChat?.projectId === group.id &&
+              currentChat.environmentId === group.environmentId
+                ? (newThreadContext.routeThreadRef?.threadId ??
+                  newThreadContext.activeDraftThread?.threadId)
+                : undefined;
+            void router.navigate({
+              to: "/recordings",
+              search: { project: group.id, ...(fromThread ? { fromThread } : {}) },
+            });
             return;
+          }
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
             return;

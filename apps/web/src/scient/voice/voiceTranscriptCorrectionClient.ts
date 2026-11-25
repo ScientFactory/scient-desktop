@@ -6,7 +6,9 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type VoiceTranscriptionLanguage,
+  type VoiceTranscriptCorrectionRequest,
   type VoiceTranscriptCorrectionResult,
+  voiceLanguageRequestFields,
   WS_METHODS,
 } from "@t3tools/contracts";
 
@@ -36,11 +38,7 @@ export const voiceTranscriptCorrectionCommand = createEnvironmentRpcCommand(conn
 export function makeVoiceTranscriptCorrectionClient<E>(
   run: (target: {
     readonly environmentId: EnvironmentId;
-    readonly input: {
-      readonly transcript: string;
-      readonly language?: VoiceTranscriptionLanguage;
-      readonly hints?: readonly string[];
-    };
+    readonly input: VoiceTranscriptCorrectionRequest;
   }) => Promise<AtomCommandResult<VoiceTranscriptCorrectionResult, E>>,
 ): VoiceTranscriptCorrectionClient {
   return {
@@ -52,7 +50,11 @@ export function makeVoiceTranscriptCorrectionClient<E>(
           signal.addEventListener("abort", onAbort, { once: true });
           void run({
             environmentId,
-            input: { transcript, ...(language ? { language } : {}), ...(hints ? { hints } : {}) },
+            input: {
+              transcript,
+              ...voiceLanguageRequestFields(language),
+              ...(hints ? { hints } : {}),
+            },
           })
             .then(resolve, reject)
             .finally(() => signal.removeEventListener("abort", onAbort));

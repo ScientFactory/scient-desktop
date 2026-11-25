@@ -12,12 +12,14 @@ export function TranscriptionSelect<Value extends string>({
   options,
   onChange,
   disabled,
+  width = "content",
 }: {
   label: string;
   value: Value;
   options: readonly { value: Value; label: string; disabled?: boolean }[];
   onChange: (value: Value) => void;
   disabled?: boolean;
+  width?: "content" | "fluid";
 }) {
   return (
     <Select
@@ -27,7 +29,7 @@ export function TranscriptionSelect<Value extends string>({
         if (next !== null) onChange(next);
       }}
     >
-      <SelectTrigger size="sm" width="content" aria-label={label} className="max-w-full">
+      <SelectTrigger size="sm" width={width} aria-label={label} className="max-w-full">
         <SelectValue>
           {options.find((option) => option.value === value)?.label ?? label}
         </SelectValue>
