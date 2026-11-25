@@ -41,7 +41,10 @@ const appWithLingeringHelper = (pidFile) => `
 `;
 
 const remember = (pidFile) => {
-  if (NodeFS.existsSync(pidFile)) lingering.push(Number(NodeFS.readFileSync(pidFile, "utf8")));
+  if (!NodeFS.existsSync(pidFile)) return;
+  const pid = Number(NodeFS.readFileSync(pidFile, "utf8"));
+  // An empty or partly written file must never become PID 0, which signals the whole group.
+  if (Number.isSafeInteger(pid) && pid > 0) lingering.push(pid);
 };
 
 describe("runDesktopSmokeWithOutputFiles", () => {
@@ -133,8 +136,11 @@ describe("runDesktopSmokeWithOutputFiles", () => {
           `
           const { spawn } = require("node:child_process");
           const helper = spawn(process.execPath, ["-e", ${JSON.stringify(
-            `const release = setInterval(() => {
-              if (!require("node:fs").existsSync(${JSON.stringify(releaseFile)})) return;
+            `const started = Date.now();
+            const release = setInterval(() => {
+              // Bounded, so it exits by itself even if the test never releases it.
+            if (Date.now() - started > 30000) process.exit(0);
+            if (!require("node:fs").existsSync(${JSON.stringify(releaseFile)})) return;
               clearInterval(release);
               process.stderr.write("Uncaught Error: late");
             }, 10);`,
