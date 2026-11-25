@@ -116,7 +116,8 @@ jobs:
           "@ | Set-Content -LiteralPath $script
           Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden
       # SCIENT-FORK:START — the published 0.6.21 downloads, verifies and installs while the
-      # candidate builds; the upgrade step waits for it and then installs the candidate over it.
+      # candidate builds; "Finish installing 0.6.21" waits for it, within a limit, and the
+      # upgrade step then installs the candidate over it.
       - name: Start installing 0.6.21 for the upgrade
         shell: pwsh
         run: |
@@ -129,17 +130,24 @@ jobs:
           $script = Join-Path $env:RUNNER_TEMP 'stable-install.ps1'
           @"
           `$code = 1
+          # Each stage is logged as it starts, so a stage that never ends names itself.
+          function Write-Stage([string] `$text) { Add-Content -LiteralPath '$log' -Value "`$([DateTime]::UtcNow.ToString('HH:mm:ss')) `$text" }
           try {
             `$ErrorActionPreference = 'Stop'
             # The progress display slows Invoke-WebRequest's download several times over.
             `$ProgressPreference = 'SilentlyContinue'
             `$oldInstaller = Join-Path '$env:RUNNER_TEMP' 'Scient-0.6.21-x64.exe'
-            Invoke-WebRequest 'https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.21/Scient-0.6.21-x64.exe' -OutFile `$oldInstaller
+            Write-Stage 'Downloading the 0.6.21 installer'
+            # A connection that does not open in 30 s, or a download that stops for 60 s, fails.
+            Invoke-WebRequest 'https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.21/Scient-0.6.21-x64.exe' -OutFile `$oldInstaller -ConnectionTimeoutSeconds 30 -OperationTimeoutSeconds 60
+            Write-Stage "Checking the SHA-256 of the `$((Get-Item -LiteralPath `$oldInstaller).Length) bytes downloaded"
             `$expectedDigest = '173891f53b4d03c15fd9e551a0bb298fc9cac5ed128176cdd9f5ceb0e6a0a409'
             if ((Get-FileHash `$oldInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne `$expectedDigest) { throw 'Stable installer checksum mismatch' }
             `$env:SCIENT_NEXT_HOME = Join-Path '$env:RUNNER_TEMP' 'scient-upgrade-profile'
             `$env:APPDATA = Join-Path '$env:RUNNER_TEMP' 'scient-upgrade-appdata'
+            Write-Stage 'Running the 0.6.21 installer'
             `$process = Start-Process `$oldInstaller -ArgumentList '/S', '/D=$installDir' -Wait -PassThru
+            Write-Stage "The 0.6.21 installer exited `$(`$process.ExitCode)"
             if (`$process.ExitCode -ne 0) { throw "Installer failed for 0.6.21 with exit `$(`$process.ExitCode)" }
             `$exe = Join-Path '$installDir' 'Scient.exe'
             if (!(Test-Path `$exe)) { throw 'Installed executable missing' }
@@ -156,16 +164,27 @@ jobs:
             Move-Item -LiteralPath '$status.partial' -Destination '$status' -Force
           }
           "@ | Set-Content -LiteralPath $script
-          Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden
+          # For the bounded wait in "Finish installing 0.6.21".
+          "SCIENT_STABLE_INSTALL_STARTED=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV
+          $background = Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden -PassThru
+          "SCIENT_STABLE_INSTALL_PID=$($background.Id)" >> $env:GITHUB_ENV
       # SCIENT-FORK:END
-      # Reference repositories and the mobile terminal's prebuilt libraries are half the
-      # repository's bytes and two thirds of its files; nothing here reads them.
+      # Already one commit, no tags, LFS or submodules; the build reads only HEAD's hash. The
+      # checkout's time is mostly the download of each checked-out file, so it leaves out what
+      # nothing here reads: reference repositories, test files (no build input imports one),
+      # and the mobile app's source and native folders (mobile is not installed; its
+      # manifests and tarballs stay for pnpm). That is 9.4k of 40k files and 170 of 500 MB.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: |
             /*
             !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+            !/apps/mobile/src/
+            !/apps/mobile/modules/*/android/
+            !/apps/mobile/modules/*/ios/
+            !/apps/mobile/modules/*/Vendor/
+            !/apps/mobile/modules/*/tests/
+            !*.test.*
           sparse-checkout-cone-mode: false
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
@@ -312,18 +331,57 @@ jobs:
         with:
           path: ${{ runner.temp }}/scient-speech-probe
           key: speech-probe-v1-${{ hashFiles('apps/server/src/speech/catalog.json', 'apps/server/src/speech-packaging-probe.ts') }}
+      # A bound on waiting for the background install, not a time limit on the install: it is
+      # normally done before this step begins, and a result it has written is accepted whenever
+      # it finished. If there is still no result 10 minutes after it started, or its process is
+      # gone without one, this fails with the stage it reached and what it was running. No retry.
+      - name: Finish installing 0.6.21
+        shell: pwsh
+        timeout-minutes: 11
+        run: |
+          $status = Join-Path $env:RUNNER_TEMP 'stable-install-status'
+          $log = Join-Path $env:RUNNER_TEMP 'stable-install.log'
+          $started = [DateTimeOffset]::FromUnixTimeSeconds([long]$env:SCIENT_STABLE_INSTALL_STARTED)
+          $deadline = $started.AddMinutes(10)
+          $background = [int]$env:SCIENT_STABLE_INSTALL_PID
+          $failure = $null
+          while (!(Test-Path -LiteralPath $status)) {
+            if ($null -eq (Get-Process -Id $background -ErrorAction SilentlyContinue)) {
+              # It may have written its result just before it exited.
+              if (!(Test-Path -LiteralPath $status)) { $failure = 'The 0.6.21 install ended without a result' }
+              break
+            }
+            if ([DateTimeOffset]::UtcNow -gt $deadline) { $failure = 'The 0.6.21 install did not finish within 10 minutes of starting'; break }
+            Start-Sleep -Seconds 1
+          }
+          if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
+          if ($failure) {
+            $stage = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Last 1 } else { 'none logged' }
+            Write-Host "Started $($started.ToString('HH:mm:ss')) UTC; now $([DateTime]::UtcNow.ToString('HH:mm:ss')) UTC."
+            $oldInstaller = Join-Path $env:RUNNER_TEMP 'Scient-0.6.21-x64.exe'
+            if (Test-Path -LiteralPath $oldInstaller) { Write-Host "Installer bytes on disk: $((Get-Item -LiteralPath $oldInstaller).Length) of 316376200." }
+            if (Test-Path -LiteralPath $env:SCIENT_PACKAGING_INSTALL) {
+              Write-Host "Install folder items: $(@(Get-ChildItem -LiteralPath $env:SCIENT_PACKAGING_INSTALL -Recurse -Force -ErrorAction SilentlyContinue).Count)."
+            }
+            # What the background install was still running: its process and every descendant.
+            $processes = @(Get-CimInstance Win32_Process)
+            $tree = [System.Collections.Generic.List[uint32]]::new()
+            $tree.Add($background)
+            for ($i = 0; $i -lt $tree.Count; $i++) {
+              foreach ($child in $processes | Where-Object { $_.ParentProcessId -eq $tree[$i] -and !$tree.Contains($_.ProcessId) }) { $tree.Add($child.ProcessId) }
+            }
+            $processes | Where-Object { $tree.Contains($_.ProcessId) } |
+              Format-Table ProcessId, ParentProcessId, Name, CreationDate, CommandLine -AutoSize -Wrap | Out-String -Width 300 | Write-Host
+            throw "$failure; last stage: $stage"
+          }
+          $code = (Get-Content -LiteralPath $status -Raw).Trim()
+          if ($code -ne '0') { throw "Installing 0.6.21 failed" }
       - name: Install 0.6.21 and upgrade to the candidate
         shell: pwsh
         timeout-minutes: 10
         env:
           SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
         run: |
-          $status = Join-Path $env:RUNNER_TEMP 'stable-install-status'
-          while (!(Test-Path -LiteralPath $status)) { Start-Sleep -Seconds 1 }
-          $log = Join-Path $env:RUNNER_TEMP 'stable-install.log'
-          if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
-          $code = (Get-Content -LiteralPath $status -Raw).Trim()
-          if ($code -ne '0') { throw "Installing 0.6.21 failed" }
           $installDir = $env:SCIENT_PACKAGING_INSTALL
           $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-upgrade-profile'
           $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-upgrade-appdata'
