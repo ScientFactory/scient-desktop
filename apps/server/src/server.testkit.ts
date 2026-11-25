@@ -197,6 +197,7 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
+import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -920,6 +921,7 @@ export const buildAppUnderTest = (options?: {
         createForProjectFolder: () => Effect.succeed(null),
         removeIfTaskFolder: () => Effect.succeed(false),
       }),
+      Layer.mock(LayoutCommandApprovalWrites.LayoutCommandApprovalWrites)({}),
       Layer.mock(WorkspaceFolders.WorkspaceFolders)({
         forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
         submodules: () => Effect.succeed([]),

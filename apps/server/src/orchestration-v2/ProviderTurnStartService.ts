@@ -1819,6 +1819,7 @@ export const layer: Layer.Layer<
             sourceProjection,
             sourceRun,
             !forceBytePolicy,
+            projection.thread,
           );
           // SCIENT-FORK:END
           const createdAt = yield* DateTime.now;

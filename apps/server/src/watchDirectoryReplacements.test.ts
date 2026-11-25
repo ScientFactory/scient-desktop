@@ -4,16 +4,55 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock"; // SCIENT-FORK: watch-backoff-test-clock
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
-// SCIENT-FORK: watch-backoff-test-clock — real ticks raced the acquire under load; offered upstream.
-it.effect.skipIf(!symlinksSupported)(
-  "backs off stopped watches for an unchanged linked directory",
-  () =>
+// Watches under this root open but report only what a test sends, as a macOS watch can stay
+// silent before it is armed. Their paths resolve to themselves unless linked or missing.
+const silent = vi.hoisted(() => ({
+  root: "/silent-watch",
+  owns(path: unknown): path is string {
+    return (
+      typeof path === "string" &&
+      (path === this.root || path.startsWith(`${this.root}/`) || path.startsWith(`${this.root}\\`))
+    );
+  },
+  links: new Map<string, string>(),
+  missing: new Set<string>(),
+  listeners: new Map<string, (event: string, filename: string | null) => void>(),
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const watch = (...args: Parameters<typeof actual.watch>) => {
+    const [path, listener] = args;
+    if (!silent.owns(path)) return actual.watch(...args);
+    const report = listener as (event: string, filename: string | null) => void;
+    silent.listeners.set(path, report);
+    return {
+      on: () => undefined,
+      close: () => silent.listeners.get(path) === report && silent.listeners.delete(path),
+    };
+  };
+  const native = (...args: Parameters<typeof actual.realpath.native>) => {
+    const [path, callback] = args;
+    if (!silent.owns(path)) return actual.realpath.native(...args);
+    if (silent.missing.has(path)) {
+      return callback(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }), "");
+    }
+    return callback(null, silent.links.get(path) ?? path);
+  };
+  return { ...actual, watch, realpath: Object.assign(actual.realpath.bind(undefined), { native }) };
+});
+
+it.live.each(["linked", "plain"] as const)(
+  "backs off stopped watches for an unchanged %s directory",
+  (kind) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -23,7 +62,8 @@ it.effect.skipIf(!symlinksSupported)(
       const second = path.join(base, "second", "themes");
       yield* fs.makeDirectory(first, { recursive: true });
       yield* fs.makeDirectory(second, { recursive: true });
-      yield* fs.symlink(first, entry);
+      if (kind === "linked" && !symlinksSupported) return;
+      yield* kind === "linked" ? fs.symlink(first, entry) : fs.makeDirectory(entry);
       const firstIdentity = yield* fs.stat(first);
       const secondIdentity = yield* fs.stat(second);
       let identity = firstIdentity;
@@ -44,19 +84,8 @@ it.effect.skipIf(!symlinksSupported)(
         ),
         Effect.forkScoped,
       );
-      // SCIENT-FORK:START watch-backoff-test-clock
-      // Each second starts once the last one's acquire, which does real I/O, has finished.
-      const nextSecond = (count: number) =>
-        TestClock.adjust("1 second").pipe(Effect.andThen(Queue.takeN(events, count)));
-      const backoff = [
-        ...(yield* Queue.takeN(events, 3)),
-        ...(yield* nextSecond(3)),
-        ...(yield* nextSecond(1)),
-        ...(yield* nextSecond(3)),
-      ];
-      // SCIENT-FORK:END watch-backoff-test-clock
       assert.deepEqual(
-        backoff,
+        yield* Queue.takeN(events, 10),
         // Each acquire stats too: the first, a retry after 1 tick, then after 2 more.
         [
           "probe",
@@ -73,8 +102,7 @@ it.effect.skipIf(!symlinksSupported)(
       );
 
       identity = secondIdentity;
-      // SCIENT-FORK: watch-backoff-test-clock
-      assert.deepEqual(yield* nextSecond(3), ["probe", "probe", "refresh"]);
+      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -115,5 +143,86 @@ it.live.skipIf(!symlinksSupported)(
       );
       yield* Queue.takeN(refreshes, 3);
       assert.deepEqual(identities, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  { name: "another directory", folder: "elsewhere", linkedStat: "other" },
+  { name: "a directory that is gone", folder: "gone", linkedStat: "missing" },
+] as const)(
+  "follows a directory replaced by a link to $name when its parent watch reports nothing",
+  ({ folder, linkedStat }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const plain = yield* fs.stat(yield* fs.makeTempDirectoryScoped());
+      const other = yield* fs.stat(yield* fs.makeTempDirectoryScoped());
+      silent.root = path.resolve("/silent-watch", folder);
+      const entry = path.join(silent.root, "userdata", "themes");
+      const target = path.join(silent.root, folder, "themes");
+      let linked = false;
+      const acquisitions = yield* Queue.unbounded<void>();
+      const fail = (method: string, _tag: "InvalidData" | "NotFound") =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag,
+            module: "FileSystem",
+            method,
+            pathOrDescriptor: entry,
+          }),
+        );
+      silent.links.clear();
+      silent.missing.clear();
+
+      yield* watchDirectoryPath(
+        entry,
+        Stream.fromEffect(Effect.asVoid(Queue.offer(acquisitions, undefined))).pipe(
+          Stream.concat(Stream.never),
+        ),
+        Effect.succeed(false),
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            // The watcher reuses the effects it builds, so each run reads the fixture afresh.
+            readLink: (file) =>
+              silent.owns(file)
+                ? Effect.suspend(() =>
+                    file === entry && linked
+                      ? Effect.succeed(target)
+                      : fail("readLink", "InvalidData"),
+                  )
+                : fs.readLink(file),
+            stat: (file) =>
+              file !== entry
+                ? fs.stat(file)
+                : Effect.suspend(() =>
+                    !linked
+                      ? Effect.succeed(plain)
+                      : linkedStat === "other"
+                        ? Effect.succeed(other)
+                        : fail("stat", "NotFound"),
+                  ),
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Queue.take(acquisitions);
+
+      // Replaced by a link with no parent event: only the next probe can see it.
+      linked = true;
+      silent.links.set(entry, target);
+      if (linkedStat === "missing") silent.missing.add(entry);
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* Queue.size(acquisitions), 1);
+      yield* Queue.take(acquisitions);
+
+      // The link target's parent is watched now: replacing the target rearms its contents.
+      const targetParent = silent.listeners.get(path.dirname(target));
+      assert.isDefined(targetParent);
+      targetParent("rename", path.basename(target));
+      yield* Queue.take(acquisitions);
     }).pipe(Effect.provide(NodeServices.layer)),
 );

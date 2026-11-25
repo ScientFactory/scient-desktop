@@ -772,7 +772,7 @@ describe("CheckoutBarrier consumers", () => {
           Layer.succeed(CheckoutBarrier, barrier),
           Layer.mock(CheckpointStore.CheckpointStore)({
             hasCheckpointRef: () => Effect.succeed(true),
-            captureCheckpoint: () => Effect.void,
+            captureCheckpoint: () => Effect.succeed(null),
             deleteCheckpointRefs: () => Effect.void,
             restoreCheckpoint: (input) =>
               Effect.sync(() => {
@@ -863,7 +863,11 @@ describe("CheckoutBarrier consumers", () => {
           Layer.mock(CheckpointStore.CheckpointStore)({
             hasCheckpointRef: (input) =>
               Effect.succeed(isTarget(input.checkpointRef) || input.cwd === options.kept),
-            captureCheckpoint: (input) => Effect.sync(() => log.push(`capture ${input.cwd}`)),
+            captureCheckpoint: (input) =>
+              Effect.sync(() => {
+                log.push(`capture ${input.cwd}`);
+                return null;
+              }),
             restoreCheckpoint: (input) =>
               Effect.sync(() => log.push(`restore ${input.cwd} ${name(input.checkpointRef)}`)).pipe(
                 Effect.andThen(

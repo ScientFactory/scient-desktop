@@ -55,7 +55,7 @@ it.effect(
       const available = yield* Effect.gen(function* () {
         const analytics = yield* AnalyticsService;
         yield* analytics.record("provider.turn.sent", { provider: "codex" });
-        yield* analytics.recordOwners([{ source: "openai", ownerId: "a".repeat(64) }], "server");
+        yield* analytics.recordOwners([{ source: "connect", ownerId: "a".repeat(64) }], "server");
         yield* analytics.flush;
         // Facts another process journaled reach the same outbox, not the never-sent default.
         yield* (yield* ScientRecordedAnalyticsIngest).ingest([

@@ -59,6 +59,10 @@ in place. Refreshing provider status does not reinstall removed files; choose **
 prepare the provider again when you want to use it. To use an existing local binary, set
 **Executable override** explicitly; Scient does not remove that executable.
 
+Scient checks the Registry for new versions in the background and installs them for app-owned
+agents on the next provider check; a check is skipped while that agent is starting a session.
+Refreshing providers in Settings checks the Registry right away.
+
 ## Signing in
 
 Open the agent's account section in **Settings → Providers** on web or desktop. Choose
@@ -139,9 +143,11 @@ Checkpoint rollback restores your files as usual. ACP agents cannot rewind their
 so the next turn after a rollback starts a fresh agent session and Scient sends it the kept
 conversation, without the turns you rolled back.
 
-Registry instances are not used for Scient's app-owned text generation, such as thread titles, commit
-messages, branch names, or pull request descriptions. Configure a text-generation-capable provider
-for those actions.
+Select an ACP model in **Settings → Threads → Text generation model** to use it for generated text,
+such as thread titles, commit messages, and pull request descriptions. Branch names use this model
+unless a source-control writer model is configured. Each request opens a separate session outside
+the project checkout. Scient requests session deletion when the agent supports it. The agent controls
+whether it retains session history.
 
 ## Advanced configuration
 

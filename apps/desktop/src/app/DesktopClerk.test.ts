@@ -68,9 +68,10 @@ const layerDesktopClerk = (
     // SCIENT-FORK:END desktop-shell-copy-png
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
+  stateDir = clerkStateDir,
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: clerkStateDir,
+    stateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     // SCIENT-FORK:START desktop-state-isolation
@@ -193,9 +194,24 @@ describe("DesktopClerk", () => {
       assert.deepEqual(storageMock.mock.calls, [
         [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
       ]);
-      assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
+      assert.strictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
   );
+
+  it.effect("keeps Clerk tokens under a relative state directory instead of userData", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+
+    return Effect.sync(() => {
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.resolve("relative-state", "clerk") }],
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerDesktopClerk(true, [], "darwin", undefined, undefined, undefined, "relative-state"),
+      ),
+    );
+  });
 
   it.effect.each(["before configure", "after configure"] as const)(
     "reveals the running window when a second instance launches %s",

@@ -1837,28 +1837,30 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       yield* notSent;
       return { _tag: "not-sent", attemptNumber } satisfies OverleafPublication;
     }
-    const pushed = yield* options
-      .pushRemote({
-        repo,
-        connection: recorded,
-        commit: input.candidateCommit,
-        credentialEpoch: input.review.binding.credentialEpoch,
-      })
-      // A push that failed partway may still have reached Overleaf; a refusal came first.
-      .pipe(
-        Effect.catch((error) =>
-          Effect.succeed<
-            | OverleafRepository.PushOutcome
-            | { readonly _tag: "refused"; readonly reason: OverleafConnectionRefusal }
-          >(
-            isRateLimited(error)
-              ? { _tag: "refused", reason: "rate-limited" }
-              : isRefusedBeforeSending(error)
-                ? { _tag: "refused", reason: gitRefusal(error) }
-                : { _tag: "unknown", detail: "push failed" },
+    const pushed = yield* (
+      options
+        .pushRemote({
+          repo,
+          connection: recorded,
+          commit: input.candidateCommit,
+          credentialEpoch: input.review.binding.credentialEpoch,
+        })
+        // A push that failed partway may still have reached Overleaf; a refusal came first.
+        .pipe(
+          Effect.catch((error) =>
+            Effect.succeed<
+              | OverleafRepository.PushOutcome
+              | { readonly _tag: "refused"; readonly reason: OverleafConnectionRefusal }
+            >(
+              isRateLimited(error)
+                ? { _tag: "refused", reason: "rate-limited" }
+                : isRefusedBeforeSending(error)
+                  ? { _tag: "refused", reason: gitRefusal(error) }
+                  : { _tag: "unknown", detail: "push failed" },
+            ),
           ),
-        ),
-      );
+        )
+    );
     yield* hook(options, "sent");
     if (pushed._tag === "unknown")
       return { _tag: "unknown", attemptNumber } satisfies OverleafPublication;

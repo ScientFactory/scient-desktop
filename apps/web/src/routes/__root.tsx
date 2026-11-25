@@ -46,6 +46,7 @@ import { ShareLinkDialogHost } from "../scient/cloud/ShareLinkDialog";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import { WorktreeLayoutApprovalDialogHost } from "../components/WorktreeLayoutApprovalDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -253,6 +254,7 @@ function RootRouteBranch() {
       <ComputeQuitGuardReport />
       <ReopenClosedViewShortcut />
       <ConfirmDialogHost />
+      <WorktreeLayoutApprovalDialogHost />
       <CustomSnoozeDialogHost />
       {/* SCIENT-FORK: conversation export dialog; imports wait while /welcome is open. */}
       <ConversationExportDialogHost />

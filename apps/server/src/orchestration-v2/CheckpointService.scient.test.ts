@@ -67,6 +67,7 @@ it.effect(
             captureCheckpoint: (input) =>
               Effect.sync(() => {
                 refs.set(`${input.cwd} ${input.checkpointRef}`, folders.get(input.cwd)!);
+                return null;
               }),
             restoreCheckpoint: (input) => {
               if (input.cwd === "/repo/second" && isTarget(input.checkpointRef)) {
@@ -171,7 +172,7 @@ it.effect(
                 }),
                 Layer.mock(CheckpointStore.CheckpointStore)({
                   isGitRepository: () => Effect.succeed(true),
-                  captureCheckpoint: () => Effect.void,
+                  captureCheckpoint: () => Effect.succeed(null),
                   hasCheckpointRef: () => Effect.succeed(store.previousExists),
                   diffCheckpoints: ({ cwd }) =>
                     store.diff === "empty"

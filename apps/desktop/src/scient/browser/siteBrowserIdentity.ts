@@ -42,19 +42,27 @@ function reloadWhenArrived(webContents: WebContents, refusedUrl: string) {
  * refuses a page gets one retry with the true identity. Only the header changes: telling the page
  * it is Chrome too makes Cloudflare Turnstile loop.
  */
-export function matchSiteBrowserIdentity(session: Pick<Session, "webRequest">) {
+export function matchSiteBrowserIdentity(
+  session: Pick<Session, "webRequest">,
+  // Electron allows one header listener per session, so other request headers join this one.
+  extraHeaders?: (details: {
+    readonly url: string;
+    readonly resourceType?: string;
+    readonly requestHeaders: Record<string, string>;
+  }) => Record<string, string> | undefined,
+) {
   const sitesRefusingChrome = new Set<string>();
 
   session.webRequest.onBeforeSendHeaders(
     { urls: ALL_SITES, excludeUrls: CHALLENGE_PAGES },
-    ({ requestHeaders, url }, callback) => {
+    ({ requestHeaders, url, resourceType }, callback) => {
       const userAgent = requestHeaders["User-Agent"];
-      callback({
-        requestHeaders:
-          userAgent === undefined || sitesRefusingChrome.has(new URL(url).hostname)
-            ? requestHeaders
-            : { ...requestHeaders, "User-Agent": asChromeIdentity(userAgent) },
-      });
+      const identified =
+        userAgent === undefined || sitesRefusingChrome.has(new URL(url).hostname)
+          ? requestHeaders
+          : { ...requestHeaders, "User-Agent": asChromeIdentity(userAgent) };
+      const extra = extraHeaders?.({ url, resourceType, requestHeaders });
+      callback({ requestHeaders: extra === undefined ? identified : { ...identified, ...extra } });
     },
   );
 

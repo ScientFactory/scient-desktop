@@ -1658,19 +1658,21 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
-      const result = yield* server
-        // SCIENT-FORK: Scient registers upstream's background wait as `scient_background_wait`.
-        .callTool({ name: "scient_background_wait", arguments: { taskIds: ["checks"] } })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, {
-            ...scope,
-            capabilities: new Set<McpInvocationContext.McpCapability>([
-              "orchestration",
-              "background-wait",
-            ]),
-          }),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
+      const result = yield* (
+        server
+          // SCIENT-FORK: Scient registers upstream's background wait as `scient_background_wait`.
+          .callTool({ name: "scient_background_wait", arguments: { taskIds: ["checks"] } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              ...scope,
+              capabilities: new Set<McpInvocationContext.McpCapability>([
+                "orchestration",
+                "background-wait",
+              ]),
+            }),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          )
+      );
       expect(result.structuredContent).toEqual({ matched: ["checks"], unmatched: [] });
     }).pipe(
       Effect.provide(
