@@ -18,6 +18,7 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { scrollLatexVisualTestEditor, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
+import { revealFileEditorSelection } from "~/components/files/fileEditorSourceReveal";
 import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import { pagedLayoutIncludesRendered, pagedLayoutSettled } from "./latexPagedGeometry";
@@ -377,8 +378,10 @@ async function selectWordWithoutJumping(
   const wordTop = () => wordPosition(state.visual.view.dom, word, false).box.top;
   let before = scroll.scrollTop;
   let beforeTop = wordTop();
+  // The gesture runs on the browser's own clock. Under fake timers Vitest advances the clock
+  // while an action is pending, so the editor's focus and selection callbacks could run before
+  // Chromium delivers the double-click's selectionchange, which empties the native selection.
   {
-    using _clock = fakeTimers();
     const pointer = () => {
       before = scroll.scrollTop;
       beforeTop = wordTop();
@@ -436,10 +439,6 @@ async function selectWordWithoutJumping(
     }
     const afterGesture = scroll.scrollTop;
     expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
-    // Publish the gesture's queued source reveal without advancing recurring editor services.
-    // Not once this test is past its deadline: the installed clock may be the next test's.
-    context.signal.throwIfAborted();
-    await act(() => vi.runOnlyPendingTimersAsync());
     await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
     const mapped = state.reveals[0]!;
     expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
@@ -499,16 +498,31 @@ async function selectWordWithoutJumping(
     )
     .toBe("visible");
   const sourceHit = wordPosition(container.shadowRoot!, word);
+  // Source already holds the word from Visual; a caret first means only the double-click selects
+  // it. Set the way a Visual reveal does, so Source neither scrolls nor takes focus before the click.
+  const caret = selection![0]!.start;
+  const caretOffset = sourceOffset(source, caret);
+  expect(
+    revealFileEditorSelection(state.source(), {
+      source,
+      from: caretOffset,
+      to: caretOffset,
+      requestId: 0,
+    }),
+  ).toBe(true);
+  expect(state.source().getViewState().selections?.[0]?.end).toEqual(caret);
+  expect(state.visual.view.dom.contains(document.activeElement)).toBe(true);
   state.sourceSelections.mockClear();
   await userEvent.dblClick(sourceHit.element, { position: sourceHit.position });
   await vi.waitFor(() => {
-    expect(state.sourceSelections).toHaveBeenCalled();
+    const reported = state.sourceSelections.mock.lastCall?.[0];
     const selected = state.source().getViewState().selections?.[0];
-    expect(selected).toBeDefined();
-    if (!selected) throw new Error("The Source owner did not acknowledge its native selection.");
-    expect(
-      source.slice(sourceOffset(source, selected.start), sourceOffset(source, selected.end)),
-    ).toBe(word);
+    if (!reported || !selected)
+      throw new Error("The Source owner did not acknowledge its native selection.");
+    for (const range of [reported, selected])
+      expect(source.slice(sourceOffset(source, range.start), sourceOffset(source, range.end))).toBe(
+        word,
+      );
   });
   const manuallySelected = state.source().getViewState().selections;
   await clickVisualPane(state.visual);
