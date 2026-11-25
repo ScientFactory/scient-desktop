@@ -1307,7 +1307,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
           className="size-3.5 shrink-0 text-icon-muted"
         />
       ) : null}
-      <span className="flex-1" />
+      {/* Holds the text line's height, which the folder row's size hint counts on. */}
+      <span className="h-4 flex-1" />
       {/* SCIENT-FORK:END */}
       {terminalStatusIcon}
       {prBadge}

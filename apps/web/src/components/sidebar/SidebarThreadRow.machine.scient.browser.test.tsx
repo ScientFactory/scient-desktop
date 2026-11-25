@@ -18,6 +18,10 @@ vi.mock(import("../../state/environments"), async (importOriginal) => ({
     }))) as never,
 }));
 
+function setup({ computers }: { computers: number }) {
+  state.computers = computers;
+}
+
 const noop = () => {};
 
 function Card() {
@@ -72,15 +76,18 @@ function Card() {
 }
 
 it("marks a card's computer with its icon alone when there are several computers", async () => {
-  state.computers = 2;
+  setup({ computers: 2 });
   await using screen = await render(<Card />);
   await expect.element(screen.getByText("Spectra fit")).toBeVisible();
   await expect.element(screen.getByRole("img", { name: "Lab server" })).toBeVisible();
   expect(screen.container.textContent).not.toContain("Lab server");
+  // The line keeps a text line's height without the name; a folder row's size hint counts on it.
+  const line = screen.getByRole("img", { name: "Lab server" }).element().parentElement;
+  expect(line?.getBoundingClientRect().height).toBe(16);
 });
 
 it("leaves a card's computer out when there is only one", async () => {
-  state.computers = 1;
+  setup({ computers: 1 });
   await using screen = await render(<Card />);
   await expect.element(screen.getByText("Spectra fit")).toBeVisible();
   expect(screen.container.querySelector('[aria-label="Lab server"]')).toBeNull();
