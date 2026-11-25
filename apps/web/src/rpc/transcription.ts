@@ -187,7 +187,11 @@ type Commands = {
   "capture-recover": { response: object };
   "capture-touch": { id: string; response: object };
   "capture-finish": { id: string; response: { source?: string } };
-  "media-register": { source: string; response: { media: RecordingSource[] } };
+  "media-register": {
+    source: string;
+    onlyInProject?: true;
+    response: { media: RecordingSource[] };
+  };
   "media-list": { response: { media: RecordingSource[] } };
   pause: { id: string; response: RecordingStatus };
   list: { includeCreated: true; query?: string; response: RecordingStatus[] };

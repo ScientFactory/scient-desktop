@@ -283,6 +283,19 @@ it.effect("lists project media that was never added and finds a file's transcrip
     ).toMatchObject([{ job: { id } }]);
     for (const source of [downloaded, NodePath.join(project, "deleted.mp3")])
       expect(yield* jobs.execute({ action: "list", project, source })).toEqual([]);
+    const alias = `${project}-alias`;
+    yield* Effect.acquireRelease(
+      Effect.promise(() => NodeFSP.symlink(project, alias)),
+      () => Effect.promise(() => NodeFSP.rm(alias, { force: true })),
+    );
+    const placed = (source: string) =>
+      jobs.execute({ action: "media-register", project: alias, source, onlyInProject: true });
+    expect(yield* placed(NodePath.join(alias, "Downloads", "lecture.mp4"))).toMatchObject({
+      media: [{ source: downloaded }],
+    });
+    expect(yield* placed(NodePath.join(NodePath.dirname(project), "elsewhere.mp4"))).toEqual({
+      media: [],
+    });
   }).pipe(Effect.provide(layer)),
 );
 

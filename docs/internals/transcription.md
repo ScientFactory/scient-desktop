@@ -35,8 +35,9 @@ segments and correction review items. An unfinished revision returns segments
 from complete checkpoint records without modifying the ledger.
 
 The Recordings UI registers added media with `media-register` and reads it
-with `media-list`. Added files from outside the project are copied in; files
-already inside are registered where they are. These registrations stay in the
+with `media-list`. Add first registers each file with `onlyInProject`, which
+resolves real paths and registers nothing for a file outside the project; those
+files are then copied in and registered. These registrations stay in the
 project if the dialog is dismissed. `media-list` also returns audio and video
 files found in the project that were never registered, from a bounded walk
 (20,000 entries, depth 12, 500 files) that skips hidden folders, `node_modules`,
