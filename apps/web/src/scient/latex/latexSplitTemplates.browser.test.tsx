@@ -377,8 +377,10 @@ async function selectWordWithoutJumping(
   const wordTop = () => wordPosition(state.visual.view.dom, word, false).box.top;
   let before = scroll.scrollTop;
   let beforeTop = wordTop();
+  // The gesture runs on the browser's own clock. Under fake timers Vitest advances the clock
+  // while an action is pending, so the editor's focus and selection callbacks could run before
+  // Chromium delivers the double-click's selectionchange, which empties the native selection.
   {
-    using _clock = fakeTimers();
     const pointer = () => {
       before = scroll.scrollTop;
       beforeTop = wordTop();
@@ -436,10 +438,6 @@ async function selectWordWithoutJumping(
     }
     const afterGesture = scroll.scrollTop;
     expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
-    // Publish the gesture's queued source reveal without advancing recurring editor services.
-    // Not once this test is past its deadline: the installed clock may be the next test's.
-    context.signal.throwIfAborted();
-    await act(() => vi.runOnlyPendingTimersAsync());
     await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
     const mapped = state.reveals[0]!;
     expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
