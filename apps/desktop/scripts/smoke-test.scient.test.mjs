@@ -124,42 +124,47 @@ describe("runDesktopSmokeWithOutputFiles", () => {
         return false;
       }
     };
-    const result = await runDesktopSmokeWithOutputFiles({
-      executable: process.execPath,
-      args: [
-        "-e",
-        `
-        const { spawn } = require("node:child_process");
-        const helper = spawn(process.execPath, ["-e", ${JSON.stringify(
-          `const release = setInterval(() => {
-            if (!require("node:fs").existsSync(${JSON.stringify(releaseFile)})) return;
-            clearInterval(release);
-            process.stderr.write("Uncaught Error: late");
-          }, 10);`,
-        )}], { stdio: ["ignore", "inherit", "inherit"] });
-        require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid));
-        setInterval(() => {}, 1000);
-      `,
-      ],
-      cwd: fixture.root,
-      env: fixture.env,
-      outputDirectory: NodePath.join(fixture.root, "output"),
-      survivalMs: 300,
-      shutdownGraceMs: 1_000,
-      settleMs: 0,
-      // Like the Windows qualification: wait until the app's processes are gone.
-      beforeScan: async () => {
-        const helper = Number(NodeFS.readFileSync(pidFile, "utf8"));
-        lingering.push(helper);
-        assert.isTrue(alive(helper), "the helper outlives the app");
-        assert.notInclude(
-          NodeFS.readFileSync(NodePath.join(fixture.root, "output", "stderr.log"), "utf8"),
-          "Uncaught",
-        );
-        NodeFS.writeFileSync(releaseFile, "");
-        await expect.poll(() => alive(helper), { timeout: 5_000 }).toBe(false);
-      },
-    });
+    let result;
+    try {
+      result = await runDesktopSmokeWithOutputFiles({
+        executable: process.execPath,
+        args: [
+          "-e",
+          `
+          const { spawn } = require("node:child_process");
+          const helper = spawn(process.execPath, ["-e", ${JSON.stringify(
+            `const release = setInterval(() => {
+              if (!require("node:fs").existsSync(${JSON.stringify(releaseFile)})) return;
+              clearInterval(release);
+              process.stderr.write("Uncaught Error: late");
+            }, 10);`,
+          )}], { stdio: ["ignore", "inherit", "inherit"] });
+          require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid));
+          setInterval(() => {}, 1000);
+        `,
+        ],
+        cwd: fixture.root,
+        env: fixture.env,
+        outputDirectory: NodePath.join(fixture.root, "output"),
+        survivalMs: 300,
+        shutdownGraceMs: 1_000,
+        settleMs: 0,
+        // Like the Windows qualification: wait until the app's processes are gone.
+        beforeScan: async () => {
+          const helper = Number(NodeFS.readFileSync(pidFile, "utf8"));
+          assert.isTrue(alive(helper), "the helper outlives the app");
+          assert.notInclude(
+            NodeFS.readFileSync(NodePath.join(fixture.root, "output", "stderr.log"), "utf8"),
+            "Uncaught",
+          );
+          NodeFS.writeFileSync(releaseFile, "");
+          await expect.poll(() => alive(helper), { timeout: 5_000 }).toBe(false);
+        },
+      });
+    } finally {
+      // Even when the runner never calls beforeScan, the helper is stopped after the test.
+      remember(pidFile);
+    }
     assert.equal(result.passed, false);
     assert.deepEqual(result.failures, ["Uncaught Error"]);
   });

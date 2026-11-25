@@ -190,6 +190,7 @@ NodeTest.test(
       ["failed workspace", { ...green, WORKSPACE_RESULT: "failure" }, false],
       ["failed Windows packaging", { ...green, WINDOWS_NATIVE_RESULT: "failure" }, false],
       ["failed Linux packaging", { ...green, LINUX_NATIVE_RESULT: "failure" }, false],
+      ["required Linux packaging skipped", { ...green, LINUX_NATIVE_RESULT: "skipped" }, false],
     ]) {
       const result = NodeChildProcess.spawnSync(process.execPath, [script, "check"], {
         env: { ...process.env, ...env },

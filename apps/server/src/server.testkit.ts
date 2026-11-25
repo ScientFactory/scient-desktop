@@ -595,6 +595,8 @@ export const makeBrowserOtlpPayload = (spanName: string) =>
   });
 
 let migratedTemplate: Promise<{ readonly base: string; readonly dbPath: string }> | undefined;
+// Recorded as soon as it exists, so a failed migration still removes it.
+let migratedTemplateBase: string | undefined;
 /**
  * The routes' settings layer opens the production database file in the state folder. Each
  * fixture starts from a copy of one closed database that the same layer created and migrated.
@@ -605,6 +607,7 @@ const migratedDatabase = (config: ServerConfig.ServerConfig["Service"]) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const base = yield* fs.makeTempDirectory({ prefix: "t3-router-database-" });
+        migratedTemplateBase = base;
         const paths = yield* ServerConfig.deriveServerPaths(base, config.devUrl);
         yield* fs.makeDirectory(paths.stateDir, { recursive: true });
         yield* Effect.scoped(
@@ -619,9 +622,10 @@ const migratedDatabase = (config: ServerConfig.ServerConfig["Service"]) =>
   });
 
 afterAll(async () => {
-  const template = await migratedTemplate;
   migratedTemplate = undefined;
-  if (template) await NodeFSP.rm(template.base, { recursive: true, force: true });
+  if (migratedTemplateBase)
+    await NodeFSP.rm(migratedTemplateBase, { recursive: true, force: true });
+  migratedTemplateBase = undefined;
 });
 
 export const buildAppUnderTest = (options?: {
@@ -738,7 +742,12 @@ export const buildAppUnderTest = (options?: {
       tailscaleServePort: 443,
       ...options?.config,
     };
-    if (options?.config?.baseDir === undefined) {
+    // Only the fixture's own database starts from the template; a caller's path is left alone.
+    if (
+      options?.config?.baseDir === undefined &&
+      options?.config?.stateDir === undefined &&
+      options?.config?.dbPath === undefined
+    ) {
       yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
       yield* fileSystem.copyFile(yield* migratedDatabase(config), config.dbPath);
     }

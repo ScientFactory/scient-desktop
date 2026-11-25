@@ -545,7 +545,12 @@ describe("ScientSourcesCoordinator", () => {
 
   it("judges Zotero preflight as the import does: an undone, removed copy is offered again", async () => {
     const { libraryRoot, library } = await libraryFixture();
-    const item = zoteroItem("UNDN2345", { title: "Undone pair", DOI: "10.1000/undone" });
+    // With its abstract, the import needs no lookup from the public abstract services.
+    const item = zoteroItem("UNDN2345", {
+      title: "Undone pair",
+      DOI: "10.1000/undone",
+      abstractNote: "A fixed abstract.",
+    });
     const zotero = fakeZoteroAccess(
       fakeZoteroTransport({ items: new Map([["UNDN2345", { item, children: [] }]]) }),
     );

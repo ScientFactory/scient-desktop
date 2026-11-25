@@ -346,10 +346,11 @@ async function expectDone(
 
 /** Seeded once through the store APIs; each case moves its own copy of the folders. */
 let seededTemplate: Promise<{ base: string; seeded: Awaited<ReturnType<typeof seed>> }> | undefined;
+// Recorded as soon as it exists, so a failed seed still removes it.
+let seededTemplateBase: string | undefined;
 
 afterAll(async () => {
-  const template = await seededTemplate;
-  if (template) await NodeFSP.rm(template.base, { recursive: true, force: true });
+  if (seededTemplateBase) await NodeFSP.rm(seededTemplateBase, { recursive: true, force: true });
 });
 
 async function seededMove() {
@@ -357,6 +358,7 @@ async function seededMove() {
     const base = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-move-template-")),
     );
+    seededTemplateBase = base;
     await newLibrary(base);
     return { base, seeded: await seed(await newProject(base)) };
   })();

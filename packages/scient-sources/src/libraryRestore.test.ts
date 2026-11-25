@@ -96,10 +96,11 @@ const STEPS: ReadonlyArray<Step> = [
 
 /** Built once by the steps below; each case restores in its own copy of the folders. */
 let template: Promise<{ readonly root: string; readonly model: Model }> | undefined;
+// Recorded as soon as it exists, so a failed build still removes it.
+let templateRoot: string | undefined;
 
 afterAll(async () => {
-  const built = await template;
-  if (built) await NodeFSP.rm(built.root, { recursive: true, force: true });
+  if (templateRoot) await NodeFSP.rm(templateRoot, { recursive: true, force: true });
 });
 
 async function build(): Promise<{ readonly scenario: Scenario; readonly model: Model }> {
@@ -107,6 +108,7 @@ async function build(): Promise<{ readonly scenario: Scenario; readonly model: M
     const root = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-library-restore-template-")),
     );
+    templateRoot = root;
     return { root, model: (await buildAt(root)).model };
   })();
   const built = await template;
@@ -118,7 +120,9 @@ async function build(): Promise<{ readonly scenario: Scenario; readonly model: M
   const escaped = (path: string) => JSON.stringify(path).slice(1, -1);
   await NodeFSP.writeFile(
     instances,
-    (await NodeFSP.readFile(instances, "utf8")).replaceAll(escaped(built.root), escaped(root)),
+    (await NodeFSP.readFile(instances, "utf8")).replaceAll(escaped(built.root), () =>
+      escaped(root),
+    ),
   );
   return { scenario, model: structuredClone(built.model) };
 }
