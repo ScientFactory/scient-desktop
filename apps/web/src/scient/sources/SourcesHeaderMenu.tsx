@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   MoreHorizontal,
   PenLine,
+  Radar,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -61,6 +62,10 @@ export function SourcesHeaderMenu(props: {
   readonly onGetMissingPdfs: () => void;
   readonly onOpenReviews: () => void;
   /** Present only on a personal Library. */
+  readonly onOpenWatches?: () => void;
+  /** Papers in watch briefings not opened yet. */
+  readonly watchesUnread?: number;
+  /** Present only on a personal Library. */
   readonly onOpenDuplicates?: () => void;
   /** Present only when sources came from Zotero and the session may change the Library. */
   readonly onRefreshZotero?: () => void;
@@ -91,8 +96,20 @@ export function SourcesHeaderMenu(props: {
   });
   const backups = Boolean(props.onBackUp || props.onRestore || props.onAddFromLibrary);
   const recovery = Boolean(props.canChangeProject || props.onMoveBack);
+  const unread = props.watchesUnread ?? 0;
   return (
     <>
+      {props.onOpenWatches && unread > 0 ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          aria-label={gt("Watches, {count} new", { count: unread })}
+          onClick={props.onOpenWatches}
+        >
+          <Radar />
+          <span className="tabular-nums">{unread}</span>
+        </Button>
+      ) : null}
       <Menu>
         <MenuTrigger
           render={
@@ -115,6 +132,12 @@ export function SourcesHeaderMenu(props: {
             <ClipboardList />
             <T>Systematic reviews</T>
           </MenuItem>
+          {props.onOpenWatches ? (
+            <MenuItem onClick={props.onOpenWatches}>
+              <Radar />
+              <T>Watches</T>
+            </MenuItem>
+          ) : null}
           {props.onOpenDuplicates ? (
             <MenuItem onClick={props.onOpenDuplicates}>
               <CopyCheck />

@@ -5,6 +5,8 @@ import {
   getEnvironmentScientSystematicReview,
   listEnvironmentScientSystematicReviewConflicts,
   listEnvironmentScientSystematicReviews,
+  listEnvironmentScientLiteratureWatches,
+  getEnvironmentScientLiteratureWatch,
   getEnvironmentScientSourceAttachmentPreview,
   searchEnvironmentScientSourcesFullText,
   getEnvironmentScientSourceDetail,
@@ -43,6 +45,9 @@ import type {
   ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
+  ScientLiteratureWatchChangeRequest,
+  ScientLiteratureWatchRequest,
+  ScientLiteratureWatchesRequest,
   ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
@@ -195,6 +200,31 @@ export function changeSystematicReviewConflict(
   input: ScientSystematicReviewConflictRequest,
 ) {
   return runSourcesCommand(sourcesCommands.systematicReviewConflict, environmentId, input);
+}
+
+export function readLiteratureWatches(
+  environmentId: EnvironmentId,
+  input: ScientLiteratureWatchesRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientLiteratureWatches({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readLiteratureWatch(
+  environmentId: EnvironmentId,
+  input: ScientLiteratureWatchRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentScientLiteratureWatch({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function changeLiteratureWatch(
+  environmentId: EnvironmentId,
+  input: ScientLiteratureWatchChangeRequest,
+) {
+  return runSourcesCommand(sourcesCommands.literatureWatchChange, environmentId, input);
 }
 
 /** Where this project's move into the personal Library is; a project server has nothing to move. */
