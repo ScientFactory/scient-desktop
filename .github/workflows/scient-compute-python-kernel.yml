@@ -437,6 +437,11 @@ jobs:
         working-directory: apps/server
         env:
           SCIENT_TEST_RUN_TABLE: "1"
+          # `dotnet run` otherwise leaves its compiler and MSBuild servers running after the
+          # proof, which the role's end reports as the files proof's leftovers.
+          UseSharedCompilation: "false"
+          MSBUILDDISABLENODEREUSE: "1"
+          DOTNET_CLI_USE_MSBUILD_SERVER: "0"
         # A compiler's first run on a fresh computer, such as runghc or `dotnet run` on Windows, takes up
         # to two minutes, the project's ceiling, so real programs get five.
         run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
@@ -575,6 +580,11 @@ jobs:
         working-directory: apps/server
         env:
           SCIENT_TEST_RUN_TABLE: "1"
+          # `dotnet run` otherwise leaves its compiler and MSBuild servers running after the
+          # proof, which the role's end reports as the files proof's leftovers.
+          UseSharedCompilation: "false"
+          MSBUILDDISABLENODEREUSE: "1"
+          DOTNET_CLI_USE_MSBUILD_SERVER: "0"
         # A compiler's first run on a fresh computer, such as runghc or `dotnet run` on Windows, takes up
         # to two minutes, the project's ceiling, so real programs get five.
         run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
