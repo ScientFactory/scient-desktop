@@ -26,6 +26,7 @@ export class KeepAwakeService extends Context.Service<
     /**
      * Whether `work` would list any thread as working, the server hold's whole question. It stops
      * at the first owned thread: start grace needs no read, and owner reads go one at a time.
+     * A read it never reaches can't fail it: a known working thread already answers yes.
      */
     readonly anyWorking: Effect.Effect<boolean, KeepAwakeWorkError>;
   }

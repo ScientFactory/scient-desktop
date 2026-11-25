@@ -120,4 +120,75 @@ describe("T3's keep-awake hold with Scient's work", () => {
       expect(yield* Queue.take(spawned)).toBe("sh");
     }),
   );
+
+  it.effect("reads one owner per check when the first executing thread is owned", () =>
+    Effect.gen(function* () {
+      const shells = ["first", "second"].map((id) => ({
+        ...shellWith("command"),
+        id: ThreadId.make(id),
+      })) as unknown as ReadonlyArray<OrchestrationV2ThreadShell>;
+      let ownerReads = 0;
+      const spawned = yield* Queue.unbounded<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(spawned, (command as unknown as { command: string }).command);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const work = KeepAwakeService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ProjectionStoreV2, {
+            listActiveShellIndex: () =>
+              Effect.succeed(
+                shells.map((shell) => ({
+                  id: shell.id,
+                  mayBeLive: true,
+                  lineage: { relationshipToParent: null },
+                })) as never,
+              ),
+            getShellSnapshot: () => Effect.succeed({ threads: shells } as never),
+            getThreadRecords: () =>
+              Effect.sync(() => {
+                ownerReads++;
+                return {
+                  providerThreads: [{ id: providerThreadId, providerSessionId: sessionId }],
+                } as never;
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ProviderSessionManagerV2, { isLive: () => Effect.succeed(true) })),
+      );
+      yield* Layer.build(
+        KeepAwake.layer.pipe(
+          Layer.provide(work),
+          Layer.provide(
+            Layer.mock(OrchestrationEventStore.OrchestrationEventStore, {
+              latestApplicationSequence: Effect.succeed(0),
+              streamApplicationEvents: () => Stream.never as never,
+            }),
+          ),
+          Layer.provide(Settings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+          Layer.provide(FileSystem.layerNoop({})),
+        ),
+      );
+      yield* settle;
+      expect(yield* Queue.take(spawned)).toBe("sh");
+      // The hold's first check stopped at the first owned thread instead of reading both.
+      expect(ownerReads).toBe(1);
+    }),
+  );
 });
