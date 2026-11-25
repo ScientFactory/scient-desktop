@@ -176,6 +176,8 @@ export interface OmpAdapterV2Options extends Pick<
   // SCIENT-FORK: a model account the agent signed out refreshes the provider's account list.
   readonly onAccountSignedOut?: Effect.Effect<void>;
 }
+/** A first launch after an update also waits on the OS's scan of the agent's large executable. */
+const OMP_READY_TIMEOUT = "20 seconds";
 const JsonString = Schema.fromJsonString(Schema.String);
 const decodeSubagentCancellation = Schema.decodeUnknownEffect(
   Schema.Struct({ cancelled: Schema.Boolean }),
@@ -285,6 +287,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         return new NativeSessionOperationError({
           detail: redaction.text(failure.detail),
           ...(failure.breaksSession === undefined ? {} : { breaksSession: failure.breaksSession }),
+          ...(failure.code === undefined ? {} : { code: failure.code }),
           ...(failure.cause === undefined ? {} : { cause: redaction.log(failure.cause) }),
         });
       };
@@ -1481,7 +1484,18 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               }
             : {}),
         });
-        const ready = yield* client.ready.pipe(Effect.timeout("8 seconds"));
+        const ready = yield* client.ready.pipe(
+          Effect.timeoutOrElse({
+            duration: OMP_READY_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new NativeSessionOperationError({
+                  detail: `${target.name} took too long to start. Send the message again.`,
+                  code: "startup_timeout",
+                }),
+              ),
+          }),
+        );
         if (!ready.supportedProtocolVersions?.includes(OMP_RPC_PROTOCOL_V2))
           return yield* new NativeSessionOperationError({
             detail: `${target.name} did not offer RPC protocol v2.`,

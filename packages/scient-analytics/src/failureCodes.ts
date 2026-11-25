@@ -6,7 +6,7 @@
  */
 
 /** Codes the host itself sets, whatever the provider. */
-const HOST_CODES = new Set(["oom_kill", "retry_stalled", "prompt_inactivity"]);
+const HOST_CODES = new Set(["oom_kill", "retry_stalled", "prompt_inactivity", "startup_timeout"]);
 
 /** Scient Agent and Oh My Pi: the agent's error kinds and the OMP host's outcome reasons. */
 const OMP_CODES = new Set([

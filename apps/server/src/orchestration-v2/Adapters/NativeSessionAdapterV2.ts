@@ -256,6 +256,8 @@ export class NativeSessionOperationError extends Schema.TaggedError<NativeSessio
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),
     breaksSession: Schema.optional(Schema.Boolean),
+    // SCIENT-FORK: a bounded machine reason; its detail is then the user's whole message.
+    code: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {

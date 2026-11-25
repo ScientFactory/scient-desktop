@@ -50,6 +50,7 @@ import { OMP_KNOWN_EVENT_TYPES, type OmpRpcResponse } from "effect-omp-rpc/schem
 import * as ServerConfig from "../../config.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
 import { makeOmpRpcClient } from "effect-omp-rpc/client";
 import {
@@ -3390,7 +3391,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
   );
 
   it.effect(
-    "bounds native OMP startup before catalog discovery when a live peer stays silent",
+    "bounds native OMP startup before catalog discovery when a live peer stays silent, with its own code",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -3407,12 +3408,19 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                 .pipe(Effect.tap(() => Deferred.succeed(launched, undefined))),
           }).pipe(Effect.exit, Effect.forkScoped);
           yield* Deferred.await(launched);
-          yield* TestClock.adjust("8 seconds");
+          // A cold start can take several seconds on its own; the deadline leaves room for it.
+          yield* TestClock.adjust("19 seconds");
+          assert.equal(opening.pollUnsafe(), undefined);
+          yield* TestClock.adjust("1 second");
           yield* Fiber.join(opening).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
           const result = opening.pollUnsafe();
           assert.notEqual(result, undefined);
           if (!result) return yield* Effect.die("Startup did not settle at its deadline");
-          assert.equal(Exit.isSuccess(result) && Exit.isFailure(result.value), true);
+          if (!Exit.isSuccess(result) || !Exit.isFailure(result.value))
+            return yield* Effect.die("Startup did not fail at its deadline");
+          const failure = makeProviderFailure({ cause: result.value.cause });
+          assert.equal(failure.code, "startup_timeout");
+          assert.equal(failure.message, "Oh My Pi took too long to start. Send the message again.");
         }),
       ),
   );
