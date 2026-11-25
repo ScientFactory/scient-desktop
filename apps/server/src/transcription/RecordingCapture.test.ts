@@ -10,7 +10,7 @@ import {
   touchCapture,
 } from "./RecordingCapture.ts";
 
-it("recovers only interrupted captures and publishes the contiguous durable chunks", async () => {
+it("recovers only interrupted captures and keeps every saved piece, even after a lost one", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "recording-recovery-"));
   const interrupted = "00000000-0000-0000-0000-000000000001";
   const active = "00000000-0000-0000-0000-000000000002";
@@ -29,7 +29,7 @@ it("recovers only interrupted captures and publishes the contiguous durable chun
     await NodeFSP.utimes(NodePath.join(root, ".recording-capture-" + interrupted), stale, stale);
     await recoverCaptures(root, register, now);
     expect(register).toHaveBeenCalledTimes(1);
-    await expect(register.mock.results[0]?.value).resolves.toBe("headeraudio");
+    await expect(register.mock.results[0]?.value).resolves.toBe("headeraudioafter the lost chunk");
     await recoverCaptures(root, register, now);
     expect(register).toHaveBeenCalledTimes(1);
     await finishCapture(root, active, register);

@@ -55,8 +55,8 @@ export async function finishCapture(
   const temporary = NodePath.join(directory, "audio.part");
   const output = await NodeFSP.open(temporary, "w");
   try {
-    for (const [index, name] of chunks.entries()) {
-      if (Number(chunkName.exec(name)?.[1]) !== index) break;
+    // Every saved piece, in order: a piece lost in the middle costs a moment, never the rest.
+    for (const name of chunks) {
       const bytes = Buffer.from(
         await NodeFSP.readFile(NodePath.join(directory, name), "utf8"),
         "base64",
