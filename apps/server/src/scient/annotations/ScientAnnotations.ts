@@ -19,6 +19,7 @@ import {
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 import {
+  isScientRegionAnchor,
   liveScientAnnotations,
   scientAnnotationQuote,
   type ScientAnnotationActor,
@@ -28,6 +29,7 @@ import {
   type ScientAnnotationsDocumentResult,
   type ScientAnnotationsSourceResult,
   type ScientPdfAnnotation,
+  type ScientPdfTextAnchor,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -342,7 +344,8 @@ export class ScientAnnotations extends Context.Service<
   }
 >()("t3/scient/annotations/ScientAnnotations") {}
 
-function samePlace(left: ScientPdfAnnotation, right: ScientPdfAnnotation["anchor"]): boolean {
+function samePlace(left: ScientPdfAnnotation, right: ScientPdfTextAnchor): boolean {
+  if (isScientRegionAnchor(left.anchor)) return false;
   const a = left.anchor.selector.pages;
   const b = right.selector.pages;
   return (

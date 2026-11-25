@@ -3393,8 +3393,12 @@ checks every folder from the canonical project root down and refuses
 symlinked ones (`assertScientProjectDirectory` in
 `packages/scient-sources/src/projectFiles.ts`, shared with the full-text store).
 
-An annotation stores the reader's `PdfTarget` text selector and extractor, not
-its document identity, so stored records hold no absolute paths. It needs a
+An annotation stores the reader's `PdfTarget` text selector and extractor, or a
+region selector (one page's geometry and a `rect` in that page's PDF user
+space, inside its view box), never its document identity, so stored records
+hold no absolute paths. A region needs no text, so it holds before, after and
+without recognition; zoom and the reader's rotation never change it. Its
+quote is empty, and agents read its `region` box instead. It needs a
 highlight or a note. Every change names the revision it was made on; a stale
 change returns the current record. Removal is a tombstone that restore undoes,
 and the last ten revisions of each annotation are kept so `revert` can bring
@@ -3427,8 +3431,12 @@ the signed URL is rooted in the Library, and the annotation service resolves
 that locator to the Library's bytes, so the reader's path lookup finds the
 highlights the move carried into the Library.
 
-The reader paints annotations per rendered page with the CSS Custom Highlight
-API. The quote is searched on its page with its stored context, then alone, and
+The reader paints text annotations per rendered page with the CSS Custom
+Highlight API, and regions as elements placed in fractions of their page, put
+back whenever pdf.js clears the page element (zoom, rotation, recycling).
+The Reader attaches annotations to the presented file revision. Structural edits
+publish before the new page order appears. While publication or loading is in
+progress, annotation actions wait for the matching document. The quote is searched on its page with its stored context, then alone, and
 shown only when it occurs once; stored offsets alone never decide between
 repeats. A create names the PDF path and is refused
 (`material-changed`) when the file's bytes are no longer the ones the reader

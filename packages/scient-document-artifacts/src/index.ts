@@ -44,6 +44,7 @@ export {
   PdfDocumentLocator,
   PdfRecognizedText,
   PdfRect,
+  PdfRegionPageSelector,
   PdfTarget,
   PdfTextPageSelector,
   relocatePdfText,

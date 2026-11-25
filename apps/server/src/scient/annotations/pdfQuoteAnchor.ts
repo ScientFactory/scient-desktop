@@ -6,7 +6,7 @@ import {
   PDF_TEXT_PROFILE,
   type PdfTextPageSelector,
 } from "@scientfactory/document-artifacts";
-import type { ScientPdfAnnotationAnchor } from "@t3tools/contracts";
+import type { ScientPdfTextAnchor } from "@t3tools/contracts";
 
 /** One page's text in the reader's target profile, with its geometry. */
 export interface PdfPageText {
@@ -18,7 +18,7 @@ export interface PdfPageText {
 }
 
 export type PdfQuoteAnchoring =
-  | { readonly _tag: "Found"; readonly anchor: ScientPdfAnnotationAnchor }
+  | { readonly _tag: "Found"; readonly anchor: ScientPdfTextAnchor }
   | { readonly _tag: "NotFound" }
   | { readonly _tag: "Ambiguous"; readonly pages: ReadonlyArray<number> }
   /** The quote is longer or spans more pages than one annotation can hold. */

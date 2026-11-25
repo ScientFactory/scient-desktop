@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { ArtifactAuthority, LogicalDocumentKey } from "./contracts.ts";
 import {
   PDF_TEXT_PROFILE,
+  PdfRegionPageSelector,
   PdfTarget,
   relocatePdfText,
   verifyPdfTarget,
@@ -184,5 +185,16 @@ describe("PDF target", () => {
         complete: false,
       }),
     ).toEqual({ _tag: "Incomplete" });
+  });
+
+  it("keeps a drawn box only when it lies inside its page's view box", () => {
+    const decode = Schema.decodeUnknownSync(PdfRegionPageSelector);
+    const page = { page: 2, viewBox: [10, 20, 622, 812], rotation: 90, userUnit: 1 };
+    const box = { ...page, rect: [72, 400, 300, 700] };
+    expect(decode(JSON.parse(JSON.stringify(box)))).toEqual(box);
+    // Outside the cropped page, inverted, or empty: never stored.
+    expect(() => decode({ ...page, rect: [0, 400, 300, 700] })).toThrow();
+    expect(() => decode({ ...page, rect: [300, 400, 72, 700] })).toThrow();
+    expect(() => decode({ ...page, rect: [72, 400, 72, 700] })).toThrow();
   });
 });

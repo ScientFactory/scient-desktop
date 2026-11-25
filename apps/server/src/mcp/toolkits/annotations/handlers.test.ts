@@ -2,7 +2,10 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { layer as ScientAnnotationsLive } from "../../../scient/annotations/ScientAnnotations.ts";
+import {
+  ScientAnnotations,
+  layer as ScientAnnotationsLive,
+} from "../../../scient/annotations/ScientAnnotations.ts";
 import {
   temporaryProject,
   textPdf,
@@ -65,6 +68,56 @@ function agentContext(root: string) {
 const project = Effect.acquireDisposable(Effect.promise(temporaryProject));
 
 describe("annotation tools", () => {
+  it.effect("show an agent a box the user drew, with its place and no quote", () =>
+    Effect.gen(function* () {
+      const { root } = yield* project;
+      yield* Effect.promise(() => writeProjectFile(root, "scans/figure.pdf", textPdf([[]])));
+      const asAgent = agentContext(root);
+      const rect = [72, 400, 300, 700] as const;
+      yield* asAgent(
+        Effect.gen(function* () {
+          const annotations = yield* ScientAnnotations;
+          const opened = yield* annotations.forDocument({
+            root,
+            relativePath: "scans/figure.pdf",
+          });
+          if (opened.status !== "available") throw new Error("Expected an annotatable PDF");
+          yield* annotations.mutate(
+            {
+              root,
+              relativePath: "scans/figure.pdf",
+              material: opened.material,
+              command: {
+                action: "create",
+                annotationId: "ann_regionfig1",
+                anchor: {
+                  selector: {
+                    type: "region",
+                    pages: [{ page: 1, viewBox: [0, 0, 612, 792], rotation: 0, userUnit: 1, rect }],
+                  },
+                },
+                highlighted: false,
+                note: "Figure 2 contradicts Table 1",
+              },
+            },
+            "user",
+          );
+        }),
+      );
+      const read = yield* asAgent(readAnnotationsForInvocation({ query: "contradicts" }));
+      expect(read.pdfs[0]!.annotations).toEqual([
+        expect.objectContaining({
+          annotationId: "ann_regionfig1",
+          pages: [1],
+          quote: "",
+          region: rect,
+          note: "Figure 2 contradicts Table 1",
+          createdBy: "user",
+        }),
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("let an agent highlight, read, edit, remove and restore like a person", () =>
     Effect.gen(function* () {
       const { root } = yield* project;

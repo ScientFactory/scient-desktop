@@ -1170,6 +1170,14 @@ message to bring it back), or **Quote in my document**. A highlight a project
 package brought with a different note shows **Another computer's version**;
 **Use this version** makes it current, as a new change.
 
+To mark a figure, a table or any other part of a page, choose **Mark an area**
+in the PDF's **More** menu and drag across the page. It needs no text, so it
+works on a scanned page before its words have been read. Add a note in the box
+that opens, or choose **Done** to keep just the marked area. A marked area with a
+note has a dashed outline. It stays on the same part of the page when you zoom,
+and opens like a highlight when you click it. Press `Esc` or choose **Cancel**
+to stop without marking anything.
+
 **Quote in my document** puts the passage into the Markdown or LaTeX document
 in this project that you used last, as a quotation followed by its citation:
 `[@key, p. 4]` in Markdown, `\cite[p.~4]{key}` in LaTeX. The page is the one
@@ -1182,8 +1190,9 @@ which source to cite. A PDF that is not a source is named by file and page
 instead. If no document is open, the quote is copied as Markdown so you can
 paste it.
 
-A source's details list the highlights and notes on its PDFs in reading order.
-Choose a passage to open the PDF at it. Passages an agent added say so.
+A source's details list the highlights, notes and marked areas on its PDFs in
+reading order. Choose a passage to open the PDF at it; a marked area opens the
+PDF. Passages an agent added say so.
 Highlights imported from Zotero keep their colour, and an underline stays an
 underline. Below them, **From Zotero, not placed on the page** lists the ones
 an import could not place, with their page; choose one to open the PDF, or

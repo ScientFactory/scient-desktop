@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { isScientRegionAnchor } from "@t3tools/contracts";
 
 import {
   importScientAnnotations,
@@ -74,7 +75,7 @@ describe("placing Zotero's highlights", () => {
     expect(
       placed.map((entry) => ({
         id: entry.annotationId,
-        at: entry.anchor.selector.pages[0]?.start,
+        at: isScientRegionAnchor(entry.anchor) ? null : entry.anchor.selector.pages[0]?.start,
         note: entry.note,
         color: entry.color,
         underline: entry.underline,

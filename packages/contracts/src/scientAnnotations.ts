@@ -1,4 +1,9 @@
-import { PDF_TARGET_LIMITS, PdfMaterial, PdfTarget } from "@scientfactory/document-artifacts";
+import {
+  PDF_TARGET_LIMITS,
+  PdfMaterial,
+  PdfRegionPageSelector,
+  PdfTarget,
+} from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
@@ -20,11 +25,11 @@ export const ScientAnnotationNote = Schema.String.check(
 );
 
 /**
- * Where an annotation sits in its PDF: the text selector of a PDF target. The
+ * Where a text annotation sits in its PDF: the text selector of a PDF target. The
  * document identity is left out on purpose; annotations are keyed by the
  * PDF's bytes, so the same file found at another path keeps them.
  */
-export const ScientPdfAnnotationAnchor = Schema.Struct({
+export const ScientPdfTextAnchor = Schema.Struct({
   extractor: PdfTarget.fields.extractor,
   selector: PdfTarget.fields.selector,
 }).check(
@@ -41,7 +46,25 @@ export const ScientPdfAnnotationAnchor = Schema.Struct({
     });
   }),
 );
+export type ScientPdfTextAnchor = typeof ScientPdfTextAnchor.Type;
+
+/** A box drawn on one page, needing no text: it holds before, after and without recognition. */
+export const ScientPdfRegionAnchor = Schema.Struct({
+  selector: Schema.Struct({
+    type: Schema.Literal("region"),
+    pages: Schema.Tuple([PdfRegionPageSelector]),
+  }),
+});
+export type ScientPdfRegionAnchor = typeof ScientPdfRegionAnchor.Type;
+
+export const ScientPdfAnnotationAnchor = Schema.Union([ScientPdfTextAnchor, ScientPdfRegionAnchor]);
 export type ScientPdfAnnotationAnchor = typeof ScientPdfAnnotationAnchor.Type;
+
+export function isScientRegionAnchor(
+  anchor: ScientPdfAnnotationAnchor,
+): anchor is ScientPdfRegionAnchor {
+  return anchor.selector.type === "region";
+}
 
 /** A highlight's own colour, as another reader gave it: `#rrggbb`. */
 const ScientAnnotationColor = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/u));
@@ -204,6 +227,16 @@ export const ScientAnnotationMutationRequest = Schema.Struct({
 });
 export type ScientAnnotationMutationRequest = typeof ScientAnnotationMutationRequest.Type;
 
+/** Text first, by offset; then boxes from the top of the page down. */
+function pageOrder(anchor: ScientPdfAnnotationAnchor): readonly [number, number, number] {
+  if (isScientRegionAnchor(anchor)) {
+    const [page] = anchor.selector.pages;
+    return [page.page, 1, -page.rect[3]];
+  }
+  const page = anchor.selector.pages[0]!;
+  return [page.page, 0, page.start];
+}
+
 /** The live annotations, in reading order. */
 export function liveScientAnnotations(
   annotations: ReadonlyArray<ScientPdfAnnotation>,
@@ -211,15 +244,25 @@ export function liveScientAnnotations(
   return annotations
     .filter((annotation) => annotation.deletedAt === null)
     .sort((left, right) => {
-      const a = left.anchor.selector.pages[0]!;
-      const b = right.anchor.selector.pages[0]!;
-      return a.page - b.page || a.start - b.start;
+      const a = pageOrder(left.anchor);
+      const b = pageOrder(right.anchor);
+      return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
     });
 }
 
-/** The quoted text; a page break reads as a line break, so words never run together. */
+/** The pages an annotation is on, counted from 1. */
+export function scientAnnotationPages(annotation: Pick<ScientPdfAnnotation, "anchor">): number[] {
+  return annotation.anchor.selector.pages.map((page) => page.page);
+}
+
+/**
+ * The quoted text; a page break reads as a line break, so words never run together.
+ * A box quotes nothing.
+ */
 export function scientAnnotationQuote(annotation: Pick<ScientPdfAnnotation, "anchor">): string {
-  return annotation.anchor.selector.pages.reduce(
+  const { anchor } = annotation;
+  if (isScientRegionAnchor(anchor)) return "";
+  return anchor.selector.pages.reduce(
     (text, page) =>
       text === "" || /\s$/u.test(text) || /^\s/u.test(page.quote)
         ? text + page.quote

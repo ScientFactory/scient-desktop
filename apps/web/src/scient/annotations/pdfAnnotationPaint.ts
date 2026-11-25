@@ -1,4 +1,8 @@
-import type { ScientPdfAnnotation } from "@t3tools/contracts";
+import {
+  isScientRegionAnchor,
+  type ScientPdfAnnotation,
+  type ScientPdfRegionAnchor,
+} from "@t3tools/contracts";
 
 import {
   pdfPageView,
@@ -8,9 +12,12 @@ import {
 } from "../pdf/anchors/pdfTextLayer";
 import type { ScientPdfRuntime } from "../pdf/pdfRuntime";
 import { annotationRangeOnPage } from "./annotationPlacement";
+import { pdfRegionPageBox } from "./pdfRegionGeometry";
 
 export interface PdfAnnotationPainter {
   readonly update: (annotations: ReadonlyArray<ScientPdfAnnotation>) => void;
+  /** A box being drawn or waiting for its note, shown until it is saved or dropped. */
+  readonly showDraft: (anchor: ScientPdfRegionAnchor | null) => void;
   /** The annotation painted under a viewport point, if any. */
   readonly annotationAt: (x: number, y: number) => ScientPdfAnnotation | null;
   /** Where an annotation is painted now, for anchoring a popover. */
@@ -22,9 +29,9 @@ let nextPainter = 0;
 const HIT_SLOP = 2;
 
 /**
- * Paints saved highlights and notes on the rendered pages with the CSS Custom
- * Highlight API, and keeps them painted as pages render again (scroll, zoom,
- * rotation). A part that cannot be placed exactly once on its page is skipped.
+ * Paints saved highlights and notes with the CSS Custom Highlight API, and marked areas as
+ * elements placed in fractions of their page, keeping both painted as pages render again
+ * (scroll, zoom, rotation). A text part that cannot be placed exactly once is skipped.
  */
 export function paintPdfAnnotations(
   runtime: ScientPdfRuntime,
@@ -99,7 +106,9 @@ export function paintPdfAnnotations(
   const pagesWithAnnotations = () =>
     new Set(
       annotations.flatMap((annotation) =>
-        annotation.anchor.selector.pages.map((selected) => selected.page),
+        isScientRegionAnchor(annotation.anchor)
+          ? []
+          : annotation.anchor.selector.pages.map((selected) => selected.page),
       ),
     );
 
@@ -110,10 +119,98 @@ export function paintPdfAnnotations(
   };
   runtime.eventBus.on("textlayerrendered", onRendered);
 
+  let draft: ScientPdfRegionAnchor | null = null;
+  const regionLayers = new Map<number, HTMLElement>();
+  let regionObserver: MutationObserver | null = null;
+  const regionsOn = (page: number) => {
+    const boxes: Array<{ readonly id: string | null; readonly anchor: ScientPdfRegionAnchor }> = [];
+    for (const annotation of annotations) {
+      const { anchor } = annotation;
+      if (isScientRegionAnchor(anchor) && anchor.selector.pages[0].page === page) {
+        boxes.push({ id: annotation.annotationId, anchor });
+      }
+    }
+    if (draft?.selector.pages[0].page === page) boxes.push({ id: null, anchor: draft });
+    return boxes;
+  };
+  const regionPages = () =>
+    new Set([
+      ...annotations.flatMap((annotation) =>
+        isScientRegionAnchor(annotation.anchor) ? [annotation.anchor.selector.pages[0].page] : [],
+      ),
+      ...(draft ? [draft.selector.pages[0].page] : []),
+    ]);
+  const paintRegions = (page: number) => {
+    regionLayers.get(page)?.remove();
+    regionLayers.delete(page);
+    const view = pdfPageView(runtime, page);
+    const pageDiv = view?.div;
+    if (!view?.pdfPage || !pageDiv) return;
+    const boxes = regionsOn(page);
+    if (boxes.length === 0) return;
+    const byId = new Map(annotations.map((annotation) => [annotation.annotationId, annotation]));
+    const layer = pageDiv.ownerDocument.createElement("div");
+    layer.className = "scient-pdf-region-layer";
+    for (const { id, anchor } of boxes) {
+      const placed = pdfRegionPageBox(view.viewport, anchor.selector.pages[0].rect);
+      const box = pageDiv.ownerDocument.createElement("div");
+      box.className = "scient-pdf-region";
+      const annotation = id === null ? undefined : byId.get(id);
+      if (annotation) {
+        box.dataset.annotationId = annotation.annotationId;
+        box.dataset.look = annotation.highlighted ? "fill" : "note";
+        if (annotation.color) box.style.setProperty("--scient-region-color", annotation.color);
+      } else {
+        box.dataset.look = "draft";
+      }
+      box.style.left = `${placed.left * 100}%`;
+      box.style.top = `${placed.top * 100}%`;
+      box.style.width = `${placed.width * 100}%`;
+      box.style.height = `${placed.height * 100}%`;
+      layer.append(box);
+    }
+    pageDiv.append(layer);
+    regionLayers.set(page, layer);
+    regionObserver?.observe(pageDiv, { childList: true });
+  };
+  // pdf.js empties a page's element when it zooms, rotates or recycles it, keeping only its own layers.
+  regionObserver =
+    typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(() => {
+          for (const page of regionPages()) {
+            if (regionLayers.get(page)?.isConnected === false) paintRegions(page);
+          }
+        });
+  const onPageRendered = (event: { pageNumber: number }) => {
+    if (regionPages().has(event.pageNumber)) paintRegions(event.pageNumber);
+  };
+  runtime.eventBus.on("pagerendered", onPageRendered);
+  const repaintRegions = () => {
+    const pages = regionPages();
+    for (const page of regionLayers.keys()) if (!pages.has(page)) paintRegions(page);
+    for (const page of pages) if (page <= runtime.document.numPages) paintRegions(page);
+  };
+
   const rectsOf = (annotationId: string) =>
     [...painted.values()].flatMap((page) =>
       (page.get(annotationId) ?? []).flatMap((range) => [...range.getClientRects()]),
     );
+  const regionRectOf = (annotationId: string) => {
+    for (const layer of regionLayers.values()) {
+      for (const box of layer.children) {
+        if (box instanceof HTMLElement && box.dataset.annotationId === annotationId) {
+          return box.getBoundingClientRect();
+        }
+      }
+    }
+    return null;
+  };
+  const inside = (rect: DOMRect, x: number, y: number) =>
+    x >= rect.left - HIT_SLOP &&
+    x <= rect.right + HIT_SLOP &&
+    y >= rect.top - HIT_SLOP &&
+    y <= rect.bottom + HIT_SLOP;
 
   return {
     update: (next) => {
@@ -123,27 +220,39 @@ export function paintPdfAnnotations(
         if (page <= runtime.document.numPages) paintPage(page);
       }
       publish();
+      repaintRegions();
+    },
+    showDraft: (anchor) => {
+      draft = anchor;
+      repaintRegions();
     },
     annotationAt: (x, y) => {
       for (const annotation of annotations) {
-        const hit = rectsOf(annotation.annotationId).some(
-          (rect) =>
-            x >= rect.left - HIT_SLOP &&
-            x <= rect.right + HIT_SLOP &&
-            y >= rect.top - HIT_SLOP &&
-            y <= rect.bottom + HIT_SLOP,
-        );
-        if (hit) return annotation;
+        if (rectsOf(annotation.annotationId).some((rect) => inside(rect, x, y))) return annotation;
       }
-      return null;
+      // Text marked inside a box opens first; of nested boxes, the smallest.
+      let found: { readonly annotation: ScientPdfAnnotation; readonly area: number } | null = null;
+      for (const annotation of annotations) {
+        const rect = regionRectOf(annotation.annotationId);
+        if (!rect || !inside(rect, x, y)) continue;
+        const area = rect.width * rect.height;
+        if (!found || area < found.area) found = { annotation, area };
+      }
+      return found?.annotation ?? null;
     },
     boundsOf: (annotationId) => {
+      const region = regionRectOf(annotationId);
+      if (region) return DOMRect.fromRect(region);
       const rects = rectsOf(annotationId).filter((rect) => rect.width > 0);
       const last = rects.at(-1);
       return last ? DOMRect.fromRect(last) : null;
     },
     dispose: () => {
       runtime.eventBus.off("textlayerrendered", onRendered);
+      runtime.eventBus.off("pagerendered", onPageRendered);
+      regionObserver?.disconnect();
+      for (const layer of regionLayers.values()) layer.remove();
+      regionLayers.clear();
       for (const name of looks.keys()) registry?.delete(name);
       registry?.delete(noteName);
       style.remove();

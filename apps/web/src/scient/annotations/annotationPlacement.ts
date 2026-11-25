@@ -1,4 +1,4 @@
-import type { ScientPdfAnnotation } from "@t3tools/contracts";
+import { isScientRegionAnchor, type ScientPdfAnnotation } from "@t3tools/contracts";
 
 export interface PageRange {
   readonly start: number;
@@ -21,7 +21,9 @@ export function annotationRangeOnPage(
   page: number,
   text: string,
 ): PageRange | null {
-  const stored = annotation.anchor.selector.pages.find((entry) => entry.page === page);
+  const { anchor } = annotation;
+  if (isScientRegionAnchor(anchor)) return null;
+  const stored = anchor.selector.pages.find((entry) => entry.page === page);
   if (!stored) return null;
   const withContext = uniqueIndex(text, stored.prefix + stored.quote + stored.suffix);
   if (withContext !== -1) {

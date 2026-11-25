@@ -64,7 +64,8 @@ and a little text around it.
   it once the message is sent.
 
 In a PDF in your project, the same bar also offers **Highlight** and **Note**,
-even where there is no conversation. See
+even where there is no conversation, and **Mark an area** in the **More** menu
+draws a box around a figure or any part of a page. See
 [Highlight and annotate PDFs](sources.md#highlight-and-annotate-pdfs).
 
 ## Page changes
@@ -136,8 +137,9 @@ When a page is a scan, an image with little or no text of its own, Scient reads
 its words on your computer while you look at it. The page shows **Reading text…**
 in its corner while recognition runs. You can then
 select and copy its words, quote them with **Ask in chat**, and highlight them or
-add a note, as on any other page. If a page already contains substantial text,
-Scient uses it even when an older transcription has mistakes.
+add a note. **Mark an area** lets you box a figure and add a note while the
+page is still being read. If a page already contains substantial text, Scient
+uses it even when an older transcription has mistakes.
 
 Type a query in Find (`Cmd/Ctrl+F`) to search the PDF. Matches in native text
 and on previously recognized pages can appear while Scient reads other scans.

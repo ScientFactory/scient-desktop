@@ -1,5 +1,6 @@
 import { citationLocatorPage, type CitationItem } from "@scientfactory/scient-sources";
 import {
+  isScientRegionAnchor,
   liveScientAnnotations,
   scientAnnotationQuote,
   type ScientPdfAnnotation,
@@ -203,7 +204,11 @@ export type CitationHighlights = ReadonlyArray<{
 function quoteMatches(quote: string, highlights: CitationHighlights) {
   return highlights.flatMap((pdf) =>
     liveScientAnnotations(pdf.annotations)
-      .filter((annotation) => quoteProse(scientAnnotationQuote(annotation)) === quote)
+      .filter(
+        (annotation) =>
+          !isScientRegionAnchor(annotation.anchor) &&
+          quoteProse(scientAnnotationQuote(annotation)) === quote,
+      )
       .map((annotation) => ({ attachmentId: pdf.attachmentId, annotation })),
   );
 }

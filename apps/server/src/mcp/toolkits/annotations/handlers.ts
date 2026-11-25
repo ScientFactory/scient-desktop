@@ -1,4 +1,6 @@
 import {
+  isScientRegionAnchor,
+  scientAnnotationPages,
   scientAnnotationQuote,
   type ScientAnnotationCommand,
   type ScientPdfAnnotation,
@@ -50,9 +52,12 @@ function annotationAgentView(annotation: ScientPdfAnnotation): ScientAnnotationA
   return {
     annotationId: annotation.annotationId,
     revision: annotation.revision,
-    pages: annotation.anchor.selector.pages.map((page) => page.page),
+    pages: scientAnnotationPages(annotation),
     quote: quote.slice(0, QUOTE_LIMIT),
     quoteTruncated: quote.length > QUOTE_LIMIT,
+    ...(isScientRegionAnchor(annotation.anchor)
+      ? { region: annotation.anchor.selector.pages[0].rect }
+      : {}),
     note: annotation.note,
     highlighted: annotation.highlighted,
     createdBy: annotation.createdBy,

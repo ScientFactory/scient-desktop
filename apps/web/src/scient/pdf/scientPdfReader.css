@@ -198,6 +198,41 @@
   margin-bottom: 0;
 }
 
+/* Boxes marked on a page sit over the page in fractions of its size; text stays selectable. */
+.scient-pdf-viewer-container .pdfViewer .page .scient-pdf-region-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.scient-pdf-viewer-container .pdfViewer .page .scient-pdf-region,
+.scient-pdf-viewer-container .pdfViewer .page .scient-pdf-region-band {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--scient-region-color, var(--warning));
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--scient-region-color, var(--warning)) 14%, transparent);
+  pointer-events: none;
+}
+
+.scient-pdf-viewer-container .pdfViewer .page .scient-pdf-region[data-look="note"] {
+  border-style: dashed;
+  background: transparent;
+}
+
+.scient-pdf-viewer-container .pdfViewer .page .scient-pdf-region[data-look="draft"],
+.scient-pdf-viewer-container .pdfViewer .page .scient-pdf-region-band {
+  border-style: dashed;
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+.scient-pdf-presentation-mount[data-drawing-region] .page,
+.scient-pdf-presentation-mount[data-drawing-region] .page .textLayer :is(span, br) {
+  cursor: crosshair;
+  user-select: none;
+}
+
 .scient-pdf-viewer-container .pdfViewer .canvasWrapper .selection {
   background: color-mix(in srgb, var(--primary) 28%, transparent);
 }
@@ -347,6 +382,10 @@
   .scient-pdf-viewer-container .pdfViewer .page {
     outline: 1px solid CanvasText;
     outline-offset: -1px;
+  }
+
+  .scient-pdf-viewer-container .pdfViewer .page :is(.scient-pdf-region, .scient-pdf-region-band) {
+    border-color: Highlight;
   }
 }
 /* Controls overlay the existing thumbnail margins, so reading geometry is unchanged. */

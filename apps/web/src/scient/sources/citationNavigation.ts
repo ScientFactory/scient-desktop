@@ -3,6 +3,7 @@ import type { CitationItem } from "@scientfactory/scient-sources";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthFilesystemReadScope,
+  isScientRegionAnchor,
   type ContextMenuItem,
   type EnvironmentId,
   type ScientSourceDetailResult,
@@ -268,15 +269,16 @@ async function openEntry(
       const attachment = pdfs.find((pdf) => pdf.attachmentId === reveal.attachmentId)!;
       const descriptor = sourcePdf(request, sourceId, attachment);
       const document = pdfDocumentIdentity(descriptor);
-      if (document) {
+      const { anchor } = reveal.annotation;
+      if (document && !isScientRegionAnchor(anchor)) {
         requestPdfReveal(
           pdfRevealDocumentKey(descriptor),
           PdfTarget.make({
             version: 1,
             document,
             material: { sha256: attachment.sha256, byteLength: attachment.byteLength },
-            extractor: reveal.annotation.anchor.extractor,
-            selector: reveal.annotation.anchor.selector,
+            extractor: anchor.extractor,
+            selector: anchor.selector,
           }),
         );
       }

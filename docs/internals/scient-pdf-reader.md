@@ -141,9 +141,10 @@ neutral location format the annotation store reuses.
   not count). `PdfQuoteLayer` shows Ask in chat (or the refusal) next to the
   selection and inserts through the active composer (`ComposerHandleContext`).
   A host enables it by passing `citeThread`; a draft attachment has none. For a
-  project PDF, `PdfAnnotationLayer` (`scient/annotations`) wraps the quote
-  layer and adds Highlight and Note to the same bar, with or without a thread;
-  annotations are described in [Sources](scient-sources.md#annotations).
+  project PDF, `usePdfAnnotationLayer` (`scient/annotations`) gives the quote
+  layer Highlight and Note for the same bar, with or without a thread, and the
+  More menu Mark an area; annotations are described in
+  [Sources](scient-sources.md#annotations).
 - **Budget.** A new quote's link must fit 40,000 characters
   (`PDF_CITATION_CAPTURE_BUDGET`), or the button says "Shorten selection". Links
   are read back up to 240,000 characters, as file quotes are, so the longest

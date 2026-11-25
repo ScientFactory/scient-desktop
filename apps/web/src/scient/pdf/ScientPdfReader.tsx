@@ -7,7 +7,15 @@ import type {
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
 import { EnvironmentId, type ContextMenuItem, type ScopedThreadRef } from "@t3tools/contracts";
-import { Download, FileText, ListTree, LoaderCircle, FolderSearch, X } from "lucide-react";
+import {
+  Download,
+  FileText,
+  ListTree,
+  LoaderCircle,
+  FolderSearch,
+  SquareDashedMousePointer,
+  X,
+} from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -48,7 +56,10 @@ import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderS
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
 import { useScientPdfReader, type PdfReaderState } from "./useScientPdfReader";
 import type { ScientPdfRuntime } from "./pdfRuntime";
-import { PdfAnnotationLayer } from "../annotations/PdfAnnotationLayer";
+import {
+  PdfAnnotationActionsContext,
+  usePdfAnnotationLayer,
+} from "../annotations/PdfAnnotationLayer";
 import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
 import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealRequests";
 import { pdfEditSession } from "./pdfEditSession";
@@ -700,6 +711,14 @@ function LoadedScientPdfReader(props: {
     props.source.capabilities.canRevealSource && props.actions.revealSource !== undefined;
   const canSaveCopy = presentedSource?.source.capabilities.canSaveCopy === true;
   const hasSourceActions = canSaveCopy || canRevealSource;
+  const annotationLayer = usePdfAnnotationLayer({
+    // Structural edits publish their bytes before displaying the new page order.
+    source: edit.url ? edit.savedSource : (presentedSource?.source ?? null),
+    container,
+    runtimeRef: reader.runtimeRef,
+    ready: currentPresentation && !edit.busy,
+  });
+  const area = annotationLayer.actions?.area ?? null;
 
   return (
     <div
@@ -756,6 +775,15 @@ function LoadedScientPdfReader(props: {
         shortcutLabel={shortcutLabel}
         moreActions={
           <>
+            {area ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => area.setDrawing(true)}>
+                  <SquareDashedMousePointer />
+                  {gt("Mark an area", { $context: "menu item: draw a box on a PDF page" })}
+                </DropdownMenuItem>
+              </>
+            ) : null}
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
             {canSaveCopy ? (
               <DropdownMenuItem
@@ -782,6 +810,14 @@ function LoadedScientPdfReader(props: {
           </>
         }
       />
+      {area?.drawing ? (
+        <div className="scient-pdf-copy-notice" role="status">
+          <span>{gt("Drag across a page to mark an area.")}</span>
+          <Button variant="ghost" size="xs" onClick={() => area.setDrawing(false)}>
+            <T>Cancel</T>
+          </Button>
+        </div>
+      ) : null}
       {props.copyView ? (
         <div className="scient-pdf-copy-notice">
           <span>{props.copyView === "edited" ? gt("Edited copy") : gt("Original PDF")}</span>
@@ -986,12 +1022,7 @@ function LoadedScientPdfReader(props: {
           >
             <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
-          <PdfAnnotationLayer
-            source={edit.savedSource ?? presentedSource?.source ?? null}
-            container={container}
-            runtimeRef={reader.runtimeRef}
-            ready={currentPresentation && !edit.busy}
-          >
+          <PdfAnnotationActionsContext value={annotationLayer.actions}>
             <PdfQuoteLayer
               container={container}
               runtimeRef={reader.runtimeRef}
@@ -1001,7 +1032,8 @@ function LoadedScientPdfReader(props: {
               citeThread={props.citeThread}
               revealOwner={props.revealOwner}
             />
-          </PdfAnnotationLayer>
+          </PdfAnnotationActionsContext>
+          {annotationLayer.overlay}
           {props.sourceNotice || state.updateError ? (
             <div className="scient-pdf-update-notice" role="status">
               <span>{state.updateError ?? props.sourceNotice}</span>

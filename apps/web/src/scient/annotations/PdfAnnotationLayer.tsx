@@ -1,10 +1,13 @@
 import { T, useGT } from "gt-react";
 import type { PdfSourceDescriptor, PdfTarget } from "@scientfactory/document-artifacts";
 import {
+  isScientRegionAnchor,
+  scientAnnotationPages,
   scientAnnotationQuote,
   type ScientAnnotationAlternative,
   type ScientPdfAnnotation,
   type ScientPdfAnnotationAnchor,
+  type ScientPdfTextAnchor,
 } from "@t3tools/contracts";
 import {
   createContext,
@@ -32,39 +35,53 @@ import {
 import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { quoteInDocument } from "./documentQuoteTargets";
 import { paintPdfAnnotations, type PdfAnnotationPainter } from "./pdfAnnotationPaint";
+import { startPdfRegionDrawing } from "./pdfRegionDrawing";
 import type { QuoteCitation, QuoteCitationChoice } from "./quoteCitation";
 import { quotePageLabels } from "./quoteFormat";
 import { useDocumentAnnotations } from "./useDocumentAnnotations";
 
-/** What a text selection in the reader can do with annotations, when its PDF can hold them. */
+/** What the reader can do with annotations, when its PDF can hold them and they can change. */
 export interface PdfAnnotationActions {
   readonly highlight: (target: PdfTarget) => void;
   readonly note: (target: PdfTarget, bounds: DOMRect) => void;
+  /** Drawing a box on a page, which needs no text. */
+  readonly area: {
+    readonly drawing: boolean;
+    readonly setDrawing: (drawing: boolean) => void;
+  };
 }
 
 export const PdfAnnotationActionsContext = createContext<PdfAnnotationActions | null>(null);
 
 type OpenNote =
-  | { readonly _tag: "draft"; readonly anchor: ScientPdfAnnotationAnchor; readonly bounds: DOMRect }
+  | {
+      readonly _tag: "draft";
+      readonly pdfKey: string;
+      readonly anchor: ScientPdfAnnotationAnchor;
+      readonly bounds: DOMRect;
+    }
   | { readonly _tag: "saved"; readonly annotationId: string; readonly bounds: DOMRect };
 
-function anchorOf(target: PdfTarget): ScientPdfAnnotationAnchor {
+function anchorOf(target: PdfTarget): ScientPdfTextAnchor {
   return { extractor: target.extractor, selector: target.selector };
 }
 
 /**
- * Highlights and notes in a PDF reader: paints the saved ones on the pages,
- * opens one when it is clicked, and gives the selection bar Highlight and Note.
+ * Highlights, notes and marked areas in a PDF reader: paints the saved ones on the pages,
+ * opens one when it is clicked, and gives the selection bar Highlight and Note. The reader
+ * provides `actions` through `PdfAnnotationActionsContext` and draws `overlay`.
  */
-export function PdfAnnotationLayer(props: {
+export function usePdfAnnotationLayer(props: {
   readonly source: PdfSourceDescriptor | null;
   readonly container: HTMLElement | null;
   readonly runtimeRef: RefObject<ScientPdfRuntime | null>;
   readonly ready: boolean;
-  readonly children: ReactNode;
-}) {
+}): { readonly actions: PdfAnnotationActions | null; readonly overlay: ReactNode } {
   const { container, ready, runtimeRef } = props;
-  const { pdf, annotations, citation, alternatives } = useDocumentAnnotations(props.source);
+  const { pdf, annotations, citation, alternatives } = useDocumentAnnotations(
+    ready ? props.source : null,
+  );
+  const pdfKey = pdf && annotatedPdfKey(pdf);
   const canChange = useCanChangeLibrary(pdf?.environmentId ?? null);
   const fileName = props.source?.fileName ?? "document.pdf";
   const painterRef = useRef<PdfAnnotationPainter | null>(null);
@@ -73,7 +90,12 @@ export function PdfAnnotationLayer(props: {
   useLayoutEffect(() => {
     annotationsRef.current = annotations;
   });
-  const [open, setOpen] = useState<OpenNote | null>(null);
+  const [requestedNote, setOpen] = useState<OpenNote | null>(null);
+  const open =
+    requestedNote?._tag === "draft" && requestedNote.pdfKey !== pdfKey ? null : requestedNote;
+  const [drawingPdfKey, setDrawingPdfKey] = useState<string | null>(null);
+  const canAnnotate = pdf !== null && canChange;
+  const drawing = drawingPdfKey === pdfKey && canAnnotate && ready;
   // The source the writer chose to cite for this PDF, kept while the reader is open.
   const [chosen, setChosen] = useState<{
     readonly pdfKey: string;
@@ -92,6 +114,7 @@ export function PdfAnnotationLayer(props: {
     painter.update(annotationsRef.current);
     painterRef.current = painter;
     const openAt = (event: MouseEvent) => {
+      if (container.dataset.drawingRegion !== undefined) return;
       if (event.button !== 0 || !document.getSelection()?.isCollapsed) return;
       const hit = painter.annotationAt(event.clientX, event.clientY);
       if (!hit) return;
@@ -111,13 +134,41 @@ export function PdfAnnotationLayer(props: {
     painterRef.current?.update(annotations);
   }, [annotations]);
 
+  const draftArea =
+    open?._tag === "draft" && isScientRegionAnchor(open.anchor) ? open.anchor : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shows the box waiting for its note on the pdf.js page
+  useEffect(() => {
+    painterRef.current?.showDraft(draftArea);
+  }, [draftArea]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the pointer listeners on the pdf.js pages while a box is drawn
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!drawing || !pdfKey || !container || !runtime) return;
+    return startPdfRegionDrawing(runtime, container, {
+      onDrawn: (anchor, bounds) => {
+        setDrawingPdfKey(null);
+        setOpen({ _tag: "draft", pdfKey, anchor, bounds });
+      },
+      onCancel: () => setDrawingPdfKey(null),
+    });
+  }, [container, drawing, pdfKey, runtimeRef]);
+
   const actions: PdfAnnotationActions | null =
-    pdf && canChange
+    pdf && pdfKey && canChange
       ? {
           highlight: (target) => {
             void createAnnotation(pdf, { anchor: anchorOf(target), highlighted: true, note: "" });
           },
-          note: (target, bounds) => setOpen({ _tag: "draft", anchor: anchorOf(target), bounds }),
+          note: (target, bounds) =>
+            setOpen({ _tag: "draft", pdfKey, anchor: anchorOf(target), bounds }),
+          area: {
+            drawing,
+            setDrawing: (next) => {
+              setOpen(null);
+              setDrawingPdfKey(next ? pdfKey : null);
+            },
+          },
         }
       : null;
 
@@ -127,10 +178,10 @@ export function PdfAnnotationLayer(props: {
       : null;
   const showing = open !== null && (open._tag === "draft" || saved !== null);
 
-  return (
-    <PdfAnnotationActionsContext value={actions}>
-      {props.children}
-      {pdf && showing ? (
+  return {
+    actions,
+    overlay:
+      pdf && showing ? (
         <AnnotationNotePopover
           key={open._tag === "draft" ? "draft" : open.annotationId}
           pdf={pdf}
@@ -153,7 +204,7 @@ export function PdfAnnotationLayer(props: {
             setChosen({ pdfKey: annotatedPdfKey(pdf), sourceId: choice.sourceId })
           }
           onQuote={(annotation, citationKey) => {
-            const pages = annotation.anchor.selector.pages.map((page) => page.page);
+            const pages = scientAnnotationPages(annotation);
             void documentPageLabels(runtimeRef.current).then((labels) =>
               quoteInDocument(pdf.environmentId, pdf.root, {
                 quote: scientAnnotationQuote(annotation),
@@ -166,9 +217,8 @@ export function PdfAnnotationLayer(props: {
           }}
           onClose={() => setOpen(null)}
         />
-      ) : null}
-    </PdfAnnotationActionsContext>
-  );
+      ) : null,
+  };
 }
 
 /** The PDF's printed page labels, or null when it defines none or they cannot be read. */
@@ -208,7 +258,12 @@ function AnnotationNotePopover(props: {
     if (!save || props.readOnly) return;
     const text = note.trim().length === 0 ? "" : note;
     if (draft) {
-      if (text) void createAnnotation(pdf, { anchor: draft, highlighted: false, note: text });
+      // A box is kept without a note; a text note without words is nothing.
+      if (isScientRegionAnchor(draft)) {
+        void createAnnotation(pdf, { anchor: draft, highlighted: text === "", note: text });
+      } else if (text) {
+        void createAnnotation(pdf, { anchor: draft, highlighted: false, note: text });
+      }
       return;
     }
     if (!annotation || text === annotation.note) return;
@@ -362,7 +417,7 @@ function AnnotationNotePopover(props: {
                   <span />
                 )}
                 <div className="flex items-center gap-1">
-                  {annotation ? (
+                  {annotation && !isScientRegionAnchor(annotation.anchor) ? (
                     <Button type="button" variant="ghost" size="compact" onClick={quoteNow}>
                       <T>Quote in my document</T>
                     </Button>

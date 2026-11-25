@@ -1,6 +1,8 @@
 import { PDF_TEXT_PROFILE } from "@scientfactory/document-artifacts";
+import { degrees, PDFDocument, StandardFonts } from "pdf-lib";
 import {
   EnvironmentId,
+  isScientRegionAnchor,
   type ScientAnnotationAlternative,
   type ScientAnnotationMutationRequest,
   type ScientAnnotationMutationResult,
@@ -33,7 +35,8 @@ const client = vi.hoisted(() => ({
   readSource: vi.fn(),
   mutate: vi.fn(),
 }));
-vi.mock("../sources/sourcesCommands", () => ({ useCanChangeLibrary: () => true }));
+const library = vi.hoisted(() => ({ canChange: true }));
+vi.mock("../sources/sourcesCommands", () => ({ useCanChangeLibrary: () => library.canChange }));
 vi.mock("./client", () => ({
   readDocumentAnnotations: client.read,
   readSourceAnnotations: client.readSource,
@@ -159,6 +162,7 @@ async function setup(
   initial: ReadonlyArray<ScientPdfAnnotation>,
   alternatives: ReadonlyArray<ScientAnnotationAlternative> = [],
   sources: DocumentSources = [],
+  bytes: Uint8Array = pdfBytes([["Introduction"], [`${QUOTE} as the inverse square.`]]),
 ) {
   serve(initial, alternatives, sources);
   const stack = new AsyncDisposableStack();
@@ -186,10 +190,7 @@ async function setup(
       <div style={{ width: "min(800px, 100vw)", height: "100dvh", display: "flex" }}>
         <ScientPdfReader
           source={source}
-          resolver={blobResolver(
-            pdfBytes([["Introduction"], [`${QUOTE} as the inverse square.`]]),
-            urls,
-          )}
+          resolver={blobResolver(bytes, urls)}
           readerScope={`pdf-annotation-test:${randomUUID()}`}
         />
       </div>,
@@ -214,7 +215,9 @@ describe("PDF annotations in the reader", () => {
     const request = client.mutate.mock.calls[0]![1] as ScientAnnotationMutationRequest;
     expect(request).toMatchObject({ relativePath: "papers/paper.pdf", material });
     expect(request.command).toMatchObject({ action: "create", highlighted: true, note: "" });
-    if (request.command.action !== "create") throw new Error("Expected a create");
+    if (request.command.action !== "create" || isScientRegionAnchor(request.command.anchor)) {
+      throw new Error("Expected a text create");
+    }
     expect(request.command.anchor.selector.pages.map((p) => [p.page, p.quote])).toEqual([
       [2, QUOTE],
     ]);
@@ -377,5 +380,170 @@ describe("PDF annotations in the reader", () => {
     await userEvent.click(quote);
     await vi.waitFor(() => expect(copied).toHaveBeenCalledTimes(2));
     expect(copied.mock.calls[1]![0]).toContain("[@doe2024b, p. 2]");
+  });
+});
+
+function savedArea(rect: readonly [number, number, number, number]): ScientPdfAnnotation {
+  return {
+    ...savedNote("Axes swapped"),
+    annotationId: "ann_savedarea1",
+    anchor: {
+      selector: {
+        type: "region",
+        pages: [{ page: 1, viewBox: [0, 0, 612, 792], rotation: 90, userUnit: 1, rect }],
+      },
+    },
+  };
+}
+
+/** A first page the PDF itself turns a quarter, with no text, before the quoted page. */
+async function turnedFirstPage(): Promise<Uint8Array> {
+  const document = await PDFDocument.create();
+  document.addPage([612, 792]).setRotation(degrees(90));
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  document.addPage([612, 792]).drawText(`${QUOTE} as the inverse square.`, { x: 72, y: 700, font });
+  return document.save();
+}
+
+function pageElement(container: HTMLElement, page: number): HTMLElement {
+  return container.querySelector<HTMLElement>(`.page[data-page-number="${page}"]`)!;
+}
+
+/** Where an element sits on its page, in fractions of the page's content box. */
+function placeOnPage(page: HTMLElement, element: Element) {
+  const pageBox = page.getBoundingClientRect();
+  const box = element.getBoundingClientRect();
+  const left = pageBox.left + page.clientLeft;
+  const top = pageBox.top + page.clientTop;
+  return {
+    left: (box.left - left) / page.clientWidth,
+    top: (box.top - top) / page.clientHeight,
+    width: box.width / page.clientWidth,
+    height: box.height / page.clientHeight,
+  };
+}
+
+function expectPlace(actual: ReturnType<typeof placeOnPage>, expected: typeof actual) {
+  for (const key of ["left", "top", "width", "height"] as const) {
+    expect(Math.abs(actual[key] - expected[key])).toBeLessThan(0.01);
+  }
+}
+
+function drag(page: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }) {
+  const box = page.getBoundingClientRect();
+  const at = (point: { x: number; y: number }) => ({
+    clientX: box.left + page.clientLeft + point.x * page.clientWidth,
+    clientY: box.top + page.clientTop + point.y * page.clientHeight,
+  });
+  const init = { bubbles: true, cancelable: true, button: 0, pointerId: 7, isPrimary: true };
+  page.dispatchEvent(new PointerEvent("pointerdown", { ...init, ...at(from) }));
+  page.dispatchEvent(new PointerEvent("pointermove", { ...init, ...at(to) }));
+  page.dispatchEvent(new PointerEvent("pointerup", { ...init, ...at(to) }));
+  page.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, ...at(to) }));
+}
+
+async function openMoreMenu() {
+  await userEvent.click(page.getByRole("button", { name: "More PDF actions" }));
+}
+
+describe("Marked areas in the reader", () => {
+  it("marks an area on a page with no text and saves its note", async () => {
+    await using fixture = await setup(
+      [],
+      [],
+      [],
+      pdfBytes([[], [`${QUOTE} as the inverse square.`]]),
+    );
+    using _capture = vi
+      .spyOn(HTMLElement.prototype, "setPointerCapture")
+      .mockImplementation(() => {});
+    const hint = page.getByText("Drag across a page to mark an area.");
+
+    // Escape leaves drawing without marking anything.
+    await openMoreMenu();
+    await userEvent.click(page.getByRole("menuitem", { name: "Mark an area" }));
+    await expect.element(hint).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(hint).not.toBeInTheDocument();
+
+    await openMoreMenu();
+    await userEvent.click(page.getByRole("menuitem", { name: "Mark an area" }));
+    await expect.element(hint).toBeVisible();
+    const first = pageElement(fixture.container, 1);
+    await act(async () => drag(first, { x: 0.25, y: 0.25 }, { x: 0.75, y: 0.5 }));
+    await expect.element(hint).not.toBeInTheDocument();
+    expect(document.getSelection()?.isCollapsed ?? true).toBe(true);
+
+    const field = page.getByRole("textbox", { name: "Note" });
+    await expect.element(field).toBeVisible();
+    await userEvent.type(field, "Figure 1 axes are swapped");
+    await userEvent.click(page.getByRole("button", { name: "Done" }));
+
+    expect(client.mutate).toHaveBeenCalledTimes(1);
+    const { command } = client.mutate.mock.calls[0]![1] as ScientAnnotationMutationRequest;
+    if (command.action !== "create" || !isScientRegionAnchor(command.anchor)) {
+      throw new Error("Expected an area to be created");
+    }
+    expect(command).toMatchObject({ highlighted: false, note: "Figure 1 axes are swapped" });
+    const [selected] = command.anchor.selector.pages;
+    expect(selected).toMatchObject({ page: 1, viewBox: [0, 0, 612, 792], rotation: 0 });
+    // A quarter of the way in from the left and top, to three quarters across and half way down.
+    [153, 396, 459, 594].forEach((value, index) =>
+      expect(Math.abs(selected.rect[index]! - value)).toBeLessThan(2),
+    );
+
+    await vi.waitFor(() => {
+      const box = first.querySelector(".scient-pdf-region[data-annotation-id]");
+      expect(box?.getAttribute("data-look")).toBe("note");
+      expectPlace(placeOnPage(first, box!), { left: 0.25, top: 0.25, width: 0.5, height: 0.25 });
+    });
+  });
+
+  it("shows a saved area where it was drawn on a turned page, through zoom, and read-only", async () => {
+    library.canChange = false;
+    using _restore = { [Symbol.dispose]: () => (library.canChange = true) };
+    const area = savedArea([100, 200, 300, 500]);
+    await using fixture = await setup([area], [], [], await turnedFirstPage());
+    const first = pageElement(fixture.container, 1);
+    // The page is turned, so its PDF y runs left to right and its x top to bottom.
+    const expected = { left: 200 / 792, top: 100 / 612, width: 300 / 792, height: 200 / 612 };
+    const box = () =>
+      first.querySelector(`.scient-pdf-region[data-annotation-id="${area.annotationId}"]`);
+    await vi.waitFor(() => expectPlace(placeOnPage(first, box()!), expected));
+
+    const width = first.clientWidth;
+    await userEvent.click(page.getByRole("button", { name: /^Zoom in/ }));
+    await vi.waitFor(() => {
+      expect(first.clientWidth).toBeGreaterThan(width);
+      expectPlace(placeOnPage(first, box()!), expected);
+    });
+
+    const center = box()!.getBoundingClientRect();
+    await act(async () =>
+      first.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          button: 0,
+          clientX: center.left + center.width / 2,
+          clientY: center.top + center.height / 2,
+        }),
+      ),
+    );
+    const field = page.getByRole("textbox", { name: "Note" });
+    await expect.element(field).toHaveValue("Axes swapped");
+    await expect.element(field).toHaveAttribute("readonly");
+    await expect.element(page.getByRole("button", { name: "Remove" })).toBeDisabled();
+    await expect
+      .element(page.getByRole("button", { name: "Quote in my document" }))
+      .not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    await openMoreMenu();
+    await expect.element(page.getByRole("menu")).toBeVisible();
+    await expect
+      .element(page.getByRole("menuitem", { name: "Mark an area" }))
+      .not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(client.mutate).not.toHaveBeenCalled();
   });
 });

@@ -1,12 +1,15 @@
 import { PDF_TEXT_PROFILE } from "@scientfactory/document-artifacts";
-import type { ScientPdfAnnotation } from "@t3tools/contracts";
+import type { ScientPdfAnnotation, ScientPdfTextAnchor } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { annotationRangeOnPage } from "./annotationPlacement";
 
 const storedText = "Intro. Sleep doubled recall. Later, sleep doubled recall again.";
 
-function annotation(quote: string, at: number): ScientPdfAnnotation {
+function annotation(
+  quote: string,
+  at: number,
+): ScientPdfAnnotation & { readonly anchor: ScientPdfTextAnchor } {
   return {
     annotationId: "ann_placement1",
     revision: 1,
@@ -78,6 +81,21 @@ describe("annotationRangeOnPage", () => {
       start: text.lastIndexOf("sleep doubled recall"),
       end: text.lastIndexOf("sleep doubled recall") + "sleep doubled recall".length,
     });
+  });
+
+  it("never places a marked area on the page's text", () => {
+    const area: ScientPdfAnnotation = {
+      ...second,
+      anchor: {
+        selector: {
+          type: "region",
+          pages: [
+            { page: 3, viewBox: [0, 0, 612, 792], rotation: 0, userUnit: 1, rect: [0, 0, 9, 9] },
+          ],
+        },
+      },
+    };
+    expect(annotationRangeOnPage(area, 3, storedText)).toBeNull();
   });
 
   it("shows nothing at the stored offsets when the quote and its context both repeat", () => {
