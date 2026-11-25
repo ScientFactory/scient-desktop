@@ -19,6 +19,13 @@ import { RateLimited } from "./job.ts";
 
 const isLanguage = Schema.is(VoiceTranscriptionLanguage);
 
+function chatGptLanguageHint(language: string | undefined): string | undefined {
+  if (language === "fil") return "tl";
+  if (language === "jw") return "jv";
+  // ChatGPT accepts ISO 639-1 hints. Let it detect languages without one.
+  return isLanguage(language) && language.length === 2 ? language : undefined;
+}
+
 export const dictateWithChatGptInstance = Effect.fn("Speech.dictateWithChatGptInstance")(function* (
   instances: Pick<ProviderInstances.ProviderInstanceRegistry["Service"], "getInstance">,
   id: ProviderInstanceId,
@@ -28,7 +35,7 @@ export const dictateWithChatGptInstance = Effect.fn("Speech.dictateWithChatGptIn
   const instance = yield* instances.getInstance(id);
   if (!instance?.enabled || !instance.voiceDictation)
     return yield* new ChatGptDictationError({ reason: "agent-unavailable" });
-  return yield* instance.voiceDictation.dictate({ wav, ...(language ? { language } : {}) });
+  return yield* instance.voiceDictation.dictate({ wav, language: chatGptLanguageHint(language) });
 });
 
 export const openChatGptRecognizer = Effect.fn("Transcription.openChatGptRecognizer")(function* <E>(
@@ -41,15 +48,14 @@ export const openChatGptRecognizer = Effect.fn("Transcription.openChatGptRecogni
     Effect.mapError(() => new ChatGptDictationError({ reason: "agent-unavailable" })),
   );
   const adapter = makeChatGptDictationThroughCodex(Effect.succeed(connection), http);
+  const languageHint = chatGptLanguageHint(language);
   let uploaded = false;
   return Effect.fn("Transcription.recognizeChatGpt")(function* (pcm: Float32Array) {
     if (uploaded) yield* Effect.sleep("1 second");
     uploaded = true;
     const wav = new Uint8Array(wave(pcm));
     for (const delay of [5_000, 15_000, 0]) {
-      const outcome = yield* adapter
-        .dictate({ wav, ...(isLanguage(language) ? { language } : {}) })
-        .pipe(Effect.result);
+      const outcome = yield* adapter.dictate({ wav, language: languageHint }).pipe(Effect.result);
       if (outcome._tag === "Success") return [{ text: outcome.success.text }];
       if (outcome.failure.reason !== "rate-limited") return yield* outcome.failure;
       if (!delay) return yield* new RateLimited();

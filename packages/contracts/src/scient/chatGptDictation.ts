@@ -6,7 +6,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderInstanceId } from "../providerInstance.ts";
-import { VOICE_AUDIO_BASE64_MAX_CHARS, VoiceTranscriptionLanguage } from "../voice.ts";
+import { VOICE_AUDIO_BASE64_MAX_CHARS, voiceLanguageRequestSchemaFields } from "../voice.ts";
 
 /**
  * Dictation with ChatGPT: a provider instance (Scient Agent or Codex) sends the recording to
@@ -17,7 +17,7 @@ export const ChatGptDictationInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   /** A 16-bit mono WAV recording. */
   audioBase64: TrimmedNonEmptyString.check(Schema.isMaxLength(VOICE_AUDIO_BASE64_MAX_CHARS)),
-  language: Schema.optionalKey(VoiceTranscriptionLanguage),
+  language: voiceLanguageRequestSchemaFields.language,
 });
 export type ChatGptDictationInput = typeof ChatGptDictationInput.Type;
 
@@ -117,7 +117,7 @@ export class DictationError extends Schema.TaggedError<DictationError>()("Dictat
 
 const DictationInput = Schema.Struct({
   audioBase64: ChatGptDictationInput.fields.audioBase64,
-  language: ChatGptDictationInput.fields.language,
+  ...voiceLanguageRequestSchemaFields,
   selection: DictationSelection,
   hints: Schema.optionalKey(DictationRecognitionHints),
   silenceFiltering: Schema.optionalKey(Schema.Boolean),

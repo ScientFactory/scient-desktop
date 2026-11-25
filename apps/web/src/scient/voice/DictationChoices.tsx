@@ -26,7 +26,7 @@ export function DictationChoices({
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
   const localModel = useClientSettings((settings) => settings.voiceCatalogModelId);
   const cloud = useClientSettings((settings) => settings.voiceCloudSelection);
-  const { choices, choose } = useCloudRecordingChoices(environmentId);
+  const { choices, choose, loading: cloudLoading } = useCloudRecordingChoices(environmentId);
   const localModels = catalog.models.filter((model) => model.state === "installed");
   const cloudEngines = choices.filter((choice) => !choice.reconnect && !choice.needsModel);
   const value =
@@ -50,14 +50,15 @@ export function DictationChoices({
     { value: "off", label: gt("Off", { $context: "dictation engine" }) },
   ];
   if (!options.some((option) => option.value === value)) {
-    options.push({
-      value,
-      label:
-        engine === "local" && localModel === null
-          ? gt("Local model")
-          : gt("Selected engine unavailable"),
-      disabled: true,
-    });
+    const loading =
+      engine === "local" ? catalog.status === null : engine === "cloud" && cloudLoading;
+    const label =
+      engine === "local" && localModel === null
+        ? gt("Local model")
+        : loading
+          ? gt("Loading…")
+          : gt("Selected engine unavailable");
+    options.push({ value, label, disabled: true });
   }
 
   const selectEngine = (next: string) => {

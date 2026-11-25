@@ -672,7 +672,11 @@ it("offers ready local, cloud and ChatGPT recording routes and keeps downloadabl
 
 it("shares searchable language menus, with the search beside the trigger on either side", async () => {
   const previous = getClientSettings();
-  __setClientSettingsForTests({ ...previous, voiceLanguagePreference: "auto" });
+  __setClientSettingsForTests({
+    ...previous,
+    voiceLanguagePreference: "auto",
+    voiceExtendedLanguagePreference: null,
+  });
   try {
     await page.viewport(1000, 850);
     await using screen = await render(<ScientVoiceSettingsPanel />);
@@ -709,7 +713,8 @@ it("shares searchable language menus, with the search beside the trigger on eith
     await expect.element(page.getByRole("button", { name: "Tibetan", exact: true })).toBeVisible();
     await userEvent.keyboard("{Enter}");
     await expect.element(voice).toHaveTextContent("Tibetan");
-    expect(getClientSettings().voiceLanguagePreference).toBe("bo");
+    expect(getClientSettings().voiceLanguagePreference).toBe("auto");
+    expect(getClientSettings().voiceExtendedLanguagePreference).toBe("bo");
 
     await comparison.element().scrollIntoView({ block: "end" });
     await comparison.click();

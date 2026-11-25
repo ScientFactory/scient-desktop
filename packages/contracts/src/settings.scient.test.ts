@@ -1,3 +1,4 @@
+import { LegacyVoiceLanguagePreference } from "./voice.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { ComputeLanguageId } from "@scientfactory/compute";
@@ -147,6 +148,24 @@ describe("ClientSettings voice language", () => {
     expect(
       decodeClientSettingsPatch({ voiceLanguagePreference: "he" }).voiceLanguagePreference,
     ).toBe("he");
+  });
+
+  it("stores new languages alongside an automatic fallback for older apps", () => {
+    const patch = decodeClientSettingsPatch({
+      voiceLanguagePreference: "auto",
+      voiceExtendedLanguagePreference: "yue",
+    });
+    const readLegacy = Schema.decodeUnknownSync(
+      Schema.Struct({ voiceLanguagePreference: LegacyVoiceLanguagePreference }),
+    );
+    expect(decodeClientSettings(patch).voiceExtendedLanguagePreference).toBe("yue");
+    expect(readLegacy(patch)).toEqual({ voiceLanguagePreference: "auto" });
+    expect(
+      decodeClientSettingsPatch({
+        voiceLanguagePreference: "he",
+        voiceExtendedLanguagePreference: null,
+      }).voiceExtendedLanguagePreference,
+    ).toBeNull();
   });
 
   it("rejects unsupported language values", () => {

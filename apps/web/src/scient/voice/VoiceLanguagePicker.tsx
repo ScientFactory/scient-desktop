@@ -30,8 +30,10 @@ export function VoiceLanguagePicker<Language extends string>({
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
   const term = query.trim().toLocaleLowerCase();
+  const labelForLanguage = (code: string) =>
+    code === "tl" ? gt("Tagalog") : languageLabel(code, locale);
   const options = [...new Set(languages)]
-    .map((code) => ({ code, name: languageLabel(code, locale) }))
+    .map((code) => ({ code, name: labelForLanguage(code) }))
     .sort((a, b) => a.name.localeCompare(b.name, locale));
   const primary = PRIMARY_LANGUAGES.flatMap((code) =>
     options.filter((option) => option.code === code),
@@ -86,7 +88,7 @@ export function VoiceLanguagePicker<Language extends string>({
           ? special.clearOnly
             ? label
             : special.label
-          : languageLabel(value, locale)}
+          : labelForLanguage(value)}
         <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
       </PopoverTrigger>
       <PopoverPopup

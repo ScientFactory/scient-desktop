@@ -127,6 +127,47 @@ export const VOICE_TRANSCRIPTION_LANGUAGE_CODES = Object.keys(
 export const VoiceTranscriptionLanguage = Schema.Literals(VOICE_TRANSCRIPTION_LANGUAGE_CODES);
 export type VoiceTranscriptionLanguage = typeof VoiceTranscriptionLanguage.Type;
 
+// Keep these codes on the original wire field so older environments can decode dictation.
+const LEGACY_VOICE_LANGUAGES = [
+  "ar",
+  "de",
+  "el",
+  "en",
+  "es",
+  "fa",
+  "fr",
+  "he",
+  "hi",
+  "id",
+  "it",
+  "ja",
+  "ko",
+  "nl",
+  "pl",
+  "pt",
+  "ro",
+  "ru",
+  "tr",
+  "uk",
+  "vi",
+  "zh",
+] as const;
+const LegacyVoiceTranscriptionLanguage = Schema.Literals(LEGACY_VOICE_LANGUAGES);
+const isLegacyVoiceTranscriptionLanguage = Schema.is(LegacyVoiceTranscriptionLanguage);
+export const LegacyVoiceLanguagePreference = Schema.Literals(["auto", ...LEGACY_VOICE_LANGUAGES]);
+
+export const voiceLanguageRequestSchemaFields = {
+  language: Schema.optionalKey(LegacyVoiceTranscriptionLanguage),
+  extendedLanguage: Schema.optionalKey(VoiceTranscriptionLanguage),
+};
+
+export function voiceLanguageRequestFields(language?: VoiceTranscriptionLanguage) {
+  if (!language) return {};
+  return isLegacyVoiceTranscriptionLanguage(language)
+    ? { language }
+    : { extendedLanguage: language };
+}
+
 /** Saved preference. `auto` uses automatic language detection. */
 export const VoiceLanguagePreference = Schema.Literals([
   "auto",
@@ -151,7 +192,7 @@ export type VoiceTranscriptCorrectionText = typeof VoiceTranscriptCorrectionText
 export const VoiceTranscriptCorrectionRequest = Schema.Struct({
   hints: Schema.optionalKey(DictationRecognitionHints),
   transcript: VoiceTranscriptCorrectionText,
-  language: Schema.optionalKey(VoiceTranscriptionLanguage),
+  ...voiceLanguageRequestSchemaFields,
 });
 export type VoiceTranscriptCorrectionRequest = typeof VoiceTranscriptCorrectionRequest.Type;
 

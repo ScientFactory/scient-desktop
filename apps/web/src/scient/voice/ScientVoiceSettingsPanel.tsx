@@ -22,6 +22,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   AuthSettingsWriteScope,
+  voiceLanguageRequestFields,
   type EnvironmentId,
   VOICE_TRANSCRIPTION_LANGUAGE_CODES,
   ProviderInstanceId,
@@ -106,7 +107,9 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
-  const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const languagePreference = useClientSettings(
+    (settings) => settings.voiceExtendedLanguagePreference ?? settings.voiceLanguagePreference,
+  );
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
   const localDictation = engine === "local" || engine === "auto";
   const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
@@ -186,7 +189,15 @@ export function ScientVoiceSettingsPanel(): ReactNode {
               languages={VOICE_TRANSCRIPTION_LANGUAGE_CODES}
               special={{ value: "auto", label: gt("Automatic"), recommended: true }}
               value={languagePreference}
-              onChange={(language) => updateClientSettings({ voiceLanguagePreference: language })}
+              onChange={(language) => {
+                const fields = voiceLanguageRequestFields(
+                  language === "auto" ? undefined : language,
+                );
+                return updateClientSettings({
+                  voiceLanguagePreference: fields.language ?? "auto",
+                  voiceExtendedLanguagePreference: fields.extendedLanguage ?? null,
+                });
+              }}
             />
           }
         />

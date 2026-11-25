@@ -31,7 +31,9 @@ export function ScientVoiceCommentControl({
   readonly className?: string;
 }): ReactNode {
   const gt = useGT();
-  const language = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const language = useClientSettings(
+    (settings) => settings.voiceExtendedLanguagePreference ?? settings.voiceLanguagePreference,
+  );
   const catalog = useCatalogDictation(language);
   const client = catalog.setup;
   const [ready, setReady] = useState(false);

@@ -7,6 +7,7 @@ import {
   VoiceTranscribeRequest,
   VoiceCancelTranscriptionRequest,
   VoiceTranscriptCorrectionRequest,
+  voiceLanguageRequestFields,
 } from "./voice.ts";
 
 const decodeVoiceRequest = Schema.decodeUnknownSync(VoiceTranscribeRequest);
@@ -63,6 +64,22 @@ describe("VoiceTranscriptCorrectionRequest", () => {
         transcript: "A".repeat(VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS + 1),
       }),
     ).toThrow();
+  });
+
+  it("sends new language hints in a field older environments can ignore", () => {
+    const { transcript, language } = VoiceTranscriptCorrectionRequest.fields;
+    const decodeLegacy = Schema.decodeUnknownSync(Schema.Struct({ transcript, language }));
+    const request = { transcript: "kumusta", ...voiceLanguageRequestFields("fil") };
+
+    expect(decodeCorrectionRequest(request)).toEqual({
+      transcript: "kumusta",
+      extendedLanguage: "fil",
+    });
+    expect(decodeLegacy(request)).toEqual({ transcript: "kumusta" });
+    expect(decodeLegacy({ ...request, ...voiceLanguageRequestFields("he") })).toEqual({
+      transcript: "kumusta",
+      language: "he",
+    });
   });
 
   it("accepts only supported explicit language hints", () => {

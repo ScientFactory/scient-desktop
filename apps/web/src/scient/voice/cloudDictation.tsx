@@ -294,16 +294,22 @@ export function useCloudDictation() {
 export function useCloudRecordingChoices(environmentId: EnvironmentId) {
   const list = useStableCallback(useAtomCommand(listChoices, { reportFailure: false }));
   const choose = useAtomCommand(chooseCloud, { reportFailure: false });
-  const [choices, setChoices] = useState<readonly CloudDictationChoice[]>([]);
+  const [inventory, setInventory] = useState<{
+    environmentId: EnvironmentId;
+    choices: readonly CloudDictationChoice[];
+  } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the server inventory after engine changes
   useEffect(() => {
     const controller = new AbortController();
     void list({ environmentId, input: undefined }, { signal: controller.signal }).then((result) => {
-      if (!controller.signal.aborted && result._tag === "Success") setChoices(result.value);
+      if (!controller.signal.aborted) {
+        setInventory({ environmentId, choices: result._tag === "Success" ? result.value : [] });
+      }
     });
     return () => controller.abort();
   }, [environmentId, list]);
-  return { choices, choose };
+  const current = inventory?.environmentId === environmentId ? inventory : null;
+  return { choices: current?.choices ?? [], loading: current === null, choose };
 }
 
 export function CloudDictationSettings({

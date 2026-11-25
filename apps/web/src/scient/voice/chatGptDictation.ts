@@ -12,6 +12,7 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerProvider,
+  voiceLanguageRequestFields,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -103,7 +104,7 @@ export function makeDictationTranscriber<E>(
           ...(selection.kind !== "chatgpt" && request.hints?.length
             ? { hints: request.hints }
             : {}),
-          ...(request.language ? { language: request.language } : {}),
+          ...voiceLanguageRequestFields(request.language),
         },
       };
       const result = signal ? await run(target, { signal }) : await run(target);
