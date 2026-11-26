@@ -1,6 +1,9 @@
 import { PreviewError, previewFailure } from "./previewFailure";
 
 const MAX_PIXELS = 32_000_000;
+// SCIENT-FORK:START — attachment decoding accepts up to 64 MP HEIF photos (matching imageCompression.ts).
+const MAX_BITMAP_PIXELS = 64_000_000;
+// SCIENT-FORK:END
 
 function validateTiffMetadata(bytes: ArrayBuffer) {
   const view = new DataView(bytes);
@@ -43,12 +46,12 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
   inspect(view.getUint32(4, littleEndian), 0);
 }
 
-function dimensions(width: number, height: number) {
-  if (!(width > 0 && height > 0) || width > 16384 || height > 16384 || width > MAX_PIXELS / height)
+function dimensions(width: number, height: number, maxPixels = MAX_PIXELS) {
+  if (!(width > 0 && height > 0) || width > 16384 || height > 16384 || width > maxPixels / height)
     throw new PreviewError({ code: "image-too-large" });
 }
 
-function validateHeif(bytes: ArrayBuffer) {
+function validateHeif(bytes: ArrayBuffer, maxPixels = MAX_PIXELS) {
   const view = new DataView(bytes);
   let found = false;
   let count = 0;
@@ -72,7 +75,11 @@ function validateHeif(bytes: ArrayBuffer) {
       const type = view.getUint32(offset + 4);
       if (type === 0x69737065) {
         if (size < header + 12) throw new PreviewError({ code: "heif-dimensions-invalid" });
-        dimensions(view.getUint32(offset + header + 4), view.getUint32(offset + header + 8));
+        dimensions(
+          view.getUint32(offset + header + 4),
+          view.getUint32(offset + header + 8),
+          maxPixels,
+        );
         found = true;
       } else if (type === 0x6d657461 || type === 0x69707270 || type === 0x6970636f)
         boxes(offset + header + (type === 0x6d657461 ? 4 : 0), offset + size, depth + 1);
@@ -162,7 +169,9 @@ async function decode(
 ): Promise<{ readonly blob: Blob } | { readonly bitmap: ImageBitmap }> {
   if (bytes.byteLength > 50 * 1024 * 1024) throw new PreviewError({ code: "file-too-large" });
   if (heif) {
-    validateHeif(bytes);
+    // SCIENT-FORK:START — bitmap attachment decoding uses MAX_BITMAP_PIXELS while PNG previews keep MAX_PIXELS.
+    validateHeif(bytes, output === "bitmap" ? MAX_BITMAP_PIXELS : MAX_PIXELS);
+    // SCIENT-FORK:END
     // Desktop CSP forbids the JavaScript evaluation used by heic-to/next.
     const { heicTo } = await import("heic-to/csp");
     const bitmap = await heicTo({ blob: new Blob([bytes]), type: "bitmap" });
@@ -230,7 +239,15 @@ self.addEventListener(
     void decode(event.data.bytes, event.data.heif, event.data.output).then(
       (result) => {
         if ("bitmap" in result) {
-          self.postMessage({ bitmap: result.bitmap }, { transfer: [result.bitmap] });
+          try {
+            self.postMessage({ bitmap: result.bitmap }, { transfer: [result.bitmap] });
+          } catch (cause: unknown) {
+            result.bitmap.close();
+            self.postMessage(
+              { failure: previewFailure(cause, "image-decode-failed") },
+              { transfer: [] },
+            );
+          }
         } else {
           self.postMessage({ blob: result.blob }, { transfer: [] });
         }

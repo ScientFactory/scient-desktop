@@ -51,7 +51,6 @@ export async function decodeHeifBitmap(blob: Blob, signal?: AbortSignal): Promis
     type: "module",
   });
   const controller = new AbortController();
-  let receivedBitmap: ImageBitmap | null = null;
   try {
     return await new Promise<ImageBitmap>((resolve, reject) => {
       let settled = false;
@@ -68,6 +67,7 @@ export async function decodeHeifBitmap(blob: Blob, signal?: AbortSignal): Promis
       const timer = setTimeout(() => fail(m(msg("This image took too long to decode."))), 30_000);
       controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
       worker.addEventListener("error", () => fail(m(msg("Could not load the image decoder."))));
+      worker.addEventListener("messageerror", () => fail(m(msg("Could not decode this image."))));
       worker.addEventListener(
         "message",
         (event: MessageEvent<{ bitmap?: ImageBitmap; failure?: PreviewFailure }>) => {
@@ -77,7 +77,6 @@ export async function decodeHeifBitmap(blob: Blob, signal?: AbortSignal): Promis
           }
           if (event.data.bitmap) {
             settled = true;
-            receivedBitmap = event.data.bitmap;
             resolve(event.data.bitmap);
           } else if (event.data.failure) {
             fail(previewFailureText(event.data.failure, m));
@@ -89,7 +88,11 @@ export async function decodeHeifBitmap(blob: Blob, signal?: AbortSignal): Promis
       void blob.arrayBuffer().then(
         (bytes) => {
           if (settled) return;
-          worker.postMessage({ bytes, heif: true, output: "bitmap" }, [bytes]);
+          try {
+            worker.postMessage({ bytes, heif: true, output: "bitmap" }, [bytes]);
+          } catch {
+            fail(m(msg("Could not decode this image.")));
+          }
         },
         (error) => {
           if (settled) return;
@@ -98,9 +101,6 @@ export async function decodeHeifBitmap(blob: Blob, signal?: AbortSignal): Promis
         },
       );
     });
-  } catch (error) {
-    receivedBitmap?.close();
-    throw error;
   } finally {
     controller.abort();
     worker.terminate();
