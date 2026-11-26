@@ -4157,6 +4157,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           { type: "scheduled-tasks.cleanup" },
           { type: "scient.release-thread-files" },
           { type: "terminal.cleanup" },
+          { type: "thread-content.purge" },
         ],
       );
       assert.isTrue(pending.every((effect) => effect.status === "pending"));
@@ -4164,8 +4165,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       assert.isFalse(yield* fileSystem.exists(attachmentPath));
       const completed = yield* outbox.listByCommandId(command.commandId);
-      assert.lengthOf(completed, 4);
-      assert.isTrue(completed.every((effect) => effect.status === "succeeded"));
+      // T3's purge drops the settled effects it follows, leaving only itself.
+      assert.deepEqual(
+        completed.map((effect) => [effect.request.type, effect.status]),
+        [["thread-content.purge", "succeeded"]],
+      );
       assert.deepEqual(yield* readReceipt, [
         { status: "accepted", resultSequence: accepted.sequence },
       ]);
