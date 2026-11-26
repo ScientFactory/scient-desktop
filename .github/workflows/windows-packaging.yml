@@ -432,7 +432,14 @@ jobs:
           $slimUnpacked = Join-Path $slimStage.FullName 'app/dist/win-unpacked'
           node scripts/verify-windows-desktop-artifact.ts --app-dir "$slimUnpacked" --arch x64 --build-version 0.6.22 --omit-wsl-runtime
           if ($LASTEXITCODE -ne 0) { throw 'Slim Windows artifact verification failed' }
-          node scripts/qualify-windows-packaged-runtime.mjs "$slimUnpacked" --launch-smoke
+          # Install the slim NSIS artifact into a fresh protected directory so launch-smoke
+          # exercises real installer ACLs and the packaged Overleaf/speech/desktop runtime.
+          $slimInstallDir = 'C:\scient-install-slim'
+          if (Test-Path $slimInstallDir) { Remove-Item -Recurse -Force $slimInstallDir }
+          $slimInstaller = (Resolve-Path 'release-slim/Scient-0.6.22-x64.exe').Path
+          $slimProc = Start-Process $slimInstaller -ArgumentList '/S', "/D=$slimInstallDir" -Wait -PassThru
+          if ($slimProc.ExitCode -ne 0) { throw "Slim installer failed with exit $($slimProc.ExitCode)" }
+          node scripts/qualify-windows-packaged-runtime.mjs "$slimInstallDir" --launch-smoke
           if ($LASTEXITCODE -ne 0) { throw 'Slim Windows runtime qualification failed' }
       # SCIENT-FORK:END
       # The installer and its blockmap are already compressed; deflating them again only costs time.
