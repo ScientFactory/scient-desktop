@@ -1278,11 +1278,6 @@ export function antigravityWindowLimitsModel(
   const base = model?.slice(model.lastIndexOf("/") + 1);
   // An alias such as "fast" may route to either quota, so both hold it back.
   if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
-  // SCIENT-FORK:START — an older account's local reading meters Claude and GPT apart
-  // ("claude-quota", "gpt-weekly"); only the summary's "3p-" quotas are shared between them.
-  const vendor = window.id.match(/^(claude|gpt)-/)?.[1];
-  if (vendor !== undefined) return base.startsWith(vendor);
-  // SCIENT-FORK:END
   return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
 }
 

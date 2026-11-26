@@ -113,9 +113,14 @@ function hubPool(
     routed.flatMap((source) => source.accounts),
   ).flatMap((provider) => {
     if (provider.driver !== "antigravity" || !provider.usageLimits) return [provider];
-    const windows = provider.usageLimits.windows.filter((window) =>
-      antigravityWindowLimitsModel(window, model),
-    );
+    // An older account's local reading meters Claude and GPT apart ("claude-quota", "gpt-weekly").
+    const base = model?.slice(model.lastIndexOf("/") + 1);
+    const windows = provider.usageLimits.windows.filter((window) => {
+      const vendor = window.id.match(/^(claude|gpt)-(quota|weekly)$/)?.[1];
+      return vendor !== undefined && base !== undefined && /^(claude|gpt)/.test(base)
+        ? base.startsWith(vendor)
+        : antigravityWindowLimitsModel(window, model);
+    });
     return windows.length === 0
       ? []
       : [{ ...provider, usageLimits: { ...provider.usageLimits, windows } }];
