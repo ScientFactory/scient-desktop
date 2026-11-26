@@ -2,6 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, render } from "../../../test/render";
+import { advanceTestClock } from "../../../test/testClock";
 import { useAccountsExternalIdentities } from "./useAccountsExternalIdentities";
 
 const query = vi.hoisted(() => ({
@@ -41,7 +42,12 @@ function Probe({ environmentId }: { readonly environmentId: EnvironmentId }) {
 const first = EnvironmentId.make("first");
 const second = EnvironmentId.make("second");
 
-it("gives each environment its own bounded retry budget for incomplete results", async () => {
+it("gives each environment its own bounded retry budget for incomplete results", async ({
+  signal,
+}) => {
+  query.pending.clear();
+  query.refreshes.clear();
+  query.refresh.clear();
   using _timers = fakeTimers();
   await using screen = await render(<Probe environmentId={first} />, { router: false });
   // Each refresh's round trip: pending, then incomplete again.
@@ -53,12 +59,12 @@ it("gives each environment its own bounded retry budget for incomplete results",
   };
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await vi.advanceTimersByTimeAsync(5_000);
+    await advanceTestClock(signal, 5_000);
     await answer(first);
   }
   expect(query.refreshes.get(first)).toBe(3);
 
   await screen.rerender(<Probe environmentId={second} />);
-  await vi.advanceTimersByTimeAsync(5_000);
+  await advanceTestClock(signal, 5_000);
   expect(query.refreshes.get(second)).toBe(1);
 });

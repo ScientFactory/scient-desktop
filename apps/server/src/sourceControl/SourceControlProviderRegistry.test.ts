@@ -611,4 +611,54 @@ it.effect(
       assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
     }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
+
+it.effect("keeps a newer single-forge observation over a slower aggregate discovery", () =>
+  Effect.gen(function* () {
+    let signedIn = true;
+    const aggregateAskedGitlab = yield* Deferred.make<void>();
+    const forgejoAnswers = yield* Deferred.make<void>();
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        {
+          ...claimingCli("gitlab"),
+          parseAuth: ({ stdout }) => ({
+            status: stdout.includes("Logged in") ? "authenticated" : "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+        claimingCli("forgejo"),
+      ],
+      run: ({ command, args }) => {
+        const output = TestSourceControlHost.processOutput(
+          signedIn && command === "gitlab-cli"
+            ? "  ✓ Logged in to git.example.internal as user\n"
+            : "",
+        );
+        if (command === "forgejo-cli" && args.includes("--version")) {
+          return Deferred.await(forgejoAnswers).pipe(Effect.as(output));
+        }
+        if (command === "gitlab-cli" && !args.includes("--version")) {
+          return Deferred.succeed(aggregateAskedGitlab, undefined).pipe(Effect.as(output));
+        }
+        return Effect.succeed(output);
+      },
+    });
+    // The aggregate sees gitlab signed in, then waits on forgejo.
+    const aggregate = yield* registry.discover.pipe(Effect.forkChild);
+    yield* Deferred.await(aggregateAskedGitlab);
+
+    signedIn = false;
+    yield* registry.discoverProvider(kind("gitlab"));
+    yield* Deferred.succeed(forgejoAnswers, undefined);
+    yield* Fiber.join(aggregate);
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+
+    signedIn = true;
+    yield* registry.discoverProvider(kind("gitlab"));
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
 // SCIENT-FORK:END

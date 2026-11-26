@@ -288,19 +288,29 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       Effect.forkScoped,
     );
 
-    // SCIENT-FORK:START — aggregate and single-forge discovery share per-forge fingerprints, so a
-    // sign-in either one observes re-asks cached unknown remotes.
-    const lastDiscovery = new Map<SourceControlProviderKind, string>();
-    const recordDiscovery = (items: ReadonlyArray<SourceControlProviderDiscoveryItem>) => {
-      let changed = false;
-      for (const item of items) {
-        const fingerprint = discoveryFingerprint([item]);
-        const previous = lastDiscovery.get(item.kind);
-        lastDiscovery.set(item.kind, fingerprint);
-        if (previous !== undefined && previous !== fingerprint) changed = true;
-      }
-      return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
-    };
+    // SCIENT-FORK:START — aggregate and single-forge discovery share per-forge observations, so a
+    // sign-in either one sees re-asks cached unknown remotes. Each probe is ordered by its start, so a
+    // slower, older probe cannot overwrite a newer observation.
+    const lastDiscovery = new Map<
+      SourceControlProviderKind,
+      { readonly started: number; readonly fingerprint: string }
+    >();
+    let probesStarted = 0;
+    const observeProvider = (spec: SourceControlProviderDiscoverySpec) =>
+      Effect.suspend(() => {
+        const started = ++probesStarted;
+        return probeSourceControlProvider({ spec, process, cwd: config.cwd }).pipe(
+          Effect.tap((item) => {
+            const previous = lastDiscovery.get(item.kind);
+            if (previous !== undefined && previous.started > started) return Effect.void;
+            const fingerprint = discoveryFingerprint([item]);
+            lastDiscovery.set(item.kind, { started, fingerprint });
+            return previous !== undefined && previous.fingerprint !== fingerprint
+              ? Cache.invalidateAll(unknownRemoteCache)
+              : Effect.void;
+          }),
+        );
+      });
     // SCIENT-FORK:END
 
     const refineContext = (
@@ -384,34 +394,16 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       resolve: Effect.fn("SourceControlProviderRegistry.resolve")(function (input) {
         return resolveHandle(input).pipe(Effect.map((handle) => handle.provider));
       }),
-      discover: Effect.forEach(
-        discoverySpecs,
-        (spec) =>
-          probeSourceControlProvider({
-            spec,
-            process,
-            cwd: config.cwd,
-          }),
-        { concurrency: "unbounded" },
-      ).pipe(
-        // A CLI installed or signed in since the last check may claim a remote no forge claimed.
-        // SCIENT-FORK: per-forge fingerprints shared with discoverProvider.
-        Effect.tap(recordDiscovery),
-      ),
+      // SCIENT-FORK: a CLI installed or signed in since the last check may claim a remote no forge
+      // claimed; observeProvider records each forge as its probe finishes.
+      discover: Effect.forEach(discoverySpecs, observeProvider, { concurrency: "unbounded" }),
       // SCIENT-FORK: probe a single forge without spawning unrelated source-control CLIs.
       discoverProvider: Effect.fn("SourceControlProviderRegistry.discoverProvider")(
         function (kind) {
           const spec = discoverySpecs.find((candidate) => candidate.kind === kind);
           return spec === undefined
             ? Effect.succeedNone
-            : probeSourceControlProvider({
-                spec,
-                process,
-                cwd: config.cwd,
-              }).pipe(
-                Effect.tap((item) => recordDiscovery([item])),
-                Effect.asSome,
-              );
+            : observeProvider(spec).pipe(Effect.asSome);
         },
       ),
     });
