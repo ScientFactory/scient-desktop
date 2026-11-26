@@ -104,8 +104,23 @@ function hubPool(
     .filter((account) => limitsNotice(account.usageLimits) === null);
   if (readable.length === 0) return null;
   // A signed-in login joins the pool only as a fresher reading of an account the hub routes to.
-  // SCIENT-FORK: matched like the Usage page, so Antigravity's credential fingerprint counts too.
-  const signedIn = providersReadingAccounts(providers, readable);
+  // SCIENT-FORK:START — matched like the Usage page, so Antigravity's credential fingerprint counts
+  // too. A local reading keeps only the quotas this model spends, like the hub's, and joins only
+  // when one is left.
+  const signedIn = providersReadingAccounts(
+    providers,
+    readable,
+    routed.flatMap((source) => source.accounts),
+  ).flatMap((provider) => {
+    if (provider.driver !== "antigravity" || !provider.usageLimits) return [provider];
+    const windows = provider.usageLimits.windows.filter((window) =>
+      antigravityWindowLimitsModel(window, model),
+    );
+    return windows.length === 0
+      ? []
+      : [{ ...provider, usageLimits: { ...provider.usageLimits, windows } }];
+  });
+  // SCIENT-FORK:END
   const presentations = new Map([
     [
       CARD_ENVIRONMENT,

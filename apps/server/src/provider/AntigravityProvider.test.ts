@@ -1147,6 +1147,33 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
+  it.effect("a read after a sign-in prompt shows no limits, though the saved token answers", () =>
+    Effect.gen(function* () {
+      const readDone = yield* Ref.make(yield* Deferred.make<void>());
+      const harness = yield* makeHarness({
+        probeUsage: Effect.succeed({
+          checkedAt: "2026-10-09T12:01:00.000Z",
+          windows: [
+            { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 },
+          ],
+        } satisfies ServerProviderUsageLimits).pipe(
+          Effect.ensuring(
+            Ref.get(readDone).pipe(Effect.flatMap((done) => Deferred.succeed(done, undefined))),
+          ),
+        ),
+      });
+      yield* harness.initialize;
+      yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+      yield* harness.provider.onAuthRequired;
+      const done = yield* Deferred.make<void>();
+      yield* Ref.set(readDone, done);
+      yield* harness.provider.snapshot.refresh;
+      yield* Deferred.await(done);
+      yield* Effect.yieldNow;
+      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+    }),
+  );
+
   it.effect("reports ready and starts sessions while one shared quota read is pending", () =>
     Effect.gen(function* () {
       const reads = yield* Ref.make(0);

@@ -73,6 +73,11 @@ describe("Antigravity Gemini quotas", () => {
     expect(exhaustedUsageWindow(aggregate, now, "gemini-4-carbon")?.id).toBe("gemini-quota");
   });
 
+  it("reads the family after a hub prefix", () => {
+    expect(exhaustedUsageWindow(perFamily, now, "ag/gemini-4-argon-high")).toBeUndefined();
+    expect(exhaustedUsageWindow(perFamily, now, "ag/gemini-4-carbon")?.id).toBe("gemini-carbon-5h");
+  });
+
   it("Gemini quotas never hold back Claude or GPT models", () => {
     expect(exhaustedUsageWindow(perFamily, now, "claude-opus-5-5")).toBeUndefined();
   });
@@ -110,6 +115,30 @@ describe("providersReadingAccounts", () => {
         (entry) => entry.instanceId,
       ),
     ).toEqual([same.instanceId]);
+  });
+
+  it("leaves out a login whose workspace is ambiguous among the hub's accounts", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const account = (workspaceId: string, readable: boolean) =>
+      ({
+        id: `codex-${workspaceId}.json`,
+        driver: codex,
+        email: "researcher@example.org",
+        workspaceId,
+        usageLimits: readable
+          ? { checkedAt, windows: [] }
+          : { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } },
+      }) satisfies UsageLimitSourceAccount;
+    const login = provider({
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: codex,
+      auth: { status: "authenticated", email: "researcher@example.org" },
+    });
+    const readable = [account("ws-a", true)];
+    expect(providersReadingAccounts([login], readable)).toEqual([login]);
+    expect(
+      providersReadingAccounts([login], readable, [...readable, account("ws-b", false)]),
+    ).toEqual([]);
   });
 
   it("matches nothing when neither side names the account", () => {
