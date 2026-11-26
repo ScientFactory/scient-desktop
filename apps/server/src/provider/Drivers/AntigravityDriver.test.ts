@@ -502,14 +502,12 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  // SCIENT-FORK:START — the driver's Marketplace plugin actions take an HTTP client.
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,
-      HttpClient.make(() => Effect.die("Unexpected HTTP request")),
+      HttpClient.make(() => Effect.die("Unexpected quota request")),
     ),
   ),
-  // SCIENT-FORK:END
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
