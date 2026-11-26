@@ -288,9 +288,20 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       Effect.forkScoped,
     );
 
-    let lastDiscovery: string | undefined;
-    // SCIENT-FORK: single-forge discovery tracks its own fingerprints to re-ask unknown remotes too.
-    const lastProviderDiscovery = new Map<SourceControlProviderKind, string>();
+    // SCIENT-FORK:START — aggregate and single-forge discovery share per-forge fingerprints, so a
+    // sign-in either one observes re-asks cached unknown remotes.
+    const lastDiscovery = new Map<SourceControlProviderKind, string>();
+    const recordDiscovery = (items: ReadonlyArray<SourceControlProviderDiscoveryItem>) => {
+      let changed = false;
+      for (const item of items) {
+        const fingerprint = discoveryFingerprint([item]);
+        const previous = lastDiscovery.get(item.kind);
+        lastDiscovery.set(item.kind, fingerprint);
+        if (previous !== undefined && previous !== fingerprint) changed = true;
+      }
+      return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
+    };
+    // SCIENT-FORK:END
 
     const refineContext = (
       cwd: string,
@@ -384,13 +395,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         { concurrency: "unbounded" },
       ).pipe(
         // A CLI installed or signed in since the last check may claim a remote no forge claimed.
-        Effect.tap((items) => {
-          const fingerprint = discoveryFingerprint(items);
-          if (fingerprint === lastDiscovery) return Effect.void;
-          const changed = lastDiscovery !== undefined;
-          lastDiscovery = fingerprint;
-          return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
-        }),
+        // SCIENT-FORK: per-forge fingerprints shared with discoverProvider.
+        Effect.tap(recordDiscovery),
       ),
       // SCIENT-FORK: probe a single forge without spawning unrelated source-control CLIs.
       discoverProvider: Effect.fn("SourceControlProviderRegistry.discoverProvider")(
@@ -403,14 +409,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
                 process,
                 cwd: config.cwd,
               }).pipe(
-                Effect.tap((item) => {
-                  const fingerprint = discoveryFingerprint([item]);
-                  const previous = lastProviderDiscovery.get(kind);
-                  lastProviderDiscovery.set(kind, fingerprint);
-                  return previous !== undefined && previous !== fingerprint
-                    ? Cache.invalidateAll(unknownRemoteCache)
-                    : Effect.void;
-                }),
+                Effect.tap((item) => recordDiscovery([item])),
                 Effect.asSome,
               );
         },

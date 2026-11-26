@@ -98,9 +98,26 @@ vi.mock("../state/filesystem", async (original) => ({
   ...(await original<typeof import("../state/filesystem")>()),
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
+const discovery = vi.hoisted(() => ({ requests: 0, atom: { sourceControlDiscovery: true } }));
+vi.mock("../state/sourceControl", async (original) => {
+  const actual = await original<typeof import("../state/sourceControl")>();
+  return {
+    ...actual,
+    sourceControlEnvironment: {
+      ...actual.sourceControlEnvironment,
+      discovery: () => {
+        discovery.requests += 1;
+        return discovery.atom;
+      },
+    },
+  };
+});
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: undefined, isLoading: false }),
+  useEnvironmentQuery: (atom: unknown) =>
+    atom === discovery.atom
+      ? { data: null, isPending: true, isLoading: true }
+      : { data: undefined, isLoading: false },
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -119,4 +136,13 @@ it("keeps Backspace in an emptied clone path inside the clone", async () => {
   await expect.element(input).toHaveValue("");
   await expect.element(page.getByText("Select where to clone")).toBeVisible();
   await expect.element(page.getByText("Repository", { exact: true })).toBeVisible();
+});
+
+it("shows Checking… for hosted sources while Add Project's source-control discovery is pending", async () => {
+  discovery.requests = 0;
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await expect.element(page.getByText("Checking…").first()).toBeVisible();
+  expect(discovery.requests).toBeGreaterThan(0);
+  await expect.element(page.getByText("Setup Required")).not.toBeInTheDocument();
 });

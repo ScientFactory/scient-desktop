@@ -577,4 +577,38 @@ it.effect(
       assert.deepStrictEqual(versionProbes, ["gitlab-cli", "gitlab-cli", "gitlab-cli"]);
     }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
+
+it.effect(
+  "re-asks unknown remotes when single-forge discovery sees a sign-in aggregate discovery missed",
+  () =>
+    Effect.gen(function* () {
+      let signedIn = false;
+      const registry = yield* makeRegistry({
+        remotes: [],
+        discovery: [
+          {
+            ...claimingCli("gitlab"),
+            parseAuth: () => ({
+              status: signedIn ? "authenticated" : "unauthenticated",
+              account: Option.none(),
+              host: Option.none(),
+              detail: Option.none(),
+            }),
+          },
+        ],
+        run: () =>
+          Effect.succeed(
+            TestSourceControlHost.processOutput(
+              signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+            ),
+          ),
+      });
+      yield* registry.discover;
+      assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+
+      signedIn = true;
+      yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
+    }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
 // SCIENT-FORK:END
