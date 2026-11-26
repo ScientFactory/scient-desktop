@@ -31,6 +31,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
+import { useAccountsExternalIdentities } from "../accounts/useAccountsExternalIdentities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
@@ -276,9 +277,7 @@ function RemoteConnectorDialog({
   const [signInError, setSignInError] = useState<string | null>(null);
   const [blockedSignInUrl, setBlockedSignInUrl] = useState<string | null>(null);
   const accountsQuery = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
-  const externalIdentitiesQuery = useEnvironmentQuery(
-    open && github ? accountsState.externalIdentities({ environmentId, input: {} }) : null,
-  );
+  const externalIdentitiesQuery = useAccountsExternalIdentities(environmentId, open && github);
   const matchingAccounts = accountsQuery.isSuccess
     ? (accountsQuery.data?.accounts.filter(
         ({ details }) =>
@@ -436,6 +435,7 @@ function RemoteConnectorDialog({
                 <GitHubConnect
                   environmentId={environmentId}
                   logins={githubLogins}
+                  checkingLogins={externalIdentitiesQuery.isPending && githubLogins.length === 0}
                   busy={submitting}
                   onConnect={(account) => void connectWithSourceControl(account)}
                   onUseToken={() => {

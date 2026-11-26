@@ -276,9 +276,7 @@ export const layer = Layer.effect(
           Exit.isSuccess(exit) && exit.value.complete ? Duration.minutes(1) : Duration.zero,
       },
     );
-    const externalIdentities = Cache.get(externalIdentitiesCache, "github").pipe(
-      Effect.map((entry) => entry.identities),
-    );
+    const externalIdentities = Cache.get(externalIdentitiesCache, "github");
     const readModelConsumers = sources.modelCatalog?.connections ?? Effect.succeed([]);
     const readTranscriptionConsumers = sources.transcriptionKeyConsumers ?? Effect.succeed([]);
     const snapshotNow = Effect.gen(function* () {

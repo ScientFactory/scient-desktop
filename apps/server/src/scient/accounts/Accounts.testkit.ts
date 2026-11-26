@@ -224,7 +224,7 @@ export function fakeAccounts(
         cancelled.add(id);
       }),
     passwordStore: () => unsupported,
-    externalIdentities: Effect.succeed([]),
+    externalIdentities: Effect.succeed({ identities: [], complete: true }),
     snapshot: Effect.sync(
       () =>
         ({

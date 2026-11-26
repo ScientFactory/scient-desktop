@@ -15,7 +15,13 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { act, render as renderScreen, stubGlobal, type Screen } from "../../../test/render";
+import {
+  act,
+  fakeTimers,
+  render as renderScreen,
+  stubGlobal,
+  type Screen,
+} from "../../../test/render";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
@@ -41,23 +47,36 @@ const state = vi.hoisted(() => ({
   externalIdentities: null as ReadonlyArray<
     NonNullable<AccountsSnapshot["managedElsewhere"]>[number]
   > | null,
+  externalIdentitiesPending: false,
+  externalIdentitiesComplete: true,
+  externalIdentitiesRefresh: vi.fn(),
   externalIdentitiesAtom: null as unknown,
 }));
 
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => {
     if (atom === null) {
-      return { isSuccess: false, data: null };
+      return { isSuccess: false, isPending: false, data: null, refresh: vi.fn() };
     }
     if (state.externalIdentitiesAtom !== null && atom === state.externalIdentitiesAtom) {
       return {
         isSuccess: state.externalIdentities !== null,
-        data: state.externalIdentities === null ? null : { identities: state.externalIdentities },
+        isPending: state.externalIdentitiesPending,
+        data:
+          state.externalIdentities === null
+            ? null
+            : {
+                identities: state.externalIdentities,
+                complete: state.externalIdentitiesComplete,
+              },
+        refresh: state.externalIdentitiesRefresh,
       };
     }
     return {
       isSuccess: state.accountsAvailable,
+      isPending: false,
       data: { accounts: state.accounts, managedElsewhere: state.managedElsewhere },
+      refresh: vi.fn(),
     };
   },
 }));
@@ -158,6 +177,9 @@ function setup() {
   state.accounts = [];
   state.managedElsewhere = [];
   state.externalIdentities = null;
+  state.externalIdentitiesPending = false;
+  state.externalIdentitiesComplete = true;
+  state.externalIdentitiesRefresh.mockReset();
   state.externalIdentitiesAtom = accountsState.externalIdentities({ environmentId, input: {} });
   state.add.mockReset();
   // Mounting the local form lists importable servers; a test that asserts it was not asked
@@ -739,6 +761,32 @@ describe("GitHub with Source Control's account", () => {
       type: "source-control",
       account: "second",
     });
+  });
+
+  it("shows a checking state while GitHub external identities are still pending", async () => {
+    await using fixture = setup();
+    state.managedElsewhere = [];
+    state.externalIdentities = null;
+    state.externalIdentitiesPending = true;
+    await fixture.render(githubEntry);
+    await expect
+      .element(page.getByRole("button", { name: /Checking GitHub account…/ }))
+      .toBeDisabled();
+    await expect
+      .element(page.getByRole("button", { name: "Sign in with GitHub" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("retries incomplete external identity results while the dialog remains open", async () => {
+    using _timers = fakeTimers();
+    await using fixture = setup();
+    state.managedElsewhere = [];
+    state.externalIdentities = [login("octo", "gh")];
+    state.externalIdentitiesComplete = false;
+    await fixture.render(githubEntry);
+    expect(state.externalIdentitiesRefresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(state.externalIdentitiesRefresh).toHaveBeenCalledTimes(1);
   });
 
   it("signs in with a code to copy, on GitHub's page in Scient's own browser", async () => {

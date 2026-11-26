@@ -82,6 +82,7 @@ import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
 import { AccountLogo, SiteFavicon } from "./AccountLogo";
 import { accountsState } from "./accountsState";
+import { useAccountsExternalIdentities } from "./useAccountsExternalIdentities";
 import {
   KIND_LABELS,
   accountIconUrl,
@@ -1178,9 +1179,7 @@ function AccountsContent({
   // and browser sign-ins are under their profiles, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const importingPasswords = useImportingPasswords();
-  const externalIdentitiesQuery = useEnvironmentQuery(
-    accountsState.externalIdentities({ environmentId, input: {} }),
-  );
+  const externalIdentitiesQuery = useAccountsExternalIdentities(environmentId);
   const managedElsewhereWithExternal = [
     ...(externalIdentitiesQuery.data?.identities ?? []),
     ...(snapshot.managedElsewhere ?? []).filter(

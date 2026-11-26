@@ -174,6 +174,8 @@ export const WsAccountsSnapshotRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accounts
     browserSessionSourceId: Schema.optional(Schema.String.check(Schema.isMaxLength(80))),
     /** The user's default browser profile, used by accounts that don't name one. */
     defaultProfileId: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+    /** Updated clients fetch external GitHub identities on demand via accounts.externalIdentities. */
+    omitExternalIdentities: Schema.optional(Schema.Boolean),
   }),
   success: AccountsSnapshot,
   error: AccountsRpcError,

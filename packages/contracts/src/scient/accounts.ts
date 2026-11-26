@@ -1011,6 +1011,8 @@ export type AccountManagedElsewhereItem = typeof AccountManagedElsewhereItem.Typ
 
 export const AccountsExternalIdentitiesResult = Schema.Struct({
   identities: Schema.Array(AccountManagedElsewhereItem),
+  /** False when a provider credential lookup timed out or failed; clients may retry while open. */
+  complete: Schema.optional(Schema.Boolean),
 });
 export type AccountsExternalIdentitiesResult = typeof AccountsExternalIdentitiesResult.Type;
 

@@ -1,9 +1,10 @@
 import { expect, it } from "@effect/vitest";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, WS_METHODS } from "@t3tools/contracts";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
 import { Deferred, Effect, Fiber, Layer, Option, Redacted } from "effect";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
+import { makeAccountsRpcHandlers } from "./AccountsRpcHandlers.ts";
 import { makeHarness, website } from "./Accounts.testkit.ts";
 
 it.effect(
@@ -93,16 +94,19 @@ it.effect(
 
       // Releasing discovery completes the fiber and caches the complete result.
       yield* Deferred.succeed(gate, undefined);
-      expect(yield* Fiber.join(discoveryFiber)).toEqual([
-        {
-          kind: "github",
-          id: "github.example.test:synthetic-user",
-          name: "synthetic-user",
-          detail: "github.example.test",
-          href: "/settings/source-control",
-          via: "gh",
-        },
-      ]);
+      expect(yield* Fiber.join(discoveryFiber)).toEqual({
+        complete: true,
+        identities: [
+          {
+            kind: "github",
+            id: "github.example.test:synthetic-user",
+            name: "synthetic-user",
+            detail: "github.example.test",
+            href: "/settings/source-control",
+            via: "gh",
+          },
+        ],
+      });
       yield* service.externalIdentities;
       expect(aggregateDiscoveries).toBe(0);
       expect(githubDiscoveries).toBe(1);
@@ -150,27 +154,33 @@ it.effect("does not cache incomplete GitHub identity probes when credential look
       },
     });
 
-    expect(yield* service.externalIdentities).toEqual([
-      {
-        kind: "github",
-        id: "github.com:octo",
-        name: "octo",
-        detail: "github.com",
-        href: "/settings/source-control",
-        via: "gh",
-      },
-    ]);
+    expect(yield* service.externalIdentities).toEqual({
+      complete: false,
+      identities: [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+      ],
+    });
     // Because the first credential lookup failed, the partial result is not pinned for 1 minute.
-    expect(yield* service.externalIdentities).toEqual([
-      {
-        kind: "github",
-        id: "github.com:octo",
-        name: "Octo",
-        detail: "github.com",
-        href: "/settings/source-control",
-        via: "app",
-      },
-    ]);
+    expect(yield* service.externalIdentities).toEqual({
+      complete: true,
+      identities: [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "Octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "app",
+        },
+      ],
+    });
     expect(credentialCalls).toBe(2);
     // Once complete, subsequent reads reuse the cached entry.
     yield* service.externalIdentities;
@@ -182,7 +192,7 @@ it.effect("omits unavailable GitHub discovery and retains optional snapshot comp
   Effect.gen(function* () {
     const { service } = yield* makeHarness();
     expect((yield* service.snapshot).managedElsewhere).toEqual([]);
-    expect(yield* service.externalIdentities).toEqual([]);
+    expect(yield* service.externalIdentities).toEqual({ complete: true, identities: [] });
   }),
 );
 
@@ -228,7 +238,7 @@ it.effect(
         },
       });
       expect(
-        (yield* service.externalIdentities).map(({ id, name, via }) => ({
+        (yield* service.externalIdentities).identities.map(({ id, name, via }) => ({
           id,
           name,
           via,
@@ -237,5 +247,85 @@ it.effect(
         { id: "github.com:octo", name: "Octo", via: "app" },
         { id: "github.com:second", name: "second", via: "gh" },
       ]);
+    }),
+);
+
+it.effect(
+  "preserves GitHub managedElsewhere for legacy snapshot callers while updated callers opt out",
+  () =>
+    Effect.gen(function* () {
+      let githubProbes = 0;
+      const githubItem = {
+        kind: SourceControlProviderKind.make("github"),
+        label: "GitHub",
+        implemented: true,
+        status: "available" as const,
+        version: Option.none(),
+        installHint: "",
+        detail: Option.none(),
+        auth: {
+          status: "authenticated" as const,
+          account: Option.some("legacy-user"),
+          host: Option.some("github.com"),
+          detail: Option.none(),
+          accounts: [
+            { host: "github.com", account: "legacy-user", active: true, authenticated: true },
+          ],
+        },
+      };
+      const { service } = yield* makeHarness().pipe(
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry)({
+            resolveLink: () => undefined,
+            discover: Effect.die("Accounts must not run aggregate discovery."),
+            discoverProvider: (kind) =>
+              kind === "github"
+                ? Effect.sync(() => (githubProbes += 1)).pipe(Effect.as(Option.some(githubItem)))
+                : Effect.succeedNone,
+          }),
+        ),
+      );
+      const handlers = makeAccountsRpcHandlers({
+        accounts: service,
+        observeRpcEffect: (_method, effect) => effect,
+        observeRpcStream: (_method, stream) => stream,
+        check: () => Effect.die("unused"),
+        linkKey: () => Effect.die("unused"),
+        restoreKeptKeys: () => Effect.die("unused"),
+        paperForSource: () => Effect.die("unused"),
+        plainKeys: {
+          find: () => Effect.die("unused"),
+          keep: () => Effect.die("unused"),
+        },
+        papers: {
+          request: () => Effect.die("unused"),
+          continue: () => Effect.die("unused"),
+          list: () => Effect.die("unused"),
+          signInAsPerson: () => Effect.die("unused"),
+          universityBrowse: () => Effect.die("unused"),
+          universities: () => Effect.die("unused"),
+        },
+      });
+
+      // Updated clients pass omitExternalIdentities: true and trigger zero CLI probes.
+      const lightweight = yield* handlers[WS_METHODS.accountsSnapshot]({
+        omitExternalIdentities: true,
+      });
+      expect(lightweight.managedElsewhere).toEqual([]);
+      expect(githubProbes).toBe(0);
+
+      // Legacy clients omit the flag and keep seeing GitHub identities in snapshot.managedElsewhere.
+      const legacy = yield* handlers[WS_METHODS.accountsSnapshot]({});
+      expect(legacy.managedElsewhere).toEqual([
+        {
+          kind: "github",
+          id: "github.com:legacy-user",
+          name: "legacy-user",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+      ]);
+      expect(githubProbes).toBe(1);
     }),
 );
