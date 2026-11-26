@@ -137,7 +137,8 @@ export function simulatedConflicts(root, base, target) {
     const [tree, ...names] = result.stdout.split("\0");
     if (!/^[0-9a-f]{40,64}$/u.test(tree)) throw new Error("Invalid merge simulation output");
     const paths = names.filter(Boolean);
-    if ((result.status === 1 && paths.length === 0) || (result.status === 0 && paths.length > 0)) {
+    // Git can report a conflict with no unmerged path, e.g. an ambiguous directory rename.
+    if (result.status === 0 && paths.length > 0) {
       throw new Error("Inconsistent merge simulation result");
     }
     return { clean: result.status === 0, paths };

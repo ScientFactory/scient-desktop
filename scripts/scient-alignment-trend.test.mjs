@@ -17,7 +17,10 @@ function fixture() {
   directories.push(cwd);
   const git = (...args) =>
     NodeChildProcess.spawnSync("git", args, { cwd, encoding: "utf8" }).stdout.trim();
-  const write = (path, content) => NodeFS.writeFileSync(NodePath.join(cwd, path), content);
+  const write = (path, content) => {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, path)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(cwd, path), content);
+  };
   const commit = (files) => {
     for (const [path, content] of Object.entries(files)) write(path, content);
     git("add", "--all");
@@ -80,5 +83,22 @@ describe("alignment conflict trend", () => {
     const result = f.trend(["--min-recurrence", "2"]);
     expect(result.alignments).toHaveLength(2);
     expect(result.recurring).toEqual([{ path: "a.ts", count: 2, area: "a.ts" }]);
+  });
+
+  it("keeps a conflicted merge that leaves no unmerged path", () => {
+    const f = fixture();
+    const body = (name) => `${name}\n${"shared line\n".repeat(20)}`;
+    f.commit({ "dir/x1.ts": body("x1"), "dir/x2.ts": body("x2") });
+    f.git("checkout", "-q", "upstream");
+    f.git("merge", "-q", "main");
+    f.git("checkout", "-q", "main");
+    f.commit({ "dir/new.ts": "owned\n" });
+    f.git("checkout", "-q", "upstream");
+    f.git("rm", "-q", "dir/x1.ts", "dir/x2.ts");
+    const target = f.commit({ "one/x1.ts": body("x1"), "two/x2.ts": body("x2") });
+    f.git("checkout", "-q", "main");
+    f.git("merge", "--no-ff", "-q", "-s", "ours", "-m", "align", target);
+
+    expect(f.trend().alignments.at(-1)).toMatchObject({ target, conflicted: [] });
   });
 });
