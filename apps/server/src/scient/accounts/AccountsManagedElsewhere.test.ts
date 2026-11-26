@@ -188,6 +188,113 @@ it.effect("does not cache incomplete GitHub identity probes when credential look
   }),
 );
 
+it.effect(
+  "marks result incomplete and skips cache when gh auth status is unknown even if app credential succeeds",
+  () =>
+    Effect.gen(function* () {
+      let discoverCalls = 0;
+      const { service } = yield* makeHarness({
+        sourceControl: {
+          discover: Effect.sync(() => {
+            discoverCalls += 1;
+            return [
+              {
+                kind: SourceControlProviderKind.make("github"),
+                label: "GitHub",
+                status: "available" as const,
+                version: Option.none(),
+                installHint: "Install gh",
+                detail: Option.none(),
+                auth:
+                  discoverCalls === 1
+                    ? {
+                        status: "unknown" as const,
+                        account: Option.none(),
+                        host: Option.none(),
+                        detail: Option.some("gh auth status timed out"),
+                      }
+                    : {
+                        status: "authenticated" as const,
+                        account: Option.some("octo"),
+                        host: Option.some("github.com"),
+                        detail: Option.none(),
+                        accounts: [
+                          {
+                            host: "github.com",
+                            account: "octo",
+                            active: true,
+                            authenticated: true,
+                          },
+                          {
+                            host: "github.com",
+                            account: "second",
+                            active: false,
+                            authenticated: true,
+                          },
+                        ],
+                      },
+              },
+            ];
+          }),
+          github: GitHubSourceControlCredential.of({
+            mcpUrl: "https://api.githubcopilot.com/mcp/",
+            get: () =>
+              Effect.succeedSome({
+                token: Redacted.make("ghu_synthetic"),
+                via: "app",
+                login: "Octo",
+              }),
+            invalidate: () => Effect.void,
+          }),
+        },
+      });
+
+      // First read: app credential succeeds, but gh CLI auth status is unknown -> incomplete, not cached.
+      expect(yield* service.externalIdentities).toEqual({
+        complete: false,
+        identities: [
+          {
+            kind: "github",
+            id: "github.com:octo",
+            name: "Octo",
+            detail: "github.com",
+            href: "/settings/source-control",
+            via: "app",
+          },
+        ],
+      });
+      expect(discoverCalls).toBe(1);
+
+      // Second read retries immediately and picks up alternate gh CLI logins once recovered.
+      expect(yield* service.externalIdentities).toEqual({
+        complete: true,
+        identities: [
+          {
+            kind: "github",
+            id: "github.com:octo",
+            name: "Octo",
+            detail: "github.com",
+            href: "/settings/source-control",
+            via: "app",
+          },
+          {
+            kind: "github",
+            id: "github.com:second",
+            name: "second",
+            detail: "github.com",
+            href: "/settings/source-control",
+            via: "gh",
+          },
+        ],
+      });
+      expect(discoverCalls).toBe(2);
+
+      // Complete result is now cached.
+      yield* service.externalIdentities;
+      expect(discoverCalls).toBe(2);
+    }),
+);
+
 it.effect("omits unavailable GitHub discovery and retains optional snapshot compatibility", () =>
   Effect.gen(function* () {
     const { service } = yield* makeHarness();

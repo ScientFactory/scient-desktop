@@ -239,7 +239,12 @@ export const layer = Layer.effect(
                 Effect.orElseSucceed(() => ({ effective: Option.none(), complete: false })),
               )
             : { effective: Option.none(), complete: true };
-          const { effective, complete } = effectiveProbe;
+          const githubProbeComplete =
+            github === undefined ||
+            github.status !== "available" ||
+            github.auth.status !== "unknown";
+          const { effective, complete: effectiveComplete } = effectiveProbe;
+          const complete = githubProbeComplete && effectiveComplete;
           const githubRows = [
             ...Option.toArray(effective).map((credential) => ({
               host: "github.com",
