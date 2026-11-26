@@ -252,9 +252,9 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: {
         skip: "GDL's own Apple Silicon build does not load on macOS 15 (duplicate LC_RPATH)",
       },
-      // Homebrew has no GDL; its own weekly build is a disk image.
+      // v1.1 is the latest stable Intel Mac image. The weekly binary links its builder's libomp.
       "darwin-x64": [
-        'curl -sSfLo gdl.dmg "https://github.com/gnudatalanguage/gdl/releases/download/weekly-release/gdl-macOS-x86_64-headless.dmg"',
+        'curl -sSfLo gdl.dmg "https://github.com/gnudatalanguage/gdl/releases/download/v1.1/gdl-macOS-x86_64-standard.dmg"',
         "hdiutil attach -nobrowse -mountpoint /Volumes/gdl gdl.dmg",
         // ditto copies an app the way the Finder does.
         'sudo ditto "/Volumes/gdl/GNU Data Language.app" "/Applications/GNU Data Language.app"',
