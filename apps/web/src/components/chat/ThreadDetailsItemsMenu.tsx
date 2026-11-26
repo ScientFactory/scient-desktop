@@ -1,15 +1,11 @@
 import { T, useMessages } from "gt-react";
-import {
-  getClientSettings,
-  updateClientSettings,
-  useClientSettings,
-} from "../../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator } from "../ui/menu";
 import {
   isDefaultThreadDetailsVisibility,
   resolveThreadDetailsVisibility,
   RESET_THREAD_DETAILS_ITEMS,
-  setThreadDetailsItem,
+  saveThreadDetailsItem,
   THREAD_DETAILS_ITEMS,
 } from "./threadDetailsItems";
 
@@ -27,11 +23,11 @@ export function ThreadDetailsItemsMenuItems() {
           <MenuCheckboxItem
             key={item.id}
             checked={visibility[item.id]}
-            onCheckedChange={(checked) =>
-              updateClientSettings({
-                threadDetailsItems: setThreadDetailsItem(getClientSettings(), item, checked),
-              })
-            }
+            onCheckedChange={(checked) => {
+              saveThreadDetailsItem(item, checked).catch((error) => {
+                console.error("Failed to save thread details item", error);
+              });
+            }}
           >
             {m(item.label)}
           </MenuCheckboxItem>
