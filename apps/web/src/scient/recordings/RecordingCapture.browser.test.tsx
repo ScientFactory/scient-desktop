@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   captions: vi.fn(),
   setPaused: vi.fn(),
-  closeCall: vi.fn(async () => {}),
+  closeCall: vi.fn(async () => true),
 }));
 vi.mock("../../speech/requestMicrophone", () => ({ requestMicrophone: mocks.microphone }));
 vi.mock("../../speech/browserMicrophones", () => ({
@@ -35,7 +35,7 @@ vi.mock("./LessonTalk", () => ({
     closeRef,
   }: {
     onEnded: (error?: string) => void;
-    closeRef: { current: (() => Promise<void>) | null };
+    closeRef: { current: (() => Promise<boolean>) | null };
   }) => {
     closeRef.current = mocks.closeCall;
     return <button onClick={() => onEnded("The conversation stopped.")}>Lesson answer</button>;

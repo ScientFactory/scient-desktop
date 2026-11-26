@@ -120,7 +120,10 @@ export function RecordingCapture() {
   /** The question being asked; ending one makes its late results stale. */
   const talkAttempt = useRef(0);
   /** Closes the question's call; set by the call while it is open. */
-  const closeTalk = useRef<(() => Promise<void>) | null>(null);
+  const closeTalk = useRef<(() => Promise<boolean>) | null>(null);
+  /** An End in progress; another End waits for it. */
+  const ending = useRef(false);
+  const [endingTalk, setEndingTalk] = useState(false);
   const target =
     projects.find((project) => project.id === (destination || projectId)) ??
     (projects.length === 1 ? projects[0] : undefined);
@@ -379,15 +382,20 @@ export function RecordingCapture() {
   /** Ends the question: the call is closed before the lesson records again. */
   const endTalk = async (message?: string) => {
     const current = session.current;
-    if (!current) return;
-    talkAttempt.current += 1;
+    if (!current || ending.current) return;
+    ending.current = true;
+    setEndingTalk(true);
+    const attempt = (talkAttempt.current += 1);
     if (message) setTalkError(message);
     const close = closeTalk.current;
     closeTalk.current = null;
-    await close?.().catch(() => undefined);
-    if (session.current !== current) return;
+    // A call that doesn't go quiet in time leaves the lesson paused rather than recording it.
+    const quiet = close ? await close().catch(() => false) : true;
+    ending.current = false;
+    setEndingTalk(false);
+    if (session.current !== current || talkAttempt.current !== attempt) return;
     setTalking(null);
-    if (resumeAfterTalk && !message) {
+    if (resumeAfterTalk && !message && quiet) {
       resumeRecording(current);
       setStatus("recording");
     } else setStatus("paused");
@@ -605,7 +613,7 @@ export function RecordingCapture() {
           </DialogPanel>
           <DialogFooter>
             {status === "talking" ? (
-              <Button onClick={() => void endTalk()}>
+              <Button disabled={endingTalk} onClick={() => void endTalk()}>
                 {resumeAfterTalk ? gt("End and resume") : gt("End")}
               </Button>
             ) : active ? (

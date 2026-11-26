@@ -33,8 +33,11 @@ export function lessonTalkAgent(providers: readonly ServerProvider[] | undefined
 
 type Phase = "connecting" | "listening" | "working" | "speaking";
 
-/** Set by the open call: closes it, so the lesson records again only once the call is quiet. */
-type CloseRef = RefObject<(() => Promise<void>) | null>;
+/**
+ * Set by the open call: closes it and says whether it went quiet, so the lesson records again
+ * only once the call can no longer be heard.
+ */
+type CloseRef = RefObject<(() => Promise<boolean>) | null>;
 const CLOSE_WAIT_MS = 2_000;
 
 function PhaseLine({ phase, line }: { readonly phase: Phase; readonly line: string | null }) {
@@ -76,11 +79,10 @@ function ChatGptTalk(props: {
     closeRef.current = async () => {
       call.hangUp();
       const until = Date.now() + CLOSE_WAIT_MS;
-      while (
-        (callState.current.status === "active" || callState.current.status === "starting") &&
-        Date.now() < until
-      )
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      const open = () =>
+        callState.current.status === "active" || callState.current.status === "starting";
+      while (open() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+      return !open();
     };
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the call starts when the question opens and hangs up when it closes.
@@ -160,7 +162,10 @@ function OpenAiTalk(props: {
       peer?.close();
       for (const track of microphone.getTracks()) track.stop();
     };
-    closeRef.current = async () => close();
+    closeRef.current = async () => {
+      close();
+      return true;
+    };
     return close;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- one call per question.
   }, []);
