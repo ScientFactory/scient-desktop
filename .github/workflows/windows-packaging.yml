@@ -413,6 +413,35 @@ jobs:
         shell: pwsh
         timeout-minutes: 10
         run: node scripts/qualify-windows-install-folder.mjs fixtures (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path
+      # SCIENT-FORK:START — also exercise the slim Windows release build (--omit-wsl-runtime)
+      # with real app.asar/server.asar packaging, standalone verifier, and launch smoke.
+      - name: Build and qualify the slim Windows installer (--omit-wsl-runtime)
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: 'true'
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+        run: |
+          $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-slim-profile'
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-slim-appdata'
+          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --skip-build --keep-stage --omit-wsl-runtime --output-dir release-slim --verbose `
+            --synctex-runtime "$env:GITHUB_WORKSPACE/native-runtimes/synctex-runtime"
+          if ($LASTEXITCODE -ne 0) { throw 'Slim Windows installer build failed' }
+          $slimStage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $slimStage) { throw 'Missing retained slim package stage' }
+          $slimUnpacked = Join-Path $slimStage.FullName 'app/dist/win-unpacked'
+          node scripts/verify-windows-desktop-artifact.ts --app-dir "$slimUnpacked" --arch x64 --build-version 0.6.22 --omit-wsl-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Slim Windows artifact verification failed' }
+          # Install the slim NSIS artifact into a fresh protected directory so launch-smoke
+          # exercises real installer ACLs and the packaged Overleaf/speech/desktop runtime.
+          $slimInstallDir = 'C:\scient-install-slim'
+          if (Test-Path $slimInstallDir) { Remove-Item -Recurse -Force $slimInstallDir }
+          $slimInstaller = (Resolve-Path 'release-slim/Scient-0.6.22-x64.exe').Path
+          $slimProc = Start-Process $slimInstaller -ArgumentList '/S', "/D=$slimInstallDir" -Wait -PassThru
+          if ($slimProc.ExitCode -ne 0) { throw "Slim installer failed with exit $($slimProc.ExitCode)" }
+          node scripts/qualify-windows-packaged-runtime.mjs "$slimInstallDir" --launch-smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Slim Windows runtime qualification failed' }
+      # SCIENT-FORK:END
       # The installer and its blockmap are already compressed; deflating them again only costs time.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()

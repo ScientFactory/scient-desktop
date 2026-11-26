@@ -24,8 +24,9 @@ export function windowsTranscribeFiles(arch: "x64" | "arm64") {
   ];
 }
 
-export function windowsCursorFiles(arch: "x64" | "arm64") {
-  return ["win32", "linux"].flatMap((platform) => {
+export function windowsCursorFiles(arch: "x64" | "arm64", linuxBackend = true) {
+  const platforms = linuxBackend ? (["win32", "linux"] as const) : (["win32"] as const);
+  return platforms.flatMap((platform) => {
     const prefix = `sdk-${platform}-${arch}/`;
     const executableSuffix = platform === "win32" ? ".exe" : "";
     return [
@@ -63,46 +64,114 @@ export function windowsNativeIgnoreGlobs(arch: "x64" | "arm64", linuxBackend: bo
     ...(linuxBackend
       ? [
           `**/node_modules/node-pty/prebuilds/linux-${otherArch}`,
-          `**/node_modules/**/*-linux-${otherArch}*`,
+          `**/node_modules/*-linux-${otherArch}*`,
+          `**/node_modules/@*/*-linux-${otherArch}*`,
         ]
-      : ["**/node_modules/node-pty/prebuilds/linux-*", "**/node_modules/**/*-linux-*"]),
+      : [
+          "**/node_modules/node-pty/prebuilds/linux-*",
+          "**/node_modules/*-linux-*",
+          "**/node_modules/@*/*-linux-*",
+        ]),
   ];
   return roots.flatMap((root) => [root, `${root}/**`]);
 }
 
-export function unexpectedWindowsNativeFiles(files: readonly string[], arch: "x64" | "arm64") {
+export function unexpectedWindowsNativeFiles(
+  files: readonly string[],
+  arch: "x64" | "arm64",
+  linuxBackend = true,
+) {
   return files.filter((file) => {
     // Both the native filenames and package/prebuild directory names encode
-    // the target. Linux is valid only in the server/WSL and Cursor resources.
+    // the target. Linux is valid only in the server/WSL and Cursor resources when WSL is bundled.
     const targets = file.matchAll(
       /(?:^|[/.-])(darwin|linux|win32|android|freebsd)-(x64|arm64|ia32|arm|riscv64|ppc64|s390x)(?=[/.-]|$)/g,
     );
     for (const target of targets) {
       const [, os, cpu] = target;
       if (cpu !== arch || (os !== "win32" && os !== "linux")) return true;
-      if (
-        os === "linux" &&
-        !file.startsWith("resources/server.asar.unpacked/") &&
-        !file.startsWith("resources/node_modules/@cursor/sdk-linux-")
-      )
-        return true;
+      if (os === "linux") {
+        if (!linuxBackend) return true;
+        if (
+          !file.startsWith("resources/server.asar.unpacked/") &&
+          !file.startsWith("resources/node_modules/@cursor/sdk-linux-")
+        )
+          return true;
+      }
     }
     const conpty = /\/win10-(x64|arm64)(?:\/|$)/.exec(file);
     return conpty !== null && conpty[1] !== arch;
   });
 }
 
+// SCIENT-FORK:START — verify server.asar entries directly so foreign Linux packages cannot hide inside ASAR.
+const ASAR_TARGET_PATTERN =
+  /(?:^|[/._-])(darwin|linux|win32|android|freebsd)[-_](x64|arm64|ia32|arm|riscv64|ppc64|s390x)(?=[/._-]|$)/g;
+const NATIVE_BINARY_EXT = /\.(?:node|so(?:\.\d+)*|dylib|dll|exe)$/i;
+
+function isTargetAllowedInWindowsAsar(
+  os: string,
+  cpu: string,
+  arch: "x64" | "arm64",
+  linuxBackend: boolean,
+): boolean {
+  if (cpu !== arch) return false;
+  if (os === "win32") return true;
+  return os === "linux" && linuxBackend;
+}
+
+export function unexpectedWindowsServerAsarEntries(
+  entries: readonly string[],
+  arch: "x64" | "arm64",
+  linuxBackend: boolean,
+) {
+  return entries.filter((entry) => {
+    const normalized = entry.replaceAll("\\", "/").replace(/^\/+/, "");
+    if (!linuxBackend && normalized.startsWith("apps/server/dist/synctex-runtime/linux-")) {
+      return true;
+    }
+    if (!normalized.startsWith("node_modules/")) return false;
+    const parts = normalized.split("/");
+    const packageRoot = parts[1]?.startsWith("@")
+      ? `${parts[1]}/${parts[2] ?? ""}`
+      : (parts[1] ?? "");
+    const inspectTargets = (segment: string) => {
+      for (const match of segment.matchAll(ASAR_TARGET_PATTERN)) {
+        const [, os = "", cpu = ""] = match;
+        if (!isTargetAllowedInWindowsAsar(os, cpu, arch, linuxBackend)) return true;
+      }
+      return false;
+    };
+    if (inspectTargets(packageRoot)) return true;
+    const prebuildsIndex = parts.indexOf("prebuilds");
+    if (
+      prebuildsIndex !== -1 &&
+      parts[prebuildsIndex + 1] &&
+      inspectTargets(parts[prebuildsIndex + 1]!)
+    ) {
+      return true;
+    }
+    if (NATIVE_BINARY_EXT.test(normalized) && inspectTargets(normalized)) {
+      return true;
+    }
+    return false;
+  });
+}
+// SCIENT-FORK:END
+
 /** Validate known components before subtracting them from the core budget. */
 export function analyzeWindowsPayloadInventory(input: {
   readonly files: readonly string[];
   readonly arch: "x64" | "arm64";
   readonly previewFiles?: readonly string[];
+  readonly linuxBackend?: boolean;
 }) {
+  const linuxBackend = input.linuxBackend ?? true;
   const components = [
     {
       name: "cursor",
       root: "resources/node_modules/@cursor/",
-      files: windowsCursorFiles(input.arch),
+      files: windowsCursorFiles(input.arch, linuxBackend),
     },
     { name: "preview", root: "resources/conversation-preview/", files: input.previewFiles ?? [] },
     {
@@ -112,7 +181,11 @@ export function analyzeWindowsPayloadInventory(input: {
     },
   ];
   const missingFiles: string[] = [];
-  const unexpectedFiles: string[] = unexpectedWindowsNativeFiles(input.files, input.arch);
+  const unexpectedFiles: string[] = unexpectedWindowsNativeFiles(
+    input.files,
+    input.arch,
+    linuxBackend,
+  );
   const counts: Record<string, number> = {};
   let allowance = 0;
   const present = new Set(input.files);
