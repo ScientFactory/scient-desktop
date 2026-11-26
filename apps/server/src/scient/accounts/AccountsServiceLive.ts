@@ -34,11 +34,13 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
+  Cache,
   Clock,
   DateTime,
   Deferred,
   Duration,
   Effect,
+  Exit,
   Layer,
   Option,
   PubSub,
@@ -102,7 +104,7 @@ import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 
 const missing = () => fail("not-found", "The account no longer exists.");
 /** Offline, Accounts still opens: GitHub's own answer is left out after this long. */
-const GITHUB_IDENTITY_TIMEOUT = Duration.seconds(3);
+const GITHUB_IDENTITY_TIMEOUT = Duration.seconds(12);
 
 /** A removed profile's sign-ins ended with it; a saved password stays, free of the profile. */
 const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId: string) =>
@@ -198,65 +200,84 @@ export const layer = Layer.effect(
     >();
 
     // Discovery runs the GitHub CLI and optional /user lookup: keep it off snapshots and the write
-    // semaphore, probe only GitHub (never unrelated forges like Azure), and cache for 1 minute.
-    const externalIdentities = yield* Effect.cachedWithTTL(
-      Effect.gen(function* () {
-        const github = Option.isSome(sourceControl)
-          ? Option.getOrUndefined(
-              yield* sourceControl.value.discoverProvider(SourceControlProviderKind.make("github")),
-            )
-          : undefined;
-        const githubAccounts =
-          github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
-        if (
-          github &&
-          githubAccounts.length === 0 &&
-          github.auth.status === "authenticated" &&
-          Option.isSome(github.auth.account)
-        ) {
-          githubAccounts.push({
-            account: github.auth.account.value,
-            host: Option.getOrElse(github.auth.host, () => "github.com"),
-            active: true,
-            authenticated: true,
-          });
-        }
-        // Source Control's own choice first, as GitHub names it; then gh's other logins.
-        const effective = Option.isSome(githubCredential)
-          ? yield* githubCredential.value.get("github.com").pipe(
-              Effect.timeoutOption(GITHUB_IDENTITY_TIMEOUT),
-              Effect.map(Option.flatten),
-              Effect.orElseSucceed(() => Option.none()),
-            )
-          : Option.none();
-        const githubRows = [
-          ...Option.toArray(effective).map((credential) => ({
-            host: "github.com",
-            account: credential.login,
-            via: credential.via === "cli" ? ("gh" as const) : credential.via,
-          })),
-          ...githubAccounts
-            .filter(
-              (account) =>
-                !Option.exists(
-                  effective,
-                  (credential) =>
-                    account.host.toLowerCase() === "github.com" &&
-                    account.account.toLowerCase() === credential.login.toLowerCase(),
+    // semaphore, probe only GitHub (never unrelated forges like Azure), and cache complete results
+    // for 1 minute without pinning timed-out or failed credential lookups.
+    const externalIdentitiesCache = yield* Cache.makeWith(
+      (_key: "github") =>
+        Effect.gen(function* () {
+          const github = Option.isSome(sourceControl)
+            ? Option.getOrUndefined(
+                yield* sourceControl.value.discoverProvider(
+                  SourceControlProviderKind.make("github"),
                 ),
-            )
-            .map((account) => ({ ...account, via: "gh" as const })),
-        ];
-        return githubRows.map((account) => ({
-          kind: "github" as const,
-          id: `${account.host.toLowerCase()}:${account.account.toLowerCase()}`,
-          name: account.account,
-          detail: account.host,
-          href: "/settings/source-control" as const,
-          via: account.via,
-        })) satisfies NonNullable<AccountsSnapshot["managedElsewhere"]>;
-      }),
-      "1 minute",
+              )
+            : undefined;
+          const githubAccounts =
+            github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
+          if (
+            github &&
+            githubAccounts.length === 0 &&
+            github.auth.status === "authenticated" &&
+            Option.isSome(github.auth.account)
+          ) {
+            githubAccounts.push({
+              account: github.auth.account.value,
+              host: Option.getOrElse(github.auth.host, () => "github.com"),
+              active: true,
+              authenticated: true,
+            });
+          }
+          // Source Control's own choice first, as GitHub names it; then gh's other logins.
+          const effectiveProbe = Option.isSome(githubCredential)
+            ? yield* githubCredential.value.get("github.com").pipe(
+                Effect.timeoutOption(GITHUB_IDENTITY_TIMEOUT),
+                Effect.map((timed) =>
+                  Option.isSome(timed)
+                    ? { effective: timed.value, complete: true }
+                    : { effective: Option.none(), complete: false },
+                ),
+                Effect.orElseSucceed(() => ({ effective: Option.none(), complete: false })),
+              )
+            : { effective: Option.none(), complete: true };
+          const { effective, complete } = effectiveProbe;
+          const githubRows = [
+            ...Option.toArray(effective).map((credential) => ({
+              host: "github.com",
+              account: credential.login,
+              via: credential.via === "cli" ? ("gh" as const) : credential.via,
+            })),
+            ...githubAccounts
+              .filter(
+                (account) =>
+                  !Option.exists(
+                    effective,
+                    (credential) =>
+                      account.host.toLowerCase() === "github.com" &&
+                      account.account.toLowerCase() === credential.login.toLowerCase(),
+                  ),
+              )
+              .map((account) => ({ ...account, via: "gh" as const })),
+          ];
+          return {
+            complete,
+            identities: githubRows.map((account) => ({
+              kind: "github" as const,
+              id: `${account.host.toLowerCase()}:${account.account.toLowerCase()}`,
+              name: account.account,
+              detail: account.host,
+              href: "/settings/source-control" as const,
+              via: account.via,
+            })) satisfies NonNullable<AccountsSnapshot["managedElsewhere"]>,
+          };
+        }),
+      {
+        capacity: 1,
+        timeToLive: (exit) =>
+          Exit.isSuccess(exit) && exit.value.complete ? Duration.minutes(1) : Duration.zero,
+      },
+    );
+    const externalIdentities = Cache.get(externalIdentitiesCache, "github").pipe(
+      Effect.map((entry) => entry.identities),
     );
     const readModelConsumers = sources.modelCatalog?.connections ?? Effect.succeed([]);
     const readTranscriptionConsumers = sources.transcriptionKeyConsumers ?? Effect.succeed([]);

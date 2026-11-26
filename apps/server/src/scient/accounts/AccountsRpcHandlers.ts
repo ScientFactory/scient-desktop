@@ -623,6 +623,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         signInAttempts: Effect.succeed(makeSignInAttempts()),
         passwordStore: unavailable,
         snapshot: missingService,
+        externalIdentities: missingService,
         changes: Stream.empty,
         save: unavailable,
         remove: unavailable,

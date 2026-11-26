@@ -461,8 +461,9 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const messages = useMessages();
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
+  // SCIENT-FORK: only probe source-control CLIs while the publish dialog is actually open.
   const sourceControlDiscovery = useEnvironmentQuery(
-    props.environmentId === null
+    props.environmentId === null || !props.open
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: props.environmentId,

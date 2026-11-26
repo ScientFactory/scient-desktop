@@ -27,6 +27,8 @@ const externalIdentities = createEnvironmentRpcQueryAtomFamily(connectionAtomRun
   tag: WS_METHODS.accountsExternalIdentities,
   staleTimeMs: 30_000,
   idleTtlMs: 60_000,
+  refreshTrigger: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
+    changes({ environmentId, input: {} }),
 });
 const lane = {
   scheduler: createAtomCommandScheduler(),

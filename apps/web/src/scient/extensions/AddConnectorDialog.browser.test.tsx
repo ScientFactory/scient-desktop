@@ -38,13 +38,28 @@ const state = vi.hoisted(() => ({
   accountsAvailable: false,
   accounts: [] as AccountSummary[],
   managedElsewhere: [] as NonNullable<AccountsSnapshot["managedElsewhere"]>,
+  externalIdentities: null as ReadonlyArray<
+    NonNullable<AccountsSnapshot["managedElsewhere"]>[number]
+  > | null,
+  externalIdentitiesAtom: null as unknown,
 }));
 
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({
-    isSuccess: state.accountsAvailable,
-    data: { accounts: state.accounts, managedElsewhere: state.managedElsewhere },
-  }),
+  useEnvironmentQuery: (atom: unknown) => {
+    if (atom === null) {
+      return { isSuccess: false, data: null };
+    }
+    if (state.externalIdentitiesAtom !== null && atom === state.externalIdentitiesAtom) {
+      return {
+        isSuccess: state.externalIdentities !== null,
+        data: state.externalIdentities === null ? null : { identities: state.externalIdentities },
+      };
+    }
+    return {
+      isSuccess: state.accountsAvailable,
+      data: { accounts: state.accounts, managedElsewhere: state.managedElsewhere },
+    };
+  },
 }));
 vi.mock("./extensionsState", () => ({
   addConnector: "add",
@@ -117,6 +132,7 @@ vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => state
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../../components/chat/providerIconUtils", () => ({ AVAILABLE_PROVIDER_OPTIONS: [] }));
 
+import { accountsState } from "../accounts/accountsState";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 
@@ -141,6 +157,8 @@ function setup() {
   state.accountsAvailable = false;
   state.accounts = [];
   state.managedElsewhere = [];
+  state.externalIdentities = null;
+  state.externalIdentitiesAtom = accountsState.externalIdentities({ environmentId, input: {} });
   state.add.mockReset();
   // Mounting the local form lists importable servers; a test that asserts it was not asked
   // must not see an earlier test's call.
@@ -703,6 +721,24 @@ describe("GitHub with Source Control's account", () => {
     expect(JSON.stringify(sent)).not.toContain("clientSecret");
     expect(sent.input).not.toHaveProperty("oauthClient");
     expect(state.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("loads GitHub logins from accounts.externalIdentities when the snapshot omits them", async () => {
+    await using fixture = setup();
+    state.managedElsewhere = [];
+    state.externalIdentities = [login("octo", "app"), login("second", "gh")];
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: githubConnector, nextStep: "ready" },
+    });
+    await fixture.render(githubEntry);
+    await expect.element(page.getByRole("button", { name: "Connect as octo" })).toBeVisible();
+    await userEvent.selectOptions(field<HTMLSelectElement>("github-account"), "second");
+    await press("Connect as second");
+    expect(state.add.mock.calls[0]?.[0].input.credential).toEqual({
+      type: "source-control",
+      account: "second",
+    });
   });
 
   it("signs in with a code to copy, on GitHub's page in Scient's own browser", async () => {
