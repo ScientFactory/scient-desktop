@@ -42,9 +42,13 @@ export function projectScriptRuntimeEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {
     T3CODE_PROJECT_ROOT: input.project.cwd,
+    // SCIENT-FORK: the Scient names, beside the T3 names older scripts read.
+    SCIENT_PROJECT_ROOT: input.project.cwd,
   };
   if (input.worktreePath) {
     env.T3CODE_WORKTREE_PATH = input.worktreePath;
+    // SCIENT-FORK: the Scient name, beside the T3 name older scripts read.
+    env.SCIENT_WORKTREE_PATH = input.worktreePath;
   }
   if (input.extraEnv) {
     return { ...env, ...input.extraEnv };

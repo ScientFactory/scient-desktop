@@ -152,7 +152,8 @@ export function settingInheritanceLayers(
   if (fileBacked && target.projectId !== null) {
     layers.push({
       key: "t3.json",
-      label: "t3.json",
+      // SCIENT-FORK: the layer is scient.json, or t3.json in a project without one.
+      label: "scient.json",
       value:
         source === "t3.json"
           ? formatValue(key, target.settings[key], resolve)

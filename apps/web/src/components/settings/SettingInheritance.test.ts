@@ -78,7 +78,8 @@ describe("settingInheritanceLayers", () => {
     expect(fromFile.map((layer) => [layer.label, layer.value, layer.effective])).toEqual([
       ["Project", "Inherits", false],
       ["Laptop", "Inherits", false],
-      ["t3.json", "New worktree", true],
+      // SCIENT-FORK: Scient names the layer for its scient.json.
+      ["scient.json", "New worktree", true],
       ["Default", "Current checkout", false],
     ]);
     const settings = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" as const };

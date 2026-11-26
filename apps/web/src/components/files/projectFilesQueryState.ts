@@ -8,7 +8,7 @@ import {
   type ProjectListEntriesResult,
   ProjectReadFileError,
   type ProjectReadFileResult,
-  T3_PROJECT_FILE_NAME,
+  isProjectFileName,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -95,6 +95,8 @@ export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFile
   /** The operating system's own error code for a failed read, when the server gave one. */
   readonly failureOsErrorCode: string | null;
   readonly isFile: boolean;
+  // SCIENT-FORK: the read answered that no such file exists, as opposed to failing.
+  readonly isMissing: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -122,7 +124,8 @@ export function getProjectFileQueryAtom(
     input: {
       cwd,
       relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH,
-      ...(relativePath === T3_PROJECT_FILE_NAME ? { allowMissing: true } : {}),
+      // SCIENT-FORK: scient.json and t3.json may both be absent.
+      ...(relativePath !== null && isProjectFileName(relativePath) ? { allowMissing: true } : {}),
     },
   });
 }
@@ -373,6 +376,8 @@ export function useProjectFileQuery(
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
     isNotFile,
+    // SCIENT-FORK: no file there, and no unsaved draft of one.
+    isMissing: canReadFiles && isMissing && !optimisticFile,
     // A folder error overrides cached contents retained across failed refreshes.
     isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
     // The file as last read, which your unsaved draft in `data` must not hide.

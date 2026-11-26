@@ -8463,6 +8463,47 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }).pipe(withGitFileProtocol),
     );
 
+    // SCIENT-FORK:START — a new worktree takes its settings from scient.json before t3.json.
+    it.effect("a new worktree reads scient.json from HEAD before the t3.json beside it", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const submoduleRepo = yield* makeTmpDir("git-submodule-");
+        yield* initRepoWithCommit(submoduleRepo);
+        yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+        yield* git(submoduleRepo, ["add", "."]);
+        yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["submodule", "add", NodeURL.pathToFileURL(submoduleRepo).href, "shared"]);
+        yield* writeTextFile(cwd, "sparse-patterns.txt", "/shared/\n");
+        yield* writeTextFile(
+          cwd,
+          "scient.json",
+          `{ "worktreeSparsePatternsPath": "sparse-patterns.txt", "worktreeSubmodules": "none" }`,
+        );
+        yield* writeTextFile(cwd, "t3.json", "{}");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "project files"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "scient");
+
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "scient",
+        });
+
+        // Sparse, so scient.json's patterns applied; no submodule, so its "none" did too.
+        assert.isFalse(yield* fileSystem.exists(pathService.join(worktreePath, ".gitmodules")));
+        assert.isFalse(
+          yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
+        );
+      }).pipe(withGitFileProtocol),
+    );
+    // SCIENT-FORK:END
+
     it.effect("still creates the worktree when submodule checkout fails", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

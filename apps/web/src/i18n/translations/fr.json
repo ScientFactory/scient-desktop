@@ -2834,19 +2834,13 @@
   "49eda70cfd56e621": "S’exécute au démarrage d’un fil dans un worktree et à la restauration de son dossier",
   "188ccaa1199f5611": "S’exécute à la suppression du worktree d’un fil",
   "7e8476e7306acabe": "Autoriser ce projet à exécuter ses commandes de worktree ?",
-  "8e11914556fd8b13": [
+  "1dc6832cb023166d": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " prépare les fils en worktree avec ses propres commandes issues de ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": "t3.json"
-    },
-    ". Elles s’exécutent sur la machine de cet environnement avec vos autorisations, hors de tout bac à sable d’agent. La question vous sera reposée chaque fois que leur texte changera."
+    " prépare les fils en worktree avec ses propres commandes. Elles s’exécutent sur la machine de cet environnement avec vos autorisations, hors de tout bac à sable d’agent. La question vous sera reposée chaque fois que leur texte changera."
   ],
   "46807acd02a4ff72": "Approuver et continuer",
   "2ac142f34e5dabc2": "Dépôts dans le nouveau worktree : {selection}",
@@ -9695,10 +9689,9 @@
   "74a80f881d59c64d": "Commandes exécutées dans le checkout de ce projet ou dans son worktree, avec des raccourcis facultatifs.",
   "b021ef2874c6c24b": "Actions différentes selon les checkouts",
   "1e0bbb3a6c4afd6c": "Réduisez la sélection ci-dessus à un seul checkout pour modifier sa liste. Ajouter une action ici l’ajoute à chaque checkout sélectionné.",
-  "8fadca1175fbcbd8": "t3.json n’est pas valide",
-  "917d2359f549794c": "Un fichier t3.json existe dans ce checkout mais son analyse échoue, donc toutes les actions et icônes qu’il déclare sont ignorées. Vérifiez la syntaxe JSON et les valeurs des icônes.",
+  "4fe5c7e10c062104": "{file} n’est pas valide",
+  "d28e2b8d77b0cd95": "Un fichier {file} existe dans ce checkout mais son analyse échoue, donc toutes les actions et icônes qu’il déclare sont ignorées. Vérifiez la syntaxe JSON et les valeurs des icônes.",
   "df4cf566c6d08a4b": "Importer des scripts",
-  "2aaeffe4fe3d29d7": "Importer depuis t3.json",
   "84f1752d64c3152e": "Ajoute les actions déclarées par ce checkout sans les modifier d’abord.",
   "3b893da0373ab50e": "Ajouter une action",
   "5afea423d829496e": "Ce fournisseur n’est pas disponible dans cet environnement.",
@@ -9716,7 +9709,7 @@
   "2f65da0a2375c66a": "Automatique (mixte)",
   "369304844a14a649": "Aucun fournisseur disponible",
   "846ba52561c0e6bb": "Où démarrent les nouveaux fils de ce projet.",
-  "af64dbd4bfce12aa": "Où démarrent les nouveaux fils. Les projets et leur t3.json peuvent le remplacer.",
+  "7735d3302c8fd0fd": "Où démarrent les nouveaux fils. Les projets et leur scient.json peuvent le remplacer.",
   "8ab693ae67cd5e86": "Réinitialiser l’espace de travail par défaut à la valeur par défaut",
   "d1d1342ccb83a14b": "Espace de travail par défaut",
   "a22721e847136f21": "Indisponible",
@@ -9747,7 +9740,7 @@
   "9290d5de050e5302": "Méthode de fusion par défaut des pull requests",
   "3619911bbdb05fc1": "Dernière sélection",
   "87717de46afcdaed": "Comment les nouveaux worktrees de ce projet remplissent les sous-modules git.",
-  "3212b4d0725a27c7": "Comment les nouveaux worktrees remplissent les sous-modules git. Les projets et leur t3.json peuvent le remplacer.",
+  "b28c1fbca84ff3ab": "Comment les nouveaux worktrees remplissent les sous-modules git. Les projets et leur scient.json peuvent le remplacer.",
   "74a80f6d7962be21": "Réinitialiser les sous-modules des worktrees à la valeur par défaut",
   "1c97d5a78ca1fdb6": "Sous-modules des worktrees",
   "2c2b437431e4cd1d": "Aucun fournisseur disponible",
@@ -9850,15 +9843,7 @@
   "a0c772d32a233da6": "Impossible de révoquer l’approbation",
   "5ccd5614c65f8d1f": "Révoquer l’approbation de la commande {kind}",
   "80c3794a5fa12f3a": "Approuver la commande {kind}",
-  "f206891e124c77b0": [
-    "Le ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": "t3.json"
-    },
-    " de ce projet prépare les fils en worktree avec ses propres commandes. Elles s’exécutent sur la machine de cet environnement avec vos autorisations, et uniquement telles qu’approuvées ici : une commande dont le texte change doit être approuvée de nouveau."
-  ],
+  "fe371387d551decf": "Ce projet prépare les fils en worktree avec ses propres commandes. Elles s’exécutent sur la machine de cet environnement avec vos autorisations, et uniquement telles qu’approuvées ici : une commande dont le texte change doit être approuvée de nouveau.",
   "8e73b883d41d4102": "Désactivé",
   "f6a91589456cca50": "Approuvée",
   "c92657bb7f2293ff": "Approbation requise",
@@ -12439,7 +12424,7 @@
   "dfd5b72fe7308d9e": "Enregistré sur cet appareil. Sélectionnez Tous les projets pour le modifier.",
   "091be13f50490708": "Varie selon les environnements sélectionnés",
   "06e9973f7537ed51": "Remplacé pour ce projet",
-  "b1d09e365249f87b": "Hérité du t3.json du dépôt",
+  "3e65ec75eebdf39a": "Hérité du scient.json du dépôt",
   "539b097411fd1307": "Hérité de l’environnement",
   "6340f81c024cfe12": "Hérité de {environment}",
   "49a60879f4348f46": "Défini sur l’environnement",
@@ -12582,7 +12567,7 @@
   "00469926c7027e2d": "équilibré performances économie batterie avancé git fetch fournisseur état actualisation hôte énergie surveillance inactif politique",
   "54e33e572cc71746": "espace de travail par défaut mode brouillon local worktree",
   "b2ece956b72c4a48": "Sous-modules",
-  "579153f275a1636f": "git sous-module init récursif premier niveau aucun worktree t3.json",
+  "46eb1855823e4314": "git sous-module init récursif premier niveau aucun worktree scient.json t3.json",
   "88553740587a9beb": "Partir du remote",
   "4a172e139167badc": "nouveaux worktrees démarrer remote origin dernière branche récupérée locale",
   "30aac12099fcaf53": "Dossier de départ d’Ajouter un projet",
@@ -12656,7 +12641,7 @@
   "4c241258fdc87942": "pull request pr revue guidée guide visite bêta expérimental",
   "39e4c844a9d56a1d": "pull request pr revue guidée guide résumé mainteneur",
   "f27f2e85e05f664c": "pull request pr revue guidée guide préférences goût prompt personnalisé",
-  "01cff0c3cb858073": "commandes scripts configuration exécuter serveur de dev extraction worktree t3.json importer",
+  "ee85d055fbf96c03": "commandes scripts configuration exécuter serveur de dev extraction worktree scient.json t3.json importer",
   "756e41fd7e0b044c": "dossiers suivis multi dépôt espace de travail code-workspace réanalyser ajouter dossier",
   "c349ea1db3f9e9f1": "Icône de l’environnement",
   "18bd7981d6c50994": "machine glyphe barre latérale mac mini studio portable bureau serveur cloud vm",

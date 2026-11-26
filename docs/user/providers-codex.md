@@ -55,7 +55,7 @@ the installed one, when that is newer), so it can also bring a newer release.
 ## Allow more time for provider checks
 
 If an authenticated Codex installation reports “Timed out while checking Codex
-app-server provider status,” set `T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` in the
+app-server provider status,” set `SCIENT_CODEX_PROBE_TIMEOUT_MS=60000` in the
 Scient server's environment and restart it. See [Provider check timeouts](./install.md#provider-check-timeouts)
 for configuration and other providers.
 

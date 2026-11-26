@@ -14,7 +14,8 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
+// SCIENT-FORK: scient.json first, then t3.json.
+import { readProjectFileText } from "../project/scientProjectFile.ts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -274,21 +275,19 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
 
 /**
  * The repositories inside a project folder, read from disk: the ones a scan finds there, less
- * those the project's `t3.json` leaves out. A folder outside it is never found this way, since
+ * those the project's `scient.json` or `t3.json` leaves out. A folder outside it is never found this way, since
  * tracking one grants agents a place they could not reach before.
  */
 export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* (
   workspaceRoot: string,
 ): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { realPath, ownsHistory } = yield* folderProbes;
   const root = path.resolve(expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory));
   const ignored = (
     parseT3ProjectFile(
-      yield* fileSystem
-        .readFileString(path.join(root, T3_PROJECT_FILE_NAME))
-        .pipe(Effect.orElseSucceed(() => "")),
+      // SCIENT-FORK: scient.json first, then t3.json.
+      (yield* readProjectFileText(root)) ?? "",
     )?.ignoreRepositories ?? []
   ).map((entry) => path.resolve(root, entry));
   // Everything the scan could find would be dropped, so skip the walk.

@@ -18,7 +18,6 @@ import {
   type VcsCreateWorktreeResult,
   type WorkspaceLayoutCommandsResult,
   type WorktreeLayoutCommandKind,
-  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { flattenTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -56,6 +55,8 @@ import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as LayoutCommandApprovals from "./LayoutCommandApprovals.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 import { projectFolders, parseGitmodulesPaths } from "./WorkspaceFolders.ts";
+// SCIENT-FORK: scient.json first, then t3.json.
+import { readProjectFileText } from "../project/scientProjectFile.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 
 // Each worktree is a checkout: enough at once to finish four repositories together, few enough
@@ -284,7 +285,7 @@ interface ClearedLayoutCommand {
 }
 
 const layoutRefusedDetail = (refusal: string) =>
-  `This project lays out its worktrees with its own command (worktreeLayout in ${T3_PROJECT_FILE_NAME}), ${refusal}`;
+  `This project lays out its worktrees with its own command (worktreeLayout in its scient.json or t3.json), ${refusal}`;
 
 const failureDetail = (cause: unknown) =>
   typeof cause === "object" &&
@@ -396,11 +397,12 @@ const make = Effect.gen(function* () {
     (cause: unknown): TaskFolderError =>
       new TaskFolderError({ operation, detail: `${prefix}: ${failureDetail(cause)}`, cause });
 
-  // A project that lays its own thread folder out says so in its `t3.json`.
+  // A project that lays its own thread folder out says so in its `scient.json` or `t3.json`.
+  // SCIENT-FORK: scient.json first, then t3.json.
   const projectFile = (projectRoot: string) =>
-    fileSystem.readFileString(path.join(projectRoot, T3_PROJECT_FILE_NAME)).pipe(
-      Effect.map(parseT3ProjectFile),
-      Effect.orElseSucceed(() => null),
+    readProjectFileText(projectRoot).pipe(
+      Effect.map((contents) => (contents === null ? null : parseT3ProjectFile(contents))),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
   const worktreeLayout = (projectRoot: string) =>
     projectFile(projectRoot).pipe(Effect.map((config) => config?.worktreeLayout ?? null));
@@ -508,6 +510,14 @@ const make = Effect.gen(function* () {
               T3_WORKTREE_BRANCH: branch,
               T3_WORKTREE_BASE: baseBranch ?? "",
               T3_WORKTREE_REPOSITORIES: repositories.join("\n"),
+              // SCIENT-FORK:START — the Scient names, beside the T3 names older commands read.
+              SCIENT_PROJECT_ROOT: taskFolder.projectRoot,
+              SCIENT_WORKTREE_ROOT: taskFolder.root,
+              SCIENT_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
+              SCIENT_WORKTREE_BRANCH: branch,
+              SCIENT_WORKTREE_BASE: baseBranch ?? "",
+              SCIENT_WORKTREE_REPOSITORIES: repositories.join("\n"),
+              // SCIENT-FORK:END
             },
             timeoutMs: LAYOUT_COMMAND_TIMEOUT_MS,
           })

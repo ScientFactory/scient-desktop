@@ -244,6 +244,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         displayMode="panel"
                         scripts={props.activeProjectScripts}
                         fileScripts={t3File.scripts}
+                        fileName={t3File.fileName}
                         onActionsMenuOpen={t3File.refresh}
                         preferredScriptId={props.preferredScriptId}
                         onRunScript={props.onRunProjectScript}

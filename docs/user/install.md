@@ -177,15 +177,18 @@ allow more time in the Scient server's environment. For example, give Codex and
 Claude readiness checks 60 seconds:
 
 ```bash
-T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 scient serve
+SCIENT_CODEX_PROBE_TIMEOUT_MS=60000 SCIENT_CLAUDE_PROBE_TIMEOUT_MS=60000 scient serve
 ```
 
 For a remote environment, set these on the machine running the Scient server.
 Keep them in your launcher or process manager configuration to retain them
 across updates, then restart the server. For systemd, add
-`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
+`Environment=SCIENT_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
 override, reload systemd, and restart the service. Provider instances can also
 set their own overrides in Settings → Providers.
+
+Every `SCIENT_` setting in this guide also works with the earlier `T3CODE_` prefix. When both
+are set, the `SCIENT_` one applies.
 
 Each variable extends that provider's readiness-probe deadlines; a phase whose
 default is already longer keeps its default. Providers with several phases can
@@ -194,17 +197,17 @@ greater than 2147483647; unset or invalid values keep the defaults.
 
 | Provider            | Environment variable                   |
 | ------------------- | -------------------------------------- |
-| Codex               | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
-| Claude              | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
-| Cursor              | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
-| Antigravity         | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
-| Grok                | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
-| Kiro                | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
-| fx                  | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
-| Pi                  | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
-| Muse Code           | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
-| OpenCode            | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
-| ACP Registry agents | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
+| Codex               | `SCIENT_CODEX_PROBE_TIMEOUT_MS`        |
+| Claude              | `SCIENT_CLAUDE_PROBE_TIMEOUT_MS`       |
+| Cursor              | `SCIENT_CURSOR_PROBE_TIMEOUT_MS`       |
+| Antigravity         | `SCIENT_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
+| Grok                | `SCIENT_GROK_PROBE_TIMEOUT_MS`         |
+| Kiro                | `SCIENT_KIRO_PROBE_TIMEOUT_MS`         |
+| fx                  | `SCIENT_FX_PROBE_TIMEOUT_MS`           |
+| Pi                  | `SCIENT_PI_PROBE_TIMEOUT_MS`           |
+| Muse Code           | `SCIENT_MUSE_PROBE_TIMEOUT_MS`         |
+| OpenCode            | `SCIENT_OPENCODE_PROBE_TIMEOUT_MS`     |
+| ACP Registry agents | `SCIENT_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
 
 Longer deadlines also take longer to report a stalled check. These overrides
 cover readiness and discovery, including OpenCode server startup. Usage and

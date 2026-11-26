@@ -388,7 +388,7 @@ sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
 runs a command, such as a dev server, stays open unless its action has **Stop this action
 when the thread settles** enabled in Settings > Projects > Actions. You can also set
-`"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
+`"stopOnSettle": true` on a `scient.json` action and import it there. Start the command through
 that action so Scient can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
 
@@ -405,7 +405,7 @@ their pinned threads keep the default newest-first order below the ones you have
 
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
 thread settles** for one of the project's actions, or set `"runOnSettle": true` on a
-`t3.json` script, for example `cargo clean`. It runs each time a thread in its own
+`scient.json` script, for example `cargo clean`. It runs each time a thread in its own
 worktree settles, manually or automatically, even if a terminal there still runs a
 command such as a dev server. Threads in the project's main checkout skip it. Its terminal
 closes when the command succeeds and stays open when it fails.

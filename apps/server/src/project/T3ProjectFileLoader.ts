@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
+import { PROJECT_FILE_NAMES, type T3ProjectFile } from "@t3tools/contracts";
 import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
 
 const decodeT3ProjectFileJson = Schema.decodeEffect(T3ProjectFileFromJson);
@@ -21,7 +21,8 @@ export class T3ProjectFileLoadError extends Schema.TaggedError<T3ProjectFileLoad
   },
 ) {
   override get message(): string {
-    return `Failed to ${this.operation} ${T3_PROJECT_FILE_NAME} at ${this.filePath}.`;
+    // SCIENT-FORK: the file is scient.json or t3.json, so the path names it.
+    return `Failed to ${this.operation} the project file at ${this.filePath}.`;
   }
 }
 
@@ -48,25 +49,39 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  // SCIENT-FORK:START — one candidate file; "missing" lets the next name answer.
+  const readProjectFile = (workspaceRoot: string, filePath: string) =>
+    fileSystem.readFileString(filePath).pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed("missing" as const)
+            : logT3ProjectFileLoadError(
+                new T3ProjectFileLoadError({
+                  operation: "read",
+                  workspaceRoot,
+                  filePath,
+                  cause: error,
+                }),
+              ).pipe(Effect.as(Option.none<string>())),
+      }),
+    );
+  // SCIENT-FORK:END
+
   const load: T3ProjectFileLoader["Service"]["load"] = Effect.fn("T3ProjectFileLoader.load")(
     function* (workspaceRoot) {
-      const filePath = path.join(workspaceRoot, T3_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logT3ProjectFileLoadError(
-                  new T3ProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
+      // SCIENT-FORK:START — scient.json first; t3.json only when the project has no scient.json.
+      let filePath = path.join(workspaceRoot, PROJECT_FILE_NAMES[0]);
+      let raw = Option.none<string>();
+      for (const name of PROJECT_FILE_NAMES) {
+        filePath = path.join(workspaceRoot, name);
+        const read = yield* readProjectFile(workspaceRoot, filePath);
+        if (read === "missing") continue;
+        raw = read;
+        break;
+      }
+      // SCIENT-FORK:END
       if (Option.isNone(raw)) {
         return Option.none<T3ProjectFile>();
       }

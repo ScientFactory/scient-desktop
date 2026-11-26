@@ -27,7 +27,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   type GitCommandFailureReason,
-  T3_PROJECT_FILE_NAME,
+  // SCIENT-FORK: scient.json first, then t3.json.
+  PROJECT_FILE_NAMES,
   type ReviewBranchCommitsInput,
   type ReviewDiffChangeType,
   type ReviewDiffFileContentsInput,
@@ -6501,25 +6502,48 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
-  // A new worktree has no files yet, so t3.json and its pattern file come from the ref itself.
+  // SCIENT-FORK:START — the project file in `ref`'s tree: scient.json when the tree has one, else
+  // t3.json. The tree decides, so a scient.json that fails to read never hands over to t3.json.
+  const readProjectFileAt = Effect.fn("readProjectFileAt")(function* (cwd: string, ref: string) {
+    const listed = yield* executeGit(
+      "GitVcsDriver.createWorktree.readProjectFile",
+      cwd,
+      ["ls-tree", "--full-tree", "--name-only", "-z", ref, "--", ...PROJECT_FILE_NAMES],
+      { allowNonZeroExit: true },
+    );
+    if (listed.exitCode !== 0) return null;
+    const inTree = new Set(listed.stdout.split("\0"));
+    const name = PROJECT_FILE_NAMES.find((candidate) => inTree.has(candidate));
+    if (name === undefined) return null;
+    const shown = yield* executeGit(
+      "GitVcsDriver.createWorktree.readProjectFile",
+      cwd,
+      ["show", `${ref}:${name}`],
+      { allowNonZeroExit: true },
+    );
+    return shown.exitCode === 0 ? { name, contents: shown.stdout } : null;
+  });
+  // SCIENT-FORK:END
+
+  // A new worktree has no files yet, so the project file and its pattern file come from the ref.
   const readWorktreeSparsePatterns = Effect.fn("readWorktreeSparsePatterns")(function* (
     cwd: string,
     refName: string,
   ) {
     // `git show` does not read a lone - as the previous checkout either.
     const ref = refName === "-" ? "@{-1}" : refName;
-    const projectFile = yield* executeGit(
-      "GitVcsDriver.createWorktree.readProjectFile",
-      cwd,
-      ["show", `${ref}:${T3_PROJECT_FILE_NAME}`],
-      { allowNonZeroExit: true },
-    );
-    if (projectFile.exitCode !== 0) return null;
-    const file = parseT3ProjectFile(projectFile.stdout);
+    // SCIENT-FORK:START — scient.json first, then t3.json.
+    const projectFile = yield* readProjectFileAt(cwd, ref);
+    if (projectFile === null) return null;
+    const file = parseT3ProjectFile(projectFile.contents);
     if (file === null) {
-      yield* Effect.logWarning("t3.json is invalid; checking out the full worktree", { cwd, ref });
+      yield* Effect.logWarning(`${projectFile.name} is invalid; checking out the full worktree`, {
+        cwd,
+        ref,
+      });
       return null;
     }
+    // SCIENT-FORK:END
     if (file.worktreeSparsePatternsPath === undefined) return null;
     // Git reads <ref>:./path from the working directory, so keep the path repository-relative.
     const patternsPath = file.worktreeSparsePatternsPath.replace(/^(?:\.\/)+/, "");
@@ -6536,7 +6560,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         operation: "GitVcsDriver.createWorktree",
         command: "git worktree add",
         cwd,
-        detail: `t3.json names the sparse-checkout pattern file "${file.worktreeSparsePatternsPath}", which is not a file in ${refName}.`,
+        // SCIENT-FORK: names the file the project has.
+        detail: `${projectFile.name} names the sparse-checkout pattern file "${file.worktreeSparsePatternsPath}", which is not a file in ${refName}.`,
       });
     }
     return patterns.stdout;
@@ -6896,24 +6921,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           options?.submodules ?? null,
           options?.submodules != null
             ? null
-            : // Read HEAD for the same reason: sparse patterns can leave t3.json out too.
-              yield* executeGit(
-                "GitVcsDriver.createWorktree.readProjectFile",
-                worktreePath,
-                ["show", `HEAD:${T3_PROJECT_FILE_NAME}`],
-                { allowNonZeroExit: true },
-              ).pipe(
-                Effect.flatMap((result) => {
-                  if (result.exitCode !== 0) return Effect.succeed(null);
-                  const file = parseT3ProjectFile(result.stdout);
+            : // Read HEAD for the same reason: sparse patterns can leave the project file out too.
+              // SCIENT-FORK:START — scient.json first, then t3.json.
+              yield* readProjectFileAt(worktreePath, "HEAD").pipe(
+                Effect.flatMap((projectFile) => {
+                  if (projectFile === null) return Effect.succeed(null);
+                  const file = parseT3ProjectFile(projectFile.contents);
                   return file === null
-                    ? Effect.logWarning("t3.json is invalid; initializing submodules recursively", {
-                        worktreePath,
-                      }).pipe(Effect.as(null))
+                    ? Effect.logWarning(
+                        `${projectFile.name} is invalid; initializing submodules recursively`,
+                        { worktreePath },
+                      ).pipe(Effect.as(null))
                     : Effect.succeed(file);
                 }),
                 Effect.orElseSucceed(() => null),
               ),
+          // SCIENT-FORK:END
         );
     if (hasSubmodules && submoduleMode.value === "none" && progress?.onSubmodulesDisabled) {
       yield* progress.onSubmodulesDisabled({

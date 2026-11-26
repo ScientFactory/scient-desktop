@@ -35,7 +35,7 @@ paths on one machine, so the same project on another machine has its own. A proj
 
 ### Leave a repository out
 
-To keep a repository inside the project folder out of the project, name it in the `t3.json` in the
+To keep a repository inside the project folder out of the project, name it in the `scient.json` in the
 project folder, relative to that folder:
 
 ```json
@@ -101,7 +101,7 @@ copies. Editing one changes it for every thread.
 
 If the default layout does not suit your project, for example because build output must be per
 thread, workspace metadata has to be generated, or submodules need preparing, the project can
-create the folder with its own command. Add this to the `t3.json` in the project folder:
+create the folder with its own command. Add this to the `scient.json` in the project folder:
 
 ```json
 {
@@ -115,14 +115,16 @@ create the folder with its own command. Add this to the `t3.json` in the project
 `create` runs in the project folder and must leave the thread's copy of the project folder in
 place. It receives these environment variables:
 
-| Variable                   | Value                                                      |
-| -------------------------- | ---------------------------------------------------------- |
-| `T3_PROJECT_ROOT`          | The project folder.                                        |
-| `T3_WORKTREE_ROOT`         | The empty folder to fill for this thread.                  |
-| `T3_WORKTREE_PROJECT_PATH` | Where the project folder goes inside it.                   |
-| `T3_WORKTREE_BRANCH`       | The thread's branch name.                                  |
-| `T3_WORKTREE_BASE`         | The base branch, or empty when the thread has none.        |
-| `T3_WORKTREE_REPOSITORIES` | The repositories chosen for the thread, one path per line. |
+| Variable                       | Value                                                      |
+| ------------------------------ | ---------------------------------------------------------- |
+| `SCIENT_PROJECT_ROOT`          | The project folder.                                        |
+| `SCIENT_WORKTREE_ROOT`         | The empty folder to fill for this thread.                  |
+| `SCIENT_WORKTREE_PROJECT_PATH` | Where the project folder goes inside it.                   |
+| `SCIENT_WORKTREE_BRANCH`       | The thread's branch name.                                  |
+| `SCIENT_WORKTREE_BASE`         | The base branch, or empty when the thread has none.        |
+| `SCIENT_WORKTREE_REPOSITORIES` | The repositories chosen for the thread, one path per line. |
+
+Each variable is also set under its earlier `T3_` name, such as `T3_WORKTREE_BRANCH`.
 
 Every repository of the project that the command checks out at the same relative place becomes the
 thread's checkout of it. `remove` is optional and runs before Scient removes whatever is left.
@@ -130,7 +132,7 @@ thread's checkout of it. `remove` is optional and runs before Scient removes wha
 What the commands can rely on, and what they must do:
 
 - **Checkouts are linked worktrees on the thread's branch.** Make each one with
-  `git worktree add` from the repository it belongs to, on `T3_WORKTREE_BRANCH`. Scient later
+  `git worktree add` from the repository it belongs to, on `SCIENT_WORKTREE_BRANCH`. Scient later
   removes, restores, and renames these through Git, so it refuses a clone or a checkout on another
   branch and the thread does not start.
 - **`create` can run more than once.** It runs again when a thread's folder has gone missing, by
@@ -157,7 +159,7 @@ it was. You can also review, approve, and revoke each command under **Worktree l
 project's settings. Approving needs a client that can use the terminal (`terminal:operate`).
 
 An approval is kept on the environment, not in the repository, and covers the exact text of one
-command for one project. When the text in `t3.json` changes, for example after a pull, the command
+command for one project. When the text in `scient.json` changes, for example after a pull, the command
 stops running until you approve the new text. An approval covers the command text only: when the
 command runs a script file, later changes to that file do not ask again.
 
@@ -188,7 +190,7 @@ so write it for the shell of the machine the project is on; this one is for `sh`
 ```json
 {
   "worktreeLayout": {
-    "create": "(git worktree add \"$T3_WORKTREE_PROJECT_PATH\" \"$T3_WORKTREE_BRANCH\" 2>/dev/null || git worktree add -b \"$T3_WORKTREE_BRANCH\" \"$T3_WORKTREE_PROJECT_PATH\" ${T3_WORKTREE_BASE:-HEAD}) && git -C \"$T3_WORKTREE_PROJECT_PATH\" submodule update --init"
+    "create": "(git worktree add \"$SCIENT_WORKTREE_PROJECT_PATH\" \"$SCIENT_WORKTREE_BRANCH\" 2>/dev/null || git worktree add -b \"$SCIENT_WORKTREE_BRANCH\" \"$SCIENT_WORKTREE_PROJECT_PATH\" ${SCIENT_WORKTREE_BASE:-HEAD}) && git -C \"$SCIENT_WORKTREE_PROJECT_PATH\" submodule update --init"
   }
 }
 ```
@@ -207,7 +209,7 @@ restored:
 ## Limits
 
 - One Git action runs in one repository. There is no commit or push across several at once.
-- Only the project folder's `t3.json` is read. Setup scripts and actions inside one of its
+- Only the project folder's `scient.json` is read. Setup scripts and actions inside one of its
   repositories are not picked up.
 - The Diff pane's repository picker and the base branch field for a plain folder are on web and
   desktop only.

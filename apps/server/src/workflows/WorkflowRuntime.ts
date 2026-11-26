@@ -133,15 +133,20 @@ const evaluate = async (url: string, evaluation: Evaluation): Promise<ReadonlyAr
     const current = evaluating.getStore();
     if (current === undefined || !current.open) {
       throw new Error(
-        "T3.workflow was called after its file finished loading. Call it at the top of the file.",
+        // SCIENT-FORK: files call it as Scient.workflow, or T3.workflow from before the rename.
+        "Scient.workflow was called after its file finished loading. Call it at the top of the file.",
       );
     }
     const definition = api.workflow(...input);
     current.registered.push(definition);
     return definition;
   }) as typeof api.workflow;
+  // SCIENT-FORK:START — `Scient` is the API's name; `T3` stays for files written before it.
+  const workflowApi = { ...t3, workflow };
   Object.assign(globalThis, {
-    T3: { ...t3, workflow },
+    Scient: workflowApi,
+    T3: workflowApi,
+    // SCIENT-FORK:END
     Effect: effect,
     Schema: schema,
     Option: option,
@@ -174,7 +179,8 @@ const evaluate = async (url: string, evaluation: Evaluation): Promise<ReadonlyAr
           : undefined;
   if (listed === undefined) {
     throw new Error(
-      "The default export is not a workflow or a list of them. Call T3.workflow(…), or export what it returned.",
+      // SCIENT-FORK: the API is Scient.workflow.
+      "The default export is not a workflow or a list of them. Call Scient.workflow(…), or export what it returned.",
     );
   }
   return [...new Set([...evaluation.registered, ...listed])];
@@ -213,7 +219,8 @@ export const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(func
   if (!definitions.every(isDefinition)) {
     return yield* new WorkflowDefinitionsLoadError({
       module,
-      cause: "Something it exports is not a workflow. Export only what `T3.workflow` returned.",
+      // SCIENT-FORK: the API is Scient.workflow.
+      cause: "Something it exports is not a workflow. Export only what `Scient.workflow` returned.",
     });
   }
   return definitions;

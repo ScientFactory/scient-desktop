@@ -260,7 +260,7 @@ so restart Scient after that.
   [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).
 - `worktreeLayoutCommands: false`: Scient does not run the
   [worktree layout commands](./multi-repo-projects.md#lay-the-folder-out-yourself) a project's
-  `t3.json` declares, whether or not a user approved them. Such a project gets no new worktree
+  `scient.json` or `t3.json` declares, whether or not a user approved them. Such a project gets no new worktree
   threads; existing thread folders are restored as plain checkouts and removed without the
   project's `remove` command.
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
