@@ -88,6 +88,29 @@ type JsonRecord = Record<string, unknown>;
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const STAMPED_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  creators: ["creatorType", "givenName", "familyName", "literalName"],
+  identifiers: ["scheme", "value"],
+};
+
+/**
+ * A stamp of the list an `overflow` continues, over its fields in a fixed order (FNV-1a and the
+ * text's length): a list an older Scient replaced no longer matches, so its stale rest is dropped.
+ */
+function listStamp(name: string, list: ReadonlyArray<unknown>): string {
+  const fields = STAMPED_FIELDS[name];
+  const text = JSON.stringify(
+    list.map((item) =>
+      fields && isRecord(item) ? fields.map((field) => item[field] ?? null) : item,
+    ),
+  );
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16).padStart(8, "0")}:${text.length}`;
+}
+
 /**
  * A saved copy as written: lists past 256 go in `overflow`, which older Scient versions skip while
  * they read the first 256. A role cut there is marked incomplete for them, and `overflow` names it
@@ -110,9 +133,14 @@ export function scientSavedCopyHead(
 } {
   const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
   const overflow: JsonRecord = {};
+  const follows: JsonRecord = {};
   const cut = <T>(name: string, list: ReadonlyArray<T>) => {
-    if (list.length > limit) overflow[name] = list.slice(limit);
-    return list.slice(0, limit);
+    const head = list.slice(0, limit);
+    if (list.length > limit) {
+      overflow[name] = list.slice(limit);
+      follows[name] = listStamp(name, head);
+    }
+    return head;
   };
   const creators = cut("creators", work.creators);
   const identifiers = cut("identifiers", work.identifiers);
@@ -127,6 +155,7 @@ export function scientSavedCopyHead(
     }
   }
   if (marked.length > 0) overflow["markedRoles"] = marked;
+  if (Object.keys(follows).length > 0) overflow["follows"] = follows;
   const roles = withIncompleteCreatorRoles(work.incompleteCreatorRoles, marked);
   return {
     creators,
@@ -142,15 +171,12 @@ export function joinScientSavedCopy(raw: unknown): unknown {
   if (!isRecord(raw) || !("overflow" in raw)) return raw;
   const { overflow, ...work } = raw;
   if (!isRecord(overflow)) return work;
-  // Only a list still holding exactly the first 256 continues in `overflow`.
+  // Only the exact list it was written after continues in `overflow`.
+  const follows = isRecord(overflow["follows"]) ? overflow["follows"] : {};
   const joined = (name: string) => {
     const head = work[name];
     const rest = overflow[name];
-    if (
-      !Array.isArray(rest) ||
-      !Array.isArray(head) ||
-      head.length !== SCIENT_SAVED_COPY_LIST_LIMIT
-    )
+    if (!Array.isArray(rest) || !Array.isArray(head) || follows[name] !== listStamp(name, head))
       return false;
     work[name] = [...head, ...rest];
     return true;

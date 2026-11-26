@@ -627,7 +627,7 @@ describe("review snapshots of works with thousands of authors", () => {
     // As an older Scient reads it: the first 256 names, the rest in a field it skips.
     const stored = JSON.parse(await NodeFSP.readFile(path, "utf8")).records[added.sourceId];
     expect(stored.creators).toEqual(consortium.slice(0, 256));
-    expect(stored.overflow).toEqual({ creators: consortium.slice(256) });
+    expect(stored.overflow).toMatchObject({ creators: consortium.slice(256) });
   });
 
   it("reads past an entry it cannot read or a count it cannot use, and keeps that entry as written", async () => {

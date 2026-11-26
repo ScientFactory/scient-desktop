@@ -1371,10 +1371,35 @@ describe("pins of works with thousands of authors", () => {
     const stored = await storedWork(projectRoot);
     expect(stored.creators).toEqual(consortium.slice(0, 256));
     expect(stored.incompleteCreatorRoles).toEqual(["author"]);
-    expect(stored.overflow).toEqual({ creators: consortium.slice(256), markedRoles: ["author"] });
+    expect(stored.overflow).toMatchObject({
+      creators: consortium.slice(256),
+      markedRoles: ["author"],
+    });
     const [pin] = await readScientProjectPins(projectRoot);
     expect(pin?.work.creators).toEqual(consortium);
     expect(pin?.work).not.toHaveProperty("incompleteCreatorRoles");
     expect(pin?.work).not.toHaveProperty("overflow");
+  });
+
+  it("drops an overflow left after a list an older Scient replaced", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+    // An older Scient rewrote the first 256 names and carried `overflow` along unread.
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    const replaced = consortium
+      .slice(0, 256)
+      .map((creator) => ({ ...creator, familyName: "Other" }));
+    file.pins[0].work.creators = replaced;
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+
+    const [pin] = await readScientProjectPins(projectRoot);
+    expect(pin?.work.creators).toEqual(replaced);
+    expect(pin?.work.incompleteCreatorRoles).toEqual(["author"]);
   });
 });
