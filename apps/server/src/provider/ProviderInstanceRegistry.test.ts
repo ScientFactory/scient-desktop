@@ -259,13 +259,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    // SCIENT-FORK:START — latest-version lookups stop before ServerConfig removes the base directory holding their npm cache: ProviderLatestVersions is provided to layerBase, not here.
     Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  // SCIENT-FORK:START — latest-version lookups stop before ServerConfig removes the base directory holding their npm cache.
   const layerBase = ProviderHostLive.layer.pipe(
     Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(layerBaseDeps),
