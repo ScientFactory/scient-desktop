@@ -139,9 +139,12 @@ it("validates slim Windows payloads without Linux Cursor helpers or Linux native
   const asarEntries = [
     "/apps/server/dist/bin.mjs",
     "/apps/server/dist/synctex-runtime/linux-x64/synctex",
+    "/node_modules/helper/src/linux-x64.js",
+    "/node_modules/helper/docs/build-for-darwin-arm64.md",
     "/node_modules/@napi-rs/canvas-win32-x64-msvc/canvas.win32-x64-msvc.node",
     "/node_modules/@napi-rs/canvas-linux-x64-gnu/canvas.linux-x64-gnu.node",
     "/node_modules/@koromix/koffi-linux-x64/linux_x64/koffi.node",
+    "/node_modules/koffi/prebuilds/linux_x64/koffi.node",
     "/node_modules/node-pty/prebuilds/linux-x64/pty.node",
   ];
   assert.deepStrictEqual(unexpectedWindowsServerAsarEntries(asarEntries, "x64", true), []);
@@ -149,6 +152,7 @@ it("validates slim Windows payloads without Linux Cursor helpers or Linux native
     "/apps/server/dist/synctex-runtime/linux-x64/synctex",
     "/node_modules/@napi-rs/canvas-linux-x64-gnu/canvas.linux-x64-gnu.node",
     "/node_modules/@koromix/koffi-linux-x64/linux_x64/koffi.node",
+    "/node_modules/koffi/prebuilds/linux_x64/koffi.node",
     "/node_modules/node-pty/prebuilds/linux-x64/pty.node",
   ]);
 });

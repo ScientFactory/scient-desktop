@@ -1008,7 +1008,7 @@ jobs:
           tar -C verify -xf verify/unpacked.tar
           node verify/verify-windows-desktop-artifact.mjs \
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
-            --arch x64 --build-version "$RELEASE_VERSION" --verbose
+            --arch x64 --build-version "$RELEASE_VERSION" --omit-wsl-runtime --verbose
       - name: Cache verified speech probe inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

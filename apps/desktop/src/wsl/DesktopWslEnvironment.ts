@@ -1192,12 +1192,21 @@ const wslServiceRegistered = Effect.scoped(
   Effect.orElseSucceed(() => false),
 );
 
+// SCIENT-FORK:START — read explicit slim-package WSL capability metadata from packaged package.json.
+const WslPackageMetadata = Schema.Struct({
+  scientWslRuntimeOmitted: Schema.optional(Schema.Boolean),
+});
+const decodeWslPackageMetadata = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(WslPackageMetadata),
+);
+// SCIENT-FORK:END
+
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
   options?: {
     readonly isPackaged?: boolean;
-    readonly resourcesPath?: string;
+    readonly appRoot?: string;
   },
 ): Effect.fn.Return<
   boolean,
@@ -1210,12 +1219,18 @@ export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable"
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  // SCIENT-FORK:START — slim Windows packages omit the WSL runtime archive and Linux natives.
-  // Check package capability before probing wsl.exe or the Windows registry.
-  if (options?.isPackaged === true) {
-    if (!options.resourcesPath) return false;
-    const archivePath = path.join(options.resourcesPath, "wsl-runtime.tar.gz");
-    if (!(yield* fileSystem.exists(archivePath).pipe(Effect.orElseSucceed(() => false)))) {
+  // SCIENT-FORK:START — slim Windows packages declare scientWslRuntimeOmitted in app package.json.
+  // Check package capability before probing wsl.exe or the Windows registry while preserving
+  // mounted-only WSL builds that keep the Linux sidecar without a tarball.
+  if (options?.isPackaged === true && options.appRoot) {
+    const omitted = yield* fileSystem
+      .readFileString(path.join(options.appRoot, "package.json"))
+      .pipe(
+        Effect.flatMap(decodeWslPackageMetadata),
+        Effect.map((parsed) => parsed.scientWslRuntimeOmitted === true),
+        Effect.orElseSucceed(() => false),
+      );
+    if (omitted) {
       return false;
     }
   }
@@ -1337,7 +1352,7 @@ export const layer = Layer.effect(
     // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
     const wslAvailable = yield* makeIsAvailable(environment.platform, windir, {
       isPackaged: environment.isPackaged,
-      resourcesPath: environment.resourcesPath,
+      appRoot: environment.appRoot,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

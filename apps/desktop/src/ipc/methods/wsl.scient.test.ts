@@ -8,79 +8,122 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopShutdown from "../../app/DesktopShutdown.ts";
+import * as DesktopState from "../../app/DesktopState.ts";
+import * as ElectronApp from "../../electron/ElectronApp.ts";
+import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronTheme from "../../electron/ElectronTheme.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./wsl.ts";
 
 const decodeWslState = Schema.decodeUnknownEffect(DesktopWslStateSchema);
 
+const layerUnusedLifecycleRuntime = Layer.mergeAll(
+  DesktopShutdown.layer,
+  DesktopState.layer,
+  Layer.succeed(
+    DesktopEnvironment.DesktopEnvironment,
+    DesktopEnvironment.DesktopEnvironment.of(
+      {} as DesktopEnvironment.DesktopEnvironment["Service"],
+    ),
+  ),
+  Layer.succeed(
+    DesktopWindow.DesktopWindow,
+    DesktopWindow.DesktopWindow.of({} as DesktopWindow.DesktopWindow["Service"]),
+  ),
+  Layer.succeed(
+    ElectronApp.ElectronApp,
+    ElectronApp.ElectronApp.of({} as ElectronApp.ElectronApp["Service"]),
+  ),
+  Layer.succeed(
+    ElectronTheme.ElectronTheme,
+    ElectronTheme.ElectronTheme.of({} as ElectronTheme.ElectronTheme["Service"]),
+  ),
+  Layer.succeed(
+    ElectronDialog.ElectronDialog,
+    ElectronDialog.ElectronDialog.of({} as ElectronDialog.ElectronDialog["Service"]),
+  ),
+  Layer.succeed(
+    ElectronWindow.ElectronWindow,
+    ElectronWindow.ElectronWindow.of({} as ElectronWindow.ElectronWindow["Service"]),
+  ),
+  DesktopClientSettings.layerTest(),
+);
+
 describe("WSL package capability in slim Windows builds", () => {
-  it.effect("returns false without spawning reg.exe when packaged without wsl-runtime.tar.gz", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-wsl-slim-" });
-      const windir = path.join(tempDir, "Windows");
-      yield* fileSystem.makeDirectory(path.join(windir, "System32"), { recursive: true });
-      yield* fileSystem.writeFileString(path.join(windir, "System32", "wsl.exe"), "");
+  it.effect(
+    "returns false without spawning reg.exe when packaged with scientWslRuntimeOmitted",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-wsl-slim-" });
+        const windir = path.join(tempDir, "Windows");
+        yield* fileSystem.makeDirectory(path.join(windir, "System32"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(windir, "System32", "wsl.exe"), "");
 
-      const resourcesPath = path.join(tempDir, "resources");
-      yield* fileSystem.makeDirectory(resourcesPath, { recursive: true });
+        const appRoot = path.join(tempDir, "app");
+        yield* fileSystem.makeDirectory(appRoot, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(appRoot, "package.json"),
+          JSON.stringify({ name: "scient-next", scientWslRuntimeOmitted: true }),
+        );
 
-      let spawnCount = 0;
-      const spawner = ChildProcessSpawner.make(() =>
-        Effect.sync(() => {
-          spawnCount += 1;
-        }).pipe(
-          Effect.as({
-            exitCode: Effect.succeed(0 as unknown as ChildProcessSpawner.ExitCode),
-          } as unknown as ChildProcessSpawner.ChildProcessHandle),
-        ),
-      );
-      const layer = Layer.mergeAll(
-        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(
-          DesktopManagedPolicy.DesktopManagedPolicy,
-          DesktopManagedPolicy.DesktopManagedPolicy.of({
-            read: Effect.succeed(undefined),
-          }),
-        ),
-      );
+        let spawnCount = 0;
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.sync(() => {
+            spawnCount += 1;
+          }).pipe(
+            Effect.as({
+              exitCode: Effect.succeed(0 as unknown as ChildProcessSpawner.ExitCode),
+            } as unknown as ChildProcessSpawner.ChildProcessHandle),
+          ),
+        );
+        const layer = Layer.mergeAll(
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(
+            DesktopManagedPolicy.DesktopManagedPolicy,
+            DesktopManagedPolicy.DesktopManagedPolicy.of({
+              read: Effect.undefined,
+            }),
+          ),
+        );
 
-      // Slim packaged build: archive missing -> unavailable with zero subprocess probes.
-      const slimAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
-        isPackaged: true,
-        resourcesPath,
-      }).pipe(Effect.provide(layer));
-      assert.isFalse(slimAvailable);
-      assert.equal(spawnCount, 0);
+        // Slim packaged build: explicit metadata -> unavailable with zero subprocess probes.
+        const slimAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
+          isPackaged: true,
+          appRoot,
+        }).pipe(Effect.provide(layer));
+        assert.isFalse(slimAvailable);
+        assert.equal(spawnCount, 0);
 
-      // Fail closed when packaged resourcesPath is missing.
-      const missingPathAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
-        isPackaged: true,
-      }).pipe(Effect.provide(layer));
-      assert.isFalse(missingPathAvailable);
-      assert.equal(spawnCount, 0);
+        // Unpackaged dev build still checks host availability even if appRoot metadata is set.
+        const devAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
+          isPackaged: false,
+          appRoot,
+        }).pipe(Effect.provide(layer));
+        assert.isTrue(devAvailable);
+        assert.isAbove(spawnCount, 0);
 
-      // Unpackaged dev build still checks host availability without the archive.
-      const devAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
-        isPackaged: false,
-        resourcesPath,
-      }).pipe(Effect.provide(layer));
-      assert.isTrue(devAvailable);
-      assert.isAbove(spawnCount, 0);
-
-      // Packaged build with the archive shipped is available on a WSL host.
-      yield* fileSystem.writeFileString(path.join(resourcesPath, "wsl-runtime.tar.gz"), "");
-      const fullAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
-        isPackaged: true,
-        resourcesPath,
-      }).pipe(Effect.provide(layer));
-      assert.isTrue(fullAvailable);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        // Packaged build without scientWslRuntimeOmitted (full or mounted-only WSL) probes host normally.
+        yield* fileSystem.writeFileString(
+          path.join(appRoot, "package.json"),
+          JSON.stringify({ name: "scient-next" }),
+        );
+        const fullAvailable = yield* DesktopWslEnvironment.makeIsAvailable("win32", windir, {
+          isPackaged: true,
+          appRoot,
+        }).pipe(Effect.provide(layer));
+        assert.isTrue(fullAvailable);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("preserves saved WSL preferences and never relaunches when WSL is unavailable", () =>
@@ -88,6 +131,7 @@ describe("WSL package capability in slim Windows builds", () => {
       const relaunchReasons: Array<string> = [];
       let reconcileCount = 0;
       const layer = Layer.mergeAll(
+        layerUnusedLifecycleRuntime,
         DesktopAppSettings.layerTest({
           ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
           localEnvironmentEnabled: true,

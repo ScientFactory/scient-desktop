@@ -1079,6 +1079,8 @@ interface StagePackageJson {
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
   readonly t3codeWebAuthn?: MacWebAuthnEntitlements;
+  // SCIENT-FORK: explicit slim-package capability read by DesktopWslEnvironment.makeIsAvailable.
+  readonly scientWslRuntimeOmitted?: boolean;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -4931,6 +4933,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     t3codeCommitHash: commitHash,
     // Read by apps/desktop/src/preview/Passkeys.ts; must match the signed entitlements.
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
+    // SCIENT-FORK: read by apps/desktop/src/wsl/DesktopWslEnvironment.ts so slim builds skip WSL probes.
+    ...(options.platform === "win" && options.omitWslRuntime
+      ? { scientWslRuntimeOmitted: true }
+      : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "Scient desktop build",

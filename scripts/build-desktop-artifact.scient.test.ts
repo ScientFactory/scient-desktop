@@ -161,12 +161,14 @@ describe("Scient WSL runtime archive", () => {
     assert.strictEqual(slimConfig.nodeLinker, "hoisted");
 
     const slimIgnores = resolveWindowsServerAsarIgnoreGlobs("x64", false);
-    assert.include(slimIgnores, "**/node_modules/**/*-linux-*");
+    assert.include(slimIgnores, "**/node_modules/*-linux-*");
+    assert.include(slimIgnores, "**/node_modules/@*/*-linux-*");
     assert.include(slimIgnores, "**/node_modules/node-pty/prebuilds/linux-*");
 
     const fullIgnores = resolveWindowsServerAsarIgnoreGlobs("x64", true);
-    assert.notInclude(fullIgnores, "**/node_modules/**/*-linux-*");
-    assert.include(fullIgnores, "**/node_modules/**/*-linux-arm64*");
+    assert.notInclude(fullIgnores, "**/node_modules/*-linux-*");
+    assert.include(fullIgnores, "**/node_modules/*-linux-arm64*");
+    assert.include(fullIgnores, "**/node_modules/@*/*-linux-arm64*");
   });
 
   it.effect(
@@ -192,7 +194,10 @@ describe("Scient WSL runtime archive", () => {
             expectWslRuntime: false,
             linuxServerBackend: false,
           }).pipe(Effect.flip);
-          assert.strictEqual(archiveFailure.reason, "wsl-runtime-invalid");
+          assert.strictEqual(archiveFailure._tag, "WindowsPackagedPayloadValidationError");
+          if (archiveFailure._tag === "WindowsPackagedPayloadValidationError") {
+            assert.strictEqual(archiveFailure.reason, "wsl-runtime-invalid");
+          }
 
           const withLinuxAsar = yield* makeSlimWindowsFixture({ injectLinuxAsarEntry: true });
           const linuxAsarFailure = yield* validateWindowsPackagedPayload({
@@ -202,7 +207,10 @@ describe("Scient WSL runtime archive", () => {
             expectWslRuntime: false,
             linuxServerBackend: false,
           }).pipe(Effect.flip);
-          assert.strictEqual(linuxAsarFailure.reason, "sidecar-invalid");
+          assert.strictEqual(linuxAsarFailure._tag, "WindowsPackagedPayloadValidationError");
+          if (linuxAsarFailure._tag === "WindowsPackagedPayloadValidationError") {
+            assert.strictEqual(linuxAsarFailure.reason, "sidecar-invalid");
+          }
 
           const missingHelper = yield* makeSlimWindowsFixture({ omitResourceMonitor: true });
           const missingFailure = yield* validateWindowsPackagedPayload({
@@ -212,7 +220,10 @@ describe("Scient WSL runtime archive", () => {
             expectWslRuntime: false,
             linuxServerBackend: false,
           }).pipe(Effect.flip);
-          assert.strictEqual(missingFailure.reason, "resource-monitor-missing");
+          assert.strictEqual(missingFailure._tag, "WindowsPackagedPayloadValidationError");
+          if (missingFailure._tag === "WindowsPackagedPayloadValidationError") {
+            assert.strictEqual(missingFailure.reason, "resource-monitor-missing");
+          }
         }),
       ).pipe(Effect.provide(linuxHostLayer)),
   );

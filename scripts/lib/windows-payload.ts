@@ -64,9 +64,14 @@ export function windowsNativeIgnoreGlobs(arch: "x64" | "arm64", linuxBackend: bo
     ...(linuxBackend
       ? [
           `**/node_modules/node-pty/prebuilds/linux-${otherArch}`,
-          `**/node_modules/**/*-linux-${otherArch}*`,
+          `**/node_modules/*-linux-${otherArch}*`,
+          `**/node_modules/@*/*-linux-${otherArch}*`,
         ]
-      : ["**/node_modules/node-pty/prebuilds/linux-*", "**/node_modules/**/*-linux-*"]),
+      : [
+          "**/node_modules/node-pty/prebuilds/linux-*",
+          "**/node_modules/*-linux-*",
+          "**/node_modules/@*/*-linux-*",
+        ]),
   ];
   return roots.flatMap((root) => [root, `${root}/**`]);
 }
@@ -100,6 +105,21 @@ export function unexpectedWindowsNativeFiles(
 }
 
 // SCIENT-FORK:START — verify server.asar entries directly so foreign Linux packages cannot hide inside ASAR.
+const ASAR_TARGET_PATTERN =
+  /(?:^|[/._-])(darwin|linux|win32|android|freebsd)[-_](x64|arm64|ia32|arm|riscv64|ppc64|s390x)(?=[/._-]|$)/g;
+const NATIVE_BINARY_EXT = /\.(?:node|so(?:\.\d+)*|dylib|dll|exe)$/i;
+
+function isTargetAllowedInWindowsAsar(
+  os: string,
+  cpu: string,
+  arch: "x64" | "arm64",
+  linuxBackend: boolean,
+): boolean {
+  if (cpu !== arch) return false;
+  if (os === "win32") return true;
+  return os === "linux" && linuxBackend;
+}
+
 export function unexpectedWindowsServerAsarEntries(
   entries: readonly string[],
   arch: "x64" | "arm64",
@@ -111,14 +131,27 @@ export function unexpectedWindowsServerAsarEntries(
       return true;
     }
     if (!normalized.startsWith("node_modules/")) return false;
-    const targets = normalized.matchAll(
-      /(?:^|[/.-])(darwin|linux|win32|android|freebsd)-(x64|arm64|ia32|arm|riscv64|ppc64|s390x)(?=[/.-]|$)/g,
-    );
-    for (const target of targets) {
-      const [, os, cpu] = target;
-      if (cpu !== arch) return true;
-      if (os === "win32") continue;
-      if (os === "linux" && linuxBackend) continue;
+    const parts = normalized.split("/");
+    const packageRoot = parts[1]?.startsWith("@")
+      ? `${parts[1]}/${parts[2] ?? ""}`
+      : (parts[1] ?? "");
+    const inspectTargets = (segment: string) => {
+      for (const match of segment.matchAll(ASAR_TARGET_PATTERN)) {
+        const [, os = "", cpu = ""] = match;
+        if (!isTargetAllowedInWindowsAsar(os, cpu, arch, linuxBackend)) return true;
+      }
+      return false;
+    };
+    if (inspectTargets(packageRoot)) return true;
+    const prebuildsIndex = parts.indexOf("prebuilds");
+    if (
+      prebuildsIndex !== -1 &&
+      parts[prebuildsIndex + 1] &&
+      inspectTargets(parts[prebuildsIndex + 1]!)
+    ) {
+      return true;
+    }
+    if (NATIVE_BINARY_EXT.test(normalized) && inspectTargets(normalized)) {
       return true;
     }
     return false;
