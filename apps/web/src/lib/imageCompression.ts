@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/image-attachment-size";
 import { msg } from "gt-react";
 
+import { decodeHeifBitmap } from "../components/files/decodeImagePreview";
 import { m } from "../i18n/messages";
 import {
   createCanvas,
@@ -644,8 +645,8 @@ async function convertHeicImage(
         : undefined;
     const decodedNatively = bitmap !== undefined;
     if (!bitmap) {
-      const { heicTo } = await import("heic-to/csp");
-      bitmap = await heicTo({ blob: file, type: "bitmap" });
+      // SCIENT-FORK: decode via imageDecode.worker so Vite bundles heic-to/csp once instead of twice.
+      bitmap = await decodeHeifBitmap(file);
     }
     const imageSize = fitImageAttachmentSize(bitmap) ?? {
       width: bitmap.width,

@@ -922,7 +922,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@crowecawcaw/xa11y": "0.13.0",
         "@napi-rs/keyring": "^1.3.0",
         "ffi-rs": "1.3.2",
-        "playwright-core": "1.60.0",
       },
     );
   });
@@ -1288,6 +1287,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
       "!apps/desktop/gnome-extension",
       "!apps/desktop/gnome-extension/**/*",
+      "!patches",
+      "!patches/**/*",
     ]);
     assert.equal(WINDOWS_SERVER_RESOURCE_SOURCE_DIR, "apps/desktop/prod-resources/windows-server");
     assert.deepStrictEqual(WINDOWS_SERVER_EXTRA_RESOURCES, [
@@ -1386,6 +1387,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/node_modules/.bin",
         "**/node_modules/.bin/**",
         "**/*.map",
+        "patches",
+        "patches/**",
       ]);
       assert.deepStrictEqual(mac.dmg, {
         title: "Scient 1.2.3 Installer",

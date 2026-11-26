@@ -1260,6 +1260,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
+  // SCIENT-FORK: patches/ is only needed during stage install, never at runtime.
+  "!patches",
+  "!patches/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1334,6 +1337,9 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
   "**/*.map",
+  // SCIENT-FORK: patches/ is only needed during stage install, never at runtime.
+  "patches",
+  "patches/**",
 ] as const;
 
 export function resolveWindowsServerAsarIgnoreGlobs(
@@ -3821,6 +3827,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     workspace: input.workspaceLockfile,
     stageDir: serverStageDir,
   });
+  // SCIENT-FORK: remove patches/ after pnpm install so patch files (~17 MB) never enter archives.
+  yield* fs.remove(path.join(serverStageDir, "patches"), { recursive: true, force: true });
 
   // SCIENT-FORK:START
   if (linuxServerBackend) {
@@ -5070,6 +5078,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   );
   // SCIENT-FORK
   yield* verifyStageFollowsLockfile({ workspace: workspaceLockfile, stageDir: stageAppDir });
+  // SCIENT-FORK: remove patches/ after pnpm install so patch files (~17 MB) never enter app.asar.
+  yield* fs.remove(path.join(stageAppDir, "patches"), { recursive: true, force: true });
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
   const cursorSdkResourcesPath = path.join(stageAppDir, "apps/desktop/prod-resources/cursor-sdk");

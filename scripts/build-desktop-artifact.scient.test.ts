@@ -10,10 +10,12 @@ import * as Path from "effect/Path";
 import {
   bundlesWslRuntime,
   createStageWorkspaceConfig,
+  DESKTOP_FILE_EXCLUSIONS,
   findForbiddenWslRuntimeArchiveMember,
   packWindowsServerAsar,
   resolveWindowsServerAsarIgnoreGlobs,
   validateWindowsPackagedPayload,
+  WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_ASAR_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
   WSL_RUNTIME_ARCHIVE_NAME,
@@ -148,6 +150,13 @@ describe("Scient WSL runtime archive", () => {
     ]) {
       assert.strictEqual(findForbiddenWslRuntimeArchiveMember([member]), member);
     }
+  });
+
+  it("excludes stage-only patches/ from both app.asar and Windows server.asar", () => {
+    assert.include(DESKTOP_FILE_EXCLUSIONS, "!patches");
+    assert.include(DESKTOP_FILE_EXCLUSIONS, "!patches/**/*");
+    assert.include(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, "patches");
+    assert.include(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, "patches/**");
   });
 
   it("leaves the archive out when the build omits the WSL runtime, even with a Linux pty.node", () => {
