@@ -492,9 +492,6 @@ importers:
       hunspell-wasm:
         specifier: 0.3.0
         version: 0.3.0
-      playwright-core:
-        specifier: 1.64.1
-        version: 1.64.1
       react-grab:
         specifier: ^0.1.32
         version: 0.1.44(react@19.3.0)

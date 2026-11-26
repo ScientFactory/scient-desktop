@@ -16,11 +16,11 @@ import { hydrateImagesFromPersisted } from "../composerDraftStore";
 import { resizeSnapShotSource } from "./snapShotSource";
 
 const mocks = vi.hoisted(() => ({
-  heicTo: vi.fn(),
+  decodeHeifBitmap: vi.fn(),
 }));
 
-vi.mock("heic-to/csp", () => ({
-  heicTo: mocks.heicTo,
+vi.mock("../components/files/decodeImagePreview", () => ({
+  decodeHeifBitmap: mocks.decodeHeifBitmap,
 }));
 
 const originalCreateImageBitmap = globalThis.createImageBitmap;
@@ -138,7 +138,7 @@ function stubCanvasPipeline(
 }
 
 afterEach(() => {
-  mocks.heicTo.mockReset();
+  mocks.decodeHeifBitmap.mockReset();
   vi.unstubAllGlobals();
   globalThis.createImageBitmap = originalCreateImageBitmap;
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
@@ -392,7 +392,7 @@ describe("HEIC attachment preparation", () => {
     try {
       const thumbnail = await createComposerImageThumbnail(original);
       expect(thumbnail).toMatch(/^data:image\/png;base64,/);
-      expect(mocks.heicTo).not.toHaveBeenCalled();
+      expect(mocks.decodeHeifBitmap).not.toHaveBeenCalled();
       expect(createImageBitmap).toHaveBeenCalledTimes(1);
       expect(close).not.toHaveBeenCalled();
     } finally {
@@ -414,14 +414,11 @@ describe("HEIC attachment preparation", () => {
     });
     const { close } = stubCanvasPipeline(() => 4);
     vi.mocked(createImageBitmap).mockRejectedValue(new Error("HEIC is not supported natively"));
-    mocks.heicTo.mockResolvedValueOnce({ width: 4000, height: 3000, close });
+    mocks.decodeHeifBitmap.mockResolvedValueOnce({ width: 4000, height: 3000, close });
 
     const result = await prepareImageForAttachment(original, 1024);
 
-    expect(mocks.heicTo).toHaveBeenCalledWith({
-      blob: original,
-      type: "bitmap",
-    });
+    expect(mocks.decodeHeifBitmap).toHaveBeenCalledWith(original);
     expect(result.ok && result.file.name).toBe("IMG_1234.jpg");
     expect(result.ok && result.file.type).toBe("image/jpeg");
     expect(result.ok && result.file.size).toBe(4);
@@ -436,7 +433,7 @@ describe("HEIC attachment preparation", () => {
     });
     const { close, canvasSizes } = stubCanvasPipeline(() => 200_000);
     vi.mocked(createImageBitmap).mockRejectedValue(new Error("HEIC is not supported natively"));
-    mocks.heicTo.mockResolvedValueOnce({ width: 4000, height: 3000, close });
+    mocks.decodeHeifBitmap.mockResolvedValueOnce({ width: 4000, height: 3000, close });
 
     const result = await prepareImageForAttachment(original, 1_000_000);
 
@@ -458,7 +455,7 @@ describe("HEIC attachment preparation", () => {
       ok: false,
       reason: "too-large",
     });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
+    expect(mocks.decodeHeifBitmap).not.toHaveBeenCalled();
   });
 
   it("rejects unsafe HEIC sources before loading the decoder", async () => {
@@ -469,7 +466,7 @@ describe("HEIC attachment preparation", () => {
       ok: false,
       reason: "too-large",
     });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
+    expect(mocks.decodeHeifBitmap).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { findForbiddenWslRuntimeArchiveMember } from "./build-desktop-artifact.ts";
+import {
+  DESKTOP_FILE_EXCLUSIONS,
+  findForbiddenWslRuntimeArchiveMember,
+  WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
+} from "./build-desktop-artifact.ts";
 
 describe("Scient WSL runtime archive", () => {
   it("accepts the Linux runtime and the Windows-named sources Linux packages carry", () => {
@@ -24,5 +28,12 @@ describe("Scient WSL runtime archive", () => {
     ]) {
       assert.strictEqual(findForbiddenWslRuntimeArchiveMember([member]), member);
     }
+  });
+
+  it("excludes stage-only patches/ from both app.asar and Windows server.asar", () => {
+    assert.include(DESKTOP_FILE_EXCLUSIONS, "!patches");
+    assert.include(DESKTOP_FILE_EXCLUSIONS, "!patches/**/*");
+    assert.include(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, "patches");
+    assert.include(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, "patches/**");
   });
 });

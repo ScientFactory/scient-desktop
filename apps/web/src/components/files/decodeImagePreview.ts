@@ -44,3 +44,66 @@ export async function decodeImagePreview(src: string, heif: boolean, signal: Abo
     worker.terminate();
   }
 }
+
+// SCIENT-FORK:START — reuse the worker's single heic-to/csp bundle for attachment decoding without sRGB conversion.
+export async function decodeHeifBitmap(blob: Blob, signal?: AbortSignal): Promise<ImageBitmap> {
+  const worker = new Worker(new URL("./imageDecode.worker.ts", import.meta.url), {
+    type: "module",
+  });
+  const controller = new AbortController();
+  let receivedBitmap: ImageBitmap | null = null;
+  try {
+    return await new Promise<ImageBitmap>((resolve, reject) => {
+      let settled = false;
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(message));
+      };
+      const abort = () => fail(m(msg("Image decoding cancelled.")));
+      if (signal) {
+        signal.addEventListener("abort", abort, { signal: controller.signal });
+        if (signal.aborted) return abort();
+      }
+      const timer = setTimeout(() => fail(m(msg("This image took too long to decode."))), 30_000);
+      controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+      worker.addEventListener("error", () => fail(m(msg("Could not load the image decoder."))));
+      worker.addEventListener(
+        "message",
+        (event: MessageEvent<{ bitmap?: ImageBitmap; failure?: PreviewFailure }>) => {
+          if (settled) {
+            event.data.bitmap?.close();
+            return;
+          }
+          if (event.data.bitmap) {
+            settled = true;
+            receivedBitmap = event.data.bitmap;
+            resolve(event.data.bitmap);
+          } else if (event.data.failure) {
+            fail(previewFailureText(event.data.failure, m));
+          } else {
+            fail(m(msg("Could not decode this image.")));
+          }
+        },
+      );
+      void blob.arrayBuffer().then(
+        (bytes) => {
+          if (settled) return;
+          worker.postMessage({ bytes, heif: true, output: "bitmap" }, [bytes]);
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        },
+      );
+    });
+  } catch (error) {
+    receivedBitmap?.close();
+    throw error;
+  } finally {
+    controller.abort();
+    worker.terminate();
+  }
+}
+// SCIENT-FORK:END

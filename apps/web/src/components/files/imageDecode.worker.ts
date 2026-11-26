@@ -155,19 +155,26 @@ async function validateTiffStrips(bytes: ArrayBuffer, image: import("tiff").Tiff
   }
 }
 
-async function decode(bytes: ArrayBuffer, heif: boolean) {
+async function decode(
+  bytes: ArrayBuffer,
+  heif: boolean,
+  output: "png" | "bitmap" = "png",
+): Promise<{ readonly blob: Blob } | { readonly bitmap: ImageBitmap }> {
   if (bytes.byteLength > 50 * 1024 * 1024) throw new PreviewError({ code: "file-too-large" });
   if (heif) {
     validateHeif(bytes);
     // Desktop CSP forbids the JavaScript evaluation used by heic-to/next.
     const { heicTo } = await import("heic-to/csp");
     const bitmap = await heicTo({ blob: new Blob([bytes]), type: "bitmap" });
+    if (output === "bitmap") {
+      return { bitmap };
+    }
     try {
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
       const context = canvas.getContext("2d");
       if (!context) throw new PreviewError({ code: "image-decoding-unavailable" });
       context.drawImage(bitmap, 0, 0);
-      return await canvas.convertToBlob({ type: "image/png" });
+      return { blob: await canvas.convertToBlob({ type: "image/png" }) };
     } finally {
       bitmap.close();
     }
@@ -214,13 +221,25 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
   const context = canvas.getContext("2d");
   if (!context) throw new PreviewError({ code: "image-decoding-unavailable" });
   context.putImageData(new ImageData(rgba, image.width, image.height), 0, 0);
-  return await canvas.convertToBlob({ type: "image/png" });
+  return { blob: await canvas.convertToBlob({ type: "image/png" }) };
 }
 
-self.addEventListener("message", (event: MessageEvent<{ bytes: ArrayBuffer; heif: boolean }>) => {
-  void decode(event.data.bytes, event.data.heif).then(
-    (blob) => self.postMessage({ blob }, { transfer: [] }),
-    (cause: unknown) =>
-      self.postMessage({ failure: previewFailure(cause, "image-decode-failed") }, { transfer: [] }),
-  );
-});
+self.addEventListener(
+  "message",
+  (event: MessageEvent<{ bytes: ArrayBuffer; heif: boolean; output?: "png" | "bitmap" }>) => {
+    void decode(event.data.bytes, event.data.heif, event.data.output).then(
+      (result) => {
+        if ("bitmap" in result) {
+          self.postMessage({ bitmap: result.bitmap }, { transfer: [result.bitmap] });
+        } else {
+          self.postMessage({ blob: result.blob }, { transfer: [] });
+        }
+      },
+      (cause: unknown) =>
+        self.postMessage(
+          { failure: previewFailure(cause, "image-decode-failed") },
+          { transfer: [] },
+        ),
+    );
+  },
+);
