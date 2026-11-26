@@ -5,7 +5,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
+import {
+  editableMetadataFromRecord,
+  type ScientSourceCandidate,
+} from "@scientfactory/scient-sources";
 import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-backup";
 import {
   mergeScientLibrarySources,
@@ -36,6 +39,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import {
   ScientSourceDetailResult,
+  ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateResult,
   ScientSourcesDuplicatesResult,
@@ -128,6 +132,7 @@ const storeFor = (fixture: Fixture, access: ScientSourcesAccess, root = fixture.
 
 // What a client receives: the HTTP contract keeps only the fields it names.
 const encodeEditAnswer = Schema.encodeSync(ScientSourceMetadataUpdateResult);
+const decodeEditRequest = Schema.decodeUnknownSync(ScientSourceMetadataUpdateRequest);
 const encodeNoteAnswer = Schema.encodeSync(ScientSourceNoteUpdateResult);
 const encodeDetail = Schema.encodeSync(ScientSourceDetailResult);
 const encodeDuplicates = Schema.encodeSync(ScientSourcesDuplicatesResult);
@@ -881,10 +886,15 @@ describe("Library routes on the library backend", () => {
           identifiers: [{ scheme: "doi", value: "10.1000/consortium" }],
         });
         await pin(fixture, trial.sourceId);
-        // pins.json as an earlier Scient wrote it: the snapshot held every author.
+        // pins.json as an earlier Scient wrote it: every author, no count and no "et al." mark.
         const pinsPath = NodePath.join(fixture.root, ".scient", "library", "pins.json");
         const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
-        file.pins[0].work.creators = consortium;
+        const {
+          creatorCount: _count,
+          incompleteCreatorRoles: _roles,
+          ...legacy
+        } = file.pins[0].work;
+        file.pins[0].work = { ...legacy, creators: consortium };
         await NodeFSP.writeFile(pinsPath, `${JSON.stringify(file, null, 2)}\n`);
 
         const here = await libraryOverview(store, { scope: "project", background: false });
@@ -925,6 +935,20 @@ describe("Library routes on the library backend", () => {
         expect(work.creators).toEqual(consortium.slice(0, 256));
         expect(work.creatorCount).toBe(7_992);
         expect(work.incompleteCreatorRoles).toEqual(["author"]);
+
+        // A title-only edit, as the client sends it, keeps every author.
+        const record = (await readScientSourceRecord(store.library, trial.sourceId))!;
+        const request = decodeEditRequest({
+          root: store.root,
+          sourceId: record.sourceId,
+          expectedRevision: record.revision,
+          metadata: { ...editableMetadataFromRecord(record), title: "Empagliflozin, corrected" },
+        });
+        await updateLibrarySourceMetadata(store, request);
+        expect(await readScientSourceRecord(store.library, trial.sourceId)).toMatchObject({
+          title: "Empagliflozin, corrected",
+          creators: consortium,
+        });
       });
     }),
   );
