@@ -298,6 +298,41 @@ it.effect(
     }),
 );
 
+it.effect("treats a failed gh version probe as incomplete but an absent gh as complete", () =>
+  Effect.gen(function* () {
+    let versionProbeFailed = true;
+    const { service } = yield* makeHarness({
+      sourceControl: {
+        discover: Effect.sync(() => [
+          {
+            kind: SourceControlProviderKind.make("github"),
+            label: "GitHub",
+            status: "missing" as const,
+            version: Option.none(),
+            installHint: "Install gh",
+            detail: versionProbeFailed ? Option.some("`gh --version` timed out.") : Option.none(),
+            auth: {
+              status: "unknown" as const,
+              account: Option.none(),
+              host: Option.none(),
+              detail: Option.some("Install gh"),
+            },
+          },
+        ]),
+        github: GitHubSourceControlCredential.of({
+          mcpUrl: "https://api.githubcopilot.com/mcp/",
+          get: () => Effect.succeedNone,
+          invalidate: () => Effect.void,
+        }),
+      },
+    });
+
+    expect(yield* service.externalIdentities).toEqual({ complete: false, identities: [] });
+    versionProbeFailed = false;
+    expect(yield* service.externalIdentities).toEqual({ complete: true, identities: [] });
+  }),
+);
+
 it.effect("omits unavailable GitHub discovery and retains optional snapshot compatibility", () =>
   Effect.gen(function* () {
     const { service } = yield* makeHarness();

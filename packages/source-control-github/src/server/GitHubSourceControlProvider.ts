@@ -246,8 +246,9 @@ export const makeDiscovery = Effect.gen(function* () {
         requireSettingsSecretLiteral(settings.tokens["github.com"], current?.secretProviders ?? {}),
       );
       // SCIENT-FORK: preserve an unknown CLI auth probe when a token or app sign-in overrides auth.status.
+      // A failed version probe of an installed gh reports "missing" with a detail and is unknown too.
       const cliAuthUnknown =
-        cli.status === "available" && cli.auth.status === "unknown"
+        cli.auth.status === "unknown" && (cli.status === "available" || Option.isSome(cli.detail))
           ? ({ cliAuthStatus: "unknown" as const } as const)
           : {};
       if (Result.isFailure(saved) && settings.hosts["github.com"]?.enabled !== false) {

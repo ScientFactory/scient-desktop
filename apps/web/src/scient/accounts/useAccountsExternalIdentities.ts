@@ -19,17 +19,19 @@ export function useAccountsExternalIdentities(environmentId: EnvironmentId | nul
   );
   const incomplete = query.data?.complete === false;
   const refresh = query.refresh;
-  const retryCountRef = useRef(0);
+  const retries = useRef({ environmentId, count: 0 });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Schedules a bounded retry timer while mounted when external identity discovery returned an incomplete result.
   useEffect(() => {
+    if (retries.current.environmentId !== environmentId)
+      retries.current = { environmentId, count: 0 };
     if (!enabled || environmentId === null || !incomplete) {
-      retryCountRef.current = 0;
+      retries.current.count = 0;
       return;
     }
-    if (query.isPending || retryCountRef.current >= MAX_INCOMPLETE_RETRIES) return;
+    if (query.isPending || retries.current.count >= MAX_INCOMPLETE_RETRIES) return;
     const timer = setTimeout(() => {
-      retryCountRef.current += 1;
+      retries.current.count += 1;
       refresh();
     }, INCOMPLETE_RETRY_MS);
     return () => {

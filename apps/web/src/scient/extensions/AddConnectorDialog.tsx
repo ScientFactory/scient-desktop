@@ -435,7 +435,11 @@ function RemoteConnectorDialog({
                 <GitHubConnect
                   environmentId={environmentId}
                   logins={githubLogins}
-                  checkingLogins={externalIdentitiesQuery.isPending && githubLogins.length === 0}
+                  checkingLogins={
+                    githubLogins.length === 0 &&
+                    (externalIdentitiesQuery.isPending ||
+                      (externalIdentitiesQuery.data === null && accountsQuery.isPending))
+                  }
                   busy={submitting}
                   onConnect={(account) => void connectWithSourceControl(account)}
                   onUseToken={() => {

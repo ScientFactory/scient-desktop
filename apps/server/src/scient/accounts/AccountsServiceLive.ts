@@ -239,10 +239,12 @@ export const layer = Layer.effect(
                 Effect.orElseSucceed(() => ({ effective: Option.none(), complete: false })),
               )
             : { effective: Option.none(), complete: true };
+          // Only an absent gh (missing without a probe-failure detail) is a complete unknown.
           const githubProbeComplete =
             github === undefined ||
             (github.auth.cliAuthStatus !== "unknown" &&
-              (github.status !== "available" || github.auth.status !== "unknown"));
+              (github.auth.status !== "unknown" ||
+                (github.status === "missing" && Option.isNone(github.detail))));
           const { effective, complete: effectiveComplete } = effectiveProbe;
           const complete = githubProbeComplete && effectiveComplete;
           const githubRows = [

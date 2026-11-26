@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
   toast: vi.fn(),
   onOpenChange: vi.fn(),
   accountsAvailable: false,
+  accountsPending: false,
   accounts: [] as AccountSummary[],
   managedElsewhere: [] as NonNullable<AccountsSnapshot["managedElsewhere"]>,
   externalIdentities: null as ReadonlyArray<
@@ -74,7 +75,7 @@ vi.mock("../../state/query", () => ({
     }
     return {
       isSuccess: state.accountsAvailable,
-      isPending: false,
+      isPending: state.accountsPending,
       data: { accounts: state.accounts, managedElsewhere: state.managedElsewhere },
       refresh: vi.fn(),
     };
@@ -174,6 +175,7 @@ const connector: ConnectorSummary = {
 
 function setup() {
   state.accountsAvailable = false;
+  state.accountsPending = false;
   state.accounts = [];
   state.managedElsewhere = [];
   state.externalIdentities = null;
@@ -768,6 +770,18 @@ describe("GitHub with Source Control's account", () => {
     state.managedElsewhere = [];
     state.externalIdentities = null;
     state.externalIdentitiesPending = true;
+    await fixture.render(githubEntry);
+    await expect.element(page.getByRole("button", { name: /Checking…/ })).toBeDisabled();
+    await expect
+      .element(page.getByRole("button", { name: "Sign in with GitHub" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("keeps checking while an older server's snapshot still carries GitHub logins", async () => {
+    await using fixture = setup();
+    state.managedElsewhere = [];
+    state.externalIdentities = null;
+    state.accountsPending = true;
     await fixture.render(githubEntry);
     await expect.element(page.getByRole("button", { name: /Checking…/ })).toBeDisabled();
     await expect

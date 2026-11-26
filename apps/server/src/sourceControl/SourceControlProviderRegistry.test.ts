@@ -534,3 +534,47 @@ it.effect("answers discovery without waiting on a hosting API that stalls", () =
     assert.strictEqual(items.find((item) => item.kind === "gitlab")?.status, "available");
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
+
+// SCIENT-FORK:START
+it.effect(
+  "discovers one forge without spawning others and re-asks unknown remotes after its sign-in",
+  () =>
+    Effect.gen(function* () {
+      let signedIn = false;
+      const versionProbes: Array<string> = [];
+      const registry = yield* makeRegistry({
+        remotes: [],
+        discovery: [
+          {
+            ...claimingCli("gitlab"),
+            parseAuth: () => ({
+              status: signedIn ? "authenticated" : "unauthenticated",
+              account: Option.none(),
+              host: Option.none(),
+              detail: Option.none(),
+            }),
+          },
+          claimingCli("forgejo"),
+        ],
+        run: ({ command, args }) => {
+          if (args.includes("--version")) versionProbes.push(command);
+          return Effect.succeed(
+            TestSourceControlHost.processOutput(
+              signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+            ),
+          );
+        },
+      });
+      const gitlab = yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual(Option.getOrUndefined(gitlab)?.kind, "gitlab");
+      assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+      yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
+
+      signedIn = true;
+      yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "gitlab");
+      assert.deepStrictEqual(versionProbes, ["gitlab-cli", "gitlab-cli", "gitlab-cli"]);
+    }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+// SCIENT-FORK:END

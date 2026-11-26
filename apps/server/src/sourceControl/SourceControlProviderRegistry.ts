@@ -289,6 +289,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     );
 
     let lastDiscovery: string | undefined;
+    // SCIENT-FORK: single-forge discovery tracks its own fingerprints to re-ask unknown remotes too.
+    const lastProviderDiscovery = new Map<SourceControlProviderKind, string>();
 
     const refineContext = (
       cwd: string,
@@ -400,7 +402,17 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
                 spec,
                 process,
                 cwd: config.cwd,
-              }).pipe(Effect.asSome);
+              }).pipe(
+                Effect.tap((item) => {
+                  const fingerprint = discoveryFingerprint([item]);
+                  const previous = lastProviderDiscovery.get(kind);
+                  lastProviderDiscovery.set(kind, fingerprint);
+                  return previous !== undefined && previous !== fingerprint
+                    ? Cache.invalidateAll(unknownRemoteCache)
+                    : Effect.void;
+                }),
+                Effect.asSome,
+              );
         },
       ),
     });
