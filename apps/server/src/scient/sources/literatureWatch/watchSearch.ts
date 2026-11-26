@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- Service windows are plain ISO days.
 import {
   isWellFormedDoi,
   type LiteratureWatchFound,
@@ -228,6 +229,8 @@ async function searchPubmed(query: string, window: Window, options: WatchSearchO
   ) as { esearchresult?: { count?: string; idlist?: ReadonlyArray<string>; ERROR?: string } };
   const result = search.esearchresult;
   if (!result || result.ERROR) throw new Error(result?.ERROR ?? "PubMed did not answer.");
+  const count = Number.parseInt(result.count ?? "0", 10);
+  if (count > WATCH_SERVICE_CAP) return { found: [], total: count, capped: true };
   const pmids = result.idlist ?? [];
   const found: LiteratureWatchFound[] = [];
   for (let start = 0; start < pmids.length; start += PUBMED_FETCH_CHUNK) {
@@ -244,7 +247,7 @@ async function searchPubmed(query: string, window: Window, options: WatchSearchO
     );
     found.push(...parsePubmed(xml));
   }
-  return { found, total: Number.parseInt(result.count ?? "0", 10) || found.length };
+  return { found, total: count || found.length, capped: false };
 }
 
 interface OpenAlexWork {
@@ -317,11 +320,12 @@ async function searchOpenAlex(query: string, window: Window, options: WatchSearc
       await getOk(options, runWithOpenAlexSearchLimit, url, "application/json"),
     ) as { meta?: { count?: number }; results?: ReadonlyArray<OpenAlexWork> };
     total = body.meta?.count ?? 0;
+    if (total > WATCH_SERVICE_CAP) return { found: [], total, capped: true };
     const results = body.results ?? [];
     found.push(...results.flatMap(openAlexRecord));
     if (results.length < OPENALEX_PAGE || page * OPENALEX_PAGE >= total) break;
   }
-  return { found, total };
+  return { found, total, capped: false };
 }
 
 async function searchArxiv(query: string, window: Window, options: WatchSearchOptions) {
@@ -341,6 +345,7 @@ async function searchArxiv(query: string, window: Window, options: WatchSearchOp
       "application/atom+xml",
     );
     total = Number.parseInt(/<opensearch:totalResults[^>]*>(\d+)</u.exec(xml)?.[1] ?? "0", 10);
+    if (total > WATCH_SERVICE_CAP) return { found: [], total, capped: true };
     const entries = parseArxivFeed(xml);
     found.push(
       ...entries.flatMap((entry) =>
@@ -360,30 +365,63 @@ async function searchArxiv(query: string, window: Window, options: WatchSearchOp
     );
     if (entries.length < ARXIV_PAGE || start + ARXIV_PAGE >= total) break;
   }
-  return { found, total };
+  return { found, total, capped: false };
 }
 
 const SEARCHES = { pubmed: searchPubmed, openalex: searchOpenAlex, arxiv: searchArxiv };
 
-/** One service's window, never thrown: a failure is the run's to report. */
+/** A run reads at most this many records from one service across its windows. */
+const RUN_SERVICE_CAP = 4_000;
+const DAY_MS = 86_400_000;
+const dayOffset = (day: string, days: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * One service's window, never thrown: a failure is the run's to report. A window holding more
+ * than one search returns is split by days, earliest first, so nothing past the cap is skipped;
+ * when even that is too much, `coveredTo` names the last day read in full.
+ */
 export async function searchWatchService(
   service: LiteratureWatchService,
   query: string,
   window: Window,
   options: WatchSearchOptions,
 ): Promise<WatchSearchResult> {
+  const found: LiteratureWatchFound[] = [];
+  let total = 0;
+  const pending: Window[] = [window];
   try {
-    const { found, total } = await SEARCHES[service](query, window, options);
-    return {
-      run: {
-        service,
-        ...window,
-        status: total > found.length && found.length >= WATCH_SERVICE_CAP ? "partial" : "complete",
-        found: found.length,
-        total,
-      },
-      found,
-    };
+    while (pending.length > 0) {
+      const span = pending.shift()!;
+      const result = await SEARCHES[service](query, span, options);
+      const { capped } = result;
+      if (capped && span.from < span.to) {
+        const days = (Date.parse(span.to) - Date.parse(span.from)) / DAY_MS;
+        const middle = dayOffset(span.from, Math.floor(days / 2));
+        pending.unshift(
+          { from: span.from, to: middle },
+          { from: dayOffset(middle, 1), to: span.to },
+        );
+        continue;
+      }
+      if (capped || found.length + result.found.length > RUN_SERVICE_CAP) {
+        const coveredTo = dayOffset(span.from, -1);
+        return {
+          run: {
+            service,
+            ...window,
+            status: "partial",
+            found: found.length,
+            total: total + result.total,
+            ...(coveredTo >= window.from ? { coveredTo } : {}),
+          },
+          found,
+        };
+      }
+      found.push(...result.found);
+      total += result.total;
+    }
+    return { run: { service, ...window, status: "complete", found: found.length, total }, found };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The service did not answer.";
     return {

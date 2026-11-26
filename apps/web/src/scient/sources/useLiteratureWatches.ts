@@ -5,9 +5,10 @@ import type {
   ScientLiteratureWatchesResult,
   ScientLiteratureWatchResult,
 } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { changeLiteratureWatch, readLiteratureWatch, readLiteratureWatches } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
@@ -57,47 +58,47 @@ export function useLiteratureWatch(input: {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const canChange = useCanChangeLibrary(input.environmentId);
+  // Only the newest read for the watch on screen may land; an older or another watch's is dropped.
+  const latest = useRef(0);
 
-  const reload = (watchId: string) =>
-    readLiteratureWatch(input.environmentId, { root: input.root, watchId }).then(
+  const reload = useStableCallback((watchId: string) => {
+    const request = ++latest.current;
+    return readLiteratureWatch(input.environmentId, { root: input.root, watchId }).then(
       (next) => {
+        if (request !== latest.current) return;
         setWatch(next.watch);
         setError(null);
       },
-      (cause: unknown) => setError(message(cause)),
+      (cause: unknown) => {
+        if (request === latest.current) setError(message(cause));
+      },
     );
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the open watch from the environment server when it opens
   useEffect(() => {
-    if (!input.watchId) return;
-    let current = true;
-    void readLiteratureWatch(input.environmentId, {
-      root: input.root,
-      watchId: input.watchId,
-    }).then(
-      (next) => {
-        if (current) setWatch(next.watch);
-      },
-      (cause: unknown) => {
-        if (current) setError(message(cause));
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [input.environmentId, input.root, input.watchId]);
+    if (input.watchId) void reload(input.watchId);
+    else latest.current += 1;
+  }, [input.watchId, reload]);
+  // A run started elsewhere, such as on schedule, shows when the view is next looked at.
+  useLiveRefresh(
+    () => {
+      if (input.watchId) void reload(input.watchId);
+    },
+    { key: `scient-literature-watch:${input.environmentId}:${input.root}:${input.watchId}` },
+  );
 
+  const onListChanged = useStableCallback(input.onListChanged);
   const running = input.watchId !== null && watch?.watchId === input.watchId && watch.running;
-  const followRun = useStableCallback((watchId: string) => {
-    void reload(watchId).then(() => input.onListChanged());
-  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows a run on the environment server until it publishes
   useEffect(() => {
     if (!running || !input.watchId) return;
     const watchId = input.watchId;
-    const timer = setInterval(() => followRun(watchId), RUNNING_POLL_MS);
+    const timer = setInterval(() => {
+      void reload(watchId).then(onListChanged);
+    }, RUNNING_POLL_MS);
     return () => clearInterval(timer);
-  }, [running, input.watchId, followRun]);
+  }, [running, input.watchId, reload, onListChanged]);
 
   /** Applies a change, then reads the watch and the list again. `key` marks what is busy. */
   const change = async (

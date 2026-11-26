@@ -70,6 +70,7 @@ export async function startLiteratureWatchRun(
     alreadySeen,
     candidates,
     delivered: 0,
+    revision: watch.revision ?? 0,
   };
   return claimLiteratureWatchRun(library, run, options.now);
 }

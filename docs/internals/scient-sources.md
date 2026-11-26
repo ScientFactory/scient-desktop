@@ -3736,23 +3736,30 @@ how to set one up and run it. The Library reads and changes watches over the
   ledger drops what was judged.
 - `seen` holds every work a run judged, by all its identity keys (DOI, PMID,
   arXiv, OpenAlex, normalized title), so no later run shows it again. Records
-  merge on any shared key, except two with the same title and different DOIs.
+  merge, and match `seen`, on any shared key, except a title shared by two
+  different DOIs.
 - A run hands out titles in pages, in order; only handed-out candidates are
   recorded and only when all were handed out do the services' days move. A
-  failed service keeps its day. A service holding more than a run reads (2,000)
-  is `partial` and the briefing says so.
-- A run is claimed under the lock (a second start resumes it), is discarded
-  when the watch's queries change, and is resumed for 24 hours. Publishing is
-  idempotent by run ID and validates the file before writing it.
+  failed service keeps its day. A window holding more than one search returns
+  (2,000) is split by days, earliest first; past 4,000 records a service is
+  `partial` and moves only to `coveredTo`, the last day it read in full.
+- A run is claimed under the lock (a second start resumes it) and resumed for
+  24 hours; a run file that cannot be read counts as none. Changing what a
+  watch searches for raises its `revision` and removes the open run under the
+  same lock; a run from an older revision can neither be claimed nor publish.
+  The change also rereads the last month and drops `passed` entries from
+  `seen`. Publishing is idempotent by run ID and validates the file first.
 - Each watch has the scheduled task `scheduled-task:<watchId>` (interval,
   `fresh_session`), written from the watch with the project and thread settings
-  of the chat that created it (`runner`). A minute after start, every six hours
-  and when a watch is opened, a lost task is rebuilt and one bound to an
-  archived or deleted run thread is unbound, so the next run starts a new one.
-  A run that ended after the last briefing without publishing marks the watch
-  `unfinished`.
+  of the chat that created it (`runner`). Reads never write it. A pass a minute
+  after start and every six hours rebuilds a lost task, unbinds one whose run
+  thread is archived or deleted, adopts a pause made in Scheduled tasks and
+  removes tasks whose watch is gone, reading each watch again before writing.
+  A run counts as going while its thread works, and as unfinished when it
+  stopped after the last briefing without publishing.
 - Briefings never change after publishing except for each item's triage and
-  note and the briefing's `openedAt`. Keep adds the paper through the identifier
+  note and the briefing's `openedAt`; they keep no abstracts, and `seen` keeps
+  the last 60,000 works. Keep adds the paper through the identifier
   intake (DOI, then PMID, arXiv, OpenAlex) without pinning it to a project.
 - OpenAlex without a key refuses cursor paging (pages by number instead) and
   allows one search a second when it has more than five boolean operators; its

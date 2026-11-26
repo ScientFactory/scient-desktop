@@ -118,8 +118,13 @@ export async function changeLiteratureWatch(
   change: (watch: LiteratureWatch) => LiteratureWatch | Promise<LiteratureWatch>,
 ): Promise<LiteratureWatch> {
   return withScientLibraryLock(library.root, async () => {
-    const next = await change(await readLiteratureWatch(library, watchId));
+    const current = await readLiteratureWatch(library, watchId);
+    const next = await change(current);
     await writeWatch(library, next);
+    // A run fetched for what the watch searched before cannot publish into what it searches now.
+    if ((next.revision ?? 0) !== (current.revision ?? 0)) {
+      await NodeFSP.rm(runPath(library, watchId), { force: true });
+    }
     return next;
   });
 }
@@ -153,22 +158,17 @@ export async function claimLiteratureWatchRun(
   now: Date,
 ): Promise<LiteratureWatchRun> {
   return withScientLibraryLock(library.root, async () => {
-    await readLiteratureWatch(library, run.watchId);
+    const watch = await readLiteratureWatch(library, run.watchId);
+    if ((run.revision ?? 0) !== (watch.revision ?? 0)) {
+      throw new Error(
+        "That run is no longer open; the watch changed while it searched. Start a new run.",
+      );
+    }
     const standing = await resumableLiteratureWatchRun(library, run.watchId, now);
     if (standing) return standing;
     await atomicWriteJson(runPath(library, run.watchId), run, MAX_RUN_BYTES);
     return run;
   });
-}
-
-/** Drops the open run, as after the watch's queries change. */
-export async function discardLiteratureWatchRun(
-  library: ScientLibraryLocation,
-  watchId: string,
-): Promise<void> {
-  await withScientLibraryLock(library.root, () =>
-    NodeFSP.rm(runPath(library, watchId), { force: true }),
-  );
 }
 
 /** Reads, changes and writes the watch's open run under the Library lock. */
@@ -188,14 +188,17 @@ export async function changeLiteratureWatchRun(
   });
 }
 
-/** The watch's open run, or null when none was started or the last one was published. */
+/**
+ * The watch's open run, or null when none was started, the last one was published, or its file
+ * cannot be read (the next start fetches again rather than failing on it forever).
+ */
 export async function readLiteratureWatchRun(
   library: ScientLibraryLocation,
   watchId: string,
 ): Promise<LiteratureWatchRun | null> {
   const filePath = runPath(library, watchId);
   if ((await snapshot(filePath)) !== "file") return null;
-  return readBoundedJson(filePath, MAX_RUN_BYTES, LiteratureWatchRun);
+  return readBoundedJson(filePath, MAX_RUN_BYTES, LiteratureWatchRun).catch(() => null);
 }
 
 /** Publishes the open run with `publish` and removes it, in one hold of the lock. */

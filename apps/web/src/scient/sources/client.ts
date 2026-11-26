@@ -206,8 +206,11 @@ export function readLiteratureWatches(
   environmentId: EnvironmentId,
   input: ScientLiteratureWatchesRequest,
 ) {
-  return runtime.runPromise(
-    listEnvironmentScientLiteratureWatches({ prepared: prepared(environmentId), ...input }),
+  // Promise-first: with no connection `prepared` throws, which must reject, not escape a render.
+  return Promise.resolve().then(() =>
+    runtime.runPromise(
+      listEnvironmentScientLiteratureWatches({ prepared: prepared(environmentId), ...input }),
+    ),
   );
 }
 
@@ -215,8 +218,10 @@ export function readLiteratureWatch(
   environmentId: EnvironmentId,
   input: ScientLiteratureWatchRequest,
 ) {
-  return runtime.runPromise(
-    getEnvironmentScientLiteratureWatch({ prepared: prepared(environmentId), ...input }),
+  return Promise.resolve().then(() =>
+    runtime.runPromise(
+      getEnvironmentScientLiteratureWatch({ prepared: prepared(environmentId), ...input }),
+    ),
   );
 }
 

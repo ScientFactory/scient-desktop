@@ -1456,8 +1456,8 @@ a service that did not answer is searched again next time.
 If a run ends without a briefing, the watch says so and offers **Run now**. To
 change what a watch follows or what it tells you about each paper, ask in a
 chat. **Run now**, **Pause** and **Delete watch** are in the watch's **⋯** menu.
-Deleting a watch keeps the papers you kept. Each run works in the watch's own
-thread, which you can open to see how it decided. Google Scholar cannot be
+Deleting a watch keeps the papers you kept. Each run works in the watch's own thread; **Open run thread** in the same menu
+shows how it decided. Google Scholar cannot be
 searched automatically, so it is not one of the services.
 
 ## Choose a citation style

@@ -9,10 +9,15 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import {
+  type ScientLibraryLocation,
   scientLibraryLocation,
   scientLibraryRootFor,
 } from "@scientfactory/scient-sources/library-root";
-import { listLiteratureWatches } from "@scientfactory/scient-sources/literature-watch-store";
+import {
+  changeLiteratureWatch,
+  listLiteratureWatches,
+  readLiteratureWatch,
+} from "@scientfactory/scient-sources/literature-watch-store";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -38,6 +43,7 @@ const decodeRunner = Schema.decodeUnknownOption(LiteratureWatchRunner);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One task per watch, named after it, so a lost task is rebuilt rather than duplicated. */
+const WATCH_TASK_PREFIX = "scheduled-task:watch-";
 export const literatureWatchTaskId = (watchId: string) =>
   ScheduledTaskId.make(`scheduled-task:${watchId}`);
 
@@ -96,13 +102,40 @@ const needsRestore = Effect.fn("LiteratureWatch.needsRestore")(function* (
   return shell === null || shell.archivedAt !== null;
 });
 
-/** Rebuilds the task of a watch that lost it and rebinds one whose run thread was archived. */
+/**
+ * Brings every task in line with its watch: rebuilds a lost one, rebinds one whose run thread was
+ * archived, follows a pause made in Scheduled tasks, and removes tasks whose watch is gone. Each
+ * watch is read again just before its task is written, so a delete or edit meanwhile wins.
+ */
 export const restoreLiteratureWatchSchedules = Effect.fn("LiteratureWatch.restoreSchedules")(
-  function* (watches: ReadonlyArray<LiteratureWatch>) {
-    const { tasks } = yield* (yield* ScheduledTaskService).list();
-    for (const watch of watches) {
-      const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watch.watchId));
-      if (yield* needsRestore(task)) yield* syncLiteratureWatchSchedule(watch);
+  function* (library: ScientLibraryLocation) {
+    const listed = yield* Effect.promise(() => listLiteratureWatches(library).catch(() => null));
+    if (!listed) return;
+    const scheduler = yield* ScheduledTaskService;
+    const { tasks } = yield* scheduler.list();
+    const owned = new Set(listed.watches.map((watch) => literatureWatchTaskId(watch.watchId)));
+    // A watch file that could not be read still owns its task.
+    if (listed.issues.length === 0) {
+      for (const task of tasks) {
+        if (task.id.startsWith(WATCH_TASK_PREFIX) && !owned.has(task.id)) {
+          yield* scheduler.delete({ id: task.id }).pipe(Effect.ignore);
+        }
+      }
+    }
+    for (const { watchId } of listed.watches) {
+      const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watchId));
+      const current = yield* Effect.promise(() =>
+        readLiteratureWatch(library, watchId).catch(() => null),
+      );
+      if (!current) continue;
+      if (task && !task.enabled && current.paused !== true) {
+        yield* Effect.promise(() =>
+          changeLiteratureWatch(library, watchId, (watch) => ({ ...watch, paused: true })),
+        ).pipe(Effect.ignore);
+        continue;
+      }
+      const drifted = task !== undefined && task.enabled === (current.paused === true);
+      if (drifted || (yield* needsRestore(task))) yield* syncLiteratureWatchSchedule(current);
     }
   },
 );
@@ -143,10 +176,7 @@ export const literatureWatchSchedulePassLayer = Layer.effectDiscard(
     if ((yield* ScientSourcesBackend) !== "library") return;
     const config = yield* ServerConfig;
     const library = scientLibraryLocation(scientLibraryRootFor(config.stateDir));
-    const pass = Effect.promise(() =>
-      listLiteratureWatches(library).catch(() => ({ watches: [] })),
-    ).pipe(
-      Effect.flatMap(({ watches }) => restoreLiteratureWatchSchedules(watches)),
+    const pass = restoreLiteratureWatchSchedules(library).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Literature watch schedules were not restored.", { cause }),
       ),

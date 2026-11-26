@@ -53,7 +53,10 @@ export const LiteratureWatchCandidate = Schema.Struct({
 export type LiteratureWatchCandidate = typeof LiteratureWatchCandidate.Type;
 export type LiteratureWatchFound = Omit<LiteratureWatchCandidate, "candidateId">;
 
-/** `partial`: the service answered but held more than one run reads; the briefing says so. */
+/**
+ * `partial`: the service held more than one run reads. `coveredTo` is then the last day read in
+ * full, which the watch moves to, so the next run goes on from there.
+ */
 export const LiteratureWatchServiceRun = Schema.Struct({
   service: LiteratureWatchService,
   from: Day,
@@ -61,6 +64,7 @@ export const LiteratureWatchServiceRun = Schema.Struct({
   status: Schema.Literals(["complete", "partial", "failed"]),
   found: Count,
   total: Schema.optionalKey(Count),
+  coveredTo: Schema.optionalKey(Day),
   error: Schema.optionalKey(Line),
 });
 export type LiteratureWatchServiceRun = typeof LiteratureWatchServiceRun.Type;
@@ -76,6 +80,8 @@ export const LiteratureWatchRun = Schema.Struct({
   candidates: Schema.Array(LiteratureWatchCandidate),
   /** How many candidates, in order, the agent has been given; only those count as screened. */
   delivered: Count,
+  /** The watch's `revision` the run searched with; a run from before an edit cannot publish. */
+  revision: Schema.optionalKey(Count),
 });
 export type LiteratureWatchRun = typeof LiteratureWatchRun.Type;
 
@@ -143,6 +149,8 @@ export const LiteratureWatch = Schema.Struct({
   watchId: NonEmptyString,
   ...LiteratureWatchDefinition.fields,
   paused: Schema.optionalKey(Schema.Literal(true)),
+  /** Raised whenever what the watch searches for changes. */
+  revision: Schema.optionalKey(Count),
   /** The thread settings its scheduled runs use, in the server's own contract shape. */
   runner: Schema.optionalKey(Schema.Unknown),
   /** Per service, the last day a run searched completely; the next run starts there. */
@@ -169,6 +177,8 @@ export const LITERATURE_WATCH_OPENALEX_DAYS = 30;
 /** PubMed and arXiv records land a little late in their own date fields. */
 const OVERLAP_DAYS = 2;
 const KEPT_BRIEFINGS = 104;
+/** About a year of a busy watch; older entries are past every service's rescan. */
+const KEPT_SEEN = 60_000;
 
 export function literatureWatchDay(at: Date): string {
   return at.toISOString().slice(0, 10);
@@ -222,6 +232,8 @@ export function literatureWatchKeys(found: Pick<LiteratureWatchFound, "ids" | "t
   return keys;
 }
 
+const isTitleKey = (key: string) => key.startsWith("title:");
+
 function sameDoi(left: string, right: string) {
   return normalizePersistentIdentifier("doi", left) === normalizePersistentIdentifier("doi", right);
 }
@@ -245,7 +257,22 @@ export function literatureWatchCandidates(
   found: ReadonlyArray<LiteratureWatchFound>,
   seen: ReadonlyArray<LiteratureWatchSeen>,
 ): { readonly candidates: ReadonlyArray<LiteratureWatchCandidate>; readonly alreadySeen: number } {
-  const judged = new Set(seen.flatMap((entry) => entry.keys));
+  const judged = new Set(seen.flatMap((entry) => entry.keys.filter((key) => !isTitleKey(key))));
+  // A title alone marks a work judged only when no DOI on either side says it is another one.
+  const judgedDois = new Map<string, ReadonlyArray<string>>();
+  for (const entry of seen) {
+    const title = entry.keys.find(isTitleKey);
+    if (!title) continue;
+    const dois = entry.keys.filter((key) => key.startsWith("doi:"));
+    judgedDois.set(title, [...(judgedDois.get(title) ?? []), ...(dois.length ? dois : ["any"])]);
+  }
+  const wasJudged = (record: LiteratureWatchFound) =>
+    literatureWatchKeys(record).some((key) => {
+      if (!isTitleKey(key)) return judged.has(key);
+      const dois = judgedDois.get(key);
+      const doi = record.ids.doi && `doi:${normalizePersistentIdentifier("doi", record.ids.doi)}`;
+      return dois !== undefined && (!doi || dois.includes("any") || dois.includes(doi));
+    });
   const merged: LiteratureWatchFound[] = [];
   const byKey = new Map<string, number>();
   for (const record of found) {
@@ -266,9 +293,7 @@ export function literatureWatchCandidates(
       for (const key of literatureWatchKeys(merged[index]!)) byKey.set(key, index);
     }
   }
-  const fresh = merged.filter(
-    (record) => !literatureWatchKeys(record).some((key) => judged.has(key)),
-  );
+  const fresh = merged.filter((record) => !wasJudged(record));
   return {
     candidates: fresh.map((record, index) => ({ ...record, candidateId: `c${index + 1}` })),
     alreadySeen: merged.length - fresh.length,
@@ -299,6 +324,11 @@ export function publishLiteratureWatchRun(
   if (run.watchId !== watch.watchId) {
     throw new LiteratureWatchPublishError("This run belongs to another watch.");
   }
+  if ((run.revision ?? 0) !== (watch.revision ?? 0)) {
+    throw new LiteratureWatchPublishError(
+      "The watch changed since this run began; start a new run.",
+    );
+  }
   if (input.picks.length > LITERATURE_WATCH_MAX_ITEMS) {
     throw new LiteratureWatchPublishError(
       `A briefing holds at most ${LITERATURE_WATCH_MAX_ITEMS} papers.`,
@@ -315,14 +345,17 @@ export function publishLiteratureWatchRun(
       throw new LiteratureWatchPublishError(`${pick.candidateId} is picked twice.`);
     }
     picked.add(pick.candidateId);
-    return { candidate, why: pick.why, details: pick.details, evidence: pick.evidence };
+    // Briefings never show abstracts; keeping them would outgrow the watch file within a year.
+    const { abstract: _abstract, ...shown } = candidate;
+    return { candidate: shown, why: pick.why, details: pick.details, evidence: pick.evidence };
   });
   const screened = run.candidates.slice(0, run.delivered);
   const unscreened = run.candidates.length - screened.length;
   const covered = { ...watch.covered };
   if (unscreened === 0) {
     for (const service of run.services) {
-      if (service.status !== "failed") covered[service.service] = service.to;
+      const day = service.status === "complete" ? service.to : service.coveredTo;
+      if (day) covered[service.service] = day;
     }
   }
   const summary = input.summary?.trim();
@@ -345,7 +378,7 @@ export function publishLiteratureWatchRun(
         fate: picked.has(candidate.candidateId) ? "shown" : "passed",
         runId: run.runId,
       })),
-    ],
+    ].slice(-KEPT_SEEN),
     briefings: [briefing, ...watch.briefings].slice(0, KEPT_BRIEFINGS),
     updatedAt: now.toISOString(),
   };

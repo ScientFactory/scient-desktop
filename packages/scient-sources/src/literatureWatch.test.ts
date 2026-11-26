@@ -192,3 +192,57 @@ describe("retuneLiteratureWatch", () => {
     expect(retuned.seen.map((entry) => entry.keys[0])).toEqual(["pmid:1"]);
   });
 });
+
+describe("review findings", () => {
+  const candidates = [
+    found("Replay during sleep predicts planning in rats", {
+      ids: { pmid: "1" },
+      abstract: "Long text.",
+    }),
+  ];
+
+  it("keeps a paper judged under one DOI apart from a new one sharing its title", () => {
+    const result = literatureWatchCandidates(
+      [found("Hippocampal replay supports flexible planning in rats", { ids: { doi: "10.1/b" } })],
+      [
+        {
+          keys: ["doi:10.1/a", "title:hippocampal replay supports flexible planning in rats"],
+          fate: "passed",
+          runId: "run-0",
+        },
+      ],
+    );
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  it("moves a partial service only to the last day it read in full", () => {
+    const partial = {
+      ...run(candidates),
+      services: [
+        {
+          service: "pubmed" as const,
+          from: "2026-11-17",
+          to: "2026-11-26",
+          status: "partial" as const,
+          found: 1,
+          coveredTo: "2026-11-21",
+        },
+      ],
+    };
+    const next = publishLiteratureWatchRun(watch(), partial, { picks: [] }, now);
+    expect(next.covered).toEqual({ pubmed: "2026-11-21" });
+  });
+
+  it("refuses a run from before the watch was edited, and stores briefings without abstracts", () => {
+    expect(() =>
+      publishLiteratureWatchRun(watch({ revision: 1 }), run(candidates), { picks: [] }, now),
+    ).toThrow("changed");
+    const next = publishLiteratureWatchRun(
+      watch(),
+      run(candidates),
+      { picks: [{ candidateId: "c1", why: "On topic.", details: [], evidence: "abstract" }] },
+      now,
+    );
+    expect(next.briefings[0]!.items[0]!.candidate).not.toHaveProperty("abstract");
+  });
+});

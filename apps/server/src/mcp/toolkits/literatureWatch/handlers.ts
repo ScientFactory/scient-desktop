@@ -8,7 +8,6 @@ import {
 import {
   changeLiteratureWatch,
   createLiteratureWatch,
-  discardLiteratureWatchRun,
   listLiteratureWatches,
   LiteratureWatchNotFoundError,
   readLiteratureWatch,
@@ -129,11 +128,11 @@ const saveWatch = Effect.fn("LiteratureWatchToolkit.save")(function* (
         const retopic =
           current.request !== definition.request ||
           JSON.stringify(current.queries) !== JSON.stringify(definition.queries);
-        return retopic ? retuneLiteratureWatch(next, now) : next;
+        return retopic
+          ? retuneLiteratureWatch({ ...next, revision: (current.revision ?? 0) + 1 }, now)
+          : next;
       }),
     );
-    // A run fetched with the old queries must not move the edited watch's searched days.
-    yield* attempt(() => discardLiteratureWatchRun(library, watchId));
     yield* syncLiteratureWatchSchedule(watch).pipe(Effect.mapError(scheduleFailure));
     return { watchId, created: false, firstRunStarted: false };
   }

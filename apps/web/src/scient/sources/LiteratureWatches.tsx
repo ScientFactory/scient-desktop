@@ -4,7 +4,9 @@ import type {
   LiteratureWatchItem,
   LiteratureWatchService,
 } from "@scientfactory/scient-sources";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, LoaderCircle, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -15,6 +17,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { readLocalApi } from "../../localApi";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { useLiteratureWatch, type LiteratureWatchList } from "./useLiteratureWatches";
 
 const FEATURED = 8;
@@ -253,6 +256,7 @@ export function LiteratureWatchesView(props: {
   readonly onBack: () => void;
 }) {
   const gt = useGT();
+  const navigate = useNavigate();
   const [watchId, setWatchId] = useState<string | null>(null);
   const [briefingId, setBriefingId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -344,6 +348,20 @@ export function LiteratureWatchesView(props: {
                     ? gt("Resume", { $context: "verb, restart a paused watch" })
                     : gt("Pause")}
                 </MenuItem>
+                {watch.threadId ? (
+                  <MenuItem
+                    onClick={() =>
+                      void navigate({
+                        to: "/$environmentId/$threadId",
+                        params: buildThreadRouteParams(
+                          scopeThreadRef(props.environmentId, ThreadId.make(watch.threadId!)),
+                        ),
+                      })
+                    }
+                  >
+                    <T>Open run thread</T>
+                  </MenuItem>
+                ) : null}
                 <MenuSeparator />
                 <MenuItem variant="destructive" onClick={() => setConfirmingDelete(true)}>
                   <T>Delete watch</T>
