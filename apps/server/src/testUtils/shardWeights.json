@@ -679,6 +679,7 @@
   "src/provider/acp/CursorAcpCliProbe.test.ts": 0.001,
   "src/provider/acp/DroidAcpCliProbe.test.ts": 0.001,
   "src/provider/acp/DroidAcpSupport.test.ts": 0.075,
+  "src/provider/antigravityUsageLimits.test.ts": 0.6,
   "src/provider/AcpRegistryProbe.test.ts": 5.074,
   "src/provider/AgentContextBudget.scient.test.ts": 0.005,
   "src/provider/AgentContextBudget.test.ts": 0.825,
