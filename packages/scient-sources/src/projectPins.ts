@@ -32,6 +32,10 @@ import {
   ScientSourceIncompleteCreatorRoles,
   ScientSourceMore,
   type ScientSourceRecord,
+  SCIENT_SAVED_COPY_LIST_LIMIT,
+  ScientSavedCopyCreatorCount,
+  scientSavedCopyCreators,
+  withIncompleteCreatorRoles,
 } from "./model.ts";
 import {
   SCIENT_PIN_CITATION_TEXT_FIELDS,
@@ -78,17 +82,20 @@ const NullableText = Schema.NullOr(Schema.String);
 /**
  * The pin's metadata snapshot: every citation input, so a collaborator with no Library cites the
  * same; never an abstract, note or PDF. A snapshot from before the optional fields lacks them:
- * unknown, never an instruction to empty them.
+ * unknown, never an instruction to empty them. Lists are kept to 256 (`boundedPinWork`); a longer
+ * one read from an older file is cut on read, never refused.
  */
 export const ScientPinWork = Schema.Struct({
   // Plain text, so a type a newer Scient adds never hides the whole file.
   type: NonEmptyString,
   title: NullableText,
-  creators: Schema.Array(ScientSourceCreator).pipe(Schema.check(Schema.isMaxLength(256))),
+  creators: Schema.Array(ScientSourceCreator),
   /** Present only when a role's list stops short; the managed entry ends it with "and others". */
   incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
+  /** The work's whole creator count, when `creators` holds only the first 256. */
+  creatorCount: Schema.optionalKey(ScientSavedCopyCreatorCount),
   issuedYear: Schema.NullOr(Schema.Int),
-  identifiers: Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
+  identifiers: Schema.Array(ScientSourceIdentifier),
   containerTitle: NullableText,
   customType: Schema.optionalKey(NullableText),
   issuedRaw: Schema.optionalKey(NullableText),
@@ -99,9 +106,39 @@ export const ScientPinWork = Schema.Struct({
   language: Schema.optionalKey(NullableText),
   url: Schema.optionalKey(NullableText),
   more: Schema.optionalKey(ScientSourceMore),
-  tags: Schema.optionalKey(Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(256)))),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientPinWork = typeof ScientPinWork.Type;
+
+/** The copy a pin keeps: at most 256 creators, identifiers and tags. */
+function boundedPinWork(work: ScientPinWork): ScientPinWork {
+  const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
+  if (
+    work.creators.length <= limit &&
+    work.identifiers.length <= limit &&
+    (work.tags?.length ?? 0) <= limit &&
+    (work.creatorCount === undefined || work.creatorCount > work.creators.length)
+  ) {
+    return work;
+  }
+  const { creatorCount: _count, incompleteCreatorRoles: _roles, ...rest } = work;
+  const { creators, creatorCount, shortenedRoles } = scientSavedCopyCreators(
+    work.creators,
+    work.creatorCount,
+  );
+  const incompleteCreatorRoles = withIncompleteCreatorRoles(
+    work.incompleteCreatorRoles,
+    shortenedRoles,
+  );
+  return {
+    ...rest,
+    creators,
+    ...(incompleteCreatorRoles?.length ? { incompleteCreatorRoles } : {}),
+    ...(creatorCount !== undefined ? { creatorCount } : {}),
+    identifiers: work.identifiers.slice(0, limit),
+    ...(work.tags !== undefined ? { tags: work.tags.slice(0, limit) } : {}),
+  };
+}
 
 export const ScientProjectPin = Schema.Struct({
   /** The project key: copied from the library's preferred key once, then frozen. */
@@ -123,7 +160,11 @@ const PinsFileHeader = Schema.Struct({
   pins: Schema.Array(Schema.Unknown),
 });
 const decodePinsHeader = Schema.decodeUnknownSync(PinsFileHeader);
-const decodePin = Schema.decodeUnknownSync(ScientProjectPin);
+const decodeWholePin = Schema.decodeUnknownSync(ScientProjectPin);
+const decodePin = (raw: unknown): ScientProjectPin => {
+  const pin = decodeWholePin(raw);
+  return { ...pin, work: boundedPinWork(pin.work) };
+};
 
 /** A pin with the fields a newer Scient wrote, which every rewrite keeps. */
 interface StoredPin {
@@ -143,7 +184,8 @@ const PIN_FIELDS = Object.keys(ScientProjectPin.fields);
 const WORK_FIELDS = Object.keys(ScientPinWork.fields);
 const FILE_FIELDS = Object.keys(PinsFileHeader.fields);
 
-function encodeWork(work: ScientPinWork, extra: JsonObject) {
+function encodeWork(whole: ScientPinWork, extra: JsonObject) {
+  const work = boundedPinWork(whole);
   return {
     type: work.type,
     title: work.title,
@@ -156,6 +198,7 @@ function encodeWork(work: ScientPinWork, extra: JsonObject) {
     ...(work.incompleteCreatorRoles?.length
       ? { incompleteCreatorRoles: [...work.incompleteCreatorRoles] }
       : {}),
+    ...(work.creatorCount !== undefined ? { creatorCount: work.creatorCount } : {}),
     issuedYear: work.issuedYear,
     identifiers: work.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
@@ -324,7 +367,7 @@ export function scientPinWorkFromRecord(
   record: ScientSourceRecord,
   earlier: ScientPinWork | null = null,
 ): ScientPinWork {
-  return scientPinWorkKeepingUnknown(
+  const work = scientPinWorkKeepingUnknown(
     earlier,
     {
       type: record.type,
@@ -349,6 +392,7 @@ export function scientPinWorkFromRecord(
     },
     record,
   );
+  return boundedPinWork(work);
 }
 
 function normalizePinNote(note: string | null | undefined): string | undefined {
@@ -1436,7 +1480,7 @@ export const scientProjectPinsInternals = {
     const restored: StoredPin = {
       ...found,
       workExtra: extraFields(copy["work"], WORK_FIELDS),
-      pin: { ...found.pin, work: decodePinWork(copy["work"]) },
+      pin: { ...found.pin, work: boundedPinWork(decodePinWork(copy["work"])) },
     };
     await writePinsDocument(
       root,

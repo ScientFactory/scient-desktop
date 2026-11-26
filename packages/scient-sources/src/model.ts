@@ -77,6 +77,47 @@ export function scientCreatorRoleIncomplete(
   return roles?.some((entry) => entry.toLowerCase() === wanted) ?? false;
 }
 
+/** How many creators, identifiers or tags a pin's or review's saved copy keeps. */
+export const SCIENT_SAVED_COPY_LIST_LIMIT = 256;
+
+/** A saved copy's whole creator count, present only when its `creators` hold the first ones. */
+export const ScientSavedCopyCreatorCount = Schema.Int.check(Schema.isGreaterThan(0));
+
+/**
+ * A saved copy's creators: the first 256, the whole count when there were more, and the roles
+ * the cut shortened (incomplete, so citations end them with "et al.").
+ */
+export function scientSavedCopyCreators(
+  creators: ReadonlyArray<ScientSourceCreator>,
+  creatorCount: number | undefined,
+): {
+  readonly creators: ReadonlyArray<ScientSourceCreator>;
+  readonly creatorCount?: number;
+  readonly shortenedRoles: ReadonlyArray<string>;
+} {
+  const whole = Math.max(creators.length, creatorCount ?? 0);
+  const kept =
+    creators.length > SCIENT_SAVED_COPY_LIST_LIMIT
+      ? creators.slice(0, SCIENT_SAVED_COPY_LIST_LIMIT)
+      : creators;
+  const shortenedRoles: string[] = [];
+  for (const { creatorType } of creators.slice(kept.length)) {
+    if (!scientCreatorRoleIncomplete(shortenedRoles, creatorType)) shortenedRoles.push(creatorType);
+  }
+  return whole > kept.length
+    ? { creators: kept, creatorCount: whole, shortenedRoles }
+    : { creators: kept, shortenedRoles };
+}
+
+/** `roles` with `added` the list lacks, within the 16 a record keeps. */
+export function withIncompleteCreatorRoles(
+  roles: ReadonlyArray<string> | undefined,
+  added: ReadonlyArray<string>,
+): ReadonlyArray<string> | undefined {
+  const fresh = added.filter((role) => !scientCreatorRoleIncomplete(roles, role));
+  return fresh.length === 0 ? roles : [...(roles ?? []), ...fresh].slice(0, 16);
+}
+
 export const ScientSourceAbstractSection = Schema.Struct({
   title: NullableText,
   paragraphs: Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(256))),

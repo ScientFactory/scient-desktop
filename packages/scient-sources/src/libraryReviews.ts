@@ -29,6 +29,9 @@ import {
   ScientSourceIdentifier,
   type ScientSourceActor,
   type ScientSourceRecord,
+  SCIENT_SAVED_COPY_LIST_LIMIT,
+  ScientSavedCopyCreatorCount,
+  scientSavedCopyCreators,
 } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { listScientSourceRecords, scientSourceStoreInternals } from "./store.ts";
@@ -74,14 +77,19 @@ const {
   reviewsDirectoryExists,
 } = scientSystematicReviewStoreInternals;
 
-/** What screening and counting read about one review record. No notes, tags, PDFs or full text. */
+/**
+ * What screening and counting read about one review record. No notes, tags, PDFs or full text.
+ * Creators and identifiers are kept to 256 (`boundedReviewWork`); a longer list is cut on read.
+ */
 export const ScientReviewWork = Schema.Struct({
   // Plain text, so a type a newer Scient adds never hides the whole file.
   type: NonEmptyString,
   title: NullableText,
-  creators: Schema.Array(ScientSourceCreator).pipe(Schema.check(Schema.isMaxLength(256))),
+  creators: Schema.Array(ScientSourceCreator),
+  /** The work's whole creator count, when `creators` holds only the first 256. */
+  creatorCount: Schema.optionalKey(ScientSavedCopyCreatorCount),
   issuedYear: Schema.NullOr(Schema.Int),
-  identifiers: Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
+  identifiers: Schema.Array(ScientSourceIdentifier),
   containerTitle: NullableText,
   abstract: NullableText,
   abstractSections: Schema.Array(ScientSourceAbstractSection).pipe(
@@ -99,7 +107,28 @@ const SnapshotFileHeader = Schema.Struct({
   records: Schema.Record(Schema.String, Schema.Unknown),
 });
 const decodeSnapshotHeader = Schema.decodeUnknownSync(SnapshotFileHeader);
-const decodeWork = Schema.decodeUnknownSync(ScientReviewWork);
+const decodeWholeWork = Schema.decodeUnknownSync(ScientReviewWork);
+const decodeWork = (raw: unknown) => boundedReviewWork(decodeWholeWork(raw));
+
+/** The copy a review keeps: at most 256 creators and identifiers. */
+function boundedReviewWork(work: ScientReviewWork): ScientReviewWork {
+  const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
+  if (
+    work.creators.length <= limit &&
+    work.identifiers.length <= limit &&
+    (work.creatorCount === undefined || work.creatorCount > work.creators.length)
+  ) {
+    return work;
+  }
+  const { creatorCount: _count, ...rest } = work;
+  const { creators, creatorCount } = scientSavedCopyCreators(work.creators, work.creatorCount);
+  return {
+    ...rest,
+    creators,
+    ...(creatorCount !== undefined ? { creatorCount } : {}),
+    identifiers: work.identifiers.slice(0, limit),
+  };
+}
 
 interface StoredWork {
   readonly work: ScientReviewWork;
@@ -120,7 +149,8 @@ const FILE_FIELDS = Object.keys(SnapshotFileHeader.fields);
 
 const codeUnitOrder = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
-function encodeWork(work: ScientReviewWork, extra: JsonObject) {
+function encodeWork(whole: ScientReviewWork, extra: JsonObject) {
+  const work = boundedReviewWork(whole);
   return {
     type: work.type,
     title: work.title,
@@ -130,6 +160,7 @@ function encodeWork(work: ScientReviewWork, extra: JsonObject) {
       familyName: creator.familyName,
       literalName: creator.literalName,
     })),
+    ...(work.creatorCount !== undefined ? { creatorCount: work.creatorCount } : {}),
     issuedYear: work.issuedYear,
     identifiers: work.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
@@ -359,7 +390,7 @@ export function scientReviewWorkFromRecord(
   record: ScientSourceRecord,
   capturedAt: string,
 ): ScientReviewWork {
-  return {
+  return boundedReviewWork({
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -370,7 +401,7 @@ export function scientReviewWorkFromRecord(
     abstractSections: record.abstractSections ?? [],
     capturedAt,
     capturedRevision: record.revision,
-  };
+  });
 }
 
 const workContent = ({
@@ -390,10 +421,13 @@ function refreshedWork(
 ): ScientReviewWork {
   const fresh = scientReviewWorkFromRecord(record, now);
   if (whole) return workContent(fresh) === workContent(existing) ? existing : fresh;
+  const { creatorCount: _count, ...freshRest } = fresh;
+  const creatorsFrom = fresh.creators.length > 0 ? fresh : existing;
   const next: ScientReviewWork = {
-    ...fresh,
+    ...freshRest,
     title: fresh.title ?? existing.title,
-    creators: fresh.creators.length > 0 ? fresh.creators : existing.creators,
+    creators: creatorsFrom.creators,
+    ...(creatorsFrom.creatorCount !== undefined ? { creatorCount: creatorsFrom.creatorCount } : {}),
     issuedYear: fresh.issuedYear ?? existing.issuedYear,
     identifiers: fresh.identifiers.length > 0 ? fresh.identifiers : existing.identifiers,
     containerTitle: fresh.containerTitle ?? existing.containerTitle,
