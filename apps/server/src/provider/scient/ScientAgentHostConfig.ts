@@ -29,7 +29,10 @@ export const scientAgentHostConfigText = (input: ScientAgentHostConfigInput): st
     "# Scient writes this file for the agent it runs and replaces it when settings change.",
     "computer:",
     `  enabled: ${input.computerControl}`,
-    ...(input.computerControl ? ["tools:", "  approval:", "    computer.control: allow"] : []),
+    "tools:",
+    // Tool mounts reach the model with its next prompt; the notice is terminal-only chatter.
+    "  commandNotices: false",
+    ...(input.computerControl ? ["  approval:", "    computer.control: allow"] : []),
     "generate_image:",
     `  enabled: ${input.imageGeneration}`,
     // An active goal keeps working between turns, as in the agent's terminal.
