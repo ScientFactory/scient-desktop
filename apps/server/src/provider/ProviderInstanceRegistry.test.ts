@@ -259,14 +259,18 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
-    Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
+  // SCIENT-FORK:START — latest-version lookups stop before ServerConfig removes the base directory holding their npm cache.
+  const layerBase = ProviderHostLive.layer.pipe(
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(layerBaseDeps),
+  );
+  // SCIENT-FORK:END
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provideMerge(PortScanner.layerTest),
