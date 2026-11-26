@@ -113,7 +113,7 @@ function argumentsFor(argv) {
   return { command, args };
 }
 
-function simulatedConflicts(root, base, target) {
+export function simulatedConflicts(root, base, target) {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-alignment-plan-"));
   try {
     const objects = output(root, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);

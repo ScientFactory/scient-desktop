@@ -87,9 +87,10 @@ describe("Scient fork footprint", () => {
   it("counts deleted T3 files apart from changed ones", async () => {
     const f = fixture();
     f.remove("legacy.ts");
+    f.remove("shared.ts");
     const result = await f.footprint(f.commit());
-    expect(result.head).toMatchObject({ changedFiles: 2, removedLines: 1, deletedFiles: 1 });
-    expect(result.newlyDeleted).toEqual(["legacy.ts"]);
+    expect(result.head).toMatchObject({ changedFiles: 1, deletedFiles: 2 });
+    expect(result.newlyDeleted).toEqual(["legacy.ts", "shared.ts"]);
     expect(result.newlyDiverged).toEqual([]);
   });
 

@@ -277,10 +277,12 @@ The provenance workflow appends it to each pull request's job summary for inform
 fails the job, and a baseline commit missing from the clone prints a note instead.
 
 `pnpm alignment:trend` replays the last 20 upstream merges on `origin/main` (those whose second
-parent is a `upstream/main` commit) with `git merge-tree` and prints, oldest first, each one's
-official commits, incoming paths, same-path overlaps, initially unmerged paths and conflicts per
-100 incoming paths, then the paths unmerged in at least 3 of them. Its counts match the receipts'
-Range lines. It writes nothing and gates nothing and takes about 15 seconds. Options: `--ref`,
+parent is a `upstream/main` commit) with the same private-object-store merge simulation as `plan`
+and prints, oldest first, each merge's official commits, incoming paths, same-path overlaps,
+initially unmerged paths and conflicts per 100 incoming paths, then the paths unmerged in at
+least 3 of them. Counts are per merge: they equal a single-merge receipt's Range line, while a
+stacked alignment's receipt reports its whole range and appears here as several rows. It writes
+nothing to the repository, gates nothing and takes about 15 seconds. Options: `--ref`,
 `--upstream`, `--last <N>`, `--min-recurrence <N>`, `--format markdown|json`.
 
 ## Desktop artifacts

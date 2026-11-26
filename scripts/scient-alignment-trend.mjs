@@ -2,13 +2,15 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 
-function git(cwd, args, okStatuses = [0]) {
+import { simulatedConflicts } from "./scient-alignment.mjs";
+
+function git(cwd, args) {
   const result = NodeChildProcess.spawnSync("git", args, {
     cwd,
     encoding: "utf8",
     maxBuffer: 512 * 1024 * 1024,
   });
-  if (!okStatuses.includes(result.status)) {
+  if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
   }
   return result.stdout;
@@ -49,10 +51,8 @@ function parseArgs(argv) {
 function replay(cwd, merge) {
   const [p1, p2] = merge.parents;
   const mergeBase = git(cwd, ["merge-base", p1, p2]).trim();
-  // Exit status 1 means the merge conflicted; the conflicted paths follow the tree id.
-  const conflicted = nulPaths(
-    git(cwd, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", p1, p2], [0, 1]),
-  ).slice(1);
+  // Replays in a private object store, like `plan`, so the repository gains no objects.
+  const conflicted = simulatedConflicts(cwd, p1, p2).paths;
   const incoming = nulPaths(git(cwd, ["diff", "--no-renames", "--name-only", "-z", mergeBase, p2]));
   const owned = new Set(
     nulPaths(git(cwd, ["diff", "--no-renames", "--name-only", "-z", mergeBase, p1])),

@@ -157,7 +157,7 @@ export async function measureForkFootprint(argv, { cwd = process.cwd() } = {}) {
     ...result,
     baselineMoved: null,
     newlyDiverged: sorted(head.changed.keys()).filter((path) => !touchedAtBase(path)),
-    newlyDeleted: sorted(head.deleted).filter((path) => !touchedAtBase(path)),
+    newlyDeleted: sorted(head.deleted).filter((path) => !base.deleted.has(path)),
     returnedToIdentical: sorted([...base.changed.keys(), ...base.deleted]).filter(
       (path) => !touchedAtHead(path),
     ),
