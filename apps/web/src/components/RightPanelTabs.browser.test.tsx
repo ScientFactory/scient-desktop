@@ -334,6 +334,11 @@ describe("add surface launcher", () => {
         pullRequestAvailable={false}
         pullRequestsAvailable={false}
         deviceAvailable={false}
+        // SCIENT-FORK:START — Scient's agents, sources and Compute tabs.
+        agentsAvailable={false}
+        sourcesAvailable={false}
+        computeAvailable={false}
+        // SCIENT-FORK:END
         onAddSideChat={() => {}}
         sideChatAvailable={sideChatAvailable}
       >

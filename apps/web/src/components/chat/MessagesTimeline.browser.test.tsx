@@ -886,8 +886,15 @@ describe("MessagesTimeline messages", () => {
     await using screen = await renderElement(
       <div
         data-chat-canvas
-        style={{ display: "flex", flexDirection: "column", height: 800, width: 1024 }}
-        className="[--chat-lane-inset-end:276px]"
+        // SCIENT-FORK:START — Scient's Tailwind skips test files, so set the inset inline.
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: 800,
+          width: 1024,
+          ["--chat-lane-inset-end" as string]: "276px",
+        }}
+        // SCIENT-FORK:END
       >
         <MessagesTimeline {...props} timelineEntries={entries} />
       </div>,
