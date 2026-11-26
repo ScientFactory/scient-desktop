@@ -13,8 +13,8 @@ import type * as SqlError from "effect/sql/SqlError";
 import {
   purgeScientThreadContentBatch,
   scientCandidateSources,
+  scientHandoffShownThreads,
   scientHoldsDeletedThreadContent,
-  scientKeepsDeletedThread,
   scientShownSources,
 } from "./scient-fork/DeletedThreadPurge.ts";
 // SCIENT-FORK:END
@@ -319,6 +319,11 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           ON target.thread_id = transfer.target_thread_id
         WHERE transfer.type = 'merge_back' AND transfer.status = 'pending'
           AND target.deleted_at IS NULL
+        ${
+          // SCIENT-FORK:START
+          scientHandoffShownThreads(sql)
+          // SCIENT-FORK:END
+        }
         UNION
         SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId')
         FROM shown
@@ -370,11 +375,6 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             AND task.status IN ('idle', 'pending', 'running', 'waiting')
             AND parent.deleted_at IS NULL
         )
-        ${
-          // SCIENT-FORK:START
-          scientKeepsDeletedThread(sql)
-          // SCIENT-FORK:END
-        }
         -- The delete's own purge always runs; the sweep only takes threads with something left.
         AND ${
           deletedThreadId !== undefined

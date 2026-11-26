@@ -172,3 +172,29 @@ it("offers an edit left open by an older build once in Stash", async () => {
     }),
   ]);
 });
+
+it("offers an edit a full Stash refused once a prompt leaves it", async () => {
+  vi.resetModules();
+  const { MAX_STASH_ENTRIES, usePromptStashStore: store } = await import("../../promptStashStore");
+  const { offerLegacyQueueEditJournals: offer } = await import("./legacyQueueEditStash");
+  await writeOldJournal("journal-full", { stashed: false });
+  store.setState({
+    entries: Array.from({ length: MAX_STASH_ENTRIES }, (_, index) => {
+      const {
+        queueEditKey: _key,
+        queueEditSide: _side,
+        ...entry
+      } = stashEntryFor(`other-${index}`);
+      return entry;
+    }),
+  });
+
+  await offer();
+  const offered = () =>
+    store.getState().entries.some((entry) => entry.queueEditKey === "journal-full");
+  expect(offered()).toBe(false);
+
+  store.getState().takeEntry(store.getState().entries[0]!.id);
+  await vi.waitFor(() => expect(offered()).toBe(true));
+  store.setState({ entries: [] });
+});

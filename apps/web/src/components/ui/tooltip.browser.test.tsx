@@ -86,7 +86,9 @@ it("closes a hovered tooltip when the combobox list scrolls under a stationary p
               <TooltipPopup>Remote machine</TooltipPopup>
             </Tooltip>
           </ComboboxItem>
-          <div className="h-160" />
+          {/* SCIENT-FORK:START — Scient's Tailwind skips test files, so size the spacer inline. */}
+          <div style={{ height: 640 }} />
+          {/* SCIENT-FORK:END */}
         </ComboboxList>
       </ComboboxPopup>
     </Combobox>,

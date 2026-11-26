@@ -40,12 +40,17 @@ export const scientCandidateSources = (sql: SqlClient.SqlClient) => sql`
 `;
 
 /**
- * A handoff reads its source's items by reference until a body is frozen, and nothing records
- * when its reader no longer needs them, so a thread such a reference names keeps its content.
+ * Non-recursive `shown` seeds. A saved handoff reads an item without a frozen body from its source
+ * thread, or from a fork view's frozen copy (`view_thread_id`, `fork_position`); a range reads its
+ * view's fork membership, frozen copies and inherited sources. Nothing records when a handoff's
+ * reader is done, so these threads stay, and the recursion keeps what a view shows.
  */
-export const scientKeepsDeletedThread = (sql: SqlClient.SqlClient) => sql`
-  AND NOT EXISTS (
-    SELECT 1 FROM scient_handoff_history AS handoff
-    WHERE handoff.source_thread_id = thread.thread_id AND handoff.body_id IS NULL
-  )
+export const scientHandoffShownThreads = (sql: SqlClient.SqlClient) => sql`
+  UNION
+  SELECT source_thread_id FROM scient_handoff_history WHERE body_id IS NULL
+  UNION
+  SELECT view_thread_id FROM scient_handoff_history
+  WHERE body_id IS NULL AND fork_position IS NOT NULL
+  UNION
+  SELECT view_thread_id FROM scient_handoff_history_ranges
 `;

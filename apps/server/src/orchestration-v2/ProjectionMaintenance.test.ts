@@ -583,6 +583,43 @@ it.effect("a deleted thread a handoff reads by reference keeps its content", () 
     assert.equal(yield* contentRowCount(source.id), 0);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("a handoff range keeps its deleted fork view and the source that view shows", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const source = makeThread(ThreadId.make("thread:purge-range-source"), now);
+    const fork = makeThread(ThreadId.make("thread:purge-range-fork"), now);
+    yield* writeThread(source, now);
+    yield* writeThread(fork, now);
+    yield* sql`
+      INSERT INTO scient_fork_history
+        (thread_id, position, source_thread_id, source_item_id, item_type, message_id, turn_start, user_turn)
+      VALUES (${fork.id}, 0, ${source.id}, 'item:ranged', 'user_message', NULL, 1, 1)
+    `;
+    yield* sql`
+      INSERT INTO scient_fork_frozen_items (thread_id, position, item_json, message_json)
+      VALUES (${fork.id}, 0, '{"text":"frozen view"}', NULL)
+    `;
+    yield* sql`
+      INSERT INTO scient_handoff_history_ranges
+        (source_id, position, item_count, view_thread_id, fork_position)
+      VALUES ('handoff-source:range', 0, 1, ${fork.id}, 0)
+    `;
+
+    yield* deleteThread(fork, now);
+    yield* deleteThread(source, now);
+    assert.equal(yield* maintenance.purgeDeletedThread(fork.id), 0);
+    assert.equal(yield* maintenance.purgeDeletedThread(source.id), 0);
+    assert.isAbove(yield* contentRowCount(source.id), 0);
+    assert.equal(
+      (yield* sql`SELECT thread_id FROM scient_fork_frozen_items WHERE thread_id = ${fork.id}`)
+        .length,
+      1,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
 // SCIENT-FORK:END
 
 it.effect("the maintenance pass purges threads deleted before purging existed", () =>
