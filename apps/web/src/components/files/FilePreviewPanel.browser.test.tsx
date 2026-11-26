@@ -170,6 +170,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
     failure: null,
     failureReason: null,
     failureOsErrorCode: null,
+    isMissing: false,
     // SCIENT-FORK:END
     refresh: vi.fn(),
   }),

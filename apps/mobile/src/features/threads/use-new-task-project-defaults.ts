@@ -53,9 +53,9 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
       : null;
   const scientProjectFileQuery = useEnvironmentQuery(projectFileRead(SCIENT_PROJECT_FILE_NAME));
   const scientProjectFileData = scientProjectFileQuery.data as ProjectReadFileResult | null;
+  // Only a missing scient.json lets t3.json answer; a failed read does not.
   const scientMissing =
-    !scientProjectFileQuery.isPending &&
-    (scientProjectFileData === null || scientProjectFileData.exists === false);
+    !scientProjectFileQuery.isPending && scientProjectFileData?.exists === false;
   const legacyProjectFileQuery = useEnvironmentQuery(
     scientMissing ? projectFileRead(T3_PROJECT_FILE_NAME) : null,
   );

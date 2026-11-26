@@ -1,6 +1,8 @@
 /**
  * The server settings the user guide documents, by the part after `T3CODE_`. Each can also be set
- * as `SCIENT_<name>`, and that value wins: the server still reads the `T3CODE_` names.
+ * as `SCIENT_<name>`, and that value wins: the server still reads the `T3CODE_` names. `HOST` and
+ * `LAN` are left out: `scient up` and `scient service` write them to service.env as `T3CODE_`, and
+ * a `SCIENT_` value there would override what those commands just set.
  */
 const SCIENT_ENVIRONMENT_SETTINGS = [
   "ACP_REGISTRY_PROBE_TIMEOUT_MS",
@@ -15,10 +17,8 @@ const SCIENT_ENVIRONMENT_SETTINGS = [
   "FEATURE_FLAGS",
   "FX_PROBE_TIMEOUT_MS",
   "GROK_PROBE_TIMEOUT_MS",
-  "HOST",
   "HOST_ID",
   "KIRO_PROBE_TIMEOUT_MS",
-  "LAN",
   "MCP_WEBHOOK_ALLOWED_HOSTS",
   "MUSE_PROBE_TIMEOUT_MS",
   "OPENCODE_PROBE_TIMEOUT_MS",

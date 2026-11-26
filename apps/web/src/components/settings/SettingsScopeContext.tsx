@@ -45,7 +45,8 @@ const memberProjectFilesAtom = Atom.family((membersKey: string) => {
         data =
           get(optimisticFileAtom(environmentId, workspaceRoot, name))?.data ??
           AsyncResult.getOrElse(result, () => null);
-        if (data !== null && data.exists !== false) break;
+        // Only a missing file lets the next name answer; a failed read stops here.
+        if (data === null || data.exists !== false) break;
       }
       if (waiting) continue;
       // SCIENT-FORK:END

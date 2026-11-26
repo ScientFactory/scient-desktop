@@ -27,6 +27,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   type GitCommandFailureReason,
+  // SCIENT-FORK: scient.json first, then t3.json.
+  PROJECT_FILE_NAMES,
   type ReviewBranchCommitsInput,
   type ReviewDiffChangeType,
   type ReviewDiffFileContentsInput,
@@ -58,8 +60,6 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
-// SCIENT-FORK: scient.json first, then t3.json.
-import { firstProjectFile } from "../project/scientProjectFile.ts";
 import * as ServerConfig from "../config.ts";
 // SCIENT-FORK:START overleaf-checkout-barrier
 import {
@@ -6502,6 +6502,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // SCIENT-FORK:START — the project file in `ref`'s tree: scient.json when the tree has one, else
+  // t3.json. The tree decides, so a scient.json that fails to read never hands over to t3.json.
+  const readProjectFileAt = Effect.fn("readProjectFileAt")(function* (cwd: string, ref: string) {
+    const listed = yield* executeGit(
+      "GitVcsDriver.createWorktree.readProjectFile",
+      cwd,
+      ["ls-tree", "--full-tree", "--name-only", "-z", ref, "--", ...PROJECT_FILE_NAMES],
+      { allowNonZeroExit: true },
+    );
+    if (listed.exitCode !== 0) return null;
+    const inTree = new Set(listed.stdout.split("\0"));
+    const name = PROJECT_FILE_NAMES.find((candidate) => inTree.has(candidate));
+    if (name === undefined) return null;
+    const shown = yield* executeGit(
+      "GitVcsDriver.createWorktree.readProjectFile",
+      cwd,
+      ["show", `${ref}:${name}`],
+      { allowNonZeroExit: true },
+    );
+    return shown.exitCode === 0 ? { name, contents: shown.stdout } : null;
+  });
+  // SCIENT-FORK:END
+
   // A new worktree has no files yet, so the project file and its pattern file come from the ref.
   const readWorktreeSparsePatterns = Effect.fn("readWorktreeSparsePatterns")(function* (
     cwd: string,
@@ -6510,11 +6533,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // `git show` does not read a lone - as the previous checkout either.
     const ref = refName === "-" ? "@{-1}" : refName;
     // SCIENT-FORK:START — scient.json first, then t3.json.
-    const projectFile = yield* firstProjectFile((name) =>
-      executeGit("GitVcsDriver.createWorktree.readProjectFile", cwd, ["show", `${ref}:${name}`], {
-        allowNonZeroExit: true,
-      }).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout : null))),
-    );
+    const projectFile = yield* readProjectFileAt(cwd, ref);
     if (projectFile === null) return null;
     const file = parseT3ProjectFile(projectFile.contents);
     if (file === null) {
@@ -6904,14 +6923,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ? null
             : // Read HEAD for the same reason: sparse patterns can leave the project file out too.
               // SCIENT-FORK:START — scient.json first, then t3.json.
-              yield* firstProjectFile((name) =>
-                executeGit(
-                  "GitVcsDriver.createWorktree.readProjectFile",
-                  worktreePath,
-                  ["show", `HEAD:${name}`],
-                  { allowNonZeroExit: true },
-                ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout : null))),
-              ).pipe(
+              yield* readProjectFileAt(worktreePath, "HEAD").pipe(
                 Effect.flatMap((projectFile) => {
                   if (projectFile === null) return Effect.succeed(null);
                   const file = parseT3ProjectFile(projectFile.contents);

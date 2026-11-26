@@ -57,7 +57,8 @@ export function peekT3ProjectFile(
 ): T3ProjectFile | null | undefined {
   for (const name of PROJECT_FILE_NAMES) {
     const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, workspaceRoot, name));
-    if (!AsyncResult.isSuccess(result)) return undefined;
+    // A refresh in flight may find a file the cached answer missed, so the answer is not settled.
+    if (!AsyncResult.isSuccess(result) || result.waiting) return undefined;
     const file = toT3ProjectFile(environmentId, workspaceRoot, name, result.value);
     if (file !== "missing") return file;
   }

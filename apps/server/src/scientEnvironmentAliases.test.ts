@@ -7,20 +7,28 @@ describe("applyScientEnvironmentAliases", () => {
     const env: NodeJS.ProcessEnv = {
       SCIENT_TERMINAL_SHELL: "/bin/zsh",
       T3CODE_TERMINAL_SHELL: "/bin/bash",
-      T3CODE_HOST: "127.0.0.1",
+      T3CODE_HOST_ID: "laptop",
     };
 
     applyScientEnvironmentAliases(env);
 
     expect(env.T3CODE_TERMINAL_SHELL).toBe("/bin/zsh");
-    expect(env.T3CODE_HOST).toBe("127.0.0.1");
+    expect(env.T3CODE_HOST_ID).toBe("laptop");
   });
 
-  it("leaves Scient's own variables out of the T3CODE_ names", () => {
-    const env: NodeJS.ProcessEnv = { SCIENT_NEXT_HOME: "/home/me/.scient-next" };
+  it("leaves Scient's own variables and the service.env settings alone", () => {
+    const env: NodeJS.ProcessEnv = {
+      SCIENT_NEXT_HOME: "/home/me/.scient-next",
+      SCIENT_LAN: "true",
+      T3CODE_LAN: "false",
+    };
 
     applyScientEnvironmentAliases(env);
 
-    expect(env).toEqual({ SCIENT_NEXT_HOME: "/home/me/.scient-next" });
+    expect(env).toEqual({
+      SCIENT_NEXT_HOME: "/home/me/.scient-next",
+      SCIENT_LAN: "true",
+      T3CODE_LAN: "false",
+    });
   });
 });
