@@ -176,6 +176,8 @@ describe("WSL package capability in slim Windows builds", () => {
           const afterDistro = yield* setWslDistro
             .handler("Debian")
             .pipe(Effect.flatMap(decodeWslState));
+          assert.isTrue(afterDistro.enabled);
+          assert.isTrue(afterDistro.wslOnly);
           assert.equal(afterDistro.distro, "Ubuntu");
 
           // Settings' "Switch to Windows" on the unavailable WSL row.
