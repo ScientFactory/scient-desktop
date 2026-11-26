@@ -2,7 +2,11 @@ import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/files
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ProjectReadFileResult } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS, T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  SCIENT_PROJECT_FILE_NAME,
+  T3_PROJECT_FILE_NAME,
+} from "@t3tools/contracts";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 
@@ -15,7 +19,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession } from "../../state/session";
 
 /**
- * A project's new-task defaults: server settings merged with its t3.json. The
+ * A project's new-task defaults: server settings merged with its scient.json or t3.json. The
  * new-task flow and the home pending-drafts list both read the default
  * workspace mode here, so a draft that never picked one shows what it sends.
  * Every read is a shared per-environment or per-project atom.
@@ -39,18 +43,24 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     m,
   );
   const fileAccessPending = hasWorkspace && fileAccess.isPending;
-  const t3ProjectFileQuery = useEnvironmentQuery(
+  // SCIENT-FORK:START — scient.json first; t3.json only when the project has no scient.json.
+  const projectFileRead = (relativePath: string) =>
     fileAccess.canReadFiles && hasWorkspace
       ? projectEnvironment.readFile({
           environmentId: project.environmentId,
-          input: {
-            cwd: project.workspaceRoot,
-            relativePath: T3_PROJECT_FILE_NAME,
-            allowMissing: true,
-          },
+          input: { cwd: project.workspaceRoot, relativePath, allowMissing: true },
         })
-      : null,
+      : null;
+  const scientProjectFileQuery = useEnvironmentQuery(projectFileRead(SCIENT_PROJECT_FILE_NAME));
+  const scientProjectFileData = scientProjectFileQuery.data as ProjectReadFileResult | null;
+  const scientMissing =
+    !scientProjectFileQuery.isPending &&
+    (scientProjectFileData === null || scientProjectFileData.exists === false);
+  const legacyProjectFileQuery = useEnvironmentQuery(
+    scientMissing ? projectFileRead(T3_PROJECT_FILE_NAME) : null,
   );
+  const t3ProjectFileQuery = scientMissing ? legacyProjectFileQuery : scientProjectFileQuery;
+  // SCIENT-FORK:END
   const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
   const t3ProjectFile =
     t3ProjectFileData === null || t3ProjectFileData.exists === false || t3ProjectFileData.truncated
@@ -71,7 +81,7 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
         newProjectsRoot: serverConfig?.newProjectsRoot,
         projectHasThreads,
       });
-  // While t3.json loads, the environment default is provisional; t3.json may replace it.
+  // While the project file loads, the environment default is provisional; the file may replace it.
   const defaultWorkspaceModeSettled =
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
     (!t3ProjectFileQuery.isPending && !fileAccessPending);

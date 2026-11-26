@@ -2834,19 +2834,13 @@
   "49eda70cfd56e621": "Körs när en worktree-tråd startar och när dess mapp återställs",
   "188ccaa1199f5611": "Körs när en tråds worktree tas bort",
   "7e8476e7306acabe": "Låta det här projektet köra sina worktree-kommandon?",
-  "8e11914556fd8b13": [
+  "1dc6832cb023166d": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " förbereder worktree-trådar med egna kommandon från ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": "t3.json"
-    },
-    ". De körs på den här miljöns dator med dina behörigheter, utanför alla agentsandlådor. Du får frågan igen varje gång deras text ändras."
+    " förbereder worktree-trådar med egna kommandon. De körs på den här miljöns dator med dina behörigheter, utanför alla agentsandlådor. Du får frågan igen varje gång deras text ändras."
   ],
   "46807acd02a4ff72": "Godkänn och fortsätt",
   "2ac142f34e5dabc2": "Repon i den nya worktreen: {selection}",
@@ -9702,10 +9696,9 @@
   "74a80f881d59c64d": "Kommandon som körs i projektets utcheckning eller dess worktree, med valfria kortkommandon.",
   "b021ef2874c6c24b": "Olika åtgärder i olika utcheckningar",
   "1e0bbb3a6c4afd6c": "Begränsa urvalet ovan till en utcheckning för att redigera dess lista. Om du lägger till en åtgärd här läggs den till i varje vald utcheckning.",
-  "8fadca1175fbcbd8": "t3.json är ogiltig",
-  "917d2359f549794c": "Det finns en t3.json i den här utcheckningen men den kan inte tolkas, så alla åtgärder och ikoner den deklarerar ignoreras. Kontrollera JSON-syntaxen och ikonvärdena.",
+  "4fe5c7e10c062104": "{file} är ogiltig",
+  "d28e2b8d77b0cd95": "Det finns en {file} i den här utcheckningen men den kan inte tolkas, så alla åtgärder och ikoner den deklarerar ignoreras. Kontrollera JSON-syntaxen och ikonvärdena.",
   "df4cf566c6d08a4b": "Importera skript",
-  "2aaeffe4fe3d29d7": "Importera från t3.json",
   "84f1752d64c3152e": "Lägg till åtgärder som den här utcheckningen deklarerar utan att redigera dem först.",
   "3b893da0373ab50e": "Lägg till åtgärd",
   "5afea423d829496e": "Leverantören är inte tillgänglig i den här miljön.",
@@ -9723,7 +9716,7 @@
   "2f65da0a2375c66a": "Automatisk (blandad)",
   "369304844a14a649": "Inga leverantörer tillgängliga",
   "846ba52561c0e6bb": "Var nya trådar i det här projektet startar.",
-  "af64dbd4bfce12aa": "Var nya trådar startar. Projekt och deras t3.json kan åsidosätta det.",
+  "7735d3302c8fd0fd": "Var nya trådar startar. Projekt och deras scient.json kan åsidosätta det.",
   "8ab693ae67cd5e86": "Återställ standardarbetsyta till standard",
   "d1d1342ccb83a14b": "Standardarbetsyta",
   "a22721e847136f21": "Inte tillgänglig",
@@ -9754,7 +9747,7 @@
   "9290d5de050e5302": "Standardmetod för merge av pull requests",
   "3619911bbdb05fc1": "Senast vald",
   "87717de46afcdaed": "Hur nya worktrees i det här projektet fyller i Git-submoduler.",
-  "3212b4d0725a27c7": "Hur nya worktrees fyller i Git-submoduler. Projekt och deras t3.json kan åsidosätta det.",
+  "b28c1fbca84ff3ab": "Hur nya worktrees fyller i Git-submoduler. Projekt och deras scient.json kan åsidosätta det.",
   "74a80f6d7962be21": "Återställ submoduler i worktrees till standard",
   "1c97d5a78ca1fdb6": "Worktree-submoduler",
   "2c2b437431e4cd1d": "Inga leverantörer tillgängliga",
@@ -9857,15 +9850,7 @@
   "a0c772d32a233da6": "Det gick inte att återkalla godkännandet",
   "5ccd5614c65f8d1f": "Återkalla godkännandet av kommandot {kind}",
   "80c3794a5fa12f3a": "Godkänn kommandot {kind}",
-  "f206891e124c77b0": [
-    "Projektets ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": "t3.json"
-    },
-    " förbereder worktree-trådar med egna kommandon. De körs på den här miljöns dator med dina behörigheter, och bara så som de godkänts här: ett kommando vars text ändras behöver godkännas igen."
-  ],
+  "fe371387d551decf": "Projektet förbereder worktree-trådar med egna kommandon. De körs på den här miljöns dator med dina behörigheter, och bara så som de godkänts här: ett kommando vars text ändras behöver godkännas igen.",
   "8e73b883d41d4102": "Av",
   "f6a91589456cca50": "Godkänt",
   "c92657bb7f2293ff": "Behöver godkännande",
@@ -12448,7 +12433,7 @@
   "dfd5b72fe7308d9e": "Sparad på den här enheten. Välj Alla projekt för att ändra den.",
   "091be13f50490708": "Blandat bland valda miljöer",
   "06e9973f7537ed51": "Åsidosatt för det här projektet",
-  "b1d09e365249f87b": "Ärvt från repots t3.json",
+  "3e65ec75eebdf39a": "Ärvt från repots scient.json",
   "539b097411fd1307": "Ärvt från miljön",
   "6340f81c024cfe12": "Ärvt från {environment}",
   "49a60879f4348f46": "Angivet i miljön",
@@ -12591,7 +12576,7 @@
   "00469926c7027e2d": "balanserad prestanda batterisparläge avancerat git fetch leverantör hälsa uppdatera värd ström övervakning inaktiv policy",
   "54e33e572cc71746": "standard arbetsyta läge utkast lokal worktree",
   "b2ece956b72c4a48": "Submoduler",
-  "579153f275a1636f": "git undermodul init rekursiv toppnivå ingen worktree t3.json submodule",
+  "46eb1855823e4314": "git undermodul init rekursiv toppnivå ingen worktree scient.json t3.json submodule",
   "88553740587a9beb": "Starta från fjärrgrenen",
   "4a172e139167badc": "nya worktrees startar fjärr origin senaste hämtade gren lokal",
   "30aac12099fcaf53": "Lägg till projekt startar i",
@@ -12665,7 +12650,7 @@
   "4c241258fdc87942": "pull request pr guidad granskning guide rundtur beta experimentell",
   "39e4c844a9d56a1d": "pull request pr guidad granskning guide sammanfattning underhållare",
   "f27f2e85e05f664c": "pull request pr guidad granskning guide inställningar smak prompt anpassad",
-  "01cff0c3cb858073": "kommandon skript konfiguration kör dev-server utcheckning worktree t3.json importera",
+  "ee85d055fbf96c03": "kommandon skript konfiguration kör dev-server utcheckning worktree scient.json t3.json importera",
   "756e41fd7e0b044c": "spårade mappar multi repo arbetsyta code-workspace skanna om lägg till mapp",
   "c349ea1db3f9e9f1": "Miljöns ikon",
   "18bd7981d6c50994": "dator symbol sidofält mac mini studio laptop skrivbord server moln vm",

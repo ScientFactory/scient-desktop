@@ -47,9 +47,8 @@ export function WorktreeLayoutApprovalDialogHost() {
           <AlertDialogDescription>
             <T>
               <Var>{request?.projectTitle ?? ""}</Var> sets up worktree threads with its own
-              commands from <code>t3.json</code>. They run on this environment's machine with your
-              permissions, outside any agent sandbox. You are asked again whenever their text
-              changes.
+              commands. They run on this environment's machine with your permissions, outside any
+              agent sandbox. You are asked again whenever their text changes.
             </T>
           </AlertDialogDescription>
           <div className="flex flex-col gap-3 pt-2 text-left">

@@ -2835,19 +2835,13 @@
   "49eda70cfd56e621": "Läuft, wenn ein Worktree-Thread startet und wenn sein Ordner wiederhergestellt wird",
   "188ccaa1199f5611": "Läuft, wenn der Worktree eines Threads entfernt wird",
   "7e8476e7306acabe": "Darf dieses Projekt seine Worktree-Befehle ausführen?",
-  "8e11914556fd8b13": [
+  "1dc6832cb023166d": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " richtet Worktree-Threads mit eigenen Befehlen aus ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": "t3.json"
-    },
-    " ein. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen, außerhalb jeder Agenten-Sandbox. Du wirst erneut gefragt, sobald sich ihr Text ändert."
+    " richtet Worktree-Threads mit eigenen Befehlen ein. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen, außerhalb jeder Agenten-Sandbox. Du wirst erneut gefragt, sobald sich ihr Text ändert."
   ],
   "46807acd02a4ff72": "Genehmigen und fortfahren",
   "2ac142f34e5dabc2": "Repositorys im neuen Worktree: {selection}",
@@ -9694,10 +9688,9 @@
   "74a80f881d59c64d": "Befehle, die im Checkout dieses Projekts oder seinem Worktree laufen, mit optionalen Tastenkürzeln.",
   "b021ef2874c6c24b": "Unterschiedliche Aktionen in den Checkouts",
   "1e0bbb3a6c4afd6c": "Grenze die Auswahl oben auf einen Checkout ein, um dessen Liste zu bearbeiten. Eine hier hinzugefügte Aktion wird jedem ausgewählten Checkout hinzugefügt.",
-  "8fadca1175fbcbd8": "t3.json ist ungültig",
-  "917d2359f549794c": "In diesem Checkout gibt es eine t3.json, die sich nicht parsen lässt, daher werden alle darin deklarierten Aktionen und Symbole ignoriert. Prüfe die JSON-Syntax und die Symbolwerte.",
+  "4fe5c7e10c062104": "{file} ist ungültig",
+  "d28e2b8d77b0cd95": "In diesem Checkout gibt es eine {file}, die sich nicht parsen lässt, daher werden alle darin deklarierten Aktionen und Symbole ignoriert. Prüfe die JSON-Syntax und die Symbolwerte.",
   "df4cf566c6d08a4b": "Skripte importieren",
-  "2aaeffe4fe3d29d7": "Aus t3.json importieren",
   "84f1752d64c3152e": "Von diesem Checkout deklarierte Aktionen hinzufügen, ohne sie vorher zu bearbeiten.",
   "3b893da0373ab50e": "Aktion hinzufügen",
   "5afea423d829496e": "Dieser Anbieter ist in dieser Umgebung nicht verfügbar.",
@@ -9715,7 +9708,7 @@
   "2f65da0a2375c66a": "Automatisch (gemischt)",
   "369304844a14a649": "Keine Anbieter verfügbar",
   "846ba52561c0e6bb": "Wo neue Threads in diesem Projekt starten.",
-  "af64dbd4bfce12aa": "Wo neue Threads starten. Projekte und ihre t3.json können das überschreiben.",
+  "7735d3302c8fd0fd": "Wo neue Threads starten. Projekte und ihre scient.json können das überschreiben.",
   "8ab693ae67cd5e86": "Standard-Arbeitsbereich auf Standard zurücksetzen",
   "d1d1342ccb83a14b": "Standard-Arbeitsbereich",
   "a22721e847136f21": "Nicht verfügbar",
@@ -9746,7 +9739,7 @@
   "9290d5de050e5302": "Standard-Merge-Methode für Pull Requests",
   "3619911bbdb05fc1": "Zuletzt ausgewählt",
   "87717de46afcdaed": "Wie neue Worktrees in diesem Projekt Git-Submodule befüllen.",
-  "3212b4d0725a27c7": "Wie neue Worktrees Git-Submodule befüllen. Projekte und ihre t3.json können das überschreiben.",
+  "b28c1fbca84ff3ab": "Wie neue Worktrees Git-Submodule befüllen. Projekte und ihre scient.json können das überschreiben.",
   "74a80f6d7962be21": "Worktree-Submodule auf Standard zurücksetzen",
   "1c97d5a78ca1fdb6": "Worktree-Submodule",
   "2c2b437431e4cd1d": "Keine Anbieter verfügbar",
@@ -9849,15 +9842,7 @@
   "a0c772d32a233da6": "Die Genehmigung konnte nicht widerrufen werden",
   "5ccd5614c65f8d1f": "Genehmigung des Befehls {kind} widerrufen",
   "80c3794a5fa12f3a": "Befehl {kind} genehmigen",
-  "f206891e124c77b0": [
-    "Die ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": "t3.json"
-    },
-    " dieses Projekts richtet Worktree-Threads mit eigenen Befehlen ein. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen und nur so, wie sie hier genehmigt wurden: Ändert sich der Text eines Befehls, muss er erneut genehmigt werden."
-  ],
+  "fe371387d551decf": "Dieses Projekt richtet Worktree-Threads mit eigenen Befehlen ein. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen und nur so, wie sie hier genehmigt wurden: Ändert sich der Text eines Befehls, muss er erneut genehmigt werden.",
   "8e73b883d41d4102": "Aus",
   "f6a91589456cca50": "Genehmigt",
   "c92657bb7f2293ff": "Genehmigung nötig",
@@ -12438,7 +12423,7 @@
   "dfd5b72fe7308d9e": "Auf diesem Gerät gespeichert. Wähle „Alle Projekte“, um sie zu ändern.",
   "091be13f50490708": "Unterschiedlich in den ausgewählten Umgebungen",
   "06e9973f7537ed51": "Für dieses Projekt überschrieben",
-  "b1d09e365249f87b": "Aus der t3.json des Repositorys übernommen",
+  "3e65ec75eebdf39a": "Aus der scient.json des Repositorys übernommen",
   "539b097411fd1307": "Von der Umgebung übernommen",
   "6340f81c024cfe12": "Von {environment} übernommen",
   "49a60879f4348f46": "In der Umgebung festgelegt",
@@ -12581,7 +12566,7 @@
   "00469926c7027e2d": "ausgewogen leistung akku sparen erweitert git fetch anbieter zustand aktualisieren host energie überwachen inaktiv richtlinie",
   "54e33e572cc71746": "standard arbeitsbereich modus entwurf lokal worktree",
   "b2ece956b72c4a48": "Submodule",
-  "579153f275a1636f": "git submodule init rekursiv oberste ebene keine worktree t3.json",
+  "46eb1855823e4314": "git submodule init rekursiv oberste ebene keine worktree scient.json t3.json",
   "88553740587a9beb": "Vom Remote starten",
   "4a172e139167badc": "neue worktrees starten remote origin neuester gefetchter branch lokal",
   "30aac12099fcaf53": "„Projekt hinzufügen“ startet in",
@@ -12655,7 +12640,7 @@
   "4c241258fdc87942": "pull request pr geführtes review leitfaden tour beta experimentell",
   "39e4c844a9d56a1d": "pull request pr geführtes review leitfaden kurzfassung maintainer",
   "f27f2e85e05f664c": "pull request pr geführtes review leitfaden vorlieben geschmack prompt eigener",
-  "01cff0c3cb858073": "befehle skripte setup ausführen dev-server checkout worktree t3.json import",
+  "ee85d055fbf96c03": "befehle skripte setup ausführen dev-server checkout worktree scient.json t3.json import",
   "756e41fd7e0b044c": "verfolgte ordner multi repo arbeitsbereich code-workspace neu scannen ordner hinzufügen",
   "c349ea1db3f9e9f1": "Umgebungssymbol",
   "18bd7981d6c50994": "rechner symbol seitenleiste mac mini studio laptop desktop server cloud vm",

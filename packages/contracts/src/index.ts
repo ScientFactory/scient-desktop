@@ -84,6 +84,8 @@ export * from "./threadSearch.ts";
 export * from "./threadTags.ts";
 export * from "./threadTitle.ts";
 export * from "./t3ProjectFile.ts";
+// SCIENT-FORK: scient.json, read before t3.json.
+export * from "./scientProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./workspaceFolders.ts";

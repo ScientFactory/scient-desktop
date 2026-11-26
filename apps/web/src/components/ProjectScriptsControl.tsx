@@ -69,6 +69,8 @@ interface ProjectScriptsControlProps {
   environmentId: EnvironmentId;
   scripts: ReadonlyArray<ProjectScript>;
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
+  // SCIENT-FORK: the file `fileScripts` come from, scient.json or t3.json.
+  fileName?: string;
   onActionsMenuOpen?: () => void;
   preferredScriptId?: string | null;
   onRunScript?: ((script: ProjectScript) => void) | undefined;
@@ -87,6 +89,7 @@ export default function ProjectScriptsControl({
   environmentId,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
+  fileName = "scient.json",
   onActionsMenuOpen,
   preferredScriptId = null,
   onRunScript,
@@ -185,7 +188,7 @@ export default function ProjectScriptsControl({
       <MenuGroup>
         <MenuGroupLabel>
           <T>
-            From <Var>t3.json</Var>
+            From <Var>{fileName}</Var>
           </T>
         </MenuGroupLabel>
         {importableScripts.map((fileScript) => (

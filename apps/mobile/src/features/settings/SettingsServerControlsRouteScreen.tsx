@@ -83,7 +83,7 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
   {
     mode: null,
     label: msg("Inherit", { $context: "use the inherited value" }),
-    description: msg("Use the repository's t3.json, or initialize recursively."),
+    description: msg("Use the repository's scient.json, or initialize recursively."),
   },
   {
     mode: "recursive",
@@ -110,7 +110,7 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
   {
     mode: null,
     label: msg("Inherit", { $context: "use the inherited value" }),
-    description: msg("Use the repository's t3.json, or the current checkout."),
+    description: msg("Use the repository's scient.json, or the current checkout."),
   },
   {
     mode: "local",

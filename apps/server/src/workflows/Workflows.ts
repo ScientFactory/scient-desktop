@@ -207,7 +207,8 @@ export class Workflows extends Context.Service<
 const refuse = Effect.fn("Workflows.disabled")(function* () {
   return yield* new WorkflowInputError({
     problem:
-      "This server defines no workflows yet. Add a file to the workflows folder of its T3 home.",
+      // SCIENT-FORK: the folder is in the Scient home.
+      "This server defines no workflows yet. Add a file to the workflows folder of its Scient home.",
   });
 });
 

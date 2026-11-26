@@ -2,7 +2,7 @@
 
 ## Choose a shell
 
-Set `T3CODE_TERMINAL_SHELL` in the environment that launches the Scient server
+Set `SCIENT_TERMINAL_SHELL` in the environment that launches the Scient server
 to choose the executable used for new terminals. Use an executable name or its
 full path, without surrounding quotes or command-line arguments. An unset or
 blank value keeps the platform default. If the executable cannot be started,
@@ -12,7 +12,7 @@ On Windows, to use Git Bash from a standard Git for Windows installation, run
 this in PowerShell:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('T3CODE_TERMINAL_SHELL', 'C:\Program Files\Git\bin\bash.exe', 'User')
+[Environment]::SetEnvironmentVariable('SCIENT_TERMINAL_SHELL', 'C:\Program Files\Git\bin\bash.exe', 'User')
 ```
 
 Fully quit Scient, then reopen it from the Start menu and create a new terminal.

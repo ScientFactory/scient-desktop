@@ -10,7 +10,7 @@ Workflows are a Labs feature, off by default. Turn on **Settings → Labs → Wo
 
 ## Create a workflow
 
-Workflow files live in `~/.scient-next/workflows/` (or wherever `T3CODE_WORKFLOWS` points — a folder or a single file). The server watches the folder and reloads changes without a restart.
+Workflow files live in `~/.scient-next/workflows/` (or wherever `SCIENT_WORKFLOWS` points — a folder or a single file). The server watches the folder and reloads changes without a restart.
 
 - **Ask an agent (recommended):** copy the [`t3-workflows` skill](https://github.com/ScientFactory/scient-desktop/blob/main/skills/t3-workflows/SKILL.md) into your agent's skills folder (such as `~/.claude/skills/` or `~/.agents/skills/`) and describe what you want.
 - **Edit directly:** edit files in `~/.scient-next/workflows/`, or use **Definitions** on the Workflows page (saving and deleting in the app require terminal access). Before anything has run, open the page with **Open workflows** in the command palette.
@@ -18,7 +18,7 @@ Workflow files live in `~/.scient-next/workflows/` (or wherever `T3CODE_WORKFLOW
 A small workflow, saved as `~/.scient-next/workflows/release.ts`:
 
 ```ts
-const { workflow, step, ask, stop, title } = T3;
+const { workflow, step, ask, stop, title } = Scient;
 
 export default workflow(
   "release",
@@ -36,7 +36,7 @@ export default workflow(
 );
 ```
 
-Start it with `scient workflow start release --input '{"name":"v1.4"}' --key v1.4`, then answer its question in the app. `T3`, `Effect`, `Schema` and `Option` are provided; a workflow file imports nothing from T3 or Effect. Name files with letters, digits, `-`, `_` and `.`; other names are skipped with a warning.
+Start it with `scient workflow start release --input '{"name":"v1.4"}' --key v1.4`, then answer its question in the app. `Scient`, `Effect`, `Schema` and `Option` are provided; a workflow file imports nothing from Scient or Effect. Files written with `T3` in place of `Scient` still work. Name files with letters, digits, `-`, `_` and `.`; other names are skipped with a warning.
 
 Saving checks that the file loads, does not duplicate a workflow name and version, and does not remove a version with unfinished runs. A file that fails these checks keeps its last working version while the Workflows page (and the server log) shows why; other files are not affected. A change held back by unfinished runs goes in by itself once those runs end or are cancelled. Mistakes inside a workflow body surface when a run hits them and pauses. To change steps while runs are unfinished, add the new body under a higher `version` and keep the old one until those runs end.
 
@@ -66,7 +66,7 @@ Every start needs a `--key`: starting twice with the same key returns the same r
 A workflow that asks more than one kind of question can name the kinds, so you can answer one kind at a time. List them in the workflow's options with the label to show, and give each `ask` its `kind`:
 
 ```ts
-const { workflow, ask, tags, Issue } = T3;
+const { workflow, ask, tags, Issue } = Scient;
 
 workflow(
   "triage",
@@ -113,7 +113,7 @@ The app asks for the reason before it sends a choice that requires one, and `sci
 A run can name the one thing it is about with `subject(...)`: an issue or pull request a trigger or listing gave it, `{ threadId }`, or a web address. Calling it again replaces the subject, and `start(workflow, payload, { key, subject })` gives a new run one from the start. A project cannot be a subject, and an issue or pull request built by hand needs its `projectId` and `host`.
 
 ```ts
-const { workflow, subject, Issue } = T3;
+const { workflow, subject, Issue } = Scient;
 
 workflow("triage", { version: 1, payload: Issue }, (issue) => subject(issue));
 ```
@@ -125,7 +125,7 @@ The run lists, **Needs you** included, show the subject under the run and open i
 Wrap part of a run in a named pool to cap how many runs are inside it at once, across the whole server:
 
 ```ts
-const { within, agent } = T3;
+const { within, agent } = Scient;
 
 yield* within("builders", { limit: 4 }, agent("fix", { ... }));
 ```

@@ -327,7 +327,7 @@ function Surface({
   );
 }
 
-const NEW_FILE = `const { workflow, step, agent, ask, stop } = T3;
+const NEW_FILE = `const { workflow, step, agent, ask, stop } = Scient;
 
 workflow(
   "my-workflow",

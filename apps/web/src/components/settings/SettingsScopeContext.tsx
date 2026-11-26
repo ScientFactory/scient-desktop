@@ -1,4 +1,9 @@
-import { type EnvironmentId, T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  PROJECT_FILE_NAMES,
+  type ProjectReadFileResult,
+  type T3ProjectFile,
+} from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -28,13 +33,22 @@ const memberProjectFilesAtom = Atom.family((membersKey: string) => {
   return Atom.make((get) => {
     const files = new Map<string, T3ProjectFile | null>();
     for (const [environmentId, workspaceRoot, physicalProjectKey] of members) {
-      const result = get(
-        getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
-      );
-      if (result.waiting) continue;
-      const data =
-        get(optimisticFileAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME))?.data ??
-        AsyncResult.getOrElse(result, () => null);
+      // SCIENT-FORK:START — scient.json first; t3.json only when the project has no scient.json.
+      let data: ProjectReadFileResult | null = null;
+      let waiting = false;
+      for (const name of PROJECT_FILE_NAMES) {
+        const result = get(getProjectFileQueryAtom(environmentId, workspaceRoot, name));
+        if (result.waiting) {
+          waiting = true;
+          break;
+        }
+        data =
+          get(optimisticFileAtom(environmentId, workspaceRoot, name))?.data ??
+          AsyncResult.getOrElse(result, () => null);
+        if (data !== null && data.exists !== false) break;
+      }
+      if (waiting) continue;
+      // SCIENT-FORK:END
       files.set(
         physicalProjectKey,
         data === null || data.exists === false || data.truncated

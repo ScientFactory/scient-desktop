@@ -2834,19 +2834,13 @@
   "49eda70cfd56e621": "Executado quando uma thread em worktree começa e quando a pasta dela é restaurada",
   "188ccaa1199f5611": "Executado quando o worktree de uma thread é removido",
   "7e8476e7306acabe": "Permitir que este projeto execute seus comandos de worktree?",
-  "8e11914556fd8b13": [
+  "1dc6832cb023166d": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " prepara as threads em worktree com comandos próprios de ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": "t3.json"
-    },
-    ". Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Você será perguntado de novo sempre que o texto deles mudar."
+    " prepara as threads em worktree com comandos próprios. Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Você será perguntado de novo sempre que o texto deles mudar."
   ],
   "46807acd02a4ff72": "Aprovar e continuar",
   "2ac142f34e5dabc2": "Repositórios no novo worktree: {selection}",
@@ -9694,10 +9688,9 @@
   "74a80f881d59c64d": "Comandos executados no checkout deste projeto ou no worktree dele, com atalhos opcionais.",
   "b021ef2874c6c24b": "Ações diferentes entre checkouts",
   "1e0bbb3a6c4afd6c": "Restrinja a seleção acima a um checkout para editar a lista dele. Adicionar uma ação aqui a adiciona a todos os checkouts selecionados.",
-  "8fadca1175fbcbd8": "t3.json é inválido",
-  "917d2359f549794c": "Existe um t3.json neste checkout, mas ele não pode ser analisado, então todas as ações e ícones que ele declara são ignorados. Verifique a sintaxe JSON e os valores dos ícones.",
+  "4fe5c7e10c062104": "{file} é inválido",
+  "d28e2b8d77b0cd95": "Existe um {file} neste checkout, mas ele não pode ser analisado, então todas as ações e ícones que ele declara são ignorados. Verifique a sintaxe JSON e os valores dos ícones.",
   "df4cf566c6d08a4b": "Importar scripts",
-  "2aaeffe4fe3d29d7": "Importar do t3.json",
   "84f1752d64c3152e": "Adiciona as ações declaradas por este checkout sem editá-las antes.",
   "3b893da0373ab50e": "Adicionar ação",
   "5afea423d829496e": "Este provedor não está disponível neste ambiente.",
@@ -9715,7 +9708,7 @@
   "2f65da0a2375c66a": "Automático (misto)",
   "369304844a14a649": "Nenhum provedor disponível",
   "846ba52561c0e6bb": "Onde as novas threads deste projeto começam.",
-  "af64dbd4bfce12aa": "Onde as novas threads começam. Os projetos e o t3.json deles podem substituir isso.",
+  "7735d3302c8fd0fd": "Onde as novas threads começam. Os projetos e o scient.json deles podem substituir isso.",
   "8ab693ae67cd5e86": "Redefinir o workspace padrão para o padrão",
   "d1d1342ccb83a14b": "Workspace padrão",
   "a22721e847136f21": "Indisponível",
@@ -9746,7 +9739,7 @@
   "9290d5de050e5302": "Método de merge padrão de pull requests",
   "3619911bbdb05fc1": "Último selecionado",
   "87717de46afcdaed": "Como os novos worktrees deste projeto preenchem os submódulos git.",
-  "3212b4d0725a27c7": "Como os novos worktrees preenchem os submódulos git. Os projetos e o t3.json deles podem substituir isso.",
+  "b28c1fbca84ff3ab": "Como os novos worktrees preenchem os submódulos git. Os projetos e o scient.json deles podem substituir isso.",
   "74a80f6d7962be21": "Redefinir os submódulos de worktrees para o padrão",
   "1c97d5a78ca1fdb6": "Submódulos do worktree",
   "2c2b437431e4cd1d": "Nenhum provedor disponível",
@@ -9850,15 +9843,7 @@
   "a0c772d32a233da6": "Não foi possível revogar a aprovação",
   "5ccd5614c65f8d1f": "Revogar a aprovação do comando {kind}",
   "80c3794a5fa12f3a": "Aprovar o comando {kind}",
-  "f206891e124c77b0": [
-    "O ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": "t3.json"
-    },
-    " deste projeto prepara as threads em worktree com comandos próprios. Eles são executados na máquina deste ambiente com as suas permissões e somente como aprovados aqui: um comando cujo texto muda precisa de aprovação de novo."
-  ],
+  "fe371387d551decf": "Este projeto prepara as threads em worktree com comandos próprios. Eles são executados na máquina deste ambiente com as suas permissões e somente como aprovados aqui: um comando cujo texto muda precisa de aprovação de novo.",
   "8e73b883d41d4102": "Desativado",
   "f6a91589456cca50": "Aprovado",
   "c92657bb7f2293ff": "Precisa de aprovação",
@@ -12439,7 +12424,7 @@
   "dfd5b72fe7308d9e": "Salvo neste dispositivo. Selecione Todos os projetos para alterar.",
   "091be13f50490708": "Misto entre os ambientes selecionados",
   "06e9973f7537ed51": "Substituído neste projeto",
-  "b1d09e365249f87b": "Herdado do t3.json do repositório",
+  "3e65ec75eebdf39a": "Herdado do scient.json do repositório",
   "539b097411fd1307": "Herdado do ambiente",
   "6340f81c024cfe12": "Herdado de {environment}",
   "49a60879f4348f46": "Definido no ambiente",
@@ -12582,7 +12567,7 @@
   "00469926c7027e2d": "equilibrado desempenho economia de bateria avançado git fetch verificação de provedores atualizar host energia monitor política de ociosidade",
   "54e33e572cc71746": "workspace padrão modo rascunho local worktree",
   "b2ece956b72c4a48": "Submódulos",
-  "579153f275a1636f": "git submódulo init recursivo nível superior nenhum worktree t3.json",
+  "46eb1855823e4314": "git submódulo init recursivo nível superior nenhum worktree scient.json t3.json",
   "88553740587a9beb": "Iniciar a partir do remoto",
   "4a172e139167badc": "novos worktrees começar remoto origin mais recente branch buscado local",
   "30aac12099fcaf53": "Adicionar projeto começa em",
@@ -12656,7 +12641,7 @@
   "4c241258fdc87942": "pull request pr revisão guiada guia tour beta experimental",
   "39e4c844a9d56a1d": "pull request pr revisão guiada guia resumo mantenedor",
   "f27f2e85e05f664c": "pull request pr revisão guiada guia preferências gosto prompt personalizado",
-  "01cff0c3cb858073": "comandos scripts setup executar servidor dev checkout worktree t3.json importar",
+  "ee85d055fbf96c03": "comandos scripts setup executar servidor dev checkout worktree scient.json t3.json importar",
   "756e41fd7e0b044c": "pastas rastreadas multi repo workspace code-workspace reescanear adicionar pasta",
   "c349ea1db3f9e9f1": "Ícone do ambiente",
   "18bd7981d6c50994": "máquina glifo barra lateral mac mini studio notebook desktop servidor nuvem vm",

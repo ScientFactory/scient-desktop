@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { useEnvironments } from "../../state/environments";
@@ -146,7 +146,9 @@ export function ProjectActionsSettings() {
                 <MenuPopup align="end">
                   <MenuGroup>
                     <MenuGroupLabel>
-                      <T>Import from t3.json</T>
+                      <T>
+                        Import from <Var>{t3File.fileName}</Var>
+                      </T>
                     </MenuGroupLabel>
                     <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
                       <T>Add actions declared by this checkout without editing them first.</T>
@@ -199,9 +201,10 @@ export function ProjectActionsSettings() {
       )}
       {t3File.status === "invalid" ? (
         <SettingsRow
-          title={gt("t3.json is invalid")}
+          title={gt("{file} is invalid", { file: t3File.fileName })}
           description={gt(
-            "A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.",
+            "A {file} exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.",
+            { file: t3File.fileName },
           )}
           className="text-warning"
         />

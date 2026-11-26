@@ -9,7 +9,6 @@ import {
   type TaskFolderError,
   type Project as ProjectRecord,
   type ServerProvider,
-  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -26,6 +25,8 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+// SCIENT-FORK: scient.json first, then t3.json.
+import { readProjectFileText } from "../../../project/scientProjectFile.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -123,14 +124,12 @@ const projectWorktreePath = Effect.fn("mcp.assertProjectWorktree")(function* (
   });
 });
 
-/** The composer falls back to the project's t3.json when no setting picks the mode. */
+/** The composer falls back to the project's scient.json or t3.json when no setting picks the mode. */
 const projectFileThreadEnvMode = Effect.fn("mcp.projectFileThreadEnvMode")(function* (
   workspaceRoot: string,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const contents = yield* fileSystem
-    .readFileString(`${workspaceRoot}/${T3_PROJECT_FILE_NAME}`)
-    .pipe(Effect.orElseSucceed(() => null));
+  // SCIENT-FORK: scient.json first, then t3.json.
+  const contents = yield* readProjectFileText(workspaceRoot);
   return resolveProjectFileBackedSetting(
     "defaultThreadEnvMode",
     null,

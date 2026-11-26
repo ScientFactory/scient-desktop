@@ -5,6 +5,8 @@ import * as NodeURL from "node:url";
 
 import { isEntrypoint } from "./entrypoint.ts";
 import { runJournalCoverWorker } from "./scient/sources/JournalCoverImageWorker.ts";
+// SCIENT-FORK: SCIENT_ names for the documented T3CODE_ settings.
+import { applyScientEnvironmentAliases } from "./scientEnvironmentAliases.ts";
 
 // Loads the CLI outside the launcher's module graph. Packaged builds embed it as a raw asset.
 async function loadCliMain(): Promise<typeof import("./binMain.ts")> {
@@ -44,6 +46,8 @@ if (
     await runJournalCoverWorker();
     process.exit(process.exitCode ?? 0);
   }
+  // SCIENT-FORK: before the launcher or the CLI reads a setting.
+  applyScientEnvironmentAliases(process.env);
   // Logs go to stdout and stderr, which may be a closed desktop launcher pipe or a log file on
   // a full disk. Node emits a failed write as an unhandled stream error that crashes the process
   // and skips shutdown, so drop the line instead.

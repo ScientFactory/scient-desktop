@@ -442,6 +442,10 @@ describe("ProjectSetupScriptRunner", () => {
           env: {
             T3CODE_PROJECT_ROOT: "/repo/project",
             T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+            // SCIENT-FORK:START — actions also get the Scient names.
+            SCIENT_PROJECT_ROOT: "/repo/project",
+            SCIENT_WORKTREE_PATH: "/repo/worktrees/a",
+            // SCIENT-FORK:END
             COLORTERM: "",
             T3CODE_TERMINAL_SHELL: "",
             NO_COLOR: "1",
@@ -563,6 +567,10 @@ describe("ProjectSetupScriptRunner", () => {
         env: {
           T3CODE_PROJECT_ROOT: "/repo/project",
           T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+          // SCIENT-FORK:START — actions also get the Scient names.
+          SCIENT_PROJECT_ROOT: "/repo/project",
+          SCIENT_WORKTREE_PATH: "/repo/worktrees/a",
+          // SCIENT-FORK:END
           COLORTERM: "",
           T3CODE_TERMINAL_SHELL: "",
           NO_COLOR: "1",

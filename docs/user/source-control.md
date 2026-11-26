@@ -237,9 +237,7 @@ servers are configured. Git clone and push still require Git credentials or an S
 Bitbucket uses tokens instead of a CLI tool. Save them in **Settings → Source Control & Issues**, or set them
 as environment variables on the machine running the Scient environment.
 
-The `T3CODE_` variable prefix below is a retained upstream compatibility
-identifier. It does not send credentials to T3, but changing the prefix would
-break existing configurations and requires a separate migration.
+The variables below also work with the earlier `T3CODE_` prefix in place of `SCIENT_`.
 
 Open **Settings → Source Control & Issues**, expand **Bitbucket**, and enter one of:
 
@@ -258,10 +256,10 @@ If no credentials are saved, Scient falls back to these environment variables on
 the environment. Restart the Scient environment after changing them:
 
 ```bash
-export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
+export SCIENT_BITBUCKET_ACCESS_TOKEN="your-access-token"
 # or
-export T3CODE_BITBUCKET_EMAIL="you@example.com"
-export T3CODE_BITBUCKET_API_TOKEN="your-token"
+export SCIENT_BITBUCKET_EMAIL="you@example.com"
+export SCIENT_BITBUCKET_API_TOKEN="your-token"
 ```
 
 If both are set, the access token wins. Restart the Scient environment and verify the connection in **Source
