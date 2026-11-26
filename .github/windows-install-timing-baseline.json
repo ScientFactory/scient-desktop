@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "context": {
+    "kind": "manual",
+    "version": "0.6.34",
+    "channel": null,
+    "sourceSha": null,
+    "rehearsal": false,
+    "installer": "https://downloads.scientfactory.com/scient-desktop/v0.6.34/Scient-0.6.34-x64.exe",
+    "runId": "45907873991",
+    "runUrl": "https://github.com/ScientFactory/scient-desktop/actions/runs/45907873991"
+  },
+  "measurement": {
+    "schemaVersion": 1,
+    "readiness": "app shell and its main view mounted ([data-slot=\"sidebar-wrapper\"] main[data-slot=\"sidebar-inset\"])",
+    "installer": {
+      "name": "Scient-0.6.34-x64.exe",
+      "bytes": 434570873,
+      "sha256": "a59fd5445feebc26c4d93e1b357a82efc5742595cb252615b7848a86176ff3c0"
+    },
+    "runner": {
+      "image": "win25-vs2026 20261116.315.1",
+      "logicalCpus": 4,
+      "memoryBytes": 17174360064,
+      "defenderRealtime": false
+    },
+    "samples": [
+      {
+        "index": 1,
+        "installDir": "C:\\scient-timing-1",
+        "failures": [],
+        "installMs": 41593,
+        "installed": {
+          "bytes": 1086660895,
+          "files": 89
+        },
+        "installedVersion": "0.6.34.0",
+        "first": {
+          "windowMs": 1177,
+          "pageLoadedMs": 2314,
+          "appShellMs": 7814,
+          "readyMs": 8318,
+          "quitMs": 1593,
+          "forcedQuit": false,
+          "failure": null
+        },
+        "second": {
+          "windowMs": 658,
+          "pageLoadedMs": 1597,
+          "appShellMs": 5635,
+          "readyMs": 7510,
+          "quitMs": 483,
+          "forcedQuit": false,
+          "failure": null
+        }
+      },
+      {
+        "index": 2,
+        "installDir": "C:\\scient-timing-2",
+        "failures": [],
+        "installMs": 29770,
+        "installed": {
+          "bytes": 1086660895,
+          "files": 89
+        },
+        "installedVersion": "0.6.34.0",
+        "first": {
+          "windowMs": 1218,
+          "pageLoadedMs": 2186,
+          "appShellMs": 7017,
+          "readyMs": 7718,
+          "quitMs": 501,
+          "forcedQuit": false,
+          "failure": null
+        },
+        "second": {
+          "windowMs": 647,
+          "pageLoadedMs": 1587,
+          "appShellMs": 5613,
+          "readyMs": 7554,
+          "quitMs": 565,
+          "forcedQuit": false,
+          "failure": null
+        }
+      },
+      {
+        "index": 3,
+        "installDir": "C:\\scient-timing-3",
+        "failures": [],
+        "installMs": 26019,
+        "installed": {
+          "bytes": 1086660895,
+          "files": 89
+        },
+        "installedVersion": "0.6.34.0",
+        "first": {
+          "windowMs": 1334,
+          "pageLoadedMs": 1351,
+          "appShellMs": 8113,
+          "readyMs": 8720,
+          "quitMs": 603,
+          "forcedQuit": false,
+          "failure": null
+        },
+        "second": {
+          "windowMs": 751,
+          "pageLoadedMs": 1635,
+          "appShellMs": 4951,
+          "readyMs": 6785,
+          "quitMs": 534,
+          "forcedQuit": false,
+          "failure": null
+        }
+      }
+    ],
+    "installedVersion": "0.6.34.0",
+    "median": {
+      "installMs": 29770,
+      "firstLaunchMs": 8318,
+      "secondLaunchMs": 7510
+    },
+    "failures": []
+  },
+  "baseline": null,
+  "comparison": [
+    {
+      "key": "installMs",
+      "label": "Install",
+      "value": 29770,
+      "baseline": null,
+      "status": "no baseline"
+    },
+    {
+      "key": "firstLaunchMs",
+      "label": "First launch to ready",
+      "value": 8318,
+      "baseline": null,
+      "status": "no baseline"
+    },
+    {
+      "key": "secondLaunchMs",
+      "label": "Second launch to ready",
+      "value": 7510,
+      "baseline": null,
+      "status": "no baseline"
+    }
+  ]
+}

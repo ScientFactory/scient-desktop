@@ -168,6 +168,56 @@ acceptance. Record compressed artifact sizes separately from raw file sizes;
 repacking or compression models cannot establish installer download savings.
 Keep differential updates enabled and qualify the normal update path.
 
+## Windows install and launch timing
+
+Every release run also installs its exact Windows installer on a clean
+`windows-2025` runner and times it
+([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml),
+job **Time the real Windows installer**). It starts once **Package Windows x64**
+succeeds and takes the installer from that job's `desktop-win-x64` artifact. The
+other release checks verify the unpacked app; this one runs the real installer.
+
+Each of three samples installs silently into a new folder under the system drive,
+launches the installed app on a new profile, quits it by closing its window,
+launches it again on that profile, and uninstalls it. The job reports the median
+install time, the first launch and the second launch. A launch is ready when the
+renderer has mounted the app shell and its main view
+(`[data-slot="sidebar-wrapper"] main[data-slot="sidebar-inset"]`). The root route
+renders the shell only after the bundled server has answered its authentication
+gate, and the home view (onboarding, on a new profile) mounts its main element only
+once the workspace snapshot and server configuration have arrived. The harness
+reads the page through the DevTools port it opens for the launch, and records when
+the first window, the loaded page and the shell appeared, to show where the time went.
+Every stage has a bound: 10 minutes to install, 3 minutes to ready, 30 seconds to
+quit (after which the app's own processes are stopped and the sample records a
+forced quit) and 5 minutes to uninstall.
+
+The job summary shows each median, every sample, the baseline and the change. The
+`windows-install-timing` artifact holds `windows-install-timing.json`, a
+screenshot at each launch's readiness and the first sample's app logs, and is
+kept 90 days. The baseline is the newest earlier non-rehearsal release run whose
+artifact has a different version and no failed stage; when none is kept, it is the
+committed [`windows-install-timing-baseline.json`](../../.github/windows-install-timing-baseline.json).
+A stage regresses when its median is more than 25% slower and also more than its
+floor slower: 5 seconds to install, 1.5 seconds for the first launch and 1 second
+for the second. The floors absorb runner noise; single launches on these runners
+vary by about 2 seconds.
+
+The timing is advisory. A regression adds a warning and a marked row in the
+summary. A failed stage, such as an installer error or a launch that never became
+ready, fails the timing job but not the run. Assembly and publication do not wait
+for the job. Read its summary before approving a Stable candidate; whether a
+regression blocks it is the release owner's decision.
+
+The numbers describe a 4-CPU GitHub runner, whose image turns Defender real-time
+scanning off (the summary records the state). Compare them between runs, not with
+users' machines. To time any other installer, run **Windows install timing** by
+hand with the `run_id` and `artifact` of the run that built it (`desktop-win-x64`
+from a release run, `windows-packaging-installer` from CI's Windows Packaging) or
+with an HTTPS `installer_url`. Manual runs compare against the same baseline and
+never become one. To reset the committed baseline, replace it with the
+`windows-install-timing.json` of an accepted release run.
+
 ## Production identity and data safety
 
 Production artifacts use product name `Scient`, bundle/application ID
@@ -297,7 +347,9 @@ tag or release already exists.
 5. Resolve artifact, signing, installed-app, updater, migration, website, and
    rollback gates against that exact candidate. Reject the pending production
    deployment if any gate fails; fix the source and build a new candidate rather
-   than approving or rebuilding the rejected bytes.
+   than approving or rebuilding the rejected bytes. Read the advisory
+   [Windows install and launch timing](#windows-install-and-launch-timing)
+   summary of the same run.
 6. Only after explicit acceptance, approve the pending `production` deployment
    in the same workflow run. Publication fails closed if macOS is unsigned or
    the repository release gate is disabled. Windows is also required to be
