@@ -10,6 +10,8 @@ import {
   type AnalyticsRuntime,
   type RecordedAnalyticsEvent,
 } from "@scientfactory/analytics";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeSea from "node:sea";
@@ -18,6 +20,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -133,14 +136,19 @@ const disabled: ScientAnalytics = {
 
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
+  // Desktop shell discovery updates this record in place.
+  const hostEnvironment = yield* HostProcess.Environment;
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
-  if (!analyticsConfig.enabled || !policyAllows) return disabled;
+  if (!analyticsConfig.enabled || isDoNotTrackSet(hostEnvironment) || !policyAllows) {
+    return disabled;
+  }
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
-  // Like T3, analytics is on for everyone; SCIENT_ANALYTICS_ENABLED=false is the off switch.
+  // Like T3, analytics is on for everyone; SCIENT_ANALYTICS_ENABLED=false or DO_NOT_TRACK=1 is the off switch.
   const sessionStartedAt = yield* Clock.currentTimeMillis;
+  const scope = yield* Scope.Scope;
 
   const createRuntime = () => {
     const endpoint = localAnalyticsTestEndpoint(analyticsConfig.testEndpoint);
@@ -154,7 +162,7 @@ export const make = Effect.gen(function* () {
     });
   };
 
-  const runtime = yield* Effect.acquireRelease(
+  const start = Effect.acquireRelease(
     Effect.try({
       try: createRuntime,
       catch: () => "analytics-initialization-failed" as const,
@@ -168,38 +176,59 @@ export const make = Effect.gen(function* () {
     (activeRuntime) =>
       Effect.gen(function* () {
         const sessionEndedAt = yield* Clock.currentTimeMillis;
-        activeRuntime.record("app.session.ended", {
-          durationMs: sessionEndedAt - sessionStartedAt,
-          shutdownClass: "graceful",
-        });
+        if (!isDoNotTrackSet(hostEnvironment)) {
+          activeRuntime.record("app.session.ended", {
+            durationMs: sessionEndedAt - sessionStartedAt,
+            shutdownClass: "graceful",
+          });
+        }
         yield* Effect.tryPromise({
           try: () => activeRuntime.close(),
           catch: () => "analytics-shutdown-failed" as const,
         });
       }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics shutdown cleanup failed"))),
+  ).pipe(
+    Effect.tap((runtime) =>
+      Effect.sync(() =>
+        runtime.record("app.session.started", {
+          platform:
+            NodeProcess.platform === "darwin"
+              ? "macos"
+              : NodeProcess.platform === "win32"
+                ? "windows"
+                : NodeProcess.platform === "linux"
+                  ? "linux"
+                  : "other",
+          architecture:
+            NodeProcess.arch === "arm64" || NodeProcess.arch === "x64" ? NodeProcess.arch : "other",
+        }),
+      ),
+    ),
+    Scope.provide(scope),
   );
-
-  runtime.record("app.session.started", {
-    platform:
-      NodeProcess.platform === "darwin"
-        ? "macos"
-        : NodeProcess.platform === "win32"
-          ? "windows"
-          : NodeProcess.platform === "linux"
-            ? "linux"
-            : "other",
-    architecture:
-      NodeProcess.arch === "arm64" || NodeProcess.arch === "x64" ? NodeProcess.arch : "other",
-  });
+  const started = yield* Effect.cached(start);
+  // As in T3's AnalyticsService, a shell-profile DO_NOT_TRACK is unknown until desktop discovery
+  // ends, so nothing starts before then: no session and no outbox delivery.
+  const shellPreferencePending = () =>
+    hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1";
+  const runtime = Effect.suspend(() =>
+    isDoNotTrackSet(hostEnvironment) || shellPreferencePending() ? Effect.undefined : started,
+  );
+  yield* runtime;
 
   const record: AnalyticsService["Service"]["record"] = (event, properties) =>
     // Agent feedback reports carry agent-written text; Scient holds them (ScientAgentFeedbackGate).
     event === "agent.feedback"
       ? Effect.succeed(false)
-      : Effect.try({
-          try: () => runtime.record(event, properties),
-          catch: () => "analytics-record-failed" as const,
-        }).pipe(
+      : runtime.pipe(
+          Effect.flatMap((active) =>
+            active === undefined
+              ? Effect.succeed(false)
+              : Effect.try({
+                  try: () => active.record(event, properties),
+                  catch: () => "analytics-record-failed" as const,
+                }),
+          ),
           Effect.catch(() =>
             Effect.logWarning("Scient analytics event could not be queued").pipe(Effect.as(false)),
           ),
@@ -212,26 +241,43 @@ export const make = Effect.gen(function* () {
       ({ source, ownerId }) => {
         const key = `${observedBy}:${source}:${ownerId}`;
         if (recordedOwners.has(key)) return Effect.void;
-        recordedOwners.add(key);
-        return record("install.owner_observed", { ownerSource: source, ownerId, observedBy });
+        // Unqueued while the shell preference is pending, so a later report can still send it.
+        return record("install.owner_observed", { ownerSource: source, ownerId, observedBy }).pipe(
+          Effect.map((queued) => {
+            if (queued) recordedOwners.add(key);
+          }),
+        );
       },
       { discard: true },
     );
 
-  const flush: AnalyticsService["Service"]["flush"] = Effect.tryPromise({
-    try: () => runtime.flush(),
-    catch: () => "analytics-flush-failed" as const,
-  }).pipe(
+  const flush: AnalyticsService["Service"]["flush"] = runtime.pipe(
+    Effect.flatMap((active) =>
+      active === undefined
+        ? Effect.void
+        : Effect.tryPromise({
+            try: () => active.flush(),
+            catch: () => "analytics-flush-failed" as const,
+          }),
+    ),
     Effect.catch(() => Effect.logWarning("Scient analytics delivery attempt failed")),
     Effect.asVoid,
   );
 
   const recorded: RecordedAnalyticsIngest = {
+    // Under DO_NOT_TRACK they are never sent; before the shell preference is known, offer again.
     ingest: (events) =>
-      Effect.tryPromise({
-        try: () => runtime.ingest(events),
-        catch: () => "analytics-ingest-failed" as const,
-      }).pipe(Effect.orElseSucceed(() => false)),
+      runtime.pipe(
+        Effect.flatMap((active) =>
+          active === undefined
+            ? Effect.succeed(isDoNotTrackSet(hostEnvironment))
+            : Effect.tryPromise({
+                try: () => active.ingest(events),
+                catch: () => "analytics-ingest-failed" as const,
+              }),
+        ),
+        Effect.orElseSucceed(() => false),
+      ),
   };
 
   return {

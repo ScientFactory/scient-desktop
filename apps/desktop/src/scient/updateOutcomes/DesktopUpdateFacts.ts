@@ -13,13 +13,16 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
@@ -29,6 +32,7 @@ import * as DesktopObservability from "../../app/DesktopObservability.ts";
 // Read only at call time: the backend manager's stream imports this module.
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import { scientAnalyticsMetadata } from "../../backend/scientAnalyticsMetadata.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 
 export const DESKTOP_UPDATE_FACTS_FILE = "desktop-update-facts.json";
 const MAX_FACT_AGE_MS = 14 * 86_400_000;
@@ -64,6 +68,8 @@ export class DesktopUpdateFacts extends Context.Service<
     readonly acknowledge: (ids: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Every pending fact, for a backend that takes them over HTTP instead of its pipe. */
     readonly pending: Effect.Effect<ReadonlyArray<DesktopUpdateFactValue>>;
+    /** Whether this launch keeps facts, once the login shell's DO_NOT_TRACK is known. */
+    readonly enabled: Effect.Effect<boolean>;
   }
 >()("@t3tools/desktop/scient/updateOutcomes/DesktopUpdateFacts") {}
 
@@ -96,14 +102,19 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
   const env = yield* HostProcess.Environment;
-  const metadata = scientAnalyticsMetadata(environment, env.SCIENT_ANALYTICS_ENABLED);
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+  const scope = yield* Scope.Scope;
+  const metadata = scientAnalyticsMetadata(environment, env);
   // Read once and shared with the updater's policy; a policy that cannot be used counts as off.
   const telemetryAllowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => found?.document?.limits?.telemetry !== false),
     Effect.orElseSucceed(() => false),
   );
   // The same rule as the rest of analytics: on unless switched off or denied by policy.
-  const enabled = metadata.SCIENT_ANALYTICS_ENABLED === "true" && telemetryAllowed;
+  const enabledFor = (launchEnv: Readonly<Record<string, string | undefined>>) =>
+    scientAnalyticsMetadata(environment, launchEnv).SCIENT_ANALYTICS_ENABLED === "true" &&
+    telemetryAllowed;
+  const decided = yield* Deferred.make<boolean>();
   const buildChannel =
     metadata.SCIENT_ANALYTICS_BUILD_CHANNEL as DesktopUpdateFactValue["buildChannel"];
 
@@ -132,12 +143,7 @@ const make = Effect.gen(function* () {
     Effect.flatMap(decodeJournal),
     Effect.orElseSucceed(() => emptyJournal),
   );
-  // Facts are never kept for a session that may not send them, nor sent from one later.
-  const initial = enabled ? boundJournal(loaded, yield* nowMs) : emptyJournal;
-  if (!enabled && loaded.facts.length > 0) {
-    yield* fileSystem.remove(journalPath, { force: true }).pipe(Effect.ignore);
-  }
-  const journalRef = yield* Ref.make(initial);
+  const journalRef = yield* Ref.make(emptyJournal);
   const readyRef = yield* Ref.make<ReadonlyArray<string>>([]);
   const offers = yield* PubSub.unbounded<{
     readonly sourceId: string;
@@ -160,14 +166,41 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  // Facts are never kept for a session that may not send them, nor sent from one later.
+  const decide = Effect.fn("DesktopUpdateFacts.decide")(function* (enabled: boolean) {
+    if (enabled) yield* Ref.set(journalRef, boundJournal(loaded, yield* nowMs));
+    else if (loaded.facts.length > 0) {
+      yield* fileSystem.remove(journalPath, { force: true }).pipe(Effect.ignore);
+    }
+    yield* Deferred.succeed(decided, enabled);
+    if (enabled) yield* offer;
+  });
+  if (!enabledFor(env)) yield* decide(false);
+  else {
+    // A shell-profile DO_NOT_TRACK is known only once the user's login shell has answered.
+    yield* shellEnvironment.updates.pipe(
+      Stream.filter((snapshot) => snapshot.discovered),
+      Stream.runHead,
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (snapshot) =>
+            decide(
+              enabledFor({ ...env, DO_NOT_TRACK: snapshot.environment.DO_NOT_TRACK ?? undefined }),
+            ),
+        }),
+      ),
+      Effect.forkScoped({ startImmediately: true }),
+    );
+  }
+
   const record = Effect.fn("DesktopUpdateFacts.record")(function* (
     name: DesktopUpdateFactValue["name"],
     properties: DesktopUpdateFactProperties,
   ) {
-    if (!enabled) return;
     const id = yield* random.uuidV4();
     const occurredAt = DateTime.formatIso(yield* DateTime.now);
-    yield* update((journal, now) => {
+    const journalFact = update((journal, now) => {
       // A summary reports the drops since the last one; its own fact then carries the count.
       const reportsDrops = name === "app.update.summary";
       const fact: DesktopUpdateFactValue = {
@@ -188,8 +221,13 @@ const make = Effect.gen(function* () {
         },
         now,
       );
-    });
-    yield* offer;
+    }).pipe(Effect.andThen(offer));
+    const whenDecided = Deferred.await(decided).pipe(
+      Effect.flatMap((enabled) => (enabled ? journalFact : Effect.void)),
+    );
+    // Until the shell answers, the fact waits without holding up the update it describes.
+    if (yield* Deferred.isDone(decided)) yield* whenDecided;
+    else yield* Effect.forkIn(whenDecided, scope);
   });
 
   // Re-offering is safe: the outbox and the gateway keep one event per fact id.
@@ -222,6 +260,7 @@ const make = Effect.gen(function* () {
       }));
     }),
     pending: Ref.get(journalRef).pipe(Effect.map((journal) => journal.facts)),
+    enabled: Deferred.await(decided),
   });
 });
 

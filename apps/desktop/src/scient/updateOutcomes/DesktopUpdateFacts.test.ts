@@ -6,12 +6,13 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { DesktopUpdateFact } from "@t3tools/contracts";
+import type { DesktopShellEnvironmentSnapshot, DesktopUpdateFact } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -20,11 +21,35 @@ import * as DesktopConfig from "../../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import { PRIMARY_INSTANCE_ID } from "../../backend/DesktopBackendPool.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopUpdateFacts from "./DesktopUpdateFacts.ts";
 
 const WSL_SOURCE = "wsl:Ubuntu";
 
-function journalLayer(home: string) {
+const shellSnapshot = (
+  discovered: boolean,
+  environment: DesktopShellEnvironmentSnapshot["environment"] = {},
+): DesktopShellEnvironmentSnapshot => ({
+  version: 1,
+  type: "shellEnvironment",
+  discovered,
+  platform: "darwin",
+  environment,
+});
+
+const shellLayer = (updates: Stream.Stream<DesktopShellEnvironmentSnapshot>) =>
+  Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
+    installIntoProcess: Effect.succeed(true),
+    awaitDiscovery: Effect.succeed(true),
+    awaitUserShellDiscovery: Effect.succeed(true),
+    discoveryFinished: Effect.succeed(true),
+    updates,
+  });
+
+function journalLayer(
+  home: string,
+  updates: Stream.Stream<DesktopShellEnvironmentSnapshot> = Stream.make(shellSnapshot(true)),
+) {
   const config = DesktopConfig.layerTest({ SCIENT_NEXT_HOME: home });
   const environment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -43,6 +68,7 @@ function journalLayer(home: string) {
         read: Effect.undefined,
       }),
     ),
+    Layer.provide(shellLayer(updates)),
     Layer.provide(environment),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
@@ -51,18 +77,22 @@ function journalLayer(home: string) {
 /** One desktop process: its journal service, with analytics on or off for that launch. */
 function inLaunch<A>(
   home: string,
-  analytics: "true" | "false",
+  analytics: "true" | "false" | undefined,
   program: (
     facts: DesktopUpdateFacts.DesktopUpdateFacts["Service"],
   ) => Effect.Effect<A, never, Scope.Scope>,
+  updates?: Stream.Stream<DesktopShellEnvironmentSnapshot>,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
       return yield* program(yield* DesktopUpdateFacts.DesktopUpdateFacts);
     }),
   ).pipe(
-    Effect.provide(journalLayer(home)),
-    Effect.provideService(HostProcess.Environment, { SCIENT_ANALYTICS_ENABLED: analytics }),
+    Effect.provide(journalLayer(home, updates)),
+    Effect.provideService(
+      HostProcess.Environment,
+      analytics === undefined ? {} : { SCIENT_ANALYTICS_ENABLED: analytics },
+    ),
   );
 }
 
@@ -188,6 +218,85 @@ describe("DesktopUpdateFacts", () => {
         offered.map((fact) => fact.name),
         ["app.update.summary"],
       );
+    }),
+  );
+
+  it.effect("drops kept facts when DO_NOT_TRACK is set only in the shell profile", () =>
+    Effect.gen(function* () {
+      const home = temporaryHome();
+      yield* inLaunch(home, undefined, (facts) =>
+        facts.record("app.update.outcome", { step: "apply", outcome: "not-applied" }),
+      );
+      assert.isTrue(NodeFS.existsSync(journalFile(home)));
+
+      // A cold launch from Finder: the inherited environment lacks the profile's DO_NOT_TRACK.
+      const [enabled, pending] = yield* inLaunch(
+        home,
+        undefined,
+        (facts) =>
+          Effect.gen(function* () {
+            const enabled = yield* facts.enabled;
+            yield* facts.record("app.update.outcome", { step: "check", outcome: "completed" });
+            return [enabled, yield* facts.pending] as const;
+          }),
+        Stream.make(shellSnapshot(true, { DO_NOT_TRACK: "1" })),
+      );
+      assert.isFalse(enabled);
+      assert.lengthOf(pending, 0);
+      assert.isFalse(NodeFS.existsSync(journalFile(home)));
+    }),
+  );
+
+  it.effect("holds facts until the login shell answers after a cached launch", () =>
+    Effect.gen(function* () {
+      const home = temporaryHome();
+      const shell = yield* Queue.unbounded<DesktopShellEnvironmentSnapshot>();
+      const offered = yield* inLaunch(
+        home,
+        undefined,
+        (facts) =>
+          Effect.gen(function* () {
+            yield* facts.sourceReady(PRIMARY_INSTANCE_ID);
+            yield* Queue.offer(shell, shellSnapshot(false, { PATH: "/cached/bin" }));
+            return yield* nextOffers(
+              facts,
+              Effect.gen(function* () {
+                yield* facts.record("app.update.outcome", { step: "apply", outcome: "completed" });
+                assert.lengthOf(yield* facts.pending, 0);
+                yield* Queue.offer(shell, shellSnapshot(true, { PATH: "/discovered/bin" }));
+              }),
+            );
+          }),
+        Stream.fromQueue(shell),
+      );
+      assert.deepEqual(
+        offered.map((fact) => fact.name),
+        ["app.update.outcome"],
+      );
+    }),
+  );
+
+  it.effect("keeps nothing when a later shell snapshot brings DO_NOT_TRACK", () =>
+    Effect.gen(function* () {
+      const home = temporaryHome();
+      const shell = yield* Queue.unbounded<DesktopShellEnvironmentSnapshot>();
+      const [enabled, pending] = yield* inLaunch(
+        home,
+        undefined,
+        (facts) =>
+          Effect.gen(function* () {
+            yield* Queue.offer(shell, shellSnapshot(false, { PATH: "/cached/bin" }));
+            yield* facts.record("app.update.outcome", { step: "apply", outcome: "completed" });
+            yield* Queue.offer(shell, shellSnapshot(true, { DO_NOT_TRACK: "1" }));
+            const enabled = yield* facts.enabled;
+            yield* facts.record("app.update.outcome", { step: "check", outcome: "completed" });
+            return [enabled, yield* facts.pending] as const;
+          }),
+        Stream.fromQueue(shell),
+      );
+      assert.isFalse(enabled);
+      assert.lengthOf(pending, 0);
+      assert.isFalse(NodeFS.existsSync(journalFile(home)));
     }),
   );
 

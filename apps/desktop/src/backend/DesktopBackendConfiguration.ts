@@ -669,9 +669,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
-        ...scientAnalyticsMetadata(environment, env.SCIENT_ANALYTICS_ENABLED),
         ELECTRON_RUN_AS_NODE: "1",
-        // SCIENT-FORK:START — Scient state directory and safety envelope.
+        // SCIENT-FORK:START — Scient analytics metadata, state directory and safety envelope.
+        ...scientAnalyticsMetadata(environment, env),
         ...scientPrimaryBackendEnv(environment),
         // SCIENT-FORK:END
         T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
@@ -815,8 +815,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...parentEnvWithoutDesktopHome,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
-      ...scientAnalyticsMetadata(environment, env.SCIENT_ANALYTICS_ENABLED),
-      // SCIENT-FORK:START — Scient WSL state directory and safety envelope.
+      // SCIENT-FORK:START — Scient analytics metadata, WSL state directory and safety envelope.
+      ...scientAnalyticsMetadata(environment, env),
       ...scientWslBackendEnv(environment),
       // SCIENT-FORK:END
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
