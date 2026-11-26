@@ -6,7 +6,6 @@ import {
   RuntimeMode,
   type ScheduledTask,
   ScheduledTaskId,
-  type ThreadId,
 } from "@t3tools/contracts";
 import {
   type ScientLibraryLocation,
@@ -93,9 +92,10 @@ export const syncLiteratureWatchSchedule = Effect.fn("LiteratureWatch.syncSchedu
 
 /** Whether a watch's task needs writing: it was lost, or its run thread is archived or gone. */
 const needsRestore = Effect.fn("LiteratureWatch.needsRestore")(function* (
-  task: { readonly threadId: ThreadId | null } | undefined,
+  task: Pick<ScheduledTask, "threadId" | "schedule"> | undefined,
 ) {
-  if (!task) return true;
+  // A watch runs on an interval; a task changed to another kind in Scheduled tasks is rewritten.
+  if (!task || task.schedule.type !== "interval") return true;
   if (task.threadId === null) return false;
   const shell = yield* (yield* ProjectionStoreV2)
     .getThreadShell(task.threadId)

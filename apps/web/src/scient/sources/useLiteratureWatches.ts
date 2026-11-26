@@ -64,7 +64,9 @@ export function useLiteratureWatch(input: {
   const shown = useRef<string | null>(null);
   const reading = useRef(false);
 
-  const reload = useStableCallback((watchId: string) => {
+  const reload = useStableCallback(async (watchId: string) => {
+    // A late call for a watch no longer on screen must not cancel the read of the one that is.
+    if (shown.current !== watchId) return;
     const request = ++latest.current;
     reading.current = true;
     const landed = () => request === latest.current && shown.current === watchId;

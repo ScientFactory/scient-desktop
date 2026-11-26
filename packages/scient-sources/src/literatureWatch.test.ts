@@ -249,3 +249,11 @@ describe("review findings", () => {
     expect(next.briefings[0]!.items[0]!.candidate).not.toHaveProperty("abstract");
   });
 });
+
+describe("title keys", () => {
+  it("never end in a space where a long title is cut, which the stored ledger would refuse", () => {
+    const title = `${"a".repeat(159)} ${"b".repeat(40)}`;
+    const next = publishLiteratureWatchRun(watch(), run([found(title)]), { picks: [] }, now);
+    expect(next.seen[0]!.keys).toEqual([`title:${"a".repeat(159)}`]);
+  });
+});

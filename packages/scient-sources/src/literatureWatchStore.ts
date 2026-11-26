@@ -17,8 +17,8 @@ import { assertSafeIdentifier, atomicWriteJson, readBoundedJson, snapshot } from
 
 const WATCHES_DIRECTORY = "watches";
 const RUN_SUFFIX = ".run.json";
-const MAX_WATCH_BYTES = 16 * 1024 * 1024;
-const MAX_RUN_BYTES = 32 * 1024 * 1024;
+const MAX_WATCH_BYTES = 64 * 1024 * 1024;
+const MAX_RUN_BYTES = 64 * 1024 * 1024;
 /** An open run older than this is fetched again rather than resumed. */
 const RUN_REUSE_MS = 24 * 60 * 60 * 1000;
 // A watch that would not read back is refused before it replaces the file.

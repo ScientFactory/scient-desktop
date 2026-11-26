@@ -208,7 +208,8 @@ export function literatureWatchWindow(
     [to, watch.createdAt.slice(0, 10)].toSorted()[0]!,
     LITERATURE_WATCH_FIRST_DAYS,
   );
-  const resumeAt = watch.resumeAt?.[service];
+  // OpenAlex dates are publication dates, which late indexing fills in behind, so it always rescans.
+  const resumeAt = service === "openalex" ? undefined : watch.resumeAt?.[service];
   if (resumeAt) return { from: resumeAt > to ? to : resumeAt, to };
   const covered = watch.covered[service];
   const resume = covered ? daysBefore(covered, OVERLAP_DAYS) : first;
@@ -226,7 +227,7 @@ function titleKey(title: string): string | null {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
-  return words.length >= 20 ? `title:${words.slice(0, 160)}` : null;
+  return words.length >= 20 ? `title:${words.slice(0, 160).trim()}` : null;
 }
 
 /** Every key a work is known by: its identifiers, then its normalized title. */
