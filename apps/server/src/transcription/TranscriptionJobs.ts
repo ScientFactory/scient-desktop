@@ -1091,6 +1091,8 @@ const make = Effect.gen(function* () {
             const failed = outcomes.find((outcome) => !outcome.ok);
             if (failed && !failed.ok) throw new Error(failed.message);
             await NodeFSP.rm(mediaRecordPath(source), { force: true });
+            // The next listing walks the project again, so the file does not come back.
+            discoveries.delete(project);
             return { trashed: true as const };
           } finally {
             trashing -= 1;
