@@ -485,19 +485,20 @@ describe("CI workflow decisions", () => {
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
     ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 50],
     ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 49],
+    // Full Compute adds one Intel macOS job for real Python.
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      53,
+      54,
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 45],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 37],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 58],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 57],
+    ["main push", "docs/operations/00_development.md", "push", false, 59],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 58],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(

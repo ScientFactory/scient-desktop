@@ -493,25 +493,25 @@ jobs:
           STEPS: ${{ toJSON(steps) }}
         run: node .github/scripts/compute-roles.mjs summary
 
-  # One job per Mac, whose runner slots are the scarcest: Apple Silicon runs all three roles, the
-  # Intel Mac managed and real Python (its R and Julia run in real_languages). Each role runs its
-  # own job's steps from a clean start (compute-roles.mjs) whatever an earlier one did, R and Julia
-  # first for their plain Python; the last step names every role that failed or did not run.
+  # Mac runner slots are the scarcest: Apple Silicon runs all three roles in one job, the Intel Mac
+  # managed and real Python in a job each, listed only when asked (its R and Julia run in
+  # real_languages). Each role runs its own job's steps from a clean start (compute-roles.mjs)
+  # whatever an earlier one did, R and Julia first for their plain Python; the last step names
+  # every role that failed or did not run.
   macos:
     if: ${{ inputs.platforms != 'linux' && (inputs.managed_python || inputs.real_kernel) }}
-    name: Compute on Mac / ${{ matrix.runner }}
+    name: Compute on Mac / ${{ matrix.runner }}${{ matrix.part && format(' / {0}', matrix.part) || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            target: darwin-arm64
-            languages: true
-          - runner: macos-15-intel
-            target: darwin-x64
-            languages: false
+        include: >-
+          ${{ fromJSON(inputs.managed_python && inputs.real_kernel
+          && '[{"runner":"macos-15","target":"darwin-arm64","languages":true,"managed":true,"python":true},{"runner":"macos-15-intel","target":"darwin-x64","languages":false,"managed":true,"python":false,"part":"managed Python"},{"runner":"macos-15-intel","target":"darwin-x64","languages":false,"managed":false,"python":true,"part":"real Python"}]'
+          || inputs.managed_python
+          && '[{"runner":"macos-15","target":"darwin-arm64","languages":true,"managed":true,"python":true},{"runner":"macos-15-intel","target":"darwin-x64","languages":false,"managed":true,"python":false,"part":"managed Python"}]'
+          || '[{"runner":"macos-15","target":"darwin-arm64","languages":true,"managed":true,"python":true},{"runner":"macos-15-intel","target":"darwin-x64","languages":false,"managed":false,"python":true,"part":"real Python"}]') }}
     defaults:
       run:
         shell: bash
@@ -634,7 +634,7 @@ jobs:
       # uv/CPython and uses the checked-in lock. No ambient pip environment can satisfy this test.
       - name: Begin managed Python
         id: managed
-        if: ${{ !cancelled() && steps.vp.outcome == 'success' && inputs.managed_python }}
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' && inputs.managed_python && matrix.managed }}
         run: node .github/scripts/compute-roles.mjs begin managed
       - name: Seal candidate recipe metadata
         id: managed-seal
@@ -672,7 +672,7 @@ jobs:
       # Real Python on both supported versions, as in real_kernel.
       - name: Begin real Python
         id: python
-        if: ${{ !cancelled() && steps.vp.outcome == 'success' && inputs.real_kernel }}
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' && inputs.real_kernel && matrix.python }}
         run: node .github/scripts/compute-roles.mjs begin python
       - name: Setup Python 3.10
         id: python-setup-310
@@ -749,6 +749,6 @@ jobs:
       - name: Name every role that failed or did not run
         if: ${{ !cancelled() }}
         env:
-          EXPECTED: ${{ format('{0} {1} {2}', matrix.languages && inputs.real_kernel && 'people files kernels' || '', inputs.managed_python && 'managed' || '', inputs.real_kernel && 'python' || '') }}
+          EXPECTED: ${{ format('{0} {1} {2}', matrix.languages && inputs.real_kernel && 'people files kernels' || '', inputs.managed_python && matrix.managed && 'managed' || '', inputs.real_kernel && matrix.python && 'python' || '') }}
           STEPS: ${{ toJSON(steps) }}
         run: node .github/scripts/compute-roles.mjs summary
