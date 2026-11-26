@@ -2,6 +2,12 @@
 # blender --background --python scripts/convert-device-model.py -- <model-id> <source.usdz> <output.glb>
 # Then optimize using @gltf-transform/cli 4.2.1 with --compress false --simplify false
 # --join false --palette false --flatten false --texture-size 1024 --texture-compress webp.
+# SCIENT-FORK:START — lossless geometry compression of the bundled models.
+# Finally write the GLB with @gltf-transform/core 4.2.1's EXTMeshoptCompression (required,
+# EncoderMethod.QUANTIZE, which adds no lossy filters) and meshoptimizer 0.22.0, without running
+# quantize(): the CLI `meshopt` command quantizes, which moves meshes off the identity transforms
+# the viewer checks.
+# SCIENT-FORK:END
 import hashlib
 import json
 import sys

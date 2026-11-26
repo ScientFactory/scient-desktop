@@ -1,6 +1,9 @@
 // @effect-diagnostics globalFetch:off - This browser-only renderer owns abortable asset requests without an Effect runtime, like the live stream.
 import { Box3, Group, Mesh, MeshBasicMaterial, Texture, type Material, type Object3D } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+// SCIENT-FORK:START — bundled device models carry lossless EXT_meshopt_compression geometry.
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+// SCIENT-FORK:END
 import type { DeviceAssetSource } from "./model.ts";
 import { createDisplayProjection, updateDisplayUv, type PhoneDisplayLayout } from "./phoneScene.ts";
 
@@ -105,10 +108,11 @@ export async function loadDeviceModel(source: DeviceAssetSource, signal: AbortSi
   if (!response.ok) throw new Error(`Device model request failed: ${response.status}`);
   const data = await response.arrayBuffer();
   signal.throwIfAborted();
-  const gltf = await new GLTFLoader().parseAsync(
-    data,
-    new URL(".", new URL(source.url, globalThis.location.href)).href,
-  );
+  // SCIENT-FORK:START — bundled device models carry lossless EXT_meshopt_compression geometry.
+  const gltf = await new GLTFLoader()
+    .setMeshoptDecoder(MeshoptDecoder)
+    .parseAsync(data, new URL(".", new URL(source.url, globalThis.location.href)).href);
+  // SCIENT-FORK:END
   if (signal.aborted) {
     disposeDeviceModel(gltf.scene);
     signal.throwIfAborted();

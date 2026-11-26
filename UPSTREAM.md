@@ -2709,6 +2709,21 @@ Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` 
 and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
 section of `docs/internals/scient-extensions.md`.
 
+## Device model compression
+
+T3's 3D device models in `apps/web/src/components/device/models/*.glb` ship with lossless
+`EXT_meshopt_compression` geometry: 12.1 MB of models became 7.4 MB, with vertex data, triangles,
+transforms and textures decoding unchanged. `loadDeviceModel` in
+`packages/client-runtime/src/device/modelScene.ts` registers three's `MeshoptDecoder` in a marked
+seam; it is loaded only with the lazy 3D viewer chunk. The models are fetched only when a device is
+shown in 3D, so neither change touches startup. `sources.json` and the header of
+`scripts/convert-device-model.py` record the encoding step. Quantizing (the gltf-transform CLI
+`meshopt` default) breaks the viewer's display normalization check.
+`modelScene.scient.test.ts` decodes each phone and tablet model through `loadDeviceModel` and that
+check. When T3 changes a model, take its file and re-encode it as the script header describes. The
+change suits T3 and can be offered upstream; when T3 takes it, use its version and delete the seam
+and test.
+
 ## Security policy
 
 `.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on
