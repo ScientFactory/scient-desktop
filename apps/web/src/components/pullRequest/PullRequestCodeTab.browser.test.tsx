@@ -486,6 +486,9 @@ async function renderShortPages(stack: AsyncDisposableStack) {
   );
   const container = document.createElement("div");
   container.className = "h-[1000px] w-[900px]";
+  // SCIENT-FORK:START — Scient's CSS omits Tailwind classes used only in tests.
+  Object.assign(container.style, { height: "1000px", width: "900px" });
+  // SCIENT-FORK:END
   const screen = stack.use(await render(tab(0), { container }));
   const loadNextPage = async () => {
     await screen.getByRole("button", { name: "Show file tree", exact: true }).click();

@@ -299,7 +299,7 @@ it.effect(
         const answer = (invocation: McpInvocationContext.McpInvocationScope) =>
           server
             .callTool({
-              name: "t3_workflow",
+              name: "scient_workflow",
               arguments: {
                 action: "signal",
                 runId: "run-1",
@@ -351,8 +351,8 @@ it.effect(
         ),
       );
       expect(result.refusals).toEqual([
-        "Tool 't3_workflow' not found",
-        "Tool 't3_workflow' not found",
+        "Tool 'scient_workflow' not found",
+        "Tool 'scient_workflow' not found",
       ]);
       expect(result.sent).toBe(false);
       expect(named).toEqual(["t3 CLI"]);
