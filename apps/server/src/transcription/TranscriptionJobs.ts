@@ -568,6 +568,8 @@ const make = Effect.gen(function* () {
   };
   type Active = {
     root: string;
+    /** The recording the job reads, once known; Trash leaves it alone. */
+    source?: string;
     id?: string;
     status?: Status;
     controller: AbortController;
@@ -575,6 +577,8 @@ const make = Effect.gen(function* () {
     paused?: boolean;
   };
   let active: Active | undefined;
+  /** Moves to the Trash in progress; no job starts meanwhile. */
+  let trashing = 0;
   const queuedSources = new Set<string>();
   const trashHost: TrashHost = {
     platform: yield* HostProcess.Platform,
@@ -902,7 +906,12 @@ const make = Effect.gen(function* () {
           if (!inside(project, source) || !(await NodeFSP.stat(source)).isFile())
             throw invalid("The recording must live in the project.");
           const speechStatus = await run(speech.status);
-          if (active || !speechStatus.supported || speechStatus.state === "transcribing")
+          if (
+            active ||
+            trashing ||
+            !speechStatus.supported ||
+            speechStatus.state === "transcribing"
+          )
             return { detectedLanguage: null };
           const controller = new AbortController();
           const sampling: Active = { root, controller };
@@ -999,40 +1008,50 @@ const make = Effect.gen(function* () {
         }
         if (input.action === "recording-trash") {
           if (!NodePath.isAbsolute(input.source)) throw invalid("Expected an absolute media path.");
-          // The file may already be gone; its transcripts still go.
-          const source = await NodeFSP.realpath(input.source).catch(() =>
-            NodePath.resolve(input.source),
-          );
-          if (!inside(project, source)) throw invalid("The recording must live in the project.");
-          if (
-            queuedSources.has(source) ||
-            (active?.root === root && active.status?.job.source === source)
-          )
-            throw invalid("Stop transcribing this recording first.");
-          const revisions = rootStat
-            ? (
-                await Promise.all(
-                  (await NodeFSP.readdir(root, { withFileTypes: true }))
-                    .filter((entry) => entry.isDirectory() && revision.test(entry.name))
-                    .map(async (entry) => {
-                      const job = await readJson<Job>(
-                        NodePath.join(root, entry.name),
-                        "job.json",
-                      ).catch(() => undefined);
-                      return job?.source === source ? NodePath.join(root, entry.name) : undefined;
-                    }),
-                )
-              ).filter((directory) => directory !== undefined)
-            : [];
-          const file = await NodeFSP.stat(source).then(
-            (stat) => (stat.isFile() ? [source] : []),
-            () => [],
-          );
-          const outcomes = await moveToTrash(trashHost, [...file, ...revisions]);
-          const failed = outcomes.find((outcome) => !outcome.ok);
-          if (failed && !failed.ok) throw new Error(failed.message);
-          await NodeFSP.rm(mediaRecordPath(source), { force: true });
-          return { trashed: true as const };
+          trashing += 1;
+          try {
+            // The file may already be gone; its transcripts still go.
+            const source = await NodeFSP.realpath(input.source).catch(() =>
+              NodePath.resolve(input.source),
+            );
+            if (!inside(project, source)) throw invalid("The recording must live in the project.");
+            // A job whose recording is not known yet, or a review being saved, may be using it.
+            if (
+              queuedSources.has(source) ||
+              pendingReviews.size > 0 ||
+              (active?.root === root &&
+                (active.source === undefined ||
+                  active.source === source ||
+                  active.status?.job.source === source))
+            )
+              throw invalid("Stop transcribing this recording first.");
+            const revisions = rootStat
+              ? (
+                  await Promise.all(
+                    (await NodeFSP.readdir(root, { withFileTypes: true }))
+                      .filter((entry) => entry.isDirectory() && revision.test(entry.name))
+                      .map(async (entry) => {
+                        const job = await readJson<Job>(
+                          NodePath.join(root, entry.name),
+                          "job.json",
+                        ).catch(() => undefined);
+                        return job?.source === source ? NodePath.join(root, entry.name) : undefined;
+                      }),
+                  )
+                ).filter((directory) => directory !== undefined)
+              : [];
+            const file = await NodeFSP.stat(source).then(
+              (stat) => (stat.isFile() ? [source] : []),
+              () => [],
+            );
+            const outcomes = await moveToTrash(trashHost, [...file, ...revisions]);
+            const failed = outcomes.find((outcome) => !outcome.ok);
+            if (failed && !failed.ok) throw new Error(failed.message);
+            await NodeFSP.rm(mediaRecordPath(source), { force: true });
+            return { trashed: true as const };
+          } finally {
+            trashing -= 1;
+          }
         }
         if (input.action === "capture-start") {
           await run(
@@ -1510,7 +1529,7 @@ const make = Effect.gen(function* () {
         };
         if (input.action === "review-accept" || input.action === "review-reject") {
           const requested = await completedRevision(input.id);
-          if (active) throw busy();
+          if (active || trashing) throw busy();
           const recording = requested.parent.job.recording ?? requested.parent.job.id;
           const key = NodePath.join(root, recording);
           const operation = async () => {
@@ -1755,7 +1774,7 @@ const make = Effect.gen(function* () {
           );
         }
         if (input.action === "use-subtitles" || input.action === "import-transcript") {
-          if (active) throw busy();
+          if (active || trashing) throw busy();
           const imported = input.action === "import-transcript" ? input : undefined;
           const requestedSource = input.source ?? imported?.file;
           const standalone = imported !== undefined && imported.source === undefined;
@@ -1776,8 +1795,10 @@ const make = Effect.gen(function* () {
           const current: Active = { root, controller };
           active = current;
           const signal = controller.signal;
+          current.source = NodePath.resolve(requestedSource);
           try {
             const source = await NodeFSP.realpath(requestedSource);
+            current.source = source;
             if ((imported && !inside(project, source)) || !(await NodeFSP.stat(source)).isFile())
               throw invalid("Expected a regular project file.");
             const previous = imported?.previousId ? await status(imported.previousId) : undefined;
@@ -1878,12 +1899,13 @@ const make = Effect.gen(function* () {
           }
         }
         if (input.action === "correct") {
-          if (active || pendingReviews.size > 0) throw busy();
+          if (active || trashing || pendingReviews.size > 0) throw busy();
           const controller = new AbortController();
           const current: Active = { root, controller };
           active = current;
           try {
             const parent = await status(input.id);
+            current.source = parent.job.source;
             if (parent.state.stage !== "completed")
               throw invalid("Select a completed transcript revision.");
             const published = await readJson<Published>(
@@ -1972,7 +1994,7 @@ const make = Effect.gen(function* () {
           if (input.action === "status") await wait(active, input.id);
           return status(input.id);
         }
-        if (active || pendingReviews.size > 0) throw busy();
+        if (active || trashing || pendingReviews.size > 0) throw busy();
         if (input.action !== "start") throw invalid("Invalid transcription action.");
         if (input.mode === "thorough" && !input.estimateId)
           throw invalid("Preview Thorough correction and provide its estimate ID.");
@@ -2039,7 +2061,9 @@ const make = Effect.gen(function* () {
               detail: cloudEngine.failure.detail,
             });
           }
+          current.source = NodePath.resolve(sourcePath);
           const source = await NodeFSP.realpath(sourcePath);
+          current.source = source;
           if ((opts?.scoped || opts?.projectOnly) && !inside(NodePath.dirname(root), source))
             throw invalid("The audio file must resolve inside this project.");
           const bound = cloudEngine?._tag === "Success" ? cloudEngine.success : undefined;
