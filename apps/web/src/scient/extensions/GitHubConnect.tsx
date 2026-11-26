@@ -205,7 +205,7 @@ export function GitHubConnect({
       ) : checkingLogins ? (
         <Button disabled>
           <Spinner />
-          <T>Checking GitHub account…</T>
+          <T>Checking…</T>
         </Button>
       ) : (
         <Button

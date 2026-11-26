@@ -769,9 +769,7 @@ describe("GitHub with Source Control's account", () => {
     state.externalIdentities = null;
     state.externalIdentitiesPending = true;
     await fixture.render(githubEntry);
-    await expect
-      .element(page.getByRole("button", { name: /Checking GitHub account…/ }))
-      .toBeDisabled();
+    await expect.element(page.getByRole("button", { name: /Checking…/ })).toBeDisabled();
     await expect
       .element(page.getByRole("button", { name: "Sign in with GitHub" }))
       .not.toBeInTheDocument();
