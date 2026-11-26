@@ -326,6 +326,11 @@ jobs:
       - name: Exercise packaged terminal and Cursor helpers
         shell: pwsh
         run: node scripts/qualify-windows-packaged-runtime.mjs "$env:SCIENT_PACKAGING_UNPACKED"
+      # This native build generates its server bytecode while packaging; the release's
+      # Linux-hosted package receives it from Windows. Either way the engine must accept it.
+      - name: Require the packaged engine to accept its server bytecode
+        shell: pwsh
+        run: node scripts/native-server-compile-cache.mjs check "$env:SCIENT_PACKAGING_UNPACKED" Scient.exe
       - name: Cache verified speech probe inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

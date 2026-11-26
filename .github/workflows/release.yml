@@ -759,6 +759,53 @@ jobs:
           echo "T3CODE_JSIGN=$dir/jsign" >> "$GITHUB_ENV"
           echo "SCIENT_WINDOWS_SIGNING_READY=true" >> "$GITHUB_ENV"
 
+      # Only Windows can run the Windows engine that generates server bytecode. An unsigned
+      # staged app from this build goes to the Windows verifier, which generates the bytecode
+      # with it; the signed package below reuses this build and installs that bytecode only for
+      # the same Electron and server module bytes.
+      - name: Stage the Windows app for native server bytecode
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.repository }}
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
+          SCIENT_WINDOWS_NATIVE_RESOURCES: ${{ github.workspace }}/windows-native
+        run: |
+          set -euo pipefail
+          vp run dist:desktop:artifact --platform win --target dir --arch "$RELEASE_ARCH" \
+            --build-version "$RELEASE_VERSION" --omit-wsl-runtime --verbose \
+            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current" \
+            --output-dir "$RUNNER_TEMP/server-bytecode-input"
+          tar -C "$RUNNER_TEMP/server-bytecode-input" -cf "$RUNNER_TEMP/server-bytecode-input.tar" win-unpacked
+
+      - name: Upload the staged Windows app
+        if: matrix.platform == 'win'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-bytecode-input-win-${{ matrix.arch }}
+          path: ${{ runner.temp }}/server-bytecode-input.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          overwrite: true
+
+      - name: Wait for the native server bytecode
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Verify exact Windows native payload" "server-bytecode-win-${{ matrix.arch }}" --uploaded
+
+      - name: Download the native server bytecode
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-bytecode-win-${{ matrix.arch }}
+          path: ${{ runner.temp }}/server-bytecode
+
       - name: Build desktop artifact
         shell: bash
         env:
@@ -819,6 +866,9 @@ jobs:
             fi
           elif [[ "$RELEASE_PLATFORM" == "win" ]]; then
             args+=(--keep-stage)
+            # The staged app's bundles, whose server modules the native bytecode was made from.
+            args+=(--skip-build)
+            export SCIENT_NATIVE_SERVER_COMPILE_CACHE="$RUNNER_TEMP/server-bytecode"
             # Releases ship a slim Windows installer without the WSL runtime archive or Linux
             # sidecar dependencies while no user runs WSL. The app hides WSL in slim builds, and
             # PR CI (windows-packaging.yml) keeps building and qualifying the full WSL package.
@@ -974,7 +1024,8 @@ jobs:
           # Installers and updater archives are already compressed.
           compression-level: 0
 
-  # Starts with the release and waits only for the Windows package, not the slowest Mac.
+  # Starts with the release and waits only for the Windows package, not the slowest Mac. First it
+  # generates the package's server bytecode, which only a Windows host can run.
   verify_windows_desktop:
     name: Verify exact Windows native payload
     needs: preflight
@@ -990,6 +1041,29 @@ jobs:
         with:
           node-version-file: package.json
           run-install: false
+      - name: Wait for the staged Windows app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Package Windows x64" server-bytecode-input-win-x64 --uploaded
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-bytecode-input-win-x64
+          path: server-bytecode-input
+      - name: Generate server bytecode with the staged app's engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C server-bytecode-input -xf server-bytecode-input/server-bytecode-input.tar
+          node scripts/native-server-compile-cache.mjs generate \
+            "$(cygpath -w "$PWD/server-bytecode-input/win-unpacked")" Scient.exe server-bytecode
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-bytecode-win-x64
+          path: server-bytecode/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - name: Wait for the Windows package
         shell: bash
         env:
@@ -1009,6 +1083,9 @@ jobs:
           node verify/verify-windows-desktop-artifact.mjs \
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
             --arch x64 --build-version "$RELEASE_VERSION" --omit-wsl-runtime --verbose
+      - name: Require the packaged engine to accept its server bytecode
+        shell: bash
+        run: node scripts/native-server-compile-cache.mjs check "$(cygpath -w "$PWD/verify/win-unpacked")" Scient.exe
       - name: Cache verified speech probe inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
