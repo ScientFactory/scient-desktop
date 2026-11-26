@@ -661,4 +661,24 @@ it.effect("keeps a newer single-forge observation over a slower aggregate discov
     assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
+
+it.effect("re-asks unknown remotes cached before a forge's first discovery", () =>
+  Effect.gen(function* () {
+    let signedIn = false;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      run: () =>
+        Effect.succeed(
+          TestSourceControlHost.processOutput(
+            signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+          ),
+        ),
+    });
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+
+    signedIn = true;
+    yield* registry.discoverProvider(kind("gitlab"));
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
 // SCIENT-FORK:END

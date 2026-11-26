@@ -289,7 +289,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     );
 
     // SCIENT-FORK:START — aggregate and single-forge discovery share per-forge observations, so a
-    // sign-in either one sees re-asks cached unknown remotes. Each probe is ordered by its start, so a
+    // sign-in either one sees re-asks cached unknown remotes, including at a forge's first
+    // observation (discovery no longer runs at startup). Each probe is ordered by its start, so a
     // slower, older probe cannot overwrite a newer observation.
     const lastDiscovery = new Map<
       SourceControlProviderKind,
@@ -300,15 +301,17 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       Effect.suspend(() => {
         const started = ++probesStarted;
         return probeSourceControlProvider({ spec, process, cwd: config.cwd }).pipe(
-          Effect.tap((item) => {
-            const previous = lastDiscovery.get(item.kind);
-            if (previous !== undefined && previous.started > started) return Effect.void;
-            const fingerprint = discoveryFingerprint([item]);
-            lastDiscovery.set(item.kind, { started, fingerprint });
-            return previous !== undefined && previous.fingerprint !== fingerprint
-              ? Cache.invalidateAll(unknownRemoteCache)
-              : Effect.void;
-          }),
+          Effect.tap((item) =>
+            Effect.suspend(() => {
+              const previous = lastDiscovery.get(item.kind);
+              if (previous !== undefined && previous.started > started) return Effect.void;
+              const fingerprint = discoveryFingerprint([item]);
+              lastDiscovery.set(item.kind, { started, fingerprint });
+              return previous?.fingerprint === fingerprint
+                ? Effect.void
+                : Cache.invalidateAll(unknownRemoteCache);
+            }).pipe(Effect.uninterruptible),
+          ),
         );
       });
     // SCIENT-FORK:END
