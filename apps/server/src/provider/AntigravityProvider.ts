@@ -335,16 +335,22 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          SubscriptionRef.update(metadata, (state) =>
+            // SCIENT-FORK: a signed-out account shows no quota, even when a saved Google token
+            // still answers the read; only an "unavailable" result is kept for it.
+            state.draft.auth.status === "unauthenticated" && probed.unavailable === undefined
+              ? state
+              : {
+                  ...state,
+                  draft: {
+                    ...state.draft,
+                    usageLimits: resolveUsageLimitsAfterProbe({
+                      published: state.draft.usageLimits,
+                      probed,
+                    }),
+                  },
+                },
+          ),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(

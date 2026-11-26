@@ -54,7 +54,8 @@ function resolveCanonicalModel(
 }
 
 function windowAppliesToModel(
-  provider: Pick<ServerProvider, "driver" | "models"> | undefined,
+  // SCIENT-FORK: usageLimits tells Antigravity's per-family Gemini quotas from one shared quota.
+  provider: Pick<ServerProvider, "driver" | "models" | "usageLimits"> | undefined,
   window: ServerProviderUsageWindow,
   model: string | null | undefined,
 ): boolean {
@@ -74,8 +75,20 @@ function windowAppliesToModel(
       }
       return true;
     case "antigravity": {
-      const family = canonical.match(/^(gemini|claude|gpt)-/)?.[1];
+      // SCIENT-FORK:START — a hub can prefix model ids, such as "ag/gemini-3.1-pro". Argon and
+      // Carbon have their own quotas when the account reports them; older accounts report one
+      // Gemini quota that covers every Gemini model.
+      const base = canonical.slice(canonical.lastIndexOf("/") + 1);
+      const family = base.match(/^(gemini|claude|gpt)-/)?.[1];
       const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+      if (
+        pool === "gemini" &&
+        family === "gemini" &&
+        provider?.usageLimits?.windows.some((entry) => /^gemini-(argon|carbon)-/.test(entry.id))
+      ) {
+        return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
+      }
+      // SCIENT-FORK:END
       return (
         pool === undefined ||
         family === undefined ||
@@ -553,6 +566,27 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
   };
 }
+
+// SCIENT-FORK:START — thread details pool signed-in logins with hub accounts by the same identity
+// as the Usage page, so a Google credential fingerprint matches as well as an e-mail.
+/** The signed-in logins that read the same account as one of these hub accounts. */
+export function providersReadingAccounts(
+  providers: readonly ServerProvider[],
+  accounts: readonly UsageLimitSourceAccount[],
+  /** Every account the hub lists, readable or not, so a login's workspace resolves as in the pool. */
+  knownAccounts: readonly UsageLimitSourceAccount[] = accounts,
+): ServerProvider[] {
+  const resolveKey = accountKeyResolver([
+    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...knownAccounts,
+  ]);
+  const keys = new Set(accounts.flatMap((account) => resolveKey(account) ?? []));
+  return providers.filter((provider) => {
+    const key = resolveKey(nativeReport(provider));
+    return key !== null && keys.has(key);
+  });
+}
+// SCIENT-FORK:END
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
