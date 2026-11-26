@@ -35,6 +35,7 @@ import {
   type ScientSavedRoster,
   ScientSavedCopyCreatorCount,
   scientFullerSavedRoster,
+  scientRecordShortOfSavedCopy,
   scientSavedCopyList,
   scientSavedCopyHead,
   scientSavedCopyRoster,
@@ -1393,7 +1394,10 @@ export async function listScientProjectPinnedWorks(input: {
       projectNote,
       pinnedAt: pin.pinnedAt,
       incompleteSnapshot:
-        scientPinCitationStillUnknown(pin.work, found) || (fuller !== null && rosterCut(fuller)),
+        scientPinCitationStillUnknown(pin.work, found) ||
+        (fuller !== null
+          ? rosterCut(fuller)
+          : !whole && scientRecordShortOfSavedCopy(known, pin.work)),
     };
   });
 }

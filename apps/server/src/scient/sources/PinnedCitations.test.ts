@@ -406,10 +406,8 @@ describe("pinned citations travel with the project", () => {
     const projectRoot = NodePath.join(base, "project");
     await NodeFSP.mkdir(projectRoot);
     await initializeScientProject({ root: projectRoot });
-    const record = await add(original, {
-      ...works[0]!,
-      creators: Array.from({ length: 7_992 }, (_, index) => person(`Member${index + 1}`)),
-    });
+    const members = Array.from({ length: 7_992 }, (_, index) => person(`Member${index + 1}`));
+    const record = await add(original, { ...works[0]!, creators: members });
     await pinScientLibrarySource({
       projectRoot,
       library: original,
@@ -440,6 +438,21 @@ describe("pinned citations travel with the project", () => {
     await syncPinnedBibliography({
       root: projectRoot,
       library: collaborator,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(projectRoot)).toEqual(written);
+
+    // A record still marked et al. with more names than the pin keeps, but far fewer than all.
+    const partial = await computer(base, "partial");
+    await add(partial, {
+      ...works[0]!,
+      creators: members.slice(0, 500),
+      incompleteCreatorRoles: ["author"],
+    });
+    await syncPinnedBibliography({
+      root: projectRoot,
+      library: partial,
       access: "write",
       actor: "user",
     });

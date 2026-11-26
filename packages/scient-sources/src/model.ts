@@ -214,6 +214,14 @@ export function scientFullerSavedRoster(
     : null;
 }
 
+/** The record marks its list short, begins as the copy does, and lists fewer than the copy knows. */
+export function scientRecordShortOfSavedCopy(
+  record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
+  copy: ScientSavedRoster,
+): boolean {
+  return stillShortOf(record, copy) && knownLength(copy) > record.creators.length;
+}
+
 const knownLength = (copy: ScientSavedRoster) =>
   Math.max(copy.creators.length, copy.creatorCount ?? 0);
 
