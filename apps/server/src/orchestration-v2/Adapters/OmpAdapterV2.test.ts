@@ -4900,7 +4900,10 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
         );
         assert.isTrue(
           items.some(
-            (item) => item.type === "system_notice" && item.message === "Extension status",
+            (item) =>
+              item.type === "system_notice" &&
+              item.message === "Extension status" &&
+              item.level === "info",
           ),
         );
         assert.isFalse(
