@@ -118,7 +118,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               ...nextSnapshot,
               auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
             },
-        state.snapshot.usageLimits,
+        // SCIENT-FORK: a signed-out snapshot has no account, so it drops the last account's limits.
+        nextSnapshot.auth.status === "unauthenticated" ? undefined : state.snapshot.usageLimits,
       );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
