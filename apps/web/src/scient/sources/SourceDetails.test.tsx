@@ -153,7 +153,7 @@ describe("SourceDetails", () => {
     expect(markup).toContain(">Background<");
   });
 
-  it("keeps metadata-only sources inspectable without offering a PDF action", () => {
+  it("keeps metadata-only sources inspectable and names what was not found quietly", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
         record={{ ...record, attachments: [] }}
@@ -168,6 +168,10 @@ describe("SourceDetails", () => {
     );
 
     expect(markup).not.toContain("Open PDF");
+    expect(markup).toContain("Not found: identifiers");
+    // The server's own English is not shown, and nothing is marked as a warning.
+    expect(markup).not.toContain("No identifier.");
+    expect(markup).not.toContain("Metadata needs review");
   });
 
   it("requires an explicit PDF choice when a Source has several materials", () => {

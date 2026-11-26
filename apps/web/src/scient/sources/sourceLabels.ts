@@ -4,6 +4,7 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
+import { dayLabel } from "./dayLabel";
 import { LIBRARY_LABELS } from "./libraryLabels";
 
 /** A source field's name as a heading or label shows it. */
@@ -51,18 +52,55 @@ type ObservableSourceRecord = {
     | undefined;
 };
 
+/** The server's clock and this one's may differ by this much. */
+const CLOCK_SLACK_MS = 60_000;
+
+/** This window's reads of one Library, in any view: when it first read one, and every source shown. */
+export interface ListObservation {
+  readonly firstReadAt: number;
+  readonly sourceIds: ReadonlySet<string>;
+}
+
+/**
+ * The sources just added: never shown in this window and imported after it first read the
+ * Library, so an agent's additions count whichever view was shown meanwhile. A source shown for
+ * the first time but imported before (another scope listed, one back from the Trash) does not.
+ * With no read before, only an agent's additions of the last `firstReadWindowMs` count.
+ */
 export function newlyObservedSourceIds(
   records: ReadonlyArray<ObservableSourceRecord>,
-  previousIds: ReadonlySet<string> | null,
-  recentCutoff: number,
+  previous: ListObservation | null,
+  now: number,
+  firstReadWindowMs: number,
 ): ReadonlyArray<string> {
+  const since = previous ? previous.firstReadAt - CLOCK_SLACK_MS : now - firstReadWindowMs;
   return records
     .filter((record) => {
       if (record.fromSnapshot) return false;
-      if (previousIds) return !previousIds.has(record.sourceId);
-      return record.origin?.actor === "agent" && Date.parse(record.importedAt) >= recentCutoff;
+      if (!(Date.parse(record.importedAt) >= since)) return false;
+      return previous ? !previous.sourceIds.has(record.sourceId) : record.origin?.actor === "agent";
     })
     .map((record) => record.sourceId);
+}
+
+/**
+ * Records a read of one of `library`'s views in this window's `observations` and answers the
+ * sources just added: a view never decides alone, so a paper shown in the project is not new to
+ * My Library.
+ */
+export function observeLibraryList(
+  observations: Map<string, ListObservation & { readonly sourceIds: Set<string> }>,
+  library: string,
+  records: ReadonlyArray<ObservableSourceRecord>,
+  now: number,
+  firstReadWindowMs: number,
+): ReadonlyArray<string> {
+  const previous = observations.get(library) ?? null;
+  const added = newlyObservedSourceIds(records, previous, now, firstReadWindowMs);
+  if (!previous) observations.set(library, { firstReadAt: now, sourceIds: new Set() });
+  const { sourceIds } = observations.get(library)!;
+  for (const record of records) sourceIds.add(record.sourceId);
+  return added;
 }
 
 const VERIFICATION_LABELS = {
@@ -100,40 +138,16 @@ export function sourcePinLabel(
   return listed === "library" && record.pinned ? ` · ${resolve(LIBRARY_LABELS.inThisProject)}` : "";
 }
 
-/** A PDF that names no title is titled by its file name until its details are found. */
-export function fileNameTitleLabel(
-  record: {
-    readonly fieldProvenance?: ReadonlyArray<{
-      readonly field: string;
-      readonly origin: string;
-      readonly sourceField: string | null;
-    }>;
-  },
-  resolve: MessageResolver = m,
-): string | null {
-  const title = record.fieldProvenance?.findLast((entry) => entry.field === "title");
-  return title?.origin === "local-pdf" && title.sourceField === "file-name"
-    ? resolve(msg("The title is the file name until this paper's details are found."))
-    : null;
-}
-
 export function sourceAddedLabel(
   importedAt: string,
   recentlyAdded: boolean,
-  addedByAgent = false,
   resolve: MessageResolver = m,
 ): string {
-  if (recentlyAdded) {
-    return addedByAgent ? resolve(msg("Just added by an agent")) : resolve(msg("Just added"));
-  }
+  if (recentlyAdded) return resolve(msg("Just added"));
   const date = new Date(importedAt);
   if (Number.isNaN(date.getTime())) return resolve(msg("Added to Scient"));
   if (isSameCalendarDay(date, new Date())) return resolve(msg("Added today"));
-  return resolve(
-    msg("Added {date}", {
-      date: new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date),
-    }),
-  );
+  return resolve(msg("Added {date}", { date: dayLabel(importedAt) }));
 }
 
 export const SCIENT_SOURCE_STUDY_DESIGN_LABELS = {

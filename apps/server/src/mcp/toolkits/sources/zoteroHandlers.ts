@@ -151,7 +151,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
       ? {
           kind: "collection",
           collectionKey: input.collectionKey,
-          includeSubcollections: input.includeSubcollections ?? false,
+          includeSubcollections: input.includeSubcollections ?? true,
         }
       : { kind: "library" };
     const library = input.library ? { groupId: input.library } : {};
@@ -272,7 +272,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
                 ? {
                     kind: "collection",
                     collectionKey: input.collectionKey,
-                    includeSubcollections: input.includeSubcollections ?? false,
+                    includeSubcollections: input.includeSubcollections ?? true,
                   }
                 : { kind: "library" },
               ...(connection ? { connection } : {}),

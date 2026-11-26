@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   agentVerificationLabel,
-  fileNameTitleLabel,
   newlyObservedSourceIds,
+  observeLibraryList,
   sourceAddedLabel,
   sourcePinLabel,
 } from "./sourceLabels";
@@ -11,10 +11,6 @@ import {
 describe("sourceAddedLabel", () => {
   it("prioritizes the transient just-added state", () => {
     expect(sourceAddedLabel("not-a-date", true)).toBe("Just added");
-  });
-
-  it("identifies agent-added sources during the transient state", () => {
-    expect(sourceAddedLabel("not-a-date", true, true)).toBe("Just added by an agent");
   });
 
   it("uses Added today for the current local calendar day", () => {
@@ -48,56 +44,96 @@ describe("agentVerificationLabel", () => {
 });
 
 describe("newlyObservedSourceIds", () => {
-  const recentCutoff = Date.parse("2026-08-30T13:30:00.000Z");
-  const recentUserSource = {
-    sourceId: "recent-user",
-    importedAt: "2026-08-30T13:35:00.000Z",
-    origin: { actor: "user" },
-  };
-  const recentAgentSource = {
-    sourceId: "recent-agent",
-    importedAt: "2026-08-30T13:36:00.000Z",
-    origin: { actor: "agent" },
-  };
-  const newlyAddedUserSource = {
-    sourceId: "new-user",
-    importedAt: "2026-08-30T13:37:00.000Z",
-    origin: { actor: "user" },
-  };
-  const olderSource = {
-    sourceId: "older-user",
-    importedAt: "2026-08-30T12:00:00.000Z",
-    origin: { actor: "user" },
-  };
-
-  it("does not treat recent user records as newly added on the initial overview", () => {
-    expect(newlyObservedSourceIds([recentUserSource, olderSource], null, recentCutoff)).toEqual([]);
+  const TEN_MINUTES = 10 * 60_000;
+  const at = (time: string) => Date.parse(`2026-08-30T${time}:00.000Z`);
+  const source = (sourceId: string, time: string, actor = "user") => ({
+    sourceId,
+    importedAt: `2026-08-30T${time}:00.000Z`,
+    origin: { actor },
+  });
+  const read = (time: string, ...sourceIds: ReadonlyArray<string>) => ({
+    firstReadAt: at(time),
+    sourceIds: new Set(sourceIds),
   });
 
-  it("keeps recent agent additions discoverable on the initial overview", () => {
-    expect(
-      newlyObservedSourceIds([recentUserSource, recentAgentSource], null, recentCutoff),
-    ).toEqual(["recent-agent"]);
+  it("on a tab's first read marks only an agent's additions of the last ten minutes", () => {
+    const records = [
+      source("user-now", "13:35"),
+      source("agent-now", "13:36", "agent"),
+      source("agent-earlier", "13:00", "agent"),
+    ];
+    expect(newlyObservedSourceIds(records, null, at("13:40"), TEN_MINUTES)).toEqual(["agent-now"]);
   });
 
-  it("marks only IDs that appear after an established overview baseline", () => {
+  it("marks what arrived since the window first read the Library, however long ago that was", () => {
+    // Nobody looked for an hour; an agent added a paper forty minutes ago.
+    const records = [source("seen", "12:00"), source("while-away", "13:00", "agent")];
     expect(
-      newlyObservedSourceIds(
-        [olderSource, recentUserSource, newlyAddedUserSource],
-        new Set([olderSource.sourceId, recentUserSource.sourceId]),
-        recentCutoff,
-      ),
-    ).toEqual(["new-user"]);
+      newlyObservedSourceIds(records, read("12:20", "seen"), at("13:40"), TEN_MINUTES),
+    ).toEqual(["while-away"]);
+  });
+
+  it("never marks a source only new to this list: another scope, or one back from the Trash", () => {
+    const records = [source("in-project", "12:00"), source("library-only", "09:00")];
+    expect(
+      newlyObservedSourceIds(records, read("13:39", "in-project"), at("13:40"), TEN_MINUTES),
+    ).toEqual([]);
   });
 
   it("never marks a pin served from its snapshot, as one moved to the Trash is", () => {
+    const records = [{ ...source("snapshot", "13:39"), fromSnapshot: true as const }];
+    expect(newlyObservedSourceIds(records, read("13:30"), at("13:40"), TEN_MINUTES)).toEqual([]);
+  });
+});
+
+describe("observeLibraryList", () => {
+  const TEN_MINUTES = 10 * 60_000;
+  const at = (time: string) => Date.parse(`2026-11-25T${time}:00.000Z`);
+  const source = (sourceId: string, time: string, actor = "user") => ({
+    sourceId,
+    importedAt: `2026-11-25T${time}:00.000Z`,
+    origin: { actor },
+  });
+
+  it("never marks a paper the project showed when the no-project Library opens", () => {
+    const observations = new Map();
+    // The no-project Library was last read while empty; the work then went on in the project.
+    expect(observeLibraryList(observations, "env", [], at("19:27"), TEN_MINUTES)).toEqual([]);
+    const papers = [source("attention", "19:29"), source("neuromorphic", "19:28")];
+    observeLibraryList(observations, "env", papers, at("19:30"), TEN_MINUTES);
+    expect(observeLibraryList(observations, "env", papers, at("19:42"), TEN_MINUTES)).toEqual([]);
+  });
+
+  it("marks what an agent added to My Library while the project was shown, on switching", () => {
+    const observations = new Map();
+    const pinned = source("pinned", "12:00");
+    observeLibraryList(observations, "env", [pinned], at("13:00"), TEN_MINUTES);
+    // The agent's paper is not in the project, so the project's later reads never show it.
+    observeLibraryList(observations, "env", [pinned], at("13:06"), TEN_MINUTES);
     expect(
-      newlyObservedSourceIds(
-        [olderSource, { ...newlyAddedUserSource, fromSnapshot: true as const }],
-        new Set([olderSource.sourceId]),
-        recentCutoff,
+      observeLibraryList(
+        observations,
+        "env",
+        [pinned, source("library-only", "13:03", "agent"), source("old", "09:00")],
+        at("13:10"),
+        TEN_MINUTES,
       ),
-    ).toEqual([]);
+    ).toEqual(["library-only"]);
+  });
+
+  it("marks what an agent added while the window showed no Library", () => {
+    const observations = new Map();
+    const seen = source("seen", "12:00");
+    observeLibraryList(observations, "env", [seen], at("12:20"), TEN_MINUTES);
+    expect(
+      observeLibraryList(
+        observations,
+        "env",
+        [seen, source("while-away", "13:00", "agent")],
+        at("13:40"),
+        TEN_MINUTES,
+      ),
+    ).toEqual(["while-away"]);
   });
 });
 
@@ -110,24 +146,5 @@ describe("sourcePinLabel", () => {
     expect(sourcePinLabel({ pinned: true, fromSnapshot: true }, "project")).toBe(
       " · Not in this Library",
     );
-  });
-});
-
-describe("fileNameTitleLabel", () => {
-  it("speaks only while the title is still the PDF's file name", () => {
-    const fromFile = { field: "title", origin: "local-pdf", sourceField: "file-name" };
-    expect(fileNameTitleLabel({ fieldProvenance: [fromFile] })).not.toBeNull();
-    expect(
-      fileNameTitleLabel({
-        fieldProvenance: [fromFile, { field: "title", origin: "doi", sourceField: "title" }],
-      }),
-    ).toBeNull();
-    expect(
-      fileNameTitleLabel({
-        fieldProvenance: [
-          { field: "title", origin: "local-pdf", sourceField: "document-info/title" },
-        ],
-      }),
-    ).toBeNull();
   });
 });

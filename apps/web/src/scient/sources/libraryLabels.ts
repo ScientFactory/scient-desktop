@@ -23,7 +23,6 @@ export const LIBRARY_LABELS = {
   removeFromProject: msg("Remove from this project"),
   projectNote: msg("Note for this project"),
   myNote: msg("My note"),
-  myNoteHelp: msg("Follows this paper into every project. It is not saved in any project folder."),
   unread: msg("Unread", { $context: "reading status of a source" }),
   starred: msg("Starred", { $context: "a source marked with a star" }),
   markRead: msg("Mark read"),
@@ -40,14 +39,12 @@ export const LIBRARY_LABELS = {
   stayInLibrary: msg("They stay in your Library."),
   staysInLibrary: msg("It stays in your Library."),
   removeSnapshot: msg("Remove a source this Library does not have?"),
-  removeSnapshotHelp: msg(
-    "This computer's Library does not have it: it is only kept for this project. Removing it cannot be undone here, and it cannot be added back from this computer.",
-  ),
+  removeSnapshotHelp: msg("It cannot be added back from this computer."),
   libraryCopy: msg("Library copy"),
   linkToCopy: msg("Link to this Library copy"),
   keepSeparate: msg("Keep separate"),
   askAgain: msg("Ask again"),
-  keptSeparate: msg("You kept this separate from the Library copies below."),
+  keptSeparate: msg("Kept separate."),
   linked: msg("Linked to the Library copy"),
   linkedHelp: msg("Its citation key, project note and reviews stay as they were."),
   unlinked: msg("Link undone"),
@@ -77,23 +74,11 @@ export function libraryCopyLabel(
   resolve: MessageResolver = m,
 ): string {
   if (match.reason === "ambiguous") {
-    return resolve(
-      msg(
-        "Your Library has several copies that match, so this project's own details are used until you choose one.",
-      ),
-    );
+    return resolve(msg("Several copies in your Library match."));
   }
   return match.candidates.length === 1
-    ? resolve(
-        msg(
-          "Your Library has a similar copy, but it differs from what this project recorded, so this project's own details are used.",
-        ),
-      )
-    : resolve(
-        msg(
-          "Your Library has similar copies, but they differ from what this project recorded, so this project's own details are used.",
-        ),
-      );
+    ? resolve(msg("Your Library's copy differs from this project's details."))
+    : resolve(msg("Your Library's copies differ from this project's details."));
 }
 
 export function libraryCopyProblemLabel(
@@ -105,34 +90,15 @@ export function libraryCopyProblemLabel(
     : resolve(msg("It matches this project's details."));
 }
 
-/**
- * The empty list's title and how to fill it. `listed` is absent on a server without a personal
- * Library. When My Library has sources, the panel adds Choose from Library itself.
- */
+/** The empty list's title. `listed` is absent on a server without a personal Library. */
 export function emptySourcesLabel(
   listed: ScientSourcesScope | undefined,
   resolve: MessageResolver = m,
-): {
-  readonly title: string;
-  readonly description: string;
-} {
-  if (listed === "library") {
-    return {
-      title: resolve(msg("No sources in My Library")),
-      description: resolve(
-        msg("Import PDFs, a reference file or sources from Zotero to build your Library."),
-      ),
-    };
-  }
-  return {
-    title:
-      listed === "project"
-        ? resolve(msg("No sources in this project"))
-        : resolve(msg("No sources yet")),
-    description: resolve(
-      msg("Import PDFs, a reference file or sources from Zotero to add them to this project."),
-    ),
-  };
+): string {
+  if (listed === "library") return resolve(msg("No sources in My Library"));
+  return listed === "project"
+    ? resolve(msg("No sources in this project"))
+    : resolve(msg("No sources yet"));
 }
 
 /** Under the panel's title when the Library shown is another computer's, named as the app names it. */
@@ -174,11 +140,7 @@ export function removeSnapshotsLabel(count: number, resolve: MessageResolver = m
 export function removeSnapshotsHelp(count: number, resolve: MessageResolver = m): string {
   return count === 1
     ? resolve(LIBRARY_LABELS.removeSnapshotHelp)
-    : resolve(
-        msg(
-          "This computer's Library does not have them: they are only kept for this project. Removing them cannot be undone here, and they cannot be added back from this computer.",
-        ),
-      );
+    : resolve(msg("They cannot be added back from this computer."));
 }
 
 /** Toast line when removed sources were only kept for this project; any others stay in the Library. */
@@ -192,36 +154,17 @@ export function goneFromComputerLabel(count: number, resolve: MessageResolver = 
       );
 }
 
-/** After a move to Trash: other projects keep the source as their saved citation details. */
+/** After a move to Trash: the Trash is the Library's, so other projects lose the source too. */
 export function alsoInOtherProjectsLabel(
   projects: number | undefined,
   resolve: MessageResolver = m,
 ): string | null {
   if (!projects) return null;
   return resolve(
-    msg(
-      "{count, plural, =1 {Also in 1 other project, which keeps its citation details.} other {Also in {count} other projects, which keep its citation details.}}",
-      { count: projects },
-    ),
+    msg("{count, plural, =1 {Also in 1 other project.} other {Also in {count} other projects.}}", {
+      count: projects,
+    }),
   );
-}
-
-/** Before deleting for good: the projects that keep citing the sources from their own copy. */
-export function stillCitedInLabel(
-  projects: ReadonlyArray<string>,
-  resolve: MessageResolver = m,
-): string | null {
-  if (projects.length === 0) return null;
-  const names = new Intl.ListFormat("en", { type: "conjunction" }).format(projects);
-  return projects.length === 1
-    ? resolve(
-        msg("Still cited in {names}: it keeps the citation details from its own copy.", { names }),
-      )
-    : resolve(
-        msg("Still cited in {names}: they keep the citation details from their own copies.", {
-          names,
-        }),
-      );
 }
 
 export function someAlsoInOtherProjectsLabel(
@@ -230,7 +173,7 @@ export function someAlsoInOtherProjectsLabel(
 ): string {
   return resolve(
     msg(
-      "{count, plural, =1 {1 of them is also in other projects, which keep its citation details.} other {{count} of them are also in other projects, which keep their citation details.}}",
+      "{count, plural, =1 {1 of them is also in other projects.} other {{count} of them are also in other projects.}}",
       { count: sourceCount },
     ),
   );

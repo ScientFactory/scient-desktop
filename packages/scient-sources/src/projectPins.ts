@@ -50,13 +50,20 @@ import {
   type ScientProjectNoteChange,
   type ScientProjectNoteVersion,
 } from "./projectNoteHistory.ts";
+import { isSettled } from "./folderIndex.ts";
 import {
-  isSettled,
   listScientSourceRecords,
   readScientSourceRecord,
   scientSourceStoreInternals,
 } from "./store.ts";
-import { atomicWriteJson, snapshot } from "./storeFiles.ts";
+import {
+  atomicWriteJson,
+  extraFields,
+  isJsonObject,
+  type JsonObject,
+  snapshot,
+  sortedExtra,
+} from "./storeFiles.ts";
 
 const SCIENT_PROJECT_LIBRARY_PATH = [".scient", "library"] as const;
 const SCIENT_PROJECT_PINS_PATH = [...SCIENT_PROJECT_LIBRARY_PATH, "pins.json"] as const;
@@ -118,8 +125,6 @@ const PinsFileHeader = Schema.Struct({
 const decodePinsHeader = Schema.decodeUnknownSync(PinsFileHeader);
 const decodePin = Schema.decodeUnknownSync(ScientProjectPin);
 
-type JsonObject = Readonly<Record<string, unknown>>;
-
 /** A pin with the fields a newer Scient wrote, which every rewrite keeps. */
 interface StoredPin {
   readonly pin: ScientProjectPin;
@@ -137,22 +142,6 @@ interface PinsDocument {
 const PIN_FIELDS = Object.keys(ScientProjectPin.fields);
 const WORK_FIELDS = Object.keys(ScientPinWork.fields);
 const FILE_FIELDS = Object.keys(PinsFileHeader.fields);
-
-const isJsonObject = (value: unknown): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-function extraFields(value: unknown, known: ReadonlyArray<string>): JsonObject {
-  if (!isJsonObject(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.includes(key)));
-}
-
-function sortedExtra(extra: JsonObject): JsonObject {
-  return Object.fromEntries(
-    Object.keys(extra)
-      .toSorted()
-      .map((key) => [key, extra[key]]),
-  );
-}
 
 function encodeWork(work: ScientPinWork, extra: JsonObject) {
   return {
@@ -627,6 +616,65 @@ export async function unpinScientLibrarySource(input: {
       document.pins.filter((stored) => stored !== found),
     );
     return { outcome: "unpinned", pin: found.pin };
+  });
+}
+
+/**
+ * Takes the paper `citationKey` names out of the project under every key it has here (a merge can
+ * leave it two); `alsoUnpinned` names the others. They are found under the same lock that removes
+ * them, so a key another window gave to a different paper meanwhile stays.
+ */
+export async function unpinScientProjectWork(input: {
+  readonly projectRoot: string;
+  /** Null without a Library: only `citationKey` goes. */
+  readonly library: ScientLibraryLocation | null;
+  readonly citationKey: string;
+  readonly actor: ScientSourceActor;
+}): Promise<
+  | {
+      readonly outcome: "unpinned";
+      readonly pin: ScientProjectPin;
+      readonly alsoUnpinned: ReadonlyArray<string>;
+    }
+  | { readonly outcome: "not-pinned" }
+> {
+  const root = await projectRootFor(input.projectRoot);
+  return withPinsLock(root, async () => {
+    const document = await readPinsDocument(root);
+    const named = findPin(document.pins, input.citationKey);
+    if (!named) return { outcome: "not-pinned" };
+    const resolutions = input.library
+      ? await resolvePinsRead(input.library, root, document.pins)
+      : [];
+    const workOf = (index: number) => {
+      const resolution = resolutions[index];
+      return resolution?.kind === "resolved" ? resolution.sourceId : null;
+    };
+    const work = workOf(document.pins.indexOf(named));
+    const removed = new Set(
+      document.pins.filter(
+        (stored, index) => stored === named || (work !== null && workOf(index) === work),
+      ),
+    );
+    for (const { pin } of removed) {
+      if (pin.note === undefined) continue;
+      const { next: _keep, ...kept } = noteChange(pin, undefined, input.actor, undefined);
+      await recordScientProjectNoteChange(root, kept);
+    }
+    await writePinsDocument(
+      root,
+      document,
+      document.pins.filter((stored) => !removed.has(stored)),
+    );
+    return {
+      outcome: "unpinned",
+      pin: named.pin,
+      alsoUnpinned: [...removed]
+        .filter((stored) => stored !== named)
+        .map(({ pin }) => pin)
+        .toSorted(comparePins)
+        .map((pin) => pin.citationKey),
+    };
   });
 }
 

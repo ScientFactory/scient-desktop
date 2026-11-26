@@ -1224,12 +1224,17 @@ export const ScientSourceRestoreRequest = Schema.Struct({
 });
 export type ScientSourceRestoreRequest = typeof ScientSourceRestoreRequest.Type;
 
-/** Without sourceIds the whole trash is emptied. */
+/**
+ * `removalIds` name Trash entries by their listed `removalId`. Without them the whole trash is
+ * emptied, only while it is still the listing whose `revision` is `trashRevision`; otherwise the
+ * outcome is `changed` and nothing is deleted.
+ */
 export const ScientSourcesPermanentDeletionRequest = Schema.Struct({
   root: NonEmptyString,
-  sourceIds: Schema.optionalKey(
+  removalIds: Schema.optionalKey(
     Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
   ),
+  trashRevision: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourcesPermanentDeletionRequest =
   typeof ScientSourcesPermanentDeletionRequest.Type;
@@ -1512,6 +1517,8 @@ export const ScientSourcesOverviewResult = Schema.Struct({
    * its own folder (not moved yet, or moved back), which has no `scopes`: ask `moveStatus`.
    */
   libraryBackend: Schema.optionalKey(Schema.Literal(true)),
+  /** The project keeps a sealed copy of its sources from before a move into the Library. */
+  preMoveCopy: Schema.optionalKey(Schema.Literal(true)),
   /**
    * Notices the weekly check put on the Library's sources (`added`) or took off them
    * (`withdrawn`) that the person has not dismissed; of the whole Library, whatever the scope.

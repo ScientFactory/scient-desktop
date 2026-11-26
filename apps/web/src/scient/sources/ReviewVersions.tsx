@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { toastManager } from "../../components/ui/toast";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import {
   REVIEW_VERSION_LABELS,
   STAGE_WORDS,
@@ -258,7 +258,7 @@ export function ReviewVersionsLine(props: {
     setDifferences(new Map());
     const next = await props.reviews.readConflicts(props.reviewId).catch((cause: unknown) => {
       if (read === latestRead.current) {
-        setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+        setError(sourcesErrorMessage(cause));
       }
       return null;
     });

@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { isScientLibraryLocation, type ScientSourceStoreLocation } from "./libraryRoot.ts";
+import { isNodeError } from "./storeFiles.ts";
 
 export const SCIENT_SOURCE_TEXT_DIRECTORY = ".scient/sources/text/sha256";
 
@@ -115,10 +116,6 @@ export async function resolveScientProjectFile(
     relativePath: NodePath.relative(canonicalRoot, absolutePath).split(NodePath.sep).join("/"),
     fileName: NodePath.basename(absolutePath),
   };
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
 }
 
 /**

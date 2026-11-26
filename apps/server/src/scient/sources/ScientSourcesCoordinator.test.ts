@@ -506,7 +506,7 @@ describe("ScientSourcesCoordinator", () => {
         sourceId: record.sourceId,
         attachmentId: "pdf_missing",
       }),
-    ).rejects.toThrow("The source attachment was not found in this project.");
+    ).rejects.toThrow("The source attachment was not found.");
   });
 
   it("names a byte-identical PDF under another title during preflight, as the import does", async () => {

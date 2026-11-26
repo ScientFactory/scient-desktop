@@ -15,10 +15,22 @@ export interface ScientSourceSearchEntry {
   readonly searchable: string;
 }
 
+// The panel derives its list on every render; these are the parts that cost tens of milliseconds
+// at 20,000 rows, kept until their input changes.
+const searchIndexes = new WeakMap<
+  ReadonlyArray<SourceSummary>,
+  ReadonlyArray<ScientSourceSearchEntry>
+>();
+
+/** One index per list the server sent: a list is never changed once received. */
 export function indexScientSourceSummaries(
   sources: ReadonlyArray<SourceSummary>,
 ): ReadonlyArray<ScientSourceSearchEntry> {
-  return sources.map((source) => ({ source, searchable: scientSourceSearchText(source) }));
+  const known = searchIndexes.get(sources);
+  if (known) return known;
+  const index = sources.map((source) => ({ source, searchable: scientSourceSearchText(source) }));
+  searchIndexes.set(sources, index);
+  return index;
 }
 
 export function filterScientSourceSearchIndex(
@@ -78,8 +90,30 @@ function sortKey(source: SourceSummary, sort: ScientSourceSort): number | string
   }
 }
 
-/** A source without the sorted value goes last; title, then source ID, break ties. */
+let lastSorted: {
+  readonly sources: ReadonlyArray<SourceSummary>;
+  readonly sort: ScientSourceSort;
+  readonly sorted: ReadonlyArray<SourceSummary>;
+} | null = null;
+
+const sameRows = (left: ReadonlyArray<SourceSummary>, right: ReadonlyArray<SourceSummary>) =>
+  left.length === right.length && left.every((source, index) => source === right[index]);
+
+/**
+ * A source without the sorted value goes last; title, then source ID, break ties. The same rows
+ * sorted the same way again (a filter gives a new list of the same rows) get the last answer.
+ */
 export function sortScientSourceRecords(
+  sources: ReadonlyArray<SourceSummary>,
+  sort: ScientSourceSort,
+): ReadonlyArray<SourceSummary> {
+  if (lastSorted?.sort === sort && sameRows(lastSorted.sources, sources)) return lastSorted.sorted;
+  const sorted = sortRows(sources, sort);
+  lastSorted = { sources, sort, sorted };
+  return sorted;
+}
+
+function sortRows(
   sources: ReadonlyArray<SourceSummary>,
   sort: ScientSourceSort,
 ): ReadonlyArray<SourceSummary> {

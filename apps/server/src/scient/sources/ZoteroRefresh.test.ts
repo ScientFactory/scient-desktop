@@ -15,6 +15,7 @@ import {
   updateScientSourceMetadata,
   updateScientSourceExternalReferences,
   updateScientSourceNote,
+  scientSourceStoreInternals,
   writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
@@ -401,6 +402,248 @@ describe("Zotero refresh", () => {
     expect(
       (await refreshZoteroSources({ root, actor: "user", zotero })).items[0]?.conflicts,
     ).toEqual([]);
+  });
+
+  it("brings Zotero's new details, note and version as one version of the source", async () => {
+    const { root, library, zotero, record } = await importedFromZotero(original, [
+      zoteroItem("NOTE2345", { itemType: "note", note: "<p>First</p>" }),
+    ]);
+    library.items.set("ABCD2345", {
+      item: { ...original, version: 4, data: { ...original.data, version: 4, title: "Retitled" } },
+      children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>Revised</p>" })],
+    });
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect(result.items[0]).toMatchObject({ outcome: "updated", changedFields: ["title", "note"] });
+    const after = await readScientSourceRecord(root, record.sourceId);
+    expect(after).toMatchObject({
+      title: "Retitled",
+      note: "Revised",
+      revision: record.revision + 1,
+    });
+    expect(after?.externalReferences[0]?.itemVersion).toBe(4);
+  });
+
+  it("says a source changed here during its refresh is stale, and keeps its base", async () => {
+    const { root, library, record } = await importedFromZotero(original);
+    const pdfPath = NodePath.join(root, "new.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nnew\n", "utf8");
+    library.items.set("ABCD2345", {
+      item: { ...original, version: 4, data: { ...original.data, version: 4 } },
+      children: [
+        zoteroItem("PDFA2345", {
+          itemType: "attachment",
+          contentType: "application/pdf",
+          filename: "new.pdf",
+        }),
+      ],
+    });
+    const transport = fakeZoteroTransport({ ...library, files: new Map([["PDFA2345", pdfPath]]) });
+    const base = await readScientSourceZoteroSync(root, record.sourceId);
+    const editedMeanwhile = fakeZoteroAccess({
+      ...transport,
+      attachmentFile: async (attachment) => {
+        await editHere(root, record.sourceId, { title: "Edited here meanwhile" });
+        return transport.attachmentFile(attachment);
+      },
+    });
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero: editedMeanwhile });
+
+    expect(result.items[0]?.outcome).toBe("stale");
+    expect(await readScientSourceZoteroSync(root, record.sourceId)).toEqual(base);
+    expect((await readScientSourceRecord(root, record.sourceId))?.title).toBe(
+      "Edited here meanwhile",
+    );
+  });
+
+  it("keeps a source's note and its base in step when two refreshes overlap", async () => {
+    const noted = (text: string) => [
+      zoteroItem("NOTE2345", { itemType: "note", note: `<p>${text}</p>` }),
+    ];
+    const { root, library, record } = await importedFromZotero(original, noted("First"));
+    const pdfPath = NodePath.join(root, "new.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nnew\n", "utf8");
+    const withPdf = (text: string): FakeZoteroLibrary => ({
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: original,
+            children: [
+              ...noted(text),
+              zoteroItem("PDFA2345", {
+                itemType: "attachment",
+                contentType: "application/pdf",
+                filename: "new.pdf",
+              }),
+            ],
+          },
+        ],
+      ]),
+      files: new Map([["PDFA2345", pdfPath]]),
+    });
+    const refresh = (zotero: ReturnType<typeof fakeZoteroAccess>) =>
+      refreshZoteroSources({ root, sourceIds: [record.sourceId], actor: "user", zotero });
+
+    // The first refresh reads note "First" and waits; Zotero's note becomes "Second".
+    const firstRead = Promise.withResolvers<void>();
+    const firstGoes = Promise.withResolvers<void>();
+    const before = fakeZoteroTransport(library);
+    const first = refresh(
+      fakeZoteroAccess({
+        ...before,
+        get: async (path) => {
+          const response = await before.get(path);
+          if (path.includes("/children")) {
+            firstRead.resolve();
+            await firstGoes.promise;
+          }
+          return response;
+        },
+      }),
+    );
+    await firstRead.promise;
+    // The second reads "Second" and a new PDF; the first finishes while that PDF comes.
+    const after = fakeZoteroTransport(withPdf("Second"));
+    await refresh(
+      fakeZoteroAccess({
+        ...after,
+        attachmentFile: async (attachment) => {
+          firstGoes.resolve();
+          await first;
+          return after.attachmentFile(attachment);
+        },
+      }),
+    );
+
+    const next = await refresh(fakeZoteroAccess(fakeZoteroTransport(withPdf("Third"))));
+
+    expect(next.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("Third");
+  });
+
+  it("adds no PDF when Zotero's details are refused as another source's", async () => {
+    const other = zoteroItem("EFGH2345", { version: 3, title: "Other", DOI: "10.1000/other" });
+    const { root, library, record } = await importedFromZotero(original);
+    library.items.set(other.key, { item: other, children: [] });
+    const zotero = fakeZoteroAccess(fakeZoteroTransport(library));
+    await beginZoteroScopedImport({
+      root,
+      operationId: "other",
+      scope: { kind: "library" },
+      zotero,
+    });
+    while ((await advanceSourceImport({ root, operationId: "other", zotero })).state === "running");
+    const pdfPath = NodePath.join(root, "new.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nnew\n", "utf8");
+    library.items.set("ABCD2345", {
+      item: {
+        ...original,
+        version: 4,
+        data: { ...original.data, version: 4, DOI: "10.1000/other" },
+      },
+      children: [
+        zoteroItem("PDFA2345", {
+          itemType: "attachment",
+          contentType: "application/pdf",
+          filename: "new.pdf",
+        }),
+      ],
+    });
+    const base = await readScientSourceZoteroSync(root, record.sourceId);
+
+    const result = await refreshZoteroSources({
+      root,
+      sourceIds: [record.sourceId],
+      actor: "user",
+      zotero: fakeZoteroAccess(
+        fakeZoteroTransport({ ...library, files: new Map([["PDFA2345", pdfPath]]) }),
+      ),
+    });
+
+    expect(result.items[0]).toMatchObject({ outcome: "failed", addedPdfCount: 0 });
+    expect(await readScientSourceRecord(root, record.sourceId)).toEqual(record);
+    expect(await readScientSourceZoteroSync(root, record.sourceId)).toEqual(base);
+  });
+
+  it("keeps the note and its base in step when the base cannot be written", async (context) => {
+    const noted = (text: string) => ({
+      item: original,
+      children: [zoteroItem("NOTE2345", { itemType: "note", note: `<p>${text}</p>` })],
+    });
+    const { root, library, record } = await importedFromZotero(original, noted("First").children);
+    const refresh = (zotero = fakeZoteroAccess(fakeZoteroTransport(library))) =>
+      refreshZoteroSources({ root, sourceIds: [record.sourceId], actor: "user", zotero });
+    library.items.set("ABCD2345", noted("Second"));
+    await refresh();
+    const paths = await scientSourceStoreInternals.sourceStorePaths(root);
+    const folder = NodePath.dirname(
+      scientSourceStoreInternals.zoteroSyncPath(paths, record.sourceId),
+    );
+
+    // Where a folder's permissions do not stop writes (Windows, or as root), this cannot fail.
+    const probe = NodePath.join(folder, "probe");
+    await NodeFSP.chmod(folder, 0o500);
+    const enforced = await NodeFSP.writeFile(probe, "").then(
+      () => false,
+      () => true,
+    );
+    await NodeFSP.chmod(folder, 0o700);
+    await NodeFSP.rm(probe, { force: true });
+    if (!enforced) return context.skip();
+
+    // Zotero's note changes and the folder of bases cannot be written while it is brought.
+    library.items.set("ABCD2345", noted("Third"));
+    const transport = fakeZoteroTransport(library);
+    try {
+      const failing = await refresh(
+        fakeZoteroAccess({
+          ...transport,
+          get: async (path) => {
+            const response = await transport.get(path);
+            if (path.includes("/children")) await NodeFSP.chmod(folder, 0o500);
+            return response;
+          },
+        }),
+      );
+      expect(failing.items[0]?.outcome).toBe("failed");
+    } finally {
+      await NodeFSP.chmod(folder, 0o700);
+    }
+
+    library.items.set("ABCD2345", noted("Fourth"));
+    const next = await refresh();
+
+    expect(next.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("Fourth");
+  });
+
+  it("refreshes every source in one call, batch after batch", async () => {
+    const second = zoteroItem("EFGH2345", { version: 3, title: "Second", DOI: "10.1000/second" });
+    const { root, library, zotero } = await importedFromZotero(original);
+    library.items.set(second.key, { item: second, children: [] });
+    await beginZoteroScopedImport({
+      root,
+      operationId: "more",
+      scope: { kind: "library" },
+      zotero,
+    });
+    let state = "running";
+    while (state === "running") {
+      state = (await advanceSourceImport({ root, operationId: "more", zotero })).state;
+    }
+    for (const [key, { item }] of library.items) {
+      library.items.set(key, {
+        item: { ...item, version: 4, data: { ...item.data, version: 4, abstractNote: "New." } },
+        children: [],
+      });
+    }
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero, batchSize: 1 });
+
+    expect(result.items.map((item) => item.outcome)).toEqual(["updated", "updated"]);
   });
 
   it("does not undo an edit here when Zotero did not change that field", async () => {

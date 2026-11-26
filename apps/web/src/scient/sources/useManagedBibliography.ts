@@ -4,7 +4,7 @@ import type {
   ScientManagedBibliographyStatus,
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 
@@ -21,6 +21,8 @@ export function useManagedBibliography(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly records: ScientSourcesOverviewResult["records"] | null;
+  /** The scope the records are of; switching it changes the rows, not the Library. */
+  readonly scope?: string | undefined;
   /** Called after hand-edited entries were imported, so the Library list can refresh. */
   readonly onImported?: () => void;
 }) {
@@ -37,10 +39,20 @@ export function useManagedBibliography(input: {
   const [replacing, setReplacing] = useState(false);
   const context = `${input.environmentId}\0${input.root}`;
   const canChange = useCanChangeLibrary(input.environmentId);
+  /** The version last seen for each scope here, so the first look at another scope is no change. */
+  const seen = useRef<{ readonly context: string; readonly byScope: Map<string, string> } | null>(
+    null,
+  );
+  const scope = input.scope ?? "";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the managed files live on the server; a Library change there is what makes them worth reading again
   useEffect(() => {
     if (libraryVersion === null) return;
+    if (seen.current?.context !== context) seen.current = { context, byScope: new Map() };
+    const { byScope } = seen.current;
+    const before = byScope.get(scope);
+    byScope.set(scope, libraryVersion);
+    if (before === libraryVersion || (before === undefined && byScope.size > 1)) return;
     publishLibraryVersion(input.root, libraryVersion);
     if (!canChange) return;
     let current = true;
@@ -55,7 +67,7 @@ export function useManagedBibliography(input: {
     return () => {
       current = false;
     };
-  }, [canChange, context, input.environmentId, input.root, libraryVersion]);
+  }, [canChange, context, input.environmentId, input.root, libraryVersion, scope]);
 
   const resolve = useStableCallback(
     async (name: ScientManagedBibliographyFileName, action: "replace" | "import") => {

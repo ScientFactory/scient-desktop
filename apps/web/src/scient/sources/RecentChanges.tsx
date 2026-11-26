@@ -11,7 +11,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
-  DialogDescription,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -23,7 +22,7 @@ import {
   readScientSourceRecentChanges,
   restoreScientSource,
 } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import { JOIN_DIFFERENCES_LABELS } from "./joinDifferenceLabels";
 import { undoProblem, unrevertedLabel } from "./libraryDuplicateLabels";
 import {
@@ -39,7 +38,6 @@ import { PackageImportsDialog } from "./PackageImportsDialog";
 
 const PAGE = 50;
 const MOST = 400;
-const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 /**
  * What an import read and did not bring, read from the import's record when it is opened:
@@ -66,7 +64,7 @@ function NotBrought(props: {
       notBroughtOfImport: props.importId,
     }).then(
       (answer) => setLines(answer.importNotBrought ?? []),
-      (cause: unknown) => setProblem(errorMessage(cause)),
+      (cause: unknown) => setProblem(sourcesErrorMessage(cause)),
     );
   };
   return (
@@ -95,8 +93,7 @@ function NotBrought(props: {
       ) : null}
       {open && lines && lines.length > 0 ? (
         <div className="mt-1 text-xs">
-          <p className="text-muted-foreground">{m(RECENT_CHANGES_LABELS.notBroughtAbout)}</p>
-          <ul className="mt-1 space-y-0.5">
+          <ul className="space-y-0.5">
             {lines.map((line) => (
               <li key={line.what} className="flex items-center justify-between gap-2">
                 <span className="min-w-0 break-words">
@@ -160,6 +157,8 @@ export function RecentChangesDialog(props: {
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [packageImportsOpen, setPackageImportsOpen] = useState(false);
+  /** Whether this project has package imports to show; until the answer, the row waits. */
+  const [hasPackageImports, setHasPackageImports] = useState<boolean | null>(null);
   const latest = useRef(0);
   // The newest request's answer is the one shown, whether asked on opening or after an action.
   const load = useStableCallback(
@@ -172,10 +171,29 @@ export function RecentChangesDialog(props: {
         setListed(result);
         setError(null);
       } catch (cause) {
-        if (asked === latest.current) setError(errorMessage(cause));
+        if (asked === latest.current) setError(sourcesErrorMessage(cause));
       }
     },
   );
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment once whether this project has package imports, so an empty list is not offered
+  useEffect(() => {
+    let active = true;
+    void organizeScientSources(environmentId, { root, change: { action: "list-package-imports" } })
+      .then(
+        (result) =>
+          (result.packageImports?.length ?? 0) > 0 ||
+          (result.packageImportDiagnostics?.length ?? 0) > 0,
+        // Unknown: offered, so a problem with them can still be opened.
+        () => true,
+      )
+      .then((has) => {
+        if (active) setHasPackageImports(has);
+      });
+    return () => {
+      active = false;
+    };
+  }, [environmentId, root]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the recorded changes from the environment when the dialog opens and when more are asked for
   useEffect(() => {
@@ -190,7 +208,7 @@ export function RecentChangesDialog(props: {
         try {
           setNotice(await work());
         } catch (cause) {
-          setNotice(errorMessage(cause));
+          setNotice(sourcesErrorMessage(cause));
         }
         await props.onChanged().catch(() => undefined);
         await load({ root, limit });
@@ -240,7 +258,7 @@ export function RecentChangesDialog(props: {
                     props.onShowSources(result.importSourceIds ?? []);
                     props.onClose();
                   })
-                  .catch((cause: unknown) => setNotice(errorMessage(cause))),
+                  .catch((cause: unknown) => setNotice(sourcesErrorMessage(cause))),
               () => setWorking(false),
             );
           },
@@ -302,7 +320,6 @@ export function RecentChangesDialog(props: {
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{m(RECENT_CHANGES_LABELS.title)}</DialogTitle>
-          <DialogDescription>{m(RECENT_CHANGES_LABELS.coverage)}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {notice ? (
@@ -342,9 +359,7 @@ export function RecentChangesDialog(props: {
                   >
                     <div className="min-w-0">
                       <p className="break-words">{sentence}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {recentChangeBy(change, m)} · {new Date(change.at).toLocaleString()}
-                      </p>
+                      <p className="text-xs text-muted-foreground">{recentChangeBy(change, m)}</p>
                       {recentChangeDetail(change, m) ? (
                         <p className="text-xs break-words text-muted-foreground">
                           {recentChangeDetail(change, m)}
@@ -447,23 +462,16 @@ export function RecentChangesDialog(props: {
           ) : listed?.more ? (
             <p className="mt-3 text-xs text-muted-foreground">{m(RECENT_CHANGES_LABELS.noOlder)}</p>
           ) : null}
-          <section
-            aria-label={m(RECENT_CHANGES_LABELS.packageImports)}
-            className="mt-4 border-t border-border pt-3 text-sm"
-          >
-            <h3 className="font-medium">{m(RECENT_CHANGES_LABELS.packageImports)}</h3>
-            <p className="text-xs text-muted-foreground">
-              {m(RECENT_CHANGES_LABELS.packageImportsAbout)}
-            </p>
-            <Button
-              className="mt-1"
-              size="xs"
-              variant="outline"
-              onClick={() => setPackageImportsOpen(true)}
+          {hasPackageImports ? (
+            <section
+              aria-label={m(RECENT_CHANGES_LABELS.packageImports)}
+              className="mt-4 border-t border-border pt-3 text-sm"
             >
-              {m(RECENT_CHANGES_LABELS.openPackageImports)}
-            </Button>
-          </section>
+              <Button size="xs" variant="outline" onClick={() => setPackageImportsOpen(true)}>
+                {m(RECENT_CHANGES_LABELS.openPackageImports)}
+              </Button>
+            </section>
+          ) : null}
         </DialogPanel>
         {packageImportsOpen ? (
           <PackageImportsDialog

@@ -5,6 +5,7 @@ import { Check, Copy } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { dayLabel } from "./dayLabel";
 import { SOURCE_FIELD_LABELS } from "./sourceLabels";
 
 type KeptCopy = NonNullable<ScientSourceDetailResult["keptCopies"]>[number];
@@ -78,11 +79,7 @@ export function KeptCopies(props: { readonly copies: ReadonlyArray<KeptCopy> }) 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        <T>
-          When a merge was undone, this project's saved details were replaced by this source's own
-          record. These values were different, so Scient kept them. Nothing is put back on its own:
-          copy what you need.
-        </T>
+        <T>Kept from before a merge was undone. Copy what you need.</T>
       </p>
       {props.copies.map((copy) => {
         const holder =
@@ -91,9 +88,7 @@ export function KeptCopies(props: { readonly copies: ReadonlyArray<KeptCopy> }) 
               ? gt("In the review “{name}”", { name: copy.holderName })
               : gt("In a review")
             : gt("Cited as {key}", { key: copy.heldBy });
-        const when = new Date(copy.undoneAt).toLocaleDateString(undefined, {
-          dateStyle: "medium",
-        });
+        const when = dayLabel(copy.undoneAt);
         return (
           <section
             key={`${copy.holder}:${copy.heldBy}:${copy.undoneAt}`}

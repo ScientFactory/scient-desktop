@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { cn } from "../../lib/utils";
+import { changedDraftFields, rebaseSourceDraft } from "./sourceEditorDraft";
 import { useSourceEditor } from "./useSourceEditor";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import {
@@ -252,13 +253,43 @@ export function SourceEditor(props: {
     invalidCustomType ||
     invalidUrl ||
     invalidCitationKey;
+  // A newer record (a stale save's answer, or a change made elsewhere) takes the draft along: the
+  // fields the person changed stay theirs, the rest show the newer record, and Save works again.
+  // A project key renamed elsewhere changes no revision.
+  const [base, setBase] = useState({ revision: props.record.revision, metadata: originalMetadata });
+  const [rebased, setRebased] = useState(false);
+  if (
+    base.revision !== props.record.revision ||
+    base.metadata.citationKey !== originalMetadata.citationKey
+  ) {
+    const changed = changedDraftFields(base.metadata, effectiveMetadata);
+    const next = rebaseSourceDraft(base.metadata, effectiveMetadata, originalMetadata);
+    setBase({ revision: props.record.revision, metadata: originalMetadata });
+    setMetadata(changed.has("more") ? { ...next, more } : next);
+    if (!changed.has("issuedYear")) {
+      setYearText(next.issuedYear === null ? "" : String(next.issuedYear));
+    }
+    if (!changed.has("tags")) setTagsText(next.tags.join("\n"));
+    if (!changed.has("creators")) {
+      setCreatorKeys(next.creators.map((_, index) => `creator-${props.record.revision}-${index}`));
+    }
+    if (!changed.has("identifiers")) {
+      setIdentifierKeys(
+        next.identifiers.map((_, index) => `identifier-${props.record.revision}-${index}`),
+      );
+    }
+    setRebased(changed.size > 0);
+    editor.clearResult();
+  }
   const stale = editor.result?.outcome === "stale";
 
   const save = async (allowPossibleMetadataMatch = false) => {
     if (invalid || !dirty || editor.saving || stale) return;
+    // A key is sent only as a rename the person made: the server renames the pin to any key sent.
+    const { citationKey, ...withoutKey } = effectiveMetadata;
     const result = await editor.save(
       props.record.revision,
-      effectiveMetadata,
+      citationKey === base.metadata.citationKey ? withoutKey : effectiveMetadata,
       allowPossibleMetadataMatch,
     );
     if (result?.outcome === "updated" || result?.outcome === "unchanged") {
@@ -270,7 +301,9 @@ export function SourceEditor(props: {
           description: skipped
             .slice(0, 3)
             .map((entry) => `${entry.path}: ${entry.reason}`)
-            .concat(skipped.length > 3 ? [`and ${skipped.length - 3} more`] : [])
+            .concat(
+              skipped.length > 3 ? [gt("and {count} more", { count: skipped.length - 3 })] : [],
+            )
             .join("\n"),
         });
       }
@@ -350,16 +383,20 @@ export function SourceEditor(props: {
             </div>
           ) : null}
 
-          {editor.result?.outcome === "stale" ? (
-            <div className="space-y-1 text-sm" role="alert">
+          {stale || rebased ? (
+            <div className="space-y-1 text-sm" role="status">
               <div className="font-medium">
                 <T>This source changed while you were editing it.</T>
               </div>
               <div className="text-muted-foreground">
-                <T>
-                  Cancel and reopen the editor to review the latest metadata. Your draft remains
-                  here.
-                </T>
+                {stale ? (
+                  <T>Loading the latest version…</T>
+                ) : (
+                  <T>
+                    Your changes are kept; the other fields show the latest version. Review them,
+                    then save.
+                  </T>
+                )}
               </div>
             </div>
           ) : null}

@@ -113,11 +113,8 @@ export function MoveBackDialog(props: {
           </AlertDialogTitle>
           <AlertDialogDescription>
             <T>
-              The sources and their PDFs are copied back into this project’s folder. The papers also
-              stay in your personal Library, because other projects may use them. This project’s
-              notes and its reviews come back too. The sealed copy from before the move stays as a
-              recovery copy; it does not include later changes. For a large Library this can take a
-              while.
+              This project’s sources, PDFs, notes and reviews are copied back into its folder. They
+              also stay in My Library.
             </T>
           </AlertDialogDescription>
         </AlertDialogHeader>

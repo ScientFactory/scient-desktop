@@ -23,6 +23,7 @@ import {
   listScientSourceRecords,
   readScientSourceZoteroSync,
   removeScientSource,
+  scientSourceStoreInternals,
   updateScientSourceMetadata,
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
@@ -897,10 +898,9 @@ describe("Zotero import", () => {
       ...original,
       item: { ...original.item, library: { type: "user", id: 475425 } },
     });
-    const fault = failRenameOnce(
-      `${NodePath.sep}zotero${NodePath.sep}`,
-      "Interrupted at the sync write.",
-    );
+    const paths = await scientSourceStoreInternals.sourceStorePaths(root);
+    const syncPath = scientSourceStoreInternals.zoteroSyncPath(paths, partial!.sourceId);
+    const fault = failRenameOnce(syncPath, "Interrupted at the sync write.");
     try {
       const refreshed = await refreshZoteroSources({
         root,
@@ -913,6 +913,10 @@ describe("Zotero import", () => {
       fault.restore();
     }
     expect(fault.interrupted()).toBe(true);
+    // As a sync write before the pending copy of the base left it: the link, and the old base.
+    await NodeFSP.rm(
+      NodePath.join(NodePath.dirname(syncPath), "pending", NodePath.basename(syncPath)),
+    );
     expect((await listScientSourceRecords(root))[0]?.externalReferences[0]).toMatchObject({
       libraryId: "475425",
     });
@@ -1681,6 +1685,7 @@ describe("Zotero import", () => {
     expect(first.items).toHaveLength(5);
     // Asked again before it ends (an answer was lost): the same part, not a second one.
     expect((await begin("run")).operationId).toBe("run");
+    expect((await begin()).operationId).toBe("run");
     expect((await finish("run")).state).toBe("completed");
 
     const second = await begin("run");

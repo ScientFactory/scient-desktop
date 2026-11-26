@@ -5,13 +5,16 @@ import * as NodeFSP from "node:fs/promises";
 
 import {
   fullTextHasText,
+  fullTextMayMatch,
   fullTextPassage,
   locateFullTextQuote,
   parseFullTextQuery,
   searchFullText,
+  summarizeFullTextWords,
   SCIENT_SOURCE_FULL_TEXT_LIMITS,
   SCIENT_SOURCE_FULL_TEXT_PROFILE,
   type FullTextRange,
+  type FullTextWordSummary,
   type ScientSourceExtractedFullText,
   type ScientSourceFullText,
   type ScientSourceFullTextPage,
@@ -256,7 +259,26 @@ function inLane<A>(run: () => Promise<A>): Promise<A> {
 // Stored text never changes for a hash, so extracted text and its folded pages
 // are cached by hash across projects.
 const textCache = makeSourceFullTextCache();
-const cacheText = (text: ScientSourceExtractedFullText) => textCache.add(text);
+
+/**
+ * What each stored text holds, by hash, kept for every text the cache has seen: the cache keeps
+ * only some texts, and a search leaves unread the texts its terms cannot be in.
+ */
+const storedSummaries = new Map<
+  string,
+  { readonly hasText: boolean; readonly words: FullTextWordSummary }
+>();
+
+const cacheText = (text: ScientSourceExtractedFullText) => {
+  const entry = textCache.add(text);
+  if (!storedSummaries.has(text.sha256)) {
+    storedSummaries.set(text.sha256, {
+      hasText: fullTextHasText(text),
+      words: summarizeFullTextWords(entry.document),
+    });
+  }
+  return entry;
+};
 
 // Text read for a caller that may not write. It stays out of `textCache`, whose
 // entries count as stored, so a later indexing pass still writes it.
@@ -270,12 +292,23 @@ interface SourceFullTextPersistence {
   readonly persist?: boolean;
 }
 
+/**
+ * Cached texts and summaries are shared by hash across stores, so each stands for a store's text
+ * only while that store's file is there: one deleted, or never written in this store, is pending.
+ */
+async function storedTextFileExists(
+  root: ScientSourceStoreLocation,
+  sha256: string,
+): Promise<boolean> {
+  return (await scientSourceFullTextByteLength(root, sha256).catch(() => null)) !== null;
+}
+
 async function readStoredText(
   root: ScientSourceStoreLocation,
   sha256: string,
 ): Promise<ScientSourceFullText | null> {
   const cached = textCache.get(sha256);
-  if (cached) return cached.text;
+  if (cached && (await storedTextFileExists(root, sha256))) return cached.text;
   const text = await readScientSourceFullText(root, sha256);
   if (text?.outcome === "extracted") cacheText(text);
   return text;
@@ -340,9 +373,9 @@ export async function indexSourceFullText(root: ScientSourceStoreLocation): Prom
   for (const material of materials.values()) {
     // Only a missing file or a small one (a recorded failure) can need work, so a
     // pass over an indexed library reads no text.
-    const stored = textCache.has(material.sha256)
-      ? MAX_FAILURE_BYTES + 1
-      : await scientSourceFullTextByteLength(resolvedRoot, material.sha256).catch(() => null);
+    const stored = await scientSourceFullTextByteLength(resolvedRoot, material.sha256).catch(
+      () => null,
+    );
     if (stored !== null && stored > MAX_FAILURE_BYTES) continue;
     await ensureMaterialText(resolvedRoot, material).catch(() => undefined);
   }
@@ -385,25 +418,39 @@ export interface SourceFullTextStatus {
   readonly unreadable: number;
 }
 
+/** The texts not summarized yet are read; `summarized` are extracted texts left unread. */
 async function storedTexts(
   root: ScientSourceStoreLocation,
   materials: Map<string, LibraryMaterial>,
 ) {
   const texts = new Map<string, ScientSourceFullText | null>();
-  for (const sha256 of materials.keys()) {
-    texts.set(sha256, await readStoredText(root, sha256));
+  const summarized: string[] = [];
+  const hashes = [...materials.keys()];
+  const present = new Set<string>();
+  for (let start = 0; start < hashes.length; start += 64) {
+    const batch = hashes.slice(start, start + 64).filter((sha256) => storedSummaries.has(sha256));
+    const found = await Promise.all(batch.map((sha256) => storedTextFileExists(root, sha256)));
+    for (const [index, sha256] of batch.entries()) if (found[index]) present.add(sha256);
+  }
+  for (const sha256 of hashes) {
+    if (present.has(sha256)) summarized.push(sha256);
+    else texts.set(sha256, await readStoredText(root, sha256));
   }
   const values = [...texts.values()];
+  const withText = summarized.filter((sha256) => storedSummaries.get(sha256)!.hasText).length;
   const status: SourceFullTextStatus = {
     pdfs: materials.size,
-    searchable: values.filter((text) => text?.outcome === "extracted" && fullTextHasText(text))
-      .length,
+    searchable:
+      withText +
+      values.filter((text) => text?.outcome === "extracted" && fullTextHasText(text)).length,
     pending: values.filter((text) => text === null).length,
-    withoutText: values.filter((text) => text?.outcome === "extracted" && !fullTextHasText(text))
-      .length,
+    withoutText:
+      summarized.length -
+      withText +
+      values.filter((text) => text?.outcome === "extracted" && !fullTextHasText(text)).length,
     unreadable: values.filter((text) => text?.outcome === "failed").length,
   };
-  return { texts, status };
+  return { texts, summarized, status };
 }
 
 export interface SourceFullTextSearchHit {
@@ -449,14 +496,23 @@ export async function searchSourceFullText(
   const wanted = input.sourceIds ? new Set(input.sourceIds) : null;
   const scoped = wanted ? records.filter((record) => wanted.has(record.sourceId)) : records;
   const materials = libraryMaterials(scoped);
-  const { texts, status } = await storedTexts(root, materials);
+  const { texts, summarized, status } = await storedTexts(root, materials);
   if (status.pending > 0 && input.persist !== false) void scheduleSourceFullTextIndexing(root);
+  const query = parseFullTextQuery(input.query);
   const extracted = [...texts.values()].filter(
     (text): text is ScientSourceExtractedFullText => text?.outcome === "extracted",
   );
-  const hits = searchFullText(extracted.map(searchDocumentFor), parseFullTextQuery(input.query), {
+  const corpusSize = extracted.length + summarized.length;
+  for (const sha256 of summarized) {
+    if (!fullTextMayMatch(storedSummaries.get(sha256)!.words, query)) continue;
+    const text = await readStoredText(root, sha256);
+    texts.set(sha256, text);
+    if (text?.outcome === "extracted") extracted.push(text);
+  }
+  const hits = searchFullText(extracted.map(searchDocumentFor), query, {
     limit: input.limit,
     perDocument: 3,
+    corpusSize,
   });
   return {
     status,
@@ -605,15 +661,19 @@ export async function checkSourceQuotes(
   input: SourceFullTextPersistence & {
     readonly root: ScientSourceStoreLocation;
     readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
+    /** Where a quote without its own source is looked for; the whole store otherwise. */
+    readonly sourceIds?: ReadonlyArray<string>;
   },
 ): Promise<ReadonlyArray<SourceQuoteCheck>> {
   const persist = input.persist !== false;
   const root = await canonicalScientSourceLocation(input.root);
   const records = await listScientSourceRecords(root);
+  const within = input.sourceIds ? new Set(input.sourceIds) : null;
+  const searched = within ? records.filter((record) => within.has(record.sourceId)) : records;
   const results: SourceQuoteCheck[] = [];
   for (const { quote, sourceId } of input.quotes) {
     const scoped =
-      sourceId === undefined ? records : records.filter((record) => record.sourceId === sourceId);
+      sourceId === undefined ? searched : records.filter((record) => record.sourceId === sourceId);
     if (sourceId !== undefined && scoped.length === 0) {
       results.push({ outcome: "source-not-found" });
       continue;

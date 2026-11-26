@@ -56,6 +56,8 @@ export function SourcesHeaderMenu(props: {
   readonly totalCount: number;
   readonly exportScope: SourcesExportScope | null;
   readonly trashedCount: number;
+  /** Deletions for good that stopped part way: the Trash stays reachable to finish them. */
+  readonly unfinishedDeletions?: number;
   /** The Library changed (Trash, a recovery): the list reads it again. */
   readonly onTrashChanged: () => Promise<unknown>;
   readonly missingPdfCount: number;
@@ -73,8 +75,10 @@ export function SourcesHeaderMenu(props: {
   readonly onOpenFile?: (path: string, line: number) => void;
   /** Present only on a moved project and for a session that may change the Library. */
   readonly onMoveBack?: () => void;
-  /** On a personal Library for a session that may change it: Save a project package, Recover. */
+  /** On a personal Library for a session that may change it: Save a project package. */
   readonly canChangeProject?: boolean;
+  /** Only where this project moved into the Library and kept a copy from before the move. */
+  readonly canRecoverPreMove?: boolean;
   /** Present only on a personal Library. */
   readonly onOpenRecentChanges?: () => void;
   /** Present only where a folder on the Library's computer can be chosen. */
@@ -88,6 +92,7 @@ export function SourcesHeaderMenu(props: {
   const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
   const [checkingReferences, setCheckingReferences] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const showsTrash = props.trashedCount > 0 || (props.unfinishedDeletions ?? 0) > 0;
   const [pickingStyle, setPickingStyle] = useState(false);
   const exporter = useSourcesExport({
     environmentId: props.environmentId,
@@ -95,7 +100,7 @@ export function SourcesHeaderMenu(props: {
     scope: props.exportScope,
   });
   const backups = Boolean(props.onBackUp || props.onRestore || props.onAddFromLibrary);
-  const recovery = Boolean(props.canChangeProject || props.onMoveBack);
+  const recovery = Boolean(props.canRecoverPreMove || props.onMoveBack);
   const unread = props.watchesUnread ?? 0;
   return (
     <>
@@ -182,18 +187,20 @@ export function SourcesHeaderMenu(props: {
                 : {})}
             />
           ) : null}
-          {props.onOpenRecentChanges || props.trashedCount > 0 ? <MenuSeparator /> : null}
+          {props.onOpenRecentChanges || showsTrash ? <MenuSeparator /> : null}
           {props.onOpenRecentChanges ? (
             <MenuItem onClick={props.onOpenRecentChanges}>
               <History />
               {m(RECENT_CHANGES_LABELS.menuItem)}
             </MenuItem>
           ) : null}
-          {props.trashedCount > 0 ? (
+          {showsTrash ? (
             <MenuItem onClick={() => setTrashOpen(true)}>
               <Trash2 />
               <T context="the Library's Trash">Trash</T>
-              <MenuItemDetail>{props.trashedCount.toLocaleString()}</MenuItemDetail>
+              {props.trashedCount > 0 ? (
+                <MenuItemDetail>{props.trashedCount.toLocaleString()}</MenuItemDetail>
+              ) : null}
             </MenuItem>
           ) : null}
           {backups || recovery ? (
@@ -224,7 +231,7 @@ export function SourcesHeaderMenu(props: {
                     </MenuItem>
                   ) : null}
                   {backups && recovery ? <MenuSeparator /> : null}
-                  {recovery ? (
+                  {props.canRecoverPreMove ? (
                     <RecoverPreMoveItem
                       environmentId={props.environmentId}
                       root={props.root}

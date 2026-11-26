@@ -14,7 +14,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { readLibraryDuplicates } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import {
   DUPLICATE_LABELS,
   damagedReceiptsLabel,
@@ -54,7 +54,6 @@ const pairKey = (pair: Pair) =>
     .map((side) => side.sourceId)
     .toSorted()
     .join("\0");
-const message = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 /**
  * The Library's possible duplicates and the merges Undo can still reverse. Every change goes
@@ -110,7 +109,7 @@ export function LibraryDuplicatesView(props: {
         setReading((previous) => ({
           context,
           result: previous?.context === context ? previous.result : null,
-          error: message(cause),
+          error: sourcesErrorMessage(cause),
           ask,
         }));
       },
@@ -153,7 +152,7 @@ export function LibraryDuplicatesView(props: {
           toastManager.add({
             type: "warning",
             title: m(DUPLICATE_LABELS.loadFailed),
-            description: message(cause),
+            description: sourcesErrorMessage(cause),
           });
         }
       },

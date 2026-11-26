@@ -83,6 +83,8 @@ export function useZoteroSync(input: {
       if (run.current === current) setRefresh(state);
     };
     show({ phase: "running" });
+    // A large Library is read again in batches, so the dialog can say how far it is.
+    const items: ScientSourceZoteroRefreshResult["items"][number][] = [];
     try {
       const status = await readZoteroStatus(input.environmentId);
       if (status.state !== "ready") {
@@ -90,8 +92,6 @@ export function useZoteroSync(input: {
         return;
       }
       const connection = status.connection ?? "local";
-      // A large Library is read again in batches, so the dialog can say how far it is.
-      const items: ScientSourceZoteroRefreshResult["items"][number][] = [];
       for (let after: string | null | undefined = null; after !== undefined;) {
         const batch = await refreshZoteroSources(input.environmentId, {
           root: input.root,
@@ -112,10 +112,12 @@ export function useZoteroSync(input: {
         }
       }
       show({ phase: "done", connection, result: { connection, items } });
-      if (items.some((item) => item.outcome === "updated")) await input.onChanged();
     } catch (cause) {
       show({ phase: "problem", message: errorText(cause) });
     }
+    // Batches that landed before a failure changed sources too. (No `finally`: the React
+    // Compiler cannot compile one, and the catch above never rethrows.)
+    if (items.some((item) => item.outcome === "updated")) await input.onChanged();
   };
 
   const resolveConflict = async (
@@ -295,13 +297,10 @@ export function ZoteroRefreshDialog(props: {
           <DialogDescription>
             {state?.phase === "running"
               ? state.checked !== undefined && state.total !== undefined
-                ? gt(
-                    "Reading your Zotero library… {checked} of {total} sources checked. Closing stops here; what was read is kept.",
-                    {
-                      checked: state.checked.toLocaleString(),
-                      total: state.total.toLocaleString(),
-                    },
-                  )
+                ? gt("Reading your Zotero library… {checked} of {total} sources checked.", {
+                    checked: state.checked.toLocaleString(),
+                    total: state.total.toLocaleString(),
+                  })
                 : gt("Reading your Zotero library…")
               : state?.phase === "problem"
                 ? state.message

@@ -55,7 +55,7 @@ export function PanelHeader(props: {
         ) : null}
       </div>
       {/* When the row cannot hold everything, the actions wrap to a line of their own. */}
-      {props.action ? <div className="ml-auto">{props.action}</div> : null}
+      {props.action ? <div className="ml-auto min-w-0 max-w-full">{props.action}</div> : null}
     </div>
   );
 }

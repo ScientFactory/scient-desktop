@@ -61,9 +61,10 @@ import {
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { toastManager } from "../../components/ui/toast";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { sourcesErrorMessage } from "./errorMessage";
 import { useZoteroSync, ZoteroRefreshDialog } from "./ZoteroSync";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
+import { useRefreshAfterAgentTurns } from "./useRefreshAfterAgentTurns";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
@@ -88,7 +89,7 @@ import { SourcesList } from "./SourcesList";
 import { scientSourceSections } from "./sourceSections";
 import { requestSourceTextReveal } from "./sourceTextReveal";
 import { useLibraryFileImport } from "./libraryFileHandoff";
-import { newlyObservedSourceIds } from "./sourceLabels";
+import { observeLibraryList, type ListObservation } from "./sourceLabels";
 import { NOTICE_CHANGES_SHOWN } from "./sourceLifecycleLabels";
 import {
   filterScientSourceSearchIndex,
@@ -110,7 +111,7 @@ import { libraryMoveActivity } from "./LibraryMoveNotice";
 import { libraryNoticeChangesActivity } from "./LibraryNoticeChanges";
 import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
 import { announceSourceMovedToTrash } from "./SourceTrash";
-import { shownSourceRecord } from "./sourcesWorkflow";
+import { heldSourceRecord, shownSourceRecord } from "./sourcesWorkflow";
 import { useScientSources } from "./useScientSources";
 import { SourceFiling } from "./SourceOrganizeSection";
 import {
@@ -127,6 +128,7 @@ import {
 import { SourcesActiveFilters } from "./SourcesActiveFilters";
 import { announceSourcesMovedToTrash, SourcesBulkBar } from "./SourcesBulkBar";
 import { SourcesFilterMenu } from "./SourcesFilterMenu";
+import { settleInBatches } from "./settleInBatches";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
 import { SystematicReviewsView } from "./SystematicReviews";
@@ -152,6 +154,7 @@ import {
 } from "./libraryLabels";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { SnapshotRemovalDialog, useLibraryProjectActions } from "./useLibraryProjectActions";
+import { sourceNoteSaveCheck } from "./SourceNote";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
@@ -183,7 +186,9 @@ interface ImportReceipt {
   readonly intake: ImportIntake;
 }
 
+/** By environment, whose one Library every view of it lists; kept across remounts. */
 const recentSourceAdds = new Map<string, Map<string, number>>();
+const listObservations = new Map<string, ListObservation & { readonly sourceIds: Set<string> }>();
 function createRecentSourcesStore(initial: ReadonlySet<string>) {
   let snapshot = initial;
   const listeners = new Set<() => void>();
@@ -202,26 +207,29 @@ function createRecentSourcesStore(initial: ReadonlySet<string>) {
   };
 }
 
-function readRecentSourceAdds(contextKey: string): ReadonlySet<string> {
+function readRecentSourceAdds(library: string): ReadonlySet<string> {
   const now = Date.now();
-  const entries = recentSourceAdds.get(contextKey);
+  const entries = recentSourceAdds.get(library);
   if (!entries) return new Set();
   for (const [sourceId, expiresAt] of entries) {
     if (expiresAt <= now) entries.delete(sourceId);
   }
-  if (entries.size === 0) recentSourceAdds.delete(contextKey);
+  if (entries.size === 0) recentSourceAdds.delete(library);
   return new Set(entries.keys());
 }
 
+/** A mark lasts from when it is first shown; seeing the source again never renews it. */
 function rememberRecentSourceAdds(
-  contextKey: string,
+  library: string,
   sourceIds: ReadonlyArray<string>,
 ): ReadonlySet<string> {
-  const entries = recentSourceAdds.get(contextKey) ?? new Map<string, number>();
+  const entries = recentSourceAdds.get(library) ?? new Map<string, number>();
   const expiresAt = Date.now() + RECENT_SOURCE_ADD_TTL_MS;
-  for (const sourceId of sourceIds) entries.set(sourceId, expiresAt);
-  if (entries.size > 0) recentSourceAdds.set(contextKey, entries);
-  return readRecentSourceAdds(contextKey);
+  for (const sourceId of sourceIds) {
+    if (!entries.has(sourceId)) entries.set(sourceId, expiresAt);
+  }
+  if (entries.size > 0) recentSourceAdds.set(library, entries);
+  return readRecentSourceAdds(library);
 }
 
 function ZoteroMark() {
@@ -258,6 +266,8 @@ export function ScientSourcesPanel(props: {
   readonly threadId: ThreadId;
   readonly root: string;
   readonly projectTitle: string;
+  /** No project is open: the Library lists My Library and offers nothing for a project. */
+  readonly scratch?: boolean;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
@@ -267,7 +277,11 @@ export function ScientSourcesPanel(props: {
 }) {
   const m = useMessages();
   const gt = useGT();
-  const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const sources = useScientSources({
+    environmentId: props.environmentId,
+    root: props.root,
+    ...(props.scratch ? { defaultScope: "library" as const } : {}),
+  });
   const libraryVersion = useLibraryVersionStore((state) => state.byRoot[props.root] ?? "");
   const canChange = useCanChangeLibrary(props.environmentId);
   const canSetReading = useCanRunSourcesCommand(
@@ -275,10 +289,14 @@ export function ScientSourcesPanel(props: {
     props.environmentId,
   );
   const canChangeProject = useCanRunSourcesCommand(sourcesCommands.organize, props.environmentId);
+  // The scratch folder is not a project a person chose: nothing is added to or kept in it.
+  const canPin = canChangeProject && !props.scratch;
   // Each computer has its own Library: one that is not this computer's is named.
   const environment = useEnvironment(props.environmentId);
   const thisComputer = usePrimaryEnvironmentId();
   const panelContext = `${props.environmentId}\0${props.root}`;
+  // "Just added" belongs to the Library, which the project and no-project views both list.
+  const libraryKey: string = props.environmentId;
   const result = useSourcesResult(panelContext);
   const [activityOpen, setActivityOpen] = useState(false);
   const backup = useLibraryBackup({
@@ -315,6 +333,7 @@ export function ScientSourcesPanel(props: {
     environmentId: props.environmentId,
     root: props.root,
     records: sources.overview?.records ?? null,
+    scope: sources.overview?.scopes?.listed,
     onImported: () => void sources.refreshOverview(),
   });
   const move = useLibraryMoveStatus({
@@ -391,7 +410,7 @@ export function ScientSourcesPanel(props: {
   const [addingByIdentifier, setAddingByIdentifier] = useState<string | null>(null);
   const panelContextRef = useRef(panelContext);
   const [recentSourcesStore] = useState(() =>
-    createRecentSourcesStore(readRecentSourceAdds(panelContext)),
+    createRecentSourcesStore(readRecentSourceAdds(libraryKey)),
   );
   const recentlyAddedSourceIds = useSyncExternalStore(
     recentSourcesStore.subscribe,
@@ -405,13 +424,10 @@ export function ScientSourcesPanel(props: {
   const referenceFileInput = useRef<HTMLInputElement>(null);
   const panelMounted = useRef(true);
   const importRevealRequest = useRef(0);
-  const observedSourceIds = useRef<{
-    readonly contextKey: string;
-    readonly sourceIds: ReadonlySet<string>;
-  } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps panelContextRef holding the current panel context
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps panelContextRef holding the current panel context; an import begun in another context opens nothing here
   useLayoutEffect(() => {
     panelContextRef.current = panelContext;
+    importRevealRequest.current += 1;
   }, [panelContext]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state in panelMounted for async callbacks
@@ -439,25 +455,38 @@ export function ScientSourcesPanel(props: {
     setViewAnchor(null);
   }
 
-  const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
+  const expirySchedule = { library: libraryKey, sourceIds: recentlyAddedSourceIds };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expires recent-add highlights on a timer
   useEffect(() => {
-    const panelContext = expirySchedule.context;
-    const entries = recentSourceAdds.get(panelContext);
+    const library = expirySchedule.library;
+    const entries = recentSourceAdds.get(library);
     if (!entries || entries.size === 0) return;
     const expiresAt = Math.min(...entries.values());
     const timeout = window.setTimeout(
-      () => setRecentlyAddedSourceIds(readRecentSourceAdds(panelContext)),
+      () => setRecentlyAddedSourceIds(readRecentSourceAdds(library)),
       Math.max(0, expiresAt - Date.now()) + 1,
     );
     return () => window.clearTimeout(timeout);
   }, [expirySchedule, setRecentlyAddedSourceIds]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads recent-add state from the recent-adds store when the panel context changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads recent-add state from the recent-adds store when the Library changes
   useEffect(() => {
-    importRevealRequest.current += 1;
-    setRecentlyAddedSourceIds(readRecentSourceAdds(panelContext));
-  }, [panelContext, setRecentlyAddedSourceIds]);
+    setRecentlyAddedSourceIds(readRecentSourceAdds(libraryKey));
+  }, [libraryKey, setRecentlyAddedSourceIds]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a drag that ends or drops outside the panel never sends the panel a dragleave
+  useEffect(() => {
+    if (!dragActive) return;
+    const clear = () => setDragActive(false);
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("dragend", clear);
+      window.removeEventListener("drop", clear);
+      window.removeEventListener("blur", clear);
+    };
+  }, [dragActive]);
 
   const openSourceDetails = (sourceId: string) => {
     setSelectedSourceId(sourceId);
@@ -479,24 +508,27 @@ export function ScientSourcesPanel(props: {
     },
     { key: `scient-sources:${panelContext}` },
   );
+  useRefreshAfterAgentTurns(props.environmentId, () => {
+    void sources.refreshOverview().catch(() => undefined);
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records newly added sources in the recent-adds store and mirrors them into state
   useEffect(() => {
     const records = sources.overview?.records;
     if (!records) return;
-    const currentIds = new Set(records.map((record) => record.sourceId));
-    const previousObservation = observedSourceIds.current;
-    const previousIds =
-      previousObservation?.contextKey === panelContext ? previousObservation.sourceIds : null;
-    observedSourceIds.current = { contextKey: panelContext, sourceIds: currentIds };
-    const cutoff = Date.now() - RECENT_SOURCE_ADD_TTL_MS;
-    const newlyObserved = newlyObservedSourceIds(records, previousIds, cutoff);
+    const newlyObserved = observeLibraryList(
+      listObservations,
+      libraryKey,
+      records,
+      Date.now(),
+      RECENT_SOURCE_ADD_TTL_MS,
+    );
     setRecentlyAddedSourceIds(
       newlyObserved.length > 0
-        ? rememberRecentSourceAdds(panelContext, newlyObserved)
-        : readRecentSourceAdds(panelContext),
+        ? rememberRecentSourceAdds(libraryKey, newlyObserved)
+        : readRecentSourceAdds(libraryKey),
     );
-  }, [panelContext, sources.overview?.records, setRecentlyAddedSourceIds]);
+  }, [libraryKey, sources.overview?.records, setRecentlyAddedSourceIds]);
 
   const toggleSelected = (itemKey: string) => {
     setSelectedKeys((current) => {
@@ -586,13 +618,16 @@ export function ScientSourcesPanel(props: {
         toastManager.add({
           type: "error",
           title: gt("The line was not dismissed"),
-          description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+          description: sourcesErrorMessage(cause),
         });
       });
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
     : null;
-  const selectedRecord = selectedSourceId ? shownSourceRecord(sources, selectedSourceId) : null;
+  const currentRecord = selectedSourceId ? shownSourceRecord(sources, selectedSourceId) : null;
+  // An open page stays while its newer detail loads, so a change elsewhere never closes an edit.
+  const selectedRecord =
+    currentRecord ?? (selectedSourceId ? heldSourceRecord(sources, selectedSourceId) : null);
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
   const loadSource = useStableCallback(sources.loadSource);
@@ -602,7 +637,7 @@ export function ScientSourcesPanel(props: {
       ? `${selectedSourceId}\0${selectedSummary.revision}\0${selectedSummary.pinned ?? ""}\0${selectedSummary.projectNote ?? ""}`
       : null;
   const needsProjectLoad =
-    !isLibraryMode && selectedSourceId !== null && selectedSummary !== null && !selectedRecord;
+    !isLibraryMode && selectedSourceId !== null && selectedSummary !== null && !currentRecord;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads or revalidates the selected source record from the server
   useEffect(() => {
     if (!selectedSourceId || !selectedDetailKey) return;
@@ -664,9 +699,7 @@ export function ScientSourcesPanel(props: {
           setImportReceipt(receipt);
         }
         if (!outcome || importRevealRequest.current !== request) return;
-        setRecentlyAddedSourceIds(
-          rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
-        );
+        setRecentlyAddedSourceIds(rememberRecentSourceAdds(libraryKey, importedSourceIds(outcome)));
         const sourceId = options.reveal ? importedSourceIdToReveal(outcome) : null;
         if (sourceId) {
           setEditingSource(false);
@@ -738,7 +771,7 @@ export function ScientSourcesPanel(props: {
               }
             : {}),
         ...(canChange ? { onRetryFailed: () => void sources.retryFailedImport() } : {}),
-        ...(canChangeProject
+        ...(canPin
           ? {
               onAddToProject: (sourceIds: ReadonlyArray<string>) =>
                 void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(result.dismiss),
@@ -806,7 +839,7 @@ export function ScientSourcesPanel(props: {
     const result = await sources.removeSource(record.sourceId, record.revision);
     if (result.outcome === "stale") {
       throw new Error(
-        "This source changed after you opened it. Review the latest version, then try again.",
+        gt("This source changed after you opened it. Review the latest version, then try again."),
       );
     }
     if (selectedSourceId === record.sourceId) {
@@ -837,7 +870,7 @@ export function ScientSourcesPanel(props: {
       busy: sources.busy,
       canChange,
       canSetReading,
-      canChangeProject,
+      canChangeProject: canPin,
       isCurrent: () => panelMounted.current && panelContextRef.current === panelContext,
       onView: () => {
         setEditingSource(false);
@@ -858,7 +891,7 @@ export function ScientSourcesPanel(props: {
           toastManager.add({
             type: "error",
             title: gt("Source could not be moved to Trash"),
-            description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+            description: sourcesErrorMessage(cause),
           });
         }),
     });
@@ -868,7 +901,6 @@ export function ScientSourcesPanel(props: {
     listed: scopes?.listed,
     selection: organize.selection,
     recentlyAddedSourceIds,
-    diagnosticsBySourceId,
     onToggleSelected: organize.toggleSelected,
     onOpenDetails: (sourceId: string) => {
       setViewAnchor(sourceId);
@@ -991,13 +1023,14 @@ export function ScientSourcesPanel(props: {
     />
   );
   // Pages other than the list keep their own header: Activity and the result sit above it. The
-  // wrapper always renders, so the page keeps its state when Activity comes and goes.
-  const withActivity = (view: ReactNode) => (
+  // wrapper always renders, so the page keeps its state when Activity comes and goes. A paper's own
+  // page leaves the result, whose actions act on the whole import, to Activity.
+  const withActivity = (view: ReactNode, options: { readonly paper?: boolean } = {}) => (
     <div className="flex min-h-0 flex-1 flex-col">
-      {activity.count > 0 || shownResult || activityOpen ? (
+      {activity.count > 0 || (shownResult && !options.paper) || activityOpen ? (
         <div className="shrink-0 border-b border-border">
-          <div className={`${SOURCES_COLUMN} flex items-start gap-2 px-3 py-1.5`}>
-            <div className="min-w-0 flex-1">{resultSlot}</div>
+          <div className={`${SOURCES_COLUMN} flex items-center gap-2 px-3 py-1.5`}>
+            <div className="min-w-0 flex-1">{options.paper ? null : resultSlot}</div>
             {activityButton}
           </div>
         </div>
@@ -1186,7 +1219,7 @@ export function ScientSourcesPanel(props: {
                     void sources.selectZoteroScope({
                       kind: "collection",
                       collectionKey: collection.key,
-                      includeSubcollections: false,
+                      includeSubcollections: true,
                     });
                   }}
                 >
@@ -1239,7 +1272,7 @@ export function ScientSourcesPanel(props: {
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={!canChange || sources.busy || sources.library.total === 0}
+                  disabled={!canChange || sources.busy || !sources.zoteroScopeTotal}
                   onClick={() =>
                     revealImportedSource(sources.importZoteroScope(), {
                       intake: "zotero",
@@ -1257,10 +1290,10 @@ export function ScientSourcesPanel(props: {
             <TooltipPopup side="bottom">
               {sources.zoteroScope.kind === "collection"
                 ? gt("Import {total} references in this collection", {
-                    total: sources.library.total,
+                    total: sources.zoteroScopeTotal ?? 0,
                   })
                 : gt("Import all {total} references in {zoteroLibraryName}", {
-                    total: sources.library.total,
+                    total: sources.zoteroScopeTotal ?? 0,
                     zoteroLibraryName,
                   })}
             </TooltipPopup>
@@ -1271,15 +1304,17 @@ export function ScientSourcesPanel(props: {
             <div
               className={`${SOURCES_COLUMN} flex items-center justify-between gap-3 px-3 py-2 text-xs text-destructive`}
             >
-              <span className="min-w-0 truncate">{sources.error}</span>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={sources.busy}
-                onClick={() => void sources.searchZotero(query, 0)}
-              >
-                <T>Try again</T>
-              </Button>
+              <span className="min-w-0 break-words">{sources.error}</span>
+              {sources.retryError ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={sources.busy}
+                  onClick={() => void sources.retryError?.()}
+                >
+                  <T>Try again</T>
+                </Button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -1287,7 +1322,10 @@ export function ScientSourcesPanel(props: {
           <div className="shrink-0 border-b border-border bg-muted/30">
             <div className={`${SOURCES_COLUMN} flex items-center justify-between gap-3 px-3 py-2`}>
               <span className="text-xs text-muted-foreground">
-                {selectedKeys.size} reference{selectedKeys.size === 1 ? "" : "s"} selected
+                {gt(
+                  "{count, plural, one {{count} reference selected} other {{count} references selected}}",
+                  { count: selectedKeys.size },
+                )}
               </span>
               <Button
                 size="xs"
@@ -1462,10 +1500,7 @@ export function ScientSourcesPanel(props: {
                       </li>
                     </ol>
                     <p className="text-muted-foreground">
-                      <T>
-                        Without Zotero on this computer, add a Zotero API key in Accounts to use
-                        your library on zotero.org.
-                      </T>
+                      <T>Or add a Zotero API key in Accounts.</T>
                     </p>
                   </div>
                 </PopoverPopup>
@@ -1500,6 +1535,7 @@ export function ScientSourcesPanel(props: {
             void sources.reloadOverview();
           }}
         />,
+        { paper: true },
       );
     }
     return withActivity(
@@ -1521,7 +1557,7 @@ export function ScientSourcesPanel(props: {
                       sourceId: selectedRecord.sourceId,
                       expectedRevision,
                       note,
-                      expectedNote: context.base,
+                      ...sourceNoteSaveCheck(context),
                     });
                     if (panelMounted.current && panelContextRef.current === panelContext) {
                       sources.acceptSourceRecord(result.record);
@@ -1541,8 +1577,7 @@ export function ScientSourcesPanel(props: {
                       sourceId: selectedRecord.sourceId,
                       expectedRevision,
                       note,
-                      expectedNote: context.base,
-                      noteSession: context.session,
+                      ...sourceNoteSaveCheck(context),
                       citationKey,
                     }),
                   ...(canSetReading
@@ -1551,10 +1586,14 @@ export function ScientSourcesPanel(props: {
                           setReadingState([selectedRecord.sourceId], change, false),
                       }
                     : {}),
-                  ...(canChangeProject
+                  ...(canPin
                     ? {
                         onAddToProject: () => addToProject([selectedRecord]),
                         onRemoveFromProject: () => removeFromProject([selectedRecord]),
+                      }
+                    : {}),
+                  ...(canChangeProject
+                    ? {
                         onLinkToCopy: (librarySourceId: string) =>
                           linkToCopy(selectedRecord.sourceId, librarySourceId),
                         onKeepSeparate: (separate: boolean) =>
@@ -1698,6 +1737,7 @@ export function ScientSourcesPanel(props: {
           />
         ) : null}
       </>,
+      { paper: true },
     );
   }
 
@@ -1759,9 +1799,9 @@ export function ScientSourcesPanel(props: {
       item.outcome === "imported" && item.sourceId ? [item.sourceId] : [],
     );
     if (added.length > 0) {
-      setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, added));
+      setRecentlyAddedSourceIds(rememberRecentSourceAdds(libraryKey, added));
     }
-    const addAction = canChangeProject ? (
+    const addAction = canPin ? (
       <Button
         size="xs"
         variant="ghost"
@@ -1776,7 +1816,7 @@ export function ScientSourcesPanel(props: {
       operationId,
       identifierAddResult(
         results,
-        scopes?.listed === "library"
+        scopes?.listed === "library" && !props.scratch
           ? {
               detail: inLibraryNotProjectLabel(added.length),
               ...(addAction ? { actions: addAction } : {}),
@@ -1826,6 +1866,8 @@ export function ScientSourcesPanel(props: {
     },
   };
   const nextView: SourceView = sourceView === "list" ? "cards" : "list";
+  const pendingScope =
+    sources.switchingScope && sources.overviewLoading ? sources.requestedScope : null;
   const viewLabel = nextView === "cards" ? gt("Show as cards") : gt("Show as a list");
 
   return (
@@ -1838,7 +1880,9 @@ export function ScientSourcesPanel(props: {
         setDragActive(true);
       }}
       onDragLeave={(event) => {
-        if (event.currentTarget === event.target) setDragActive(false);
+        // Leaving for a card or row inside keeps it; leaving the panel or the window clears it.
+        const into = event.relatedTarget;
+        if (!(into instanceof Node && event.currentTarget.contains(into))) setDragActive(false);
       }}
       onDrop={(event) => {
         event.preventDefault();
@@ -1857,7 +1901,7 @@ export function ScientSourcesPanel(props: {
     >
       {dragActive ? (
         <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed border-foreground/30 bg-background/85 px-3 text-center text-xs text-muted-foreground">
-          <T>Drop PDFs or a reference file to add them to the Library</T>
+          <T>Drop PDFs or a reference file</T>
         </div>
       ) : null}
       <input
@@ -1891,7 +1935,7 @@ export function ScientSourcesPanel(props: {
         }}
       />
       <PanelHeader
-        {...(scopes
+        {...(scopes && !props.scratch
           ? {
               start: (
                 // Full labels first: the row wraps before they shorten, and only a panel narrower
@@ -1899,16 +1943,22 @@ export function ScientSourcesPanel(props: {
                 <ToggleGroup
                   className="max-w-full shrink-0 *:min-w-0 *:shrink"
                   aria-label={gt("Source scope")}
-                  value={[scopes.listed]}
+                  value={[sources.requestedScope ?? scopes.listed]}
                   onValueChange={(values) => {
                     const scope = values[0];
                     if (scope === "project" || scope === "library") selectScope(scope);
                   }}
                 >
-                  <Toggle value="project">
-                    <span className="truncate">{m(LIBRARY_LABELS.scopes.project)}</span>
-                  </Toggle>
-                  <Toggle value="library">
+                  <ScientTooltip content={props.projectTitle}>
+                    <Toggle value="project" aria-busy={pendingScope === "project" || undefined}>
+                      {pendingScope === "project" ? (
+                        <LoaderCircle className="animate-spin" />
+                      ) : null}
+                      <span className="truncate">{m(LIBRARY_LABELS.scopes.project)}</span>
+                    </Toggle>
+                  </ScientTooltip>
+                  <Toggle value="library" aria-busy={pendingScope === "library" || undefined}>
+                    {pendingScope === "library" ? <LoaderCircle className="animate-spin" /> : null}
                     <span className="truncate">{m(LIBRARY_LABELS.scopes.library)}</span>
                   </Toggle>
                 </ToggleGroup>
@@ -1917,7 +1967,8 @@ export function ScientSourcesPanel(props: {
           : {})}
         {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere, m) } : {})}
         action={
-          <div className="flex shrink-0 items-center gap-1">
+          // Labels give way first; a row still too narrow wraps, so ⋯ is never pushed off.
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
             {scopes && sources.overview.records.length > 0 ? <AskLibraryButton /> : null}
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
             <Menu>
@@ -1934,7 +1985,7 @@ export function ScientSourcesPanel(props: {
                     ) : (
                       <Download />
                     )}
-                    <span className="@max-[20rem]:hidden">
+                    <span className="@max-[28rem]:hidden">
                       <T>Import sources</T>
                     </span>
                   </Button>
@@ -1963,7 +2014,7 @@ export function ScientSourcesPanel(props: {
                   <Hash />
                   <T>Add by identifier</T>
                 </MenuItem>
-                {scopes && canChange ? (
+                {scopes && canChange && !props.scratch ? (
                   <ImportPackageSubmenu
                     environmentId={props.environmentId}
                     root={props.root}
@@ -1989,6 +2040,9 @@ export function ScientSourcesPanel(props: {
                     : null
               }
               trashedCount={sources.overview.trashedCount ?? 0}
+              {...(sources.overview.unfinishedDeletions
+                ? { unfinishedDeletions: sources.overview.unfinishedDeletions }
+                : {})}
               onTrashChanged={sources.refreshOverview}
               missingPdfCount={canChange ? missingPdfs.length : 0}
               onGetMissingPdfs={() => void requestPapers({ root: props.root, papers: missingPdfs })}
@@ -2026,7 +2080,10 @@ export function ScientSourcesPanel(props: {
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
-              canChangeProject={Boolean(scopes && canChange)}
+              canChangeProject={Boolean(scopes && canChange && !props.scratch)}
+              canRecoverPreMove={Boolean(
+                scopes && canChange && !props.scratch && sources.overview.preMoveCopy,
+              )}
               {...(hasZoteroSources && canChange
                 ? { onRefreshZotero: () => void zoteroSync.startRefresh() }
                 : {})}
@@ -2102,22 +2159,36 @@ export function ScientSourcesPanel(props: {
             visibleSourceIds={filteredSourceRecords.map((record) => record.sourceId)}
             onRequestName={setNameRequest}
             onRemove={async (records) => {
+              // A few removals at a time; the list is read again once, after the last.
+              const settled = await settleInBatches(records, (record) =>
+                sources.removeSource(record.sourceId, record.revision, { refresh: false }),
+              );
               const removed: string[] = [];
               let alsoElsewhere = 0;
-              // Each removal is its own request; the list is read again once, after the last.
-              for (const record of records) {
-                const result = await sources
-                  .removeSource(record.sourceId, record.revision, { refresh: false })
-                  .catch(() => null);
-                if (result?.outcome === "removed") removed.push(record.sourceId);
-                if (result?.outcome === "removed" && result.alsoPinnedIn) alsoElsewhere += 1;
-              }
+              let changed = 0;
+              const failures: unknown[] = [];
+              settled.forEach((answer, index) => {
+                if (answer.status === "rejected") failures.push(answer.reason);
+                else if (answer.value.outcome !== "removed") changed += 1;
+                else {
+                  removed.push(records[index]!.sourceId);
+                  if (answer.value.alsoPinnedIn) alsoElsewhere += 1;
+                }
+              });
               await sources.reloadOverview();
               announceSourcesMovedToTrash({
                 environmentId: props.environmentId,
                 root: props.root,
                 sourceIds: removed,
-                notRemoved: records.length - removed.length,
+                notRemoved: changed,
+                ...(failures.length > 0
+                  ? {
+                      failed: {
+                        count: failures.length,
+                        reason: sourcesErrorMessage(failures[0]),
+                      },
+                    }
+                  : {}),
                 ...(alsoElsewhere > 0 ? { alsoElsewhere } : {}),
                 onRestored: sources.refreshOverview,
               });
@@ -2134,8 +2205,9 @@ export function ScientSourcesPanel(props: {
                           ) => setReadingState(sourceIds, change, true),
                         }
                       : {}),
-                    onAddToProject: addToProject,
-                    onRemoveFromProject: removeFromProject,
+                    ...(canPin
+                      ? { onAddToProject: addToProject, onRemoveFromProject: removeFromProject }
+                      : {}),
                   },
                 }
               : {})}
@@ -2242,8 +2314,7 @@ export function ScientSourcesPanel(props: {
       {sources.overview.records.length === 0 ? (
         <CenteredState
           icon={<BookOpen />}
-          title={empty.title}
-          description={empty.description}
+          title={empty}
           {...(scopes?.listed === "project" && scopes.library > 0
             ? {
                 action: (

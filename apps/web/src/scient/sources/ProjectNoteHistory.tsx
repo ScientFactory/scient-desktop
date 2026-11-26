@@ -13,23 +13,18 @@ import {
   MenuPopup,
   MenuTrigger,
 } from "../../components/ui/menu";
+import { byLine, whenLabel } from "./dayLabel";
 
 type NoteVersion = NonNullable<ScientSourceDetailResult["projectNoteHistory"]>[number];
 
 function versionLabel(version: NoteVersion, resolve: MessageResolver): string {
-  const when = new Date(version.at).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-  const who =
-    version.kind === "found"
-      ? resolve(msg("found in the project", { $context: "where a note version came from" }))
-      : version.by === "agent"
-        ? resolve(msg("agent", { $context: "who wrote a note version" }))
-        : version.by === "user"
-          ? resolve(msg("you", { $context: "who wrote a note version" }))
-          : null;
-  return who ? `${when} · ${who}` : when;
+  if (version.kind === "found") {
+    const found = resolve(
+      msg("found in the project", { $context: "where a note version came from" }),
+    );
+    return `${whenLabel(version.at, resolve)} · ${found}`;
+  }
+  return byLine(version.by === "agent" ? "agent" : "user", version.at, resolve);
 }
 
 function preview(note: string | null, resolve: MessageResolver): string {

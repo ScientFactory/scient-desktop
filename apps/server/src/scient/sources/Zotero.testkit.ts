@@ -77,11 +77,14 @@ export function fakeZoteroTransport(
         const found = files.flatMap((file) => library.annotations?.get(file.key) ?? []);
         return json(found, found.length);
       }
-      if (route === "/items/top") {
+      const top = /^(?:\/collections\/([A-Z0-9]{8}))?\/items\/top$/u.exec(route);
+      if (top) {
         // As Zotero filters: `itemType=note` keeps one type, `-attachment` leaves one out.
         const wanted = new URLSearchParams(path.split("?")[1] ?? "").get("itemType");
-        const top = [...library.items.values()]
+        const inCollection = top[1];
+        const items = [...library.items.values()]
           .map((entry) => entry.item)
+          .filter((item) => !inCollection || (item.data.collections ?? []).includes(inCollection))
           .filter((item) =>
             !wanted
               ? true
@@ -91,8 +94,8 @@ export function fakeZoteroTransport(
           );
         // A keys-only listing is plain text, one key a line, as Zotero answers it.
         return new URLSearchParams(path.split("?")[1] ?? "").get("format") === "keys"
-          ? { status: 200, headers: {}, body: top.map((item) => item.key).join("\n") }
-          : json(top, top.length);
+          ? { status: 200, headers: {}, body: items.map((item) => item.key).join("\n") }
+          : json(items, items.length);
       }
       if (route === "/collections") {
         const collections = (library.collections ?? []).map((collection) => ({

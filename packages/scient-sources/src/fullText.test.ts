@@ -6,6 +6,8 @@ import {
   locateFullTextQuote,
   parseFullTextQuery,
   searchFullText,
+  summarizeFullTextWords,
+  fullTextMayMatch,
   type FullTextSearchDocument,
 } from "./fullText.ts";
 
@@ -139,6 +141,48 @@ describe("full-text search", () => {
         (hit) => hit.key,
       ),
     ).toEqual(["trial"]);
+  });
+
+  it("leaves unread only documents that cannot match, with the same hits and ranking", () => {
+    const corpus = [
+      ...documents,
+      ...Array.from({ length: 40 }, (_, index) =>
+        searchDocument(`filler-${index}`, [
+          `Sample ${index} of soil carbon in boreal forests, measured weekly.`,
+          index % 7 === 0 ? "Mortality of seedlings rose after drought." : "Roots grew.",
+        ]),
+      ),
+    ];
+    const summaries = new Map(
+      corpus.map((document) => [document.key, summarizeFullTextWords(document)]),
+    );
+    for (const query of [
+      "antibiotics mortality",
+      '"septic shock"',
+      "randomis",
+      "mortality",
+      "sepsis drought",
+      '"carbon in boreal" weekly',
+      "zebrafish",
+      "of",
+    ]) {
+      const parsed = parseFullTextQuery(query);
+      const options = { limit: 20, perDocument: 3 };
+      const candidates = corpus.filter((document) =>
+        fullTextMayMatch(summaries.get(document.key)!, parsed),
+      );
+      expect(
+        searchFullText(candidates, parsed, { ...options, corpusSize: corpus.length }),
+        query,
+      ).toEqual(searchFullText(corpus, parsed, options));
+      for (const hit of searchFullText(corpus, parsed, options)) {
+        expect(candidates.map((document) => document.key)).toContain(hit.key);
+      }
+    }
+    const filler = summaries.get("filler-1")!;
+    expect(fullTextMayMatch(filler, parseFullTextQuery("zebrafish"))).toBe(false);
+    expect(fullTextMayMatch(filler, parseFullTextQuery("bore"))).toBe(true);
+    expect(fullTextMayMatch(filler, parseFullTextQuery("for"))).toBe(false);
   });
 
   it("maps a hit back to stored offsets and a one-line passage", () => {
