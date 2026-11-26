@@ -119,6 +119,8 @@ export const SourceControlProviderAuth = Schema.Struct({
   account: Schema.Option(TrimmedNonEmptyString),
   host: Schema.Option(TrimmedNonEmptyString),
   detail: Schema.Option(TrimmedNonEmptyString),
+  /** Set when a token or app sign-in overrides a CLI auth probe whose own status was unknown. */
+  cliAuthStatus: Schema.optionalKey(SourceControlProviderAuthStatus),
   accounts: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

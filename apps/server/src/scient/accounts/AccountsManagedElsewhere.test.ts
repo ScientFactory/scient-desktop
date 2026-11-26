@@ -189,7 +189,7 @@ it.effect("does not cache incomplete GitHub identity probes when credential look
 );
 
 it.effect(
-  "marks result incomplete and skips cache when gh auth status is unknown even if app credential succeeds",
+  "marks result incomplete and skips cache when app sign-in masks a timed-out gh auth status probe",
   () =>
     Effect.gen(function* () {
       let discoverCalls = 0;
@@ -208,16 +208,19 @@ it.effect(
                 auth:
                   discoverCalls === 1
                     ? {
-                        status: "unknown" as const,
-                        account: Option.none(),
-                        host: Option.none(),
-                        detail: Option.some("gh auth status timed out"),
+                        // Matches GitHubSourceControlProvider's live output when app sign-in
+                        // succeeds while `gh auth status` timed out.
+                        status: "authenticated" as const,
+                        account: Option.some("Octo"),
+                        host: Option.some("github.com"),
+                        detail: Option.some("Signed in with Scient for GitHub."),
+                        cliAuthStatus: "unknown" as const,
                       }
                     : {
                         status: "authenticated" as const,
-                        account: Option.some("octo"),
+                        account: Option.some("Octo"),
                         host: Option.some("github.com"),
-                        detail: Option.none(),
+                        detail: Option.some("Signed in with Scient for GitHub."),
                         accounts: [
                           {
                             host: "github.com",
@@ -249,7 +252,7 @@ it.effect(
         },
       });
 
-      // First read: app credential succeeds, but gh CLI auth status is unknown -> incomplete, not cached.
+      // First read: app sign-in succeeds, but cliAuthStatus is unknown -> incomplete, not cached.
       expect(yield* service.externalIdentities).toEqual({
         complete: false,
         identities: [

@@ -241,8 +241,8 @@ export const layer = Layer.effect(
             : { effective: Option.none(), complete: true };
           const githubProbeComplete =
             github === undefined ||
-            github.status !== "available" ||
-            github.auth.status !== "unknown";
+            (github.auth.cliAuthStatus !== "unknown" &&
+              (github.status !== "available" || github.auth.status !== "unknown"));
           const { effective, complete: effectiveComplete } = effectiveProbe;
           const complete = githubProbeComplete && effectiveComplete;
           const githubRows = [
