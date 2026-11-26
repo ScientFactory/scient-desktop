@@ -1022,6 +1022,14 @@ const make = Effect.gen(function* () {
               ? { duration }
               : {}),
           };
+          // A move to the Trash may have finished while the length was measured.
+          if (
+            !(await NodeFSP.stat(source).then(
+              (file) => file.isFile(),
+              () => false,
+            ))
+          )
+            throw invalid("The recording is no longer in the project.");
           const title = (await readMediaRecord(source))?.title;
           const record = { ...media, ...(title ? { title } : {}) };
           await NodeFSP.mkdir(root, { recursive: true });
@@ -1213,6 +1221,14 @@ const make = Effect.gen(function* () {
                 try {
                   const record = decodeRecordingSource(await readJson<unknown>(root, entry.name));
                   if (!inside(project, record.source)) return undefined;
+                  // A record outlives its file when the file is moved or deleted outside Scient.
+                  if (
+                    !(await NodeFSP.stat(record.source).then(
+                      (file) => file.isFile(),
+                      () => false,
+                    ))
+                  )
+                    return undefined;
                   const duration = record.duration ?? (await durationFor(project, record.source));
                   return {
                     ...record,
@@ -1856,6 +1872,8 @@ const make = Effect.gen(function* () {
             throw invalid("Expected an absolute subtitle path.");
           if (imported && "file" in selection && !inside(project, selection.file))
             throw invalid("The transcript must live in the project.");
+          // Checked again: another job or a move to the Trash may have begun while this resolved.
+          if (active || trashing) throw busy();
           const controller = new AbortController();
           const current: Active = { root, controller };
           active = current;

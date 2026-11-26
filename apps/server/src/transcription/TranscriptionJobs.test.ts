@@ -421,6 +421,14 @@ it.effect("renames a recording and moves it with its transcripts to the Trash", 
         NodeFSP.readdir(NodePath.join(trashHome, "Trash", "files")),
       )).sort(),
     ).toEqual([id, "lecture.wav"]);
+    // A record written back after the move, as by a rename that was still measuring, stays hidden.
+    yield* Effect.promise(() =>
+      NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", `recording-${"b".repeat(64)}.json`),
+        JSON.stringify({ source: recording, size: 5, created: 1 }),
+      ),
+    );
+    expect(yield* jobs.execute({ action: "media-list", project })).toEqual({ media: [] });
   }).pipe(
     Effect.provide(
       layer.pipe(
