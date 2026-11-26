@@ -48,6 +48,8 @@ import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { moveToTrash, type TrashHost } from "../scient/workspace/WorkspaceTrash.ts";
 import * as SpeechModelStore from "../speech/SpeechModelStore.ts";
 import {
   atomicWrite,
@@ -238,6 +240,14 @@ export const Request = Schema.Union([
     lesson: Schema.optionalKey(Schema.Struct({ language: lessonLanguage })),
   }),
   Schema.Struct({ action: Schema.Literal("media-register"), project: path, source: path }),
+  Schema.Struct({
+    action: Schema.Literal("recording-rename"),
+    project: path,
+    source: path,
+    /** Shown in place of the file name; empty goes back to the file name. */
+    title: Schema.String.check(Schema.isMaxLength(200)),
+  }),
+  Schema.Struct({ action: Schema.Literal("recording-trash"), project: path, source: path }),
   Schema.Struct({ action: Schema.Literal("revision"), project: path, id: RevisionId }),
   Schema.Struct({ action: Schema.Literal("inventory"), project: path, ...InventoryInput.fields }),
   Schema.Struct({
@@ -306,6 +316,7 @@ const RecordingSource = Schema.Struct({
   created: Schema.Number,
   duration: Schema.optionalKey(Schema.Number),
   queued: Schema.optionalKey(Schema.Boolean),
+  title: Schema.optionalKey(Schema.String),
 });
 const decodeRecordingSource = Schema.decodeUnknownSync(RecordingSource);
 type RecordingSource = typeof RecordingSource.Type;
@@ -403,6 +414,7 @@ export class TranscriptionJobs extends Context.Service<
           talk: { openai: boolean };
         }
       | { sdpAnswer: string }
+      | { trashed: true }
       | { detectedLanguage: string | null }
       | Published
       | typeof EngineInventory.Type
@@ -564,6 +576,12 @@ const make = Effect.gen(function* () {
   };
   let active: Active | undefined;
   const queuedSources = new Set<string>();
+  const trashHost: TrashHost = {
+    platform: yield* HostProcess.Platform,
+    homeDirectory: yield* HostProcess.HomeDirectory,
+    environment: yield* HostProcess.Environment,
+    userId: yield* HostProcess.UserId,
+  };
   const jobsScope = yield* Scope.make();
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
@@ -926,6 +944,19 @@ const make = Effect.gen(function* () {
             if (active === sampling) active = undefined;
           }
         }
+        const mediaRecordPath = (source: string) =>
+          NodePath.join(
+            root,
+            `recording-${NodeCrypto.createHash("sha256").update(source).digest("hex")}.json`,
+          );
+        const readMediaRecord = (source: string) =>
+          NodeFSP.readFile(mediaRecordPath(source), "utf8").then(
+            (text) => decodeRecordingSource(JSON.parse(text)),
+            (error: unknown) => {
+              if (missing(error)) return undefined;
+              throw error;
+            },
+          );
         const registerMedia = async (path: string) => {
           if (!NodePath.isAbsolute(path)) throw invalid("Expected an absolute media path.");
           const source = await NodeFSP.realpath(path);
@@ -945,13 +976,64 @@ const make = Effect.gen(function* () {
               ? { duration }
               : {}),
           };
-          const key = NodeCrypto.createHash("sha256").update(source).digest("hex");
+          const title = (await readMediaRecord(source))?.title;
+          const record = { ...media, ...(title ? { title } : {}) };
           await NodeFSP.mkdir(root, { recursive: true });
-          await atomicWrite(NodePath.join(root, `recording-${key}.json`), JSON.stringify(media));
-          return media;
+          await atomicWrite(mediaRecordPath(source), JSON.stringify(record));
+          return record;
         };
         if (input.action === "media-register")
           return { media: [await registerMedia(input.source)] };
+        if (input.action === "recording-rename") {
+          if (!NodePath.isAbsolute(input.source)) throw invalid("Expected an absolute media path.");
+          const source = await NodeFSP.realpath(input.source);
+          if (!inside(project, source)) throw invalid("The recording must live in the project.");
+          const { title: _previous, ...media } =
+            (await readMediaRecord(source)) ?? (await registerMedia(source));
+          const title = input.title.trim();
+          await atomicWrite(
+            mediaRecordPath(source),
+            JSON.stringify({ ...media, ...(title ? { title } : {}) }),
+          );
+          return { media: [{ ...media, ...(title ? { title } : {}) }] };
+        }
+        if (input.action === "recording-trash") {
+          if (!NodePath.isAbsolute(input.source)) throw invalid("Expected an absolute media path.");
+          // The file may already be gone; its transcripts still go.
+          const source = await NodeFSP.realpath(input.source).catch(() =>
+            NodePath.resolve(input.source),
+          );
+          if (!inside(project, source)) throw invalid("The recording must live in the project.");
+          if (
+            queuedSources.has(source) ||
+            (active?.root === root && active.status?.job.source === source)
+          )
+            throw invalid("Stop transcribing this recording first.");
+          const revisions = rootStat
+            ? (
+                await Promise.all(
+                  (await NodeFSP.readdir(root, { withFileTypes: true }))
+                    .filter((entry) => entry.isDirectory() && revision.test(entry.name))
+                    .map(async (entry) => {
+                      const job = await readJson<Job>(
+                        NodePath.join(root, entry.name),
+                        "job.json",
+                      ).catch(() => undefined);
+                      return job?.source === source ? NodePath.join(root, entry.name) : undefined;
+                    }),
+                )
+              ).filter((directory) => directory !== undefined)
+            : [];
+          const file = await NodeFSP.stat(source).then(
+            (stat) => (stat.isFile() ? [source] : []),
+            () => [],
+          );
+          const outcomes = await moveToTrash(trashHost, [...file, ...revisions]);
+          const failed = outcomes.find((outcome) => !outcome.ok);
+          if (failed && !failed.ok) throw new Error(failed.message);
+          await NodeFSP.rm(mediaRecordPath(source), { force: true });
+          return { trashed: true as const };
+        }
         if (input.action === "capture-start") {
           await run(
             captureGate.withPermit(Effect.promise(() => touchCapture(root, input.id, nowMs))),

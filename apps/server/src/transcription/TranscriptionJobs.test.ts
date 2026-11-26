@@ -306,6 +306,68 @@ it.effect(
   },
 );
 
+const trashHome = NodePath.join(NodeOS.tmpdir(), `recordings-trash-${process.pid}`);
+it.effect("renames a recording and moves it with its transcripts to the Trash", () =>
+  Effect.gen(function* () {
+    const project = yield* Effect.acquireRelease(
+      Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "transcription-manage-")).then((directory) =>
+          NodeFSP.realpath(directory, "utf8"),
+        ),
+      ),
+      (directory) =>
+        Effect.promise(async () => {
+          await NodeFSP.rm(directory, { recursive: true, force: true });
+          await NodeFSP.rm(trashHome, { recursive: true, force: true });
+        }),
+    );
+    const jobs = yield* Jobs.TranscriptionJobs;
+    const recording = NodePath.join(project, "lecture.wav");
+    const id = "2026-11-26-lecture-12345678";
+    yield* Effect.promise(async () => {
+      await NodeFSP.writeFile(recording, "audio");
+      await NodeFSP.mkdir(NodePath.join(project, "Transcripts", id), { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", id, "job.json"),
+        JSON.stringify({ id, source: recording }),
+      );
+    });
+    const named = () =>
+      jobs
+        .execute({ action: "media-list", project })
+        .pipe(Effect.map((result) => (result as { media: { title?: string }[] }).media[0]?.title));
+    yield* jobs.execute({ action: "media-register", project, source: recording });
+    yield* jobs.execute({
+      action: "recording-rename",
+      project,
+      source: recording,
+      title: " Week 3 ",
+    });
+    expect(yield* named()).toBe("Week 3");
+    yield* jobs.execute({ action: "media-register", project, source: recording });
+    expect(yield* named()).toBe("Week 3");
+    yield* jobs.execute({ action: "recording-rename", project, source: recording, title: "" });
+    expect(yield* named()).toBeUndefined();
+
+    yield* jobs.execute({ action: "recording-trash", project, source: recording });
+    expect(yield* Effect.promise(() => NodeFSP.readdir(project))).toEqual(["Transcripts"]);
+    expect(
+      yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(project, "Transcripts"))),
+    ).toEqual([]);
+    expect(
+      (yield* Effect.promise(() =>
+        NodeFSP.readdir(NodePath.join(trashHome, "Trash", "files")),
+      )).sort(),
+    ).toEqual([id, "lecture.wav"]);
+  }).pipe(
+    Effect.provide(
+      layer.pipe(
+        Layer.provide(Layer.succeed(HostProcess.Environment, { XDG_DATA_HOME: trashHome })),
+      ),
+    ),
+  ),
+);
+
 it.effect("engine inventory exposes available engine configurations", () =>
   Effect.gen(function* () {
     expect(yield* (yield* Jobs.TranscriptionJobs).engines("/project", {})).toEqual({
