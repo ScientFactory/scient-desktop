@@ -17,10 +17,11 @@ const ms = (start) => Math.round(now() - start);
 const run = (command, args) =>
   ChildProcess.spawnSync(command, args, { encoding: "utf8", windowsHide: true });
 
-// Install silently, per user, as a person double-clicking would get it.
+// Install silently into a known folder (the default one differs per machine setup).
+const TARGET = "C:\\ScientTiming";
 {
   const start = now();
-  const install = run(installer, ["/S"]);
+  const install = run(installer, ["/S", `/D=${TARGET}`]);
   result.steps.installMs = ms(start);
   result.steps.installExit = install.status;
 }
@@ -31,6 +32,7 @@ const registered = run("powershell.exe", [
   "Get-ItemProperty HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*, HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Scient*' } | Select-Object -First 1 -ExpandProperty InstallLocation",
 ]).stdout.trim();
 const candidates = [
+  TARGET,
   registered,
   Path.join(process.env.LOCALAPPDATA, "Programs", "Scient"),
   Path.join(process.env.LOCALAPPDATA, "Programs", "scient"),
