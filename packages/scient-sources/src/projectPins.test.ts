@@ -11,6 +11,7 @@ import { vi } from "vite-plus/test";
 import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { changeScientLibraryReview, refreshScientLibraryReviewSnapshot } from "./libraryReviews.ts";
 import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
@@ -1167,5 +1168,55 @@ describe("pins of works with thousands of authors", () => {
     expect(work.creators).toEqual(consortium.slice(0, 256));
     expect(work.creatorCount).toBe(7_992);
     expect(work.incompleteCreatorRoles).toEqual(["author"]);
+  });
+
+  it("keeps the whole author count through a record hydrated from the cut copy", async () => {
+    const base = await fixture();
+    const { author, projectRoot, record } = await legacyPin(base);
+    const created = await changeScientLibraryReview({
+      projectRoot,
+      library: author.library,
+      change: { action: "create-review", title: "Trials" },
+      actor: "user",
+    });
+    const reviewId = created.reviewId!;
+    await changeScientLibraryReview({
+      projectRoot,
+      library: author.library,
+      change: { action: "add-sources", reviewId, sourceIds: [record.sourceId] },
+      actor: "user",
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot, library: author.library });
+    const reviewEntry = async () =>
+      JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(projectRoot, ".scient", "library", "reviews", `${reviewId}.works.json`),
+          "utf8",
+        ),
+      ).records[record.sourceId];
+    expect((await reviewEntry()).creatorCount).toBe(7_992);
+
+    const collaborator = await newLibrary(base, "collaborator");
+    await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    const [hydrated] = await listScientSourceRecords(collaborator.library);
+    expect(hydrated?.creators).toHaveLength(256);
+
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    await refreshScientLibraryReviewSnapshot({
+      projectRoot,
+      library: collaborator.library,
+      reviewId,
+    });
+    expect(await storedWork(projectRoot)).toMatchObject({
+      creators: consortium.slice(0, 256),
+      creatorCount: 7_992,
+      incompleteCreatorRoles: ["author"],
+    });
+    expect((await reviewEntry()).creatorCount).toBe(7_992);
   });
 });

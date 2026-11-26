@@ -108,7 +108,7 @@ function scientFullerSavedRoster(
 ): ScientSavedRoster | null {
   if (!copy) return null;
   if (record.creators === copy.creators) return copy;
-  const known = copy.creators.length;
+  const known = Math.max(copy.creators.length, copy.creatorCount ?? 0);
   const names = record.creators;
   return (record.incompleteCreatorRoles?.length ?? 0) > 0 &&
     names.length > 0 &&
