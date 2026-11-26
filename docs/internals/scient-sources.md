@@ -685,6 +685,10 @@ sources in `<project>/.scient/library/pins.json`:
   note it drops. The detail (`projectNoteHistory`) and the agent's
   `scient_sources_get` return the versions; restoring is an ordinary checked
   write of an earlier text.
+- A pin's `work` and a review's record snapshot keep at most 256 creators,
+  identifiers and tags; a longer list, read or written, keeps its first 256 with
+  the whole `creatorCount`, and a pin marks the cut roles incomplete ("et al."),
+  so one consortium paper never refuses the whole file. Records keep every author.
 - `work` snapshots every citation input the formatter reads (type, title,
   creators with roles and incompleteness, issued year, identifiers, container
   title, and the optional `customType`, `issuedRaw`, `publisher`, `volume`,
