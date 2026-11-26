@@ -46,12 +46,17 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
   inspect(view.getUint32(4, littleEndian), 0);
 }
 
-function dimensions(width: number, height: number, maxPixels = MAX_PIXELS) {
-  if (!(width > 0 && height > 0) || width > 16384 || height > 16384 || width > maxPixels / height)
+function dimensions(width: number, height: number, maxPixels = MAX_PIXELS, maxEdge = 16384) {
+  if (
+    !(width > 0 && height > 0) ||
+    width > maxEdge ||
+    height > maxEdge ||
+    width > maxPixels / height
+  )
     throw new PreviewError({ code: "image-too-large" });
 }
 
-function validateHeif(bytes: ArrayBuffer, maxPixels = MAX_PIXELS) {
+function validateHeif(bytes: ArrayBuffer, maxPixels = MAX_PIXELS, maxEdge = 16384) {
   const view = new DataView(bytes);
   let found = false;
   let count = 0;
@@ -79,6 +84,7 @@ function validateHeif(bytes: ArrayBuffer, maxPixels = MAX_PIXELS) {
           view.getUint32(offset + header + 4),
           view.getUint32(offset + header + 8),
           maxPixels,
+          maxEdge,
         );
         found = true;
       } else if (type === 0x6d657461 || type === 0x69707270 || type === 0x6970636f)
@@ -169,8 +175,12 @@ async function decode(
 ): Promise<{ readonly blob: Blob } | { readonly bitmap: ImageBitmap }> {
   if (bytes.byteLength > 50 * 1024 * 1024) throw new PreviewError({ code: "file-too-large" });
   if (heif) {
-    // SCIENT-FORK:START — bitmap attachment decoding uses MAX_BITMAP_PIXELS while PNG previews keep MAX_PIXELS.
-    validateHeif(bytes, output === "bitmap" ? MAX_BITMAP_PIXELS : MAX_PIXELS);
+    // SCIENT-FORK:START — bitmap attachment decoding preserves the 64 MP / unbounded-edge cap from imageCompression.ts.
+    validateHeif(
+      bytes,
+      output === "bitmap" ? MAX_BITMAP_PIXELS : MAX_PIXELS,
+      output === "bitmap" ? Number.POSITIVE_INFINITY : 16384,
+    );
     // SCIENT-FORK:END
     // Desktop CSP forbids the JavaScript evaluation used by heic-to/next.
     const { heicTo } = await import("heic-to/csp");

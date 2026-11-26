@@ -95,13 +95,13 @@ it("decodes HEIC bitmaps via decodeHeifBitmap and rejects malformed input cleanl
   await expect(decodeHeifBitmap(new Blob([new Uint8Array([1, 2, 3, 4])]))).rejects.toThrow();
 });
 
-it("allows up to 64 MP HEIF headers in bitmap mode while keeping the 32 MP cap for PNG previews", async () => {
-  const runWorker = (output: "png" | "bitmap") =>
+it("allows up to 64 MP HEIF headers (including long edges > 16384 px) in bitmap mode while keeping PNG preview limits", async () => {
+  const runWorker = (output: "png" | "bitmap", width: number, height: number) =>
     new Promise<{ failure?: { code: string } }>((resolve, reject) => {
       const worker = new Worker(new URL("./imageDecode.worker.ts", import.meta.url), {
         type: "module",
       });
-      const bytes = makeSyntheticHeifHeader(8064, 6048);
+      const bytes = makeSyntheticHeifHeader(width, height);
       worker.addEventListener("message", (event: MessageEvent<{ failure?: { code: string } }>) => {
         worker.terminate();
         resolve(event.data);
@@ -115,6 +115,13 @@ it("allows up to 64 MP HEIF headers in bitmap mode while keeping the 32 MP cap f
 
   // 8064 x 6048 = 48.77 MP: rejected by the 32 MP PNG preview cap, accepted by the 64 MP bitmap cap
   // (where validation passes and the stub header fails later during HEIC decoding).
-  expect((await runWorker("png")).failure?.code).toBe("image-too-large");
-  expect((await runWorker("bitmap")).failure?.code).not.toBe("image-too-large");
+  expect((await runWorker("png", 8064, 6048)).failure?.code).toBe("image-too-large");
+  expect((await runWorker("bitmap", 8064, 6048)).failure?.code).not.toBe("image-too-large");
+
+  // 18000 x 3000 = 54 MP with a long edge > 16384 px: rejected by PNG preview edge cap, accepted by bitmap mode.
+  expect((await runWorker("png", 18_000, 3_000)).failure?.code).toBe("image-too-large");
+  expect((await runWorker("bitmap", 18_000, 3_000)).failure?.code).not.toBe("image-too-large");
+
+  // 10000 x 7000 = 70 MP: rejected in both modes.
+  expect((await runWorker("bitmap", 10_000, 7_000)).failure?.code).toBe("image-too-large");
 });
