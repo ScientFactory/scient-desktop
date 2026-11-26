@@ -103,6 +103,7 @@ export function scientRecordingSurface(
   projectId: string,
   source: string,
   match?: { version: string; time: number; query: string },
+  title?: string,
 ): Extract<ScientRightPanelSurface, { module: "recording" }> {
   return {
     id: `scient:recording:${encodeURIComponent(projectId)}:${encodeURIComponent(source)}`,
@@ -111,7 +112,7 @@ export function scientRecordingSurface(
     projectId,
     source,
     ...(match ? { match } : {}),
-    title: source.split(/[\\/]/).at(-1) ?? source,
+    title: title || (source.split(/[\\/]/).at(-1) ?? source),
   };
 }
 
@@ -267,6 +268,7 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
         typeof match.query === "string"
         ? { version: match.version, time: match.time, query: match.query }
         : undefined,
+      typeof surface.title === "string" ? surface.title.slice(0, 200) : undefined,
     );
   }
   if (surface.id === "scient:sources" && surface.module === "sources") {

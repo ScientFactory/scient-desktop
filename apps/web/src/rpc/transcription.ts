@@ -70,6 +70,8 @@ type RecordingSource = {
   created: number;
   queued?: boolean;
   duration?: number;
+  /** The name the person gave it. */
+  title?: string;
 };
 type Commands = {
   inventory: {
@@ -220,6 +222,8 @@ type Commands = {
   };
   "media-register": { source: string; response: { media: RecordingSource[] } };
   "media-list": { response: { media: RecordingSource[] } };
+  "recording-rename": { source: string; title: string; response: { media: RecordingSource[] } };
+  "recording-trash": { source: string; response: { trashed: true } };
   pause: { id: string; response: RecordingStatus };
   list: { includeCreated: true; query?: string; response: RecordingStatus[] };
   status: { id: string; response: RecordingStatus };

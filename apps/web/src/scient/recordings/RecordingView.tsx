@@ -24,6 +24,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useRecordingTitle } from "./recordingTitle";
 import { MiddleTruncate } from "../../components/ui/middle-truncate";
 import { Button } from "../../components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
@@ -56,8 +57,14 @@ export function RecordingView({
   match,
   onBack,
   onChange,
+  title,
+  duration,
 }: {
   recording: Recording;
+  /** The name the person gave it. */
+  title?: string | undefined;
+  /** The length Scient measured when the file was added. */
+  duration?: number | undefined;
   threadRef: ScopedThreadRef;
   onRevealComposer: () => void;
   match?: { version: string; time: number; query: string } | undefined;
@@ -66,6 +73,7 @@ export function RecordingView({
 }) {
   const gt = useGT();
   const locale = useLocale();
+  const recordingTitle = useRecordingTitle();
   const [version, setVersion] = useState(match?.version ?? "");
   const current =
     recording.revisions.find(({ job }) => job.id === version) ?? recording.revisions[0]!;
@@ -341,10 +349,18 @@ export function RecordingView({
           }}
         />
       )}
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+      {/* Audio reads as one centered column with room above it; video keeps a full-width bar. */}
+      <header
+        className={
+          video
+            ? "flex shrink-0 items-center gap-2 border-b px-3 py-2"
+            : "mx-auto flex w-full max-w-3xl shrink-0 items-center gap-2 px-4 pt-8 pb-2"
+        }
+      >
         <Button
           variant="ghost"
           size="icon-sm"
+          className={video ? undefined : "-ms-2"}
           onClick={onBack}
           aria-label={gt("Back to recordings")}
         >
@@ -352,7 +368,7 @@ export function RecordingView({
         </Button>
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-medium">
-            <MiddleTruncate value={fileName(current.job.source)} />
+            <MiddleTruncate value={recordingTitle(current.job.source, title)} />
           </h1>
           <p className="truncate text-xs text-muted-foreground">
             {project.title}
@@ -458,10 +474,13 @@ export function RecordingView({
         className={`flex min-h-0 flex-1 flex-col ${video && !theater ? "@[1200px]/recording:grid @[1200px]/recording:grid-cols-[minmax(0,58fr)_minmax(0,42fr)]" : ""}`}
       >
         {playable && (
-          <div className={`shrink-0 ${video ? "" : "mx-auto w-full max-w-3xl px-4 pt-3"}`}>
+          <div className={`shrink-0 ${video ? "" : "mx-auto w-full max-w-3xl px-4 pt-4"}`}>
             {mediaQuery.data && (
               <RecordingPlayer
                 key={mediaQuery.data}
+                knownDuration={
+                  duration ?? recording.revisions.find((revision) => revision.duration)?.duration
+                }
                 onMedia={(element) => {
                   media.current = element;
                 }}
@@ -526,7 +545,9 @@ export function RecordingView({
         <section
           className={`mx-auto flex w-full max-w-3xl min-w-0 flex-1 flex-col px-4 ${video ? (theater ? "min-h-64" : "min-h-64 @[1200px]/recording:min-h-0") : "min-h-0"}`}
         >
-          <div className="flex min-h-12 flex-wrap items-center gap-2 py-2">
+          <div
+            className={`flex min-h-12 flex-wrap items-center gap-2 ${video ? "py-2" : "pt-5 pb-2"}`}
+          >
             <ToggleGroup
               variant="segmented"
               value={[notesOpen ? "notes" : "transcript"]}
