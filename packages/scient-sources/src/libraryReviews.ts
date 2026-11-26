@@ -31,6 +31,7 @@ import {
   type ScientSourceRecord,
   ScientSavedCopyCreatorCount,
   scientSavedCopyList,
+  SCIENT_SAVED_COPY_LIST_LIMIT,
   scientSavedCopyHead,
   scientSavedCopyRoster,
   joinScientSavedCopy,
@@ -470,6 +471,40 @@ export function scientReviewSnapshotText(
       extra: {},
     }),
   );
+}
+
+/**
+ * A snapshot file's bytes with every list past 256 written in the form older Scient reads; null
+ * when the file needs no change or is not this review's snapshot.
+ */
+export function boundScientReviewSnapshotText(text: string, reviewId: string): string | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    const header = decodeSnapshotHeader(value);
+    if (header.reviewId !== reviewId) return null;
+    const long = (raw: unknown, name: string) =>
+      isJsonObject(raw) &&
+      Array.isArray(raw[name]) &&
+      raw[name].length > SCIENT_SAVED_COPY_LIST_LIMIT;
+    if (
+      !Object.values(header.records).some(
+        (raw) => long(raw, "creators") || long(raw, "identifiers"),
+      )
+    )
+      return null;
+    const entries = new Map<string, StoredWork>();
+    const unread = new Map<string, unknown>();
+    for (const [sourceId, raw] of Object.entries(header.records)) {
+      const work = decodeEntry(raw);
+      if (work) entries.set(sourceId, { work, extra: extraFields(raw, WORK_FIELDS) });
+      else unread.set(sourceId, raw);
+    }
+    return formatJson(
+      encodeSnapshot(reviewId, { entries, unread, extra: extraFields(value, FILE_FIELDS) }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** A snapshot file's entries, or null when its bytes are not this review's snapshot. */

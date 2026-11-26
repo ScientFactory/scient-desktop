@@ -79,7 +79,7 @@ export function scientCreatorRoleIncomplete(
 }
 
 /** How many creators, identifiers or tags a pin's or review's saved copy keeps. */
-const SCIENT_SAVED_COPY_LIST_LIMIT = 256;
+export const SCIENT_SAVED_COPY_LIST_LIMIT = 256;
 
 /** A saved copy's whole creator count, present only when its `creators` hold the first ones. */
 export const ScientSavedCopyCreatorCount = Schema.Int.check(Schema.isGreaterThan(0));
