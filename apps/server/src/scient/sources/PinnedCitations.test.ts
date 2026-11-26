@@ -396,4 +396,53 @@ describe("pinned citations travel with the project", () => {
       expect(await managedFiles(elsewhere)).toEqual(written);
     },
   );
+
+  it("keeps entries listing every author while only a cut copy of the list is here", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pinned-citations-")),
+    );
+    fixtures.push(base);
+    const original = await computer(base, "author");
+    const projectRoot = NodePath.join(base, "project");
+    await NodeFSP.mkdir(projectRoot);
+    await initializeScientProject({ root: projectRoot });
+    const record = await add(original, {
+      ...works[0]!,
+      creators: Array.from({ length: 7_992 }, (_, index) => person(`Member${index + 1}`)),
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library: original,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot, library: original });
+    expect((await readScientProjectPins(projectRoot))[0]?.work.creators).toHaveLength(256);
+    await syncPinnedBibliography({
+      root: projectRoot,
+      library: original,
+      access: "write",
+      actor: "user",
+    });
+    const written = await managedFiles(projectRoot);
+    expect(written.bib).toContain("Member7992");
+
+    const offline = await syncPinnedBibliography({
+      root: projectRoot,
+      library: null,
+      access: "read",
+      actor: "user",
+    });
+    expect(await managedFiles(projectRoot)).toEqual(written);
+    expect(offline.keptEntries).toHaveLength(1);
+
+    const collaborator = await computer(base, "collaborator");
+    await syncPinnedBibliography({
+      root: projectRoot,
+      library: collaborator,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(projectRoot)).toEqual(written);
+  });
 });

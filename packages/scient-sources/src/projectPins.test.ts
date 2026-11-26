@@ -1219,4 +1219,24 @@ describe("pins of works with thousands of authors", () => {
     });
     expect((await reviewEntry()).creatorCount).toBe(7_992);
   });
+
+  it("cites a pin's full author list over a shortened record that begins the same", async () => {
+    const base = await fixture();
+    const { projectRoot } = await legacyPin(base);
+    const collaborator = await newLibrary(base, "collaborator");
+    await addRecord(collaborator.library, "trial", {
+      creators: consortium.slice(0, 256),
+      incompleteCreatorRoles: ["author"],
+      identifiers: [{ scheme: "doi", value: "10.1000/trial" }],
+    });
+
+    const [work] = await listScientProjectPinnedWorks({
+      projectRoot,
+      library: collaborator.library,
+    });
+    expect(work?.from).toBe("library");
+    expect(work?.record.creators).toEqual(consortium);
+    expect(work?.record).not.toHaveProperty("incompleteCreatorRoles");
+    expect(work?.incompleteSnapshot).toBe(false);
+  });
 });

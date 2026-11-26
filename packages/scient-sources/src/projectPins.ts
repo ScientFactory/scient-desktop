@@ -32,7 +32,9 @@ import {
   ScientSourceIncompleteCreatorRoles,
   ScientSourceMore,
   type ScientSourceRecord,
+  type ScientSavedRoster,
   ScientSavedCopyCreatorCount,
+  scientFullerSavedRoster,
   scientSavedCopyList,
   scientSavedCopyRoster,
 } from "./model.ts";
@@ -1193,10 +1195,26 @@ export interface ScientProjectPinnedWork {
   readonly projectNote: string | null;
   readonly pinnedAt: string;
   /**
-   * The citation comes only from a snapshot written before it held every citation input (the
-   * snapshot itself, or a record hydrated from it): an earlier managed entry may be fuller.
+   * The citation comes only from a snapshot written before it held every citation input, or one
+   * holding the first names of a longer list (the snapshot itself, or a record hydrated from it):
+   * an earlier managed entry may be fuller.
    */
   readonly incompleteSnapshot: boolean;
+}
+
+/** The copy holds only the first names of a longer list. */
+const rosterCut = (roster: ScientSavedRoster) =>
+  (roster.creatorCount ?? 0) > roster.creators.length;
+
+function withRoster(record: ScientSourceRecord, roster: ScientSavedRoster): ScientSourceRecord {
+  const { incompleteCreatorRoles: _roles, ...rest } = record;
+  return {
+    ...rest,
+    creators: roster.creators,
+    ...(roster.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: roster.incompleteCreatorRoles }
+      : {}),
+  };
 }
 
 function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
@@ -1290,13 +1308,15 @@ export async function listScientProjectPinnedWorks(input: {
         record: recordFromSnapshot(pin),
         projectNote,
         pinnedAt: pin.pinnedAt,
-        incompleteSnapshot: incomplete,
+        incompleteSnapshot: incomplete || rosterCut(pin.work),
       };
     }
     // As the refresh: an unmerged source is cited from its record alone.
-    const { note: _personal, ...record } = unmerged.has(found.sourceId)
-      ? found
-      : withKnownPinCitationValues(found, pin.work);
+    const whole = unmerged.has(found.sourceId);
+    const known = whole ? found : withKnownPinCitationValues(found, pin.work);
+    const fuller = whole ? null : scientFullerSavedRoster(known, pin.work);
+    const { note: _personal, ...record } =
+      fuller && fuller.creators.length > known.creators.length ? withRoster(known, fuller) : known;
     return {
       citationKey: pin.citationKey,
       projectSourceId: pin.sourceId,
@@ -1304,7 +1324,8 @@ export async function listScientProjectPinnedWorks(input: {
       record: { ...record, citationKey: pin.citationKey },
       projectNote,
       pinnedAt: pin.pinnedAt,
-      incompleteSnapshot: scientPinCitationStillUnknown(pin.work, found),
+      incompleteSnapshot:
+        scientPinCitationStillUnknown(pin.work, found) || (fuller !== null && rosterCut(fuller)),
     };
   });
 }

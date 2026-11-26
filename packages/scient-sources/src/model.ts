@@ -102,7 +102,7 @@ const sameCreator = (left: ScientSourceCreator, right: ScientSourceCreator) =>
  * the record's list is the copy's own (filled from it), or a shortened record's list is how the
  * copy's begins. Otherwise null: the record's list is the one to keep.
  */
-function scientFullerSavedRoster(
+export function scientFullerSavedRoster(
   record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
   copy: ScientSavedRoster | null,
 ): ScientSavedRoster | null {
