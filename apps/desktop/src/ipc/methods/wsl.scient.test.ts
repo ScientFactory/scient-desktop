@@ -173,13 +173,9 @@ describe("WSL package capability in slim Windows builds", () => {
           assert.isTrue(initial.wslOnly);
           assert.equal(initial.distro, "Ubuntu");
 
-          yield* setWslBackendEnabled.handler(true);
-          yield* setWslOnly.handler(true);
           const afterDistro = yield* setWslDistro
             .handler("Debian")
             .pipe(Effect.flatMap(decodeWslState));
-          assert.isTrue(afterDistro.enabled);
-          assert.isTrue(afterDistro.wslOnly);
           assert.equal(afterDistro.distro, "Ubuntu");
 
           // Settings' "Switch to Windows" on the unavailable WSL row.
@@ -188,6 +184,13 @@ describe("WSL package capability in slim Windows builds", () => {
             .pipe(Effect.flatMap(decodeWslState));
           assert.isFalse(afterDisable.enabled);
           assert.isFalse(afterDisable.wslOnly);
+
+          yield* setWslBackendEnabled.handler(true);
+          const afterReenable = yield* setWslOnly
+            .handler(true)
+            .pipe(Effect.flatMap(decodeWslState));
+          assert.isFalse(afterReenable.enabled);
+          assert.isFalse(afterReenable.wslOnly);
         }).pipe(Effect.provide(layer));
 
         assert.deepEqual(relaunchReasons, []);
