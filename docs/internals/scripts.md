@@ -244,6 +244,7 @@ a committed upstream merge: owned base, previous boundary, target and its exact 
 commit and path counts, initially unmerged paths reconstructed with the same merge
 simulation as `plan`, the merge tree, and later merges on the branch, each labelled as an
 owned-main catch-up or an official extension.
+
 Shared model curation and project/settings reducers run before server integration checks.
 Affected compilation and static checks remain separate required composition checks.
 For older target revisions, review the actual assertion bodies too: an existing suite
@@ -263,7 +264,7 @@ alignment integrator. These checks do not replace any complete local, hosted, na
 migration, provenance, protected-seam, or visual qualification required by
 [AGENTS.md](../../AGENTS.md) and the [alignment protocol](./upstream-alignment-protocol.md).
 
-## Fork footprint
+## Fork footprint and conflict trend
 
 `pnpm alignment:footprint --base <ref> --head <ref>` (`--format json` for data) measures each
 ref's divergence from the T3 `integrationBase` in its own `upstream-state.json`: files present
@@ -274,6 +275,13 @@ newly deletes or returns to identical. When the baseline moved (an alignment), i
 omits the per-file lists. It reads commits only and finishes in about a second on this repository.
 The provenance workflow appends it to each pull request's job summary for information; it never
 fails the job, and a baseline commit missing from the clone prints a note instead.
+
+`pnpm alignment:trend` replays the last 20 upstream merges on `origin/main` (those whose second
+parent is a `upstream/main` commit) with `git merge-tree` and prints, oldest first, each one's
+official commits, incoming paths, same-path overlaps, initially unmerged paths and conflicts per
+100 incoming paths, then the paths unmerged in at least 3 of them. Its counts match the receipts'
+Range lines. It writes nothing and gates nothing and takes about 15 seconds. Options: `--ref`,
+`--upstream`, `--last <N>`, `--min-recurrence <N>`, `--format markdown|json`.
 
 ## Desktop artifacts
 
