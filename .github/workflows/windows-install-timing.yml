@@ -52,7 +52,7 @@ on:
         type: string
         default: ""
       artifact:
-        description: Its artifact holding exactly one installer .exe (release runs desktop-win-x64; CI windows-packaging-installer)
+        description: Its artifact holding exactly one installer .exe (release runs desktop-win-x64; CI windows-packaging-slim-installer)
         type: string
         default: desktop-win-x64
       installer_url:

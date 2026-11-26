@@ -213,7 +213,8 @@ The numbers describe a 4-CPU GitHub runner, whose image turns Defender real-time
 scanning off (the summary records the state). Compare them between runs, not with
 users' machines. To time any other installer, run **Windows install timing** by
 hand with the `run_id` and `artifact` of the run that built it (`desktop-win-x64`
-from a release run, `windows-packaging-installer` from CI's Windows Packaging) or
+from a release run; from CI's Windows Packaging, `windows-packaging-slim-installer`
+for the release shape or `windows-packaging-installer` for the one with WSL) or
 with an HTTPS `installer_url`. Manual runs compare against the same baseline and
 never become one. To reset the committed baseline, replace it with the
 `windows-install-timing.json` of an accepted release run.
