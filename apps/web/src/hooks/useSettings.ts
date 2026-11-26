@@ -244,10 +244,18 @@ export function persistClientSettingsPatch(
     deferred = false;
     deferredClientSettingsPatchCount -= 1;
   };
+  // Values this patch replaced, put back if its save fails and nothing changed them since.
+  let replaced: Partial<ClientSettings> | null = null;
+  const capture = (settings: ClientSettings) => {
+    replaced ??= Object.fromEntries(
+      Object.keys(patch).map((key) => [key, settings[key as keyof ClientSettings]]),
+    ) as Partial<ClientSettings>;
+  };
   // SCIENT-FORK:END
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
+    capture(getClientSettingsSnapshot());
     replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
   }
   // SCIENT-FORK:START — settings another window saves meanwhile must keep unsaved patches.
@@ -268,6 +276,9 @@ export function persistClientSettingsPatch(
     if (
       !Object.entries(patch).every(([key, value]) => current[key as keyof ClientSettings] === value)
     ) {
+      // SCIENT-FORK:START
+      capture(current);
+      // SCIENT-FORK:END
       replaceClientSettingsSnapshot({ ...current, ...patch });
     }
     await persist(getClientSettingsSnapshot());
@@ -277,8 +288,32 @@ export function persistClientSettingsPatch(
       operation: "persist",
       ...safeErrorLogAttributes(error),
     });
+    // SCIENT-FORK:START — a failed save must not look saved.
+    revertUnsavedPatch(patch, replaced);
+    toastManager.add({
+      type: "error",
+      title: m(msg("Setting not saved")),
+      description: m(msg("Could not save this setting on this device. Try again.")),
+    });
+    // SCIENT-FORK:END
   });
 }
+
+// SCIENT-FORK:START — a failed save must not look saved.
+/** Puts back what `patch` replaced, for each key nothing has changed since. */
+function revertUnsavedPatch(patch: ClientSettingsPatch, replaced: Partial<ClientSettings> | null) {
+  if (replaced === null) return;
+  const current = getClientSettingsSnapshot();
+  const untouched = Object.entries(patch).filter(
+    ([key, value]) => current[key as keyof ClientSettings] === value,
+  );
+  if (untouched.length === 0) return;
+  replaceClientSettingsSnapshot({
+    ...current,
+    ...Object.fromEntries(untouched.map(([key]) => [key, replaced[key as keyof ClientSettings]])),
+  });
+}
+// SCIENT-FORK:END
 
 /** Reapply to newer snapshots after pending writes to avoid losing concurrent changes. */
 export async function persistClientSettingsUpdate(

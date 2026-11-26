@@ -12,6 +12,12 @@ vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({ persistence: persistenceMocks }),
 }));
 
+const toasts = vi.hoisted(() => ({ add: vi.fn() }));
+vi.mock("~/components/ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  toastManager: toasts,
+}));
+
 import {
   __resetClientSettingsPersistenceForTests,
   __setClientSettingsForTests,
@@ -196,5 +202,35 @@ describe("client settings saved by another desktop window", () => {
       wordWrap: false,
     });
     expect(getClientSettings().diffLayout).toBe("split");
+  });
+});
+
+describe("a client setting whose save fails", () => {
+  it("goes back to its saved value and says so", async () => {
+    using _desktop = setup();
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    toasts.add.mockReset();
+
+    await persistClientSettingsPatch({ wordWrap: false }, () =>
+      Promise.reject(new Error("disk full")),
+    );
+
+    expect(getClientSettings().wordWrap).toBe(true);
+    expect(toasts.add).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: "error", title: "Setting not saved" }),
+    );
+  });
+
+  it("keeps a newer change made to the same setting while it saved", async () => {
+    using _desktop = setup();
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    const save = Promise.withResolvers<void>();
+
+    const failing = persistClientSettingsPatch({ timestampFormat: "12-hour" }, () => save.promise);
+    const newer = persistClientSettingsPatch({ timestampFormat: "24-hour" });
+    save.reject(new Error("disk full"));
+    await Promise.all([failing, newer]);
+
+    expect(getClientSettings().timestampFormat).toBe("24-hour");
   });
 });
