@@ -35,7 +35,12 @@ segments and correction review items. An unfinished revision returns segments
 from complete checkpoint records without modifying the ledger.
 
 The Recordings UI registers copied media with `media-register` and reads it
-with `media-list`. These registrations stay in the project if the dialog is
+with `media-list`. `recording-rename` stores a shown `title` in the media
+record; an empty title returns to the file name, and registering again keeps
+it. `recording-trash` moves the media file, every revision directory whose
+`job.json` names that source, and their notes to the host's Trash, then
+removes the media record. It refuses while the source is queued or
+transcribing. These registrations stay in the project if the dialog is
 dismissed. `start-batch` accepts up to 20 recordings in one project and runs
 them serially through the same job admission and checkpoint pipeline. Pending
 batch requests live in process memory. `pause` stops the active job with its

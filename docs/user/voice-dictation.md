@@ -63,8 +63,8 @@ progress, and removal controls.
 
 ## Record a lesson
 
-Choose **Record a lesson** from a project's menu in the sidebar, or from
-**Add** on the Recordings page. Pick the project and microphone, then
+Choose **Record a lesson** from a project's menu in the sidebar, or
+**Record** on the Recordings page. Pick the project and microphone, then
 **Start recording**.
 
 - Live captions appear while you record. They use the project's
@@ -92,6 +92,15 @@ heard by the microphone.
   hears the most recent part of the lesson's captions.
 
 Talk is hidden when neither is set up.
+
+## Manage recordings
+
+Right-click a recording on the Recordings page, or use its **⋯** button:
+
+- **Rename** edits the name in place. The file in the project keeps its name.
+- **Info** shows when it was recorded, its length, size, format and transcript.
+- **Move to Trash** moves the recording with its transcripts and notes to the
+  computer's Trash (the Recycle Bin on Windows), where you can restore it.
 
 ## Recordings defaults
 
