@@ -53,6 +53,8 @@ vi.mock(import("~/components/files/projectFilesQueryState"), async (importOrigin
         readError: null,
         isNotFile: false,
         isFile: data !== null,
+        // SCIENT-FORK: no scient.json in this checkout, so Scient reads its t3.json.
+        isMissing: data === null,
         refresh,
       };
     }) as never,
