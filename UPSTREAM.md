@@ -731,6 +731,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6d21ad2b25075b8246120aba5d478ba946a44fa8` is recorded in
+[the 2026-11-26 31d95f850b receipt](docs/internals/t3-upstream-sync-20261126-31d95f850b.md),
+Scient PR #1131. Literal merge `8a0c77466e9c7e93d4dc9061cd351efe3e2b2e33` has owned base
+`d89b2ef401e4c5523de5bab396310b0ad9ef94e8` and the frozen official target as parents, retaining
+the 251 official commits after `31d95f850b`. T3's deleted-thread purge keeps what Scient forks
+and saved handoffs still read; T3's migrations 117-119 are Scient's 121-123; push-hook approval
+recognises Scient's own MCP servers. Release remains separate.
+
+The previous committed alignment through
 `31d95f850bd8f1dfb68676500606d44b923e4883` is recorded in
 [the 2026-11-25 4c2e2b3734 receipt](docs/internals/t3-upstream-sync-20261125-4c2e2b3734.md),
 Scient PR #1119. Literal merge `882e727c7fb9b6c362ea7481ba22edd0dc0a5c69` has owned base
@@ -740,7 +749,7 @@ bounded fork read; worktree layout commands need a person's approval while Scien
 guard still holds; Scient keeps naming user-configured models in analytics. Release remains
 separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `4c2e2b373433b729b4080f8bab42aa0754b63304` is recorded in
 [the 2026-11-24 364ca47868 receipt](docs/internals/t3-upstream-sync-20261124-364ca47868.md),
 Scient PR #1100. Literal merge `31ebaa3db55319006d59e0195d7c4fe1ab7b4f06` has owned base

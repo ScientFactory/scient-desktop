@@ -94,7 +94,7 @@
     },
     {
       "path": "scripts/build-desktop-artifact.ts",
-      "anchor": "electronFuses: { enableCookieEncryption: true }",
+      "anchor": "enableCookieEncryption: true,",
       "purpose": "Keep packaged profile cookies encrypted with Electron Safe Storage."
     },
     {

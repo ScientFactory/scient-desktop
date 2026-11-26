@@ -96,6 +96,9 @@ for (const previousId of [49, 50, 52, 71] as const) {
               [118, "WorkflowRunIndexes"],
               [119, "WorkflowRunTags"],
               [120, "ForkHistoryMembership"],
+              [121, "WorkflowMailSender"],
+              [122, "WorkflowPools"],
+              [123, "WorkflowRunSubject"],
             ]);
             assert.deepStrictEqual(
               yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,

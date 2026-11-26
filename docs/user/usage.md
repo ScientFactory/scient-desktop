@@ -1,8 +1,8 @@
 # Review usage
 
 Open **Usage** from the sidebar or the command palette, or press `mod+u` on web and
-desktop when the terminal is not focused. Customize `usage.open` in
-**Settings → Shortcuts**.
+desktop when the terminal is not focused. Press it again to close Usage. Customize
+**Usage: Toggle** in **Settings → Shortcuts**.
 
 Use the Usage page to understand which providers and models are doing the work,
 compare activity over time, and estimate the token cost of recent project work.
@@ -237,8 +237,8 @@ configured API connection for recovery even when the connection reports no quota
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
-accounts for other providers are not read. Codex accounts show banked reset credits; select an
+The hub's Codex, Claude and xAI (shown as Grok) accounts appear under **Usage → Limits**;
+accounts for other providers, including Antigravity, are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure

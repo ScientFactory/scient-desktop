@@ -20,6 +20,8 @@ describe("ComposerContextPermissions", () => {
         environmentId={EnvironmentId.make("environment-local")}
         runtimeMode="auto-accept-edits"
         supportedRuntimeModes={undefined}
+        instanceId={undefined}
+        cwd={null}
         onRuntimeModeChange={() => undefined}
       />,
     );

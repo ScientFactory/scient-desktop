@@ -43,6 +43,26 @@ runs in **Supervised**.
 An administrator can cap the modes available on a machine with a
 [managed policy](./managed-policy.md#permission-modes); modes above the cap show who manages them.
 
+When an agent below **Full access** opens a pull request with Scient's own pull request tool and
+the push would run one of the repository's Git hooks (`pre-push` or `reference-transaction`, as a
+project with husky has), Scient asks you first. The request names the branch and the hooks: the
+hook files, and any hook set up in Git's configuration (`hook.<name>.command`, which Git 2.54 and
+later run). **Approve** pushes and runs them; **Decline** pushes nothing. You are asked each
+time: there is no "always allow" for this request, and Plan mode asks too. An approval covers the
+contents of the files and the commands it names: if one of them changes, you are asked again. A
+change made in the moment between Scient's last look and Git starting the hook is not caught.
+With husky 9 and Vite+ that is the hook's script, such as `.husky/pre-push`, along with the two
+files they generate to start it. It does not cover what those go on to run or read, such as a
+package script or another file a hook sources (`.husky/_/husky.sh` with husky 8), so a change
+there is not asked about. A push that would run no hook is not asked about. An agent
+whose provider cannot show the request pushes without running the hooks and is told so.
+With Claude and Codex the push waits for your answer in Scient itself; with any other client
+that asks you by itself, Scient goes by the answer that client sends.
+
+This request is for that tool only. An agent that runs `git push` or a command such as
+`gh pr create` itself, in its own shell, goes through its provider's approval for commands as
+described above, and the repository's hooks run with that command.
+
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
 there. Subagent approval requests appear in the parent conversation with the subagent's name, so
 you can respond without switching threads.
@@ -62,6 +82,11 @@ by the permission mode. See [ACP Registry permissions](./providers-acp.md#permis
 In **Full access**, commands that Codex's dangerous-command check would ask about run without
 asking. Codex still asks before network access its managed network settings don't allow, unless
 you already allowed commands for the session.
+
+In **Auto**, Claude asks you about the actions its review leaves open. Where Claude's settings turn
+its Auto mode off, the permissions menu shows **Auto** as unavailable for that project, with whose
+settings do it. A Claude thread that is set to **Auto** anyway, or whose model has no Auto mode,
+asks like **Supervised** and says so once in the thread.
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
 approval for an action. Dangerous-removal safety checks in bypass mode reject the command with

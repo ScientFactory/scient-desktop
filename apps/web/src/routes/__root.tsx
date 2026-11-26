@@ -71,6 +71,7 @@ import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
+import { SharedTooltipProvider } from "../components/ui/shared-tooltip";
 import { AppToastProviders } from "../components/ui/toast";
 import { isElectron } from "../env";
 // SCIENT-FORK:START — route recovery respects the file save barrier.
@@ -159,7 +160,7 @@ export const Route = createRootRoute({
   // SCIENT-FORK:START — page-lifetime notices survive root errors and retry.
   shellComponent: AppToastProviders,
   // SCIENT-FORK:END
-  component: RootRouteBranch,
+  component: RootRouteView,
   errorComponent: RootRouteErrorView,
   notFoundComponent: RootRouteNotFoundView,
   head: () => ({
@@ -185,6 +186,17 @@ function RootRouteNotFoundView() {
         </Button>
       </div>
     </main>
+  );
+}
+
+function RootRouteView() {
+  // SCIENT-FORK: the toasts sit around the whole page in the shell (AppToastProviders).
+  return (
+    // One tooltip for every trigger in the app: mounting a tooltip per trigger made opening a
+    // thread, panel or message pay for tooltips nobody hovers.
+    <SharedTooltipProvider>
+      <RootRouteBranch />
+    </SharedTooltipProvider>
   );
 }
 

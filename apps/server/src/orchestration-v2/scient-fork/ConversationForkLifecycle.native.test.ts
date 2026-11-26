@@ -681,9 +681,10 @@ it.live(
         const waited = yield* Fiber.join(waiting);
         assert.equal(waited._tag, "Failure");
         const store = yield* ProjectionStoreV2;
+        // The deletion's effects purge its conversation; provisioning must not change the result.
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
         const deleted = yield* store.getThreadProjection(command.newThreadId);
         assert.isNotNull(deleted.thread.deletedAt);
-        yield* (yield* OrchestrationEffectWorkerV2).drain();
         yield* (yield* ConversationForkService).provision(command.newThreadId, false);
         assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), deleted);
         assert.notEqual((yield* conversationForkOf(deleted.thread.id))?.status, "ready");
@@ -719,8 +720,10 @@ it.live(
         assert.equal(yield* sink.latestSequence({}), seq);
         assert.equal((yield* Fiber.join(waiting))._tag, "Failure");
         yield* (yield* OrchestrationEffectWorkerV2).drain();
+        const purged = yield* store.getThreadProjection(command.newThreadId);
+        assert.deepEqual(purged.thread.deletedAt, deleted.thread.deletedAt);
         yield* forks.provision(command.newThreadId, false);
-        assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), deleted);
+        assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), purged);
         assert.isFalse(yield* branchExists(cwd, command.newThreadId));
       }).pipe(Effect.provide(makeRuntime()), Effect.timeout("20 seconds")),
     ),

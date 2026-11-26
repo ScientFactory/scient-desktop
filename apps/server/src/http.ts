@@ -11,6 +11,7 @@ import {
   injectMcpAppThemeBootstrap,
 } from "@t3tools/shared/mcpApp";
 import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
+import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import {
   DESKTOP_READINESS_CHALLENGE_MAX_LENGTH,
   DESKTOP_READINESS_CHALLENGE_PARAM,
@@ -84,22 +85,23 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 const HTML_CONTENT_SECURITY_POLICY =
   "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 
+const XML_DOCUMENT_MIME_TYPE_PATTERN = /(?:\/xml(?:$|-)|\+xml$)/i;
 // Proxies may strip disposition; force document-capable downloads to octet-stream.
 const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
 const isSafeDownloadMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
-  !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
-const isSafeInlineMediaMimeType = (mimeType: string): boolean =>
-  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && /^(?:audio|video)\//i.test(mimeType);
-const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
-  mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
+  !/^text\/html$/i.test(mimeType.trim()) &&
+  !XML_DOCUMENT_MIME_TYPE_PATTERN.test(mimeType.trim());
 
-// XML types render as documents, so they get the same policy as SVG.
-const isScriptableXmlPath = (filePath: string): boolean =>
-  Option.match(Mime.getType(filePath), {
-    onNone: () => false,
-    onSome: (mimeType) => /(?:\/xml(?:$|-)|\+xml$)/.test(mimeType),
-  });
+// The served type and its sandbox policy come from this one answer, so they cannot disagree.
+const inlineAssetMimeType = (filePath: string, claimed: string | undefined): string => {
+  const claimedType = claimed?.split(";", 1)[0]?.trim().toLowerCase();
+  if (claimedType !== undefined && DOWNLOAD_MIME_TYPE_PATTERN.test(claimedType)) return claimedType;
+  return (
+    hostPreviewMimeTypeFromExtension(/\.[^./\\]+$/.exec(filePath)?.[0] ?? "") ??
+    Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream")
+  );
+};
 
 export function downloadContentDisposition(fileName?: string): string {
   if (fileName === undefined) {
@@ -121,50 +123,48 @@ export function downloadContentDisposition(fileName?: string): string {
 export function assetResponseHeaders(
   filePath: string,
   options?: {
+    // SCIENT-FORK: a document file that can change in place is never cached.
     readonly cacheControl?: "no-store";
     readonly download?: boolean;
     readonly fileName?: string;
     readonly mimeType?: string;
   },
 ): Record<string, string> {
-  const lowerPath = filePath.toLowerCase();
-  const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
-  return {
+  const base = {
+    // SCIENT-FORK:START
     "Cache-Control": options?.cacheControl ?? "private, max-age=3600",
     // Asset images are also fetched as bytes for copy/download. The initial
     // <img> request and the later CORS fetch can otherwise share a cache entry
     // even though only the latter carries Origin, which Chromium correctly
     // rejects as an unusable CORS response.
     Vary: "Origin",
+    // SCIENT-FORK:END
     "X-Content-Type-Options": "nosniff",
-    ...(options?.download
-      ? {
-          "Content-Disposition": downloadContentDisposition(options.fileName),
-          "Content-Security-Policy": "default-src 'none'; sandbox",
-          "Content-Type":
-            options.mimeType !== undefined && isSafeDownloadMimeType(options.mimeType)
-              ? options.mimeType
-              : "application/octet-stream",
-        }
-      : inlineMimeType !== undefined && isSafeInlineMediaMimeType(inlineMimeType)
-        ? { "Content-Type": inlineMimeType }
-        : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
-          ? {
-              "Content-Type":
-                inlineMimeType.toLowerCase() === "text/html"
-                  ? "text/html; charset=utf-8"
-                  : "application/pdf",
-              ...(inlineMimeType.toLowerCase() === "text/html"
-                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
-                : {}),
-            }
-          : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
-            ? {
-                "Content-Type": "text/html; charset=utf-8",
-                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
-              }
-            : {}),
-    ...(!options?.download && isScriptableXmlPath(lowerPath)
+  };
+  if (options?.download) {
+    return {
+      ...base,
+      "Content-Disposition": downloadContentDisposition(options.fileName),
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Type":
+        options.mimeType !== undefined && isSafeDownloadMimeType(options.mimeType)
+          ? options.mimeType
+          : "application/octet-stream",
+    };
+  }
+  const mimeType = inlineAssetMimeType(filePath, options?.mimeType);
+  if (mimeType === "text/html") {
+    return {
+      ...base,
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+    };
+  }
+  return {
+    ...base,
+    "Content-Type": mimeType,
+    // XML types render as documents, so they get the same policy as SVG.
+    ...(XML_DOCUMENT_MIME_TYPE_PATTERN.test(mimeType)
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
@@ -200,9 +200,6 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
 ) {
   const headers: Record<string, string> = {
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
-    "Content-Type":
-      asset.mimeType ??
-      Option.getOrElse(Mime.getType(asset.path), () => "application/octet-stream"),
     ...assetResponseHeaders(asset.path, asset),
   };
   const mediaFile = asset.file;

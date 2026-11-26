@@ -54,6 +54,7 @@ import type { ProviderNativeInventory } from "../ScientProviderInstanceSeams.ts"
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   createClaudeAdapterV2,
+  resolveClaudeModeAvailability,
   type ClaudeAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -147,6 +148,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const host = yield* ProviderHost.ProviderHost;
     // Instance-level probes are not tied to a project, so they run in the
     // server's own state dir. The server cwd is $HOME in packaged desktop
     // builds, and `claude` wrappers that scope themselves to their cwd refuse
@@ -171,13 +173,11 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       spawner,
       managedInstallationAllowed: serverConfig.mode === "desktop",
     });
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const effectiveConfig = {
       ...config,
       enabled,
-      binaryPath: expandHomePath(
-        managedRuntime.effectiveBinaryPath,
-        yield* HostProcess.HomeDirectory,
-      ),
+      binaryPath: expandHomePath(managedRuntime.effectiveBinaryPath, homeDirectory),
     } satisfies ClaudeSettings;
     const effectiveProcessEnv = managedRuntime.usesManagedPath
       ? { ...processEnv, DISABLE_UPDATES: "1" }
@@ -196,6 +196,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       : yield* makeClaudeMaintenanceResolution({
           binaryPath: effectiveConfig.binaryPath,
           env: effectiveProcessEnv,
+          npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -640,6 +641,24 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
+      // Unreadable settings report no limit; the thread's own notice covers a refused mode.
+      runtimeModeLimitsForCwd: (cwd: string) =>
+        resolveClaudeModeAvailability({
+          settings: effectiveConfig,
+          homePath: configDir,
+          customHome,
+          cwd,
+          fileSystem,
+          path,
+        }).pipe(
+          Effect.map((availability) =>
+            availability.autoDisabledBy === undefined
+              ? []
+              : [{ mode: "auto" as const, reason: availability.autoDisabledBy }],
+          ),
+          Effect.orElseSucceed(() => []),
+          Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+        ),
       snapshotForCwd: (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

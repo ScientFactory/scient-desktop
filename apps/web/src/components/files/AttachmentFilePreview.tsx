@@ -558,8 +558,10 @@ const MEDIA_LOAD_FAILURE: AttachmentFailure = { kind: "media" };
 
 /** Names "csv files" for report.csv; a name without an extension names no format. */
 function unsupportedPreviewDescription(name: string, resolve: MessageResolver): string {
-  const dot = name.lastIndexOf(".");
-  const extension = dot > 0 ? name.slice(dot + 1) : "";
+  const basename = name.split(/[\\/]/).at(-1) ?? "";
+  const dotIndex = basename.lastIndexOf(".");
+  const extension =
+    dotIndex > 0 && dotIndex < basename.length - 1 ? basename.slice(dotIndex + 1) : null;
   return extension
     ? resolve(msg("Save it to open in an app that supports {extension} files.", { extension }))
     : resolve(msg("Save it to open in an app that supports this format."));

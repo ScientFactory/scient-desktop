@@ -191,6 +191,9 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": {
         "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        // Upstream's single-folder chain helper serves its merged-folder rows, which Scient's
+        // lazy Files tree turns off; it stays as upstream ships it so upstream changes merge.
+        "src/components/files/fileTreeExpansion.ts": ["exports"],
         // Upstream's downloaded-update toast. Scient announces a ready update with
         // scient/desktopUpdate/updateReadyNotice instead; the module stays as upstream
         // ships it (its release-notes helper is still used) so upstream changes merge.

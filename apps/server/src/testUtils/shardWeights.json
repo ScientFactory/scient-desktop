@@ -691,7 +691,6 @@
   "src/provider/antigravityCliRelease.test.ts": 0.013,
   "src/provider/AntigravityInstallation.test.ts": 3.028,
   "src/provider/AntigravityProvider.test.ts": 0.133,
-  "src/provider/antigravityUsageLimits.test.ts": 0.269,
   "src/provider/AppProviderDriverComposition.test.ts": 0.06,
   "src/provider/ClaudeCapabilitiesProbe.scient.test.ts": 0.152,
   "src/provider/ClaudeCapabilitiesProbe.test.ts": 0.055,

@@ -4157,6 +4157,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           { type: "scheduled-tasks.cleanup" },
           { type: "scient.release-thread-files" },
           { type: "terminal.cleanup" },
+          { type: "thread-content.purge" },
         ],
       );
       assert.isTrue(pending.every((effect) => effect.status === "pending"));
@@ -4164,8 +4165,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       assert.isFalse(yield* fileSystem.exists(attachmentPath));
       const completed = yield* outbox.listByCommandId(command.commandId);
-      assert.lengthOf(completed, 4);
-      assert.isTrue(completed.every((effect) => effect.status === "succeeded"));
+      // T3's purge drops the settled effects it follows, leaving only itself.
+      assert.deepEqual(
+        completed.map((effect) => [effect.request.type, effect.status]),
+        [["thread-content.purge", "succeeded"]],
+      );
       assert.deepEqual(yield* readReceipt, [
         { status: "accepted", resultSequence: accepted.sequence },
       ]);
@@ -13517,7 +13521,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "user"] as const)(
+  it.effect.each(["notification", "scheduled-task", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -13553,8 +13557,8 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "provider",
+          createdBy: kind === "notification" ? "agent" : "user",
+          creationSource: kind === "notification" ? "provider" : "web",
           ...(kind === "notification"
             ? {
                 notification: {
@@ -13564,11 +13568,15 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                 },
               }
             : {}),
+          ...(kind === "scheduled-task"
+            ? { scheduledTaskId: ScheduledTaskId.make(`scheduled-task:${threadId}`) }
+            : {}),
         });
         const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
         if (kind === "user") {
           assert.isNull(thread.snoozedUntil);
         } else {
+          assert.isNotNull(thread.snoozedUntil);
           assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
         }
       }),

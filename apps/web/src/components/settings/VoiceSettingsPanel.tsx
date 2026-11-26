@@ -94,8 +94,8 @@ import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import {
@@ -149,6 +149,7 @@ import { useSearchableSetting } from "./settingsSearch";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const OFF = "off";
 const DEVICE = "device";
@@ -198,13 +199,10 @@ type ModelCardProps = {
 
 function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<Badge variant="outline" />}>
-        {props.icon}
-        {props.label}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger render={<Badge variant="outline" />} label={props.tooltip}>
+      {props.icon}
+      {props.label}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -247,22 +245,20 @@ function EngineCard(props: ModelCardProps) {
       <XIcon className="size-3.5" />
     </Button>
   ) : model.state === "downloadable" && props.compact ? (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            aria-label={gt("Download {name}", { name: model.name })}
-            disabled={props.busy}
-            onClick={props.onDownload}
-          />
-        }
-      >
-        <DownloadIcon />
-      </TooltipTrigger>
-      <TooltipPopup>{gt("Download")}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          aria-label={gt("Download {name}", { name: model.name })}
+          disabled={props.busy}
+          onClick={props.onDownload}
+        />
+      }
+      label={gt("Download")}
+    >
+      <DownloadIcon />
+    </SharedTooltipTrigger>
   ) : model.state === "downloadable" ? (
     <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
       <DownloadIcon />
@@ -1707,28 +1703,26 @@ export function VoiceSettingsPanel() {
               {destination.cloudProvider &&
                 chosenEnvironment &&
                 (canManageKey || destination.cloudProvider === "openrouter") && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          size="icon-sm"
-                          type="button"
-                          variant="ghost"
-                          aria-label={manageLabel}
-                          onClick={() => {
-                            if (destination.cloudProvider)
-                              setPendingCloud({
-                                provider: destination.cloudProvider,
-                                environmentId: chosenEnvironment.environmentId,
-                              });
-                          }}
-                        >
-                          <KeyRoundIcon aria-hidden className="size-4" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup>{manageLabel}</TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                        aria-label={manageLabel}
+                        onClick={() => {
+                          if (destination.cloudProvider)
+                            setPendingCloud({
+                              provider: destination.cloudProvider,
+                              environmentId: chosenEnvironment.environmentId,
+                            });
+                        }}
+                      >
+                        <KeyRoundIcon aria-hidden className="size-4" />
+                      </Button>
+                    }
+                    label={manageLabel}
+                  />
                 )}
             </div>
           }
@@ -1745,6 +1739,13 @@ export function VoiceSettingsPanel() {
             close={() => setPendingCloud(null)}
           />
         )}
+        {!destination.cloudProvider && !destination.device && catalog.loading ? (
+          <SettingsRow
+            title={gt("Language")}
+            description={gt("Checking which languages the model supports…")}
+            control={<Skeleton shape="card" className="h-8 w-40 sm:h-7" />}
+          />
+        ) : null}
         {(model || destination.cloudProvider || destination.device) && (
           <SettingsRow
             {...setting("speech-language")}

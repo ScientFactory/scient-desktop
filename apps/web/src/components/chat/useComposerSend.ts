@@ -11,7 +11,6 @@ import { chatActionErrorMessage, getAntigravitySendBlockReason } from "../ChatVi
 import { shouldCompactBeforeSend } from "./compaction.logic";
 import { declineShownApprovalsBeforeSend } from "./approvalSendGuard";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
 import { collectSelectedScientSkillNames } from "~/scient/skills/selectedSkillNames";
 import {
@@ -44,7 +43,7 @@ import {
   formatOutgoingPrompt,
   optimisticMessageAttachments,
   planComposerTurn,
-  sendTitleFallbackLabels,
+  deriveComposerSendTitle,
   snapshotComposerSend,
   makeThreadErrorSetter,
   withMessageContext,
@@ -63,7 +62,6 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
 import {
@@ -788,14 +786,7 @@ export function useComposerSend(input: ComposerSendInput) {
               })),
             }),
           }),
-          titleSeed: deriveThreadTitleSeed(
-            {
-              text: snapshot.messageText,
-              attachments: snapshot.attachments,
-              fallbackLabels: sendTitleFallbackLabels(snapshot),
-            },
-            m,
-          ),
+          titleSeed: deriveComposerSendTitle(snapshot),
         });
       }).finally(() => {
         sendInFlightRef.current = false;
@@ -1761,14 +1752,12 @@ export function useComposerSend(input: ComposerSendInput) {
             );
           }
 
-          const title = deriveThreadTitleSeed(
-            {
-              text: composerCitationsToPlainText(stripInlineContextReferences(trimmed)),
-              attachments: composerAttachmentsSnapshot,
-              fallbackLabels: sendTitleFallbackLabels(sendSnapshot),
-            },
-            m,
-          );
+          // SCIENT-FORK:START — the title reads plain text: no inline references or citation marks.
+          const title = deriveComposerSendTitle({
+            ...sendSnapshot,
+            messageText: composerCitationsToPlainText(stripInlineContextReferences(trimmed)),
+          });
+          // SCIENT-FORK:END
           const threadCreateModelSelection = createModelSelection(
             ctxSelectedModelSelection.instanceId,
             ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,

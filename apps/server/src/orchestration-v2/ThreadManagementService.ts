@@ -407,7 +407,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "unmatched":
         // SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
         return (
-          "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here." +
+          "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and Workflow runs already keep the thread working until they finish, and delegate_task IDs don't go here either." +
           runningBackgroundTasksHint(this.running ?? [])
         );
       // SCIENT-FORK:END
