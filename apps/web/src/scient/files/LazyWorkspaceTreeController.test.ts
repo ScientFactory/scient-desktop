@@ -240,6 +240,170 @@ describe("LazyWorkspaceTreeController", () => {
     harness.destroy();
   });
 
+  it("refreshes the root and the open folders, and unloads a closed folder listed before", async () => {
+    const listings: Record<string, ProjectDirectoryEntry[]> = {
+      "": [directory("src"), directory("docs"), directory("lib"), directory("notes")],
+      src: [directory("src/ui"), file("src/a.ts")],
+      "src/ui": [file("src/ui/b.ts")],
+      docs: [directory("docs/api"), file("docs/c.md")],
+      "docs/api": [file("docs/api/d.md")],
+      lib: [directory("lib/deep"), file("lib/e.ts")],
+      "lib/deep": [file("lib/deep/f.ts")],
+      notes: [file("notes/g.md")],
+    };
+    const loadDirectory = vi.fn(async (relativeDirectory: string) =>
+      complete(...(listings[relativeDirectory] ?? [])),
+    );
+    const harness = makeController(loadDirectory);
+    const isExpanded = (path: string) => {
+      const item = harness.model.getItem(path);
+      return item !== null && "isExpanded" in item && item.isExpanded();
+    };
+    await harness.controller.start();
+    for (const path of ["src", "src/ui", "docs", "docs/api", "lib", "lib/deep", "notes"]) {
+      const item = harness.model.getItem(path);
+      if (item && "expand" in item) item.expand();
+      await harness.controller.load(path);
+    }
+    harness.model.getItem("notes/g.md")?.select();
+    // docs keeps an open folder inside it; lib's folders are all closed.
+    for (const path of ["docs", "lib/deep", "lib", "notes"]) {
+      const item = harness.model.getItem(path);
+      if (item && "collapse" in item) item.collapse();
+    }
+    loadDirectory.mockClear();
+    const listed = () => loadDirectory.mock.calls.map(([path]) => path);
+
+    await harness.controller.refresh();
+    expect(listed().toSorted()).toEqual(["", "docs", "docs/api", "notes", "src", "src/ui"]);
+    expect(isExpanded("docs/api")).toBe(true);
+    expect(harness.model.getItem("docs/api/d.md")).not.toBeNull();
+    expect(harness.model.getSelectedPaths()).toEqual(["notes/g.md"]);
+    expect(harness.model.getItem("lib/")).not.toBeNull();
+    expect(harness.model.getItem("lib/e.ts")).toBeNull();
+    expect(harness.model.getItem("lib/deep/")).toBeNull();
+
+    listings.lib!.push(file("lib/new.ts"));
+    const lib = harness.model.getItem("lib");
+    if (lib && "expand" in lib) lib.expand();
+    await vi.waitFor(() => expect(harness.model.getItem("lib/new.ts")).not.toBeNull());
+    expect(listed().filter((path) => path === "lib")).toEqual(["lib"]);
+    harness.destroy();
+  });
+
+  it("reads every listed folder again when Refresh comes during a search", async () => {
+    const loadDirectory = vi.fn(async (relativeDirectory: string) => {
+      if (relativeDirectory === "") return complete(directory("docs"), file("needle.md"));
+      if (relativeDirectory === "docs") return complete(directory("docs/api"));
+      return complete(file("docs/api/d.md"));
+    });
+    const harness = makeController(loadDirectory);
+    await harness.controller.start();
+    for (const path of ["docs", "docs/api"]) {
+      const item = harness.model.getItem(path);
+      if (item && "expand" in item) item.expand();
+      await harness.controller.load(path);
+    }
+    harness.model.setSearch("needle");
+    loadDirectory.mockClear();
+
+    await harness.controller.refresh();
+    harness.model.closeSearch();
+
+    expect(loadDirectory.mock.calls.map(([path]) => path).toSorted()).toEqual([
+      "",
+      "docs",
+      "docs/api",
+    ]);
+    const api = harness.model.getItem("docs/api");
+    expect(api !== null && "isExpanded" in api && api.isExpanded()).toBe(true);
+    expect(harness.model.getItem("docs/api/d.md")).not.toBeNull();
+    harness.destroy();
+  });
+
+  it("keeps a folder opened during a refresh through a second refresh", async () => {
+    const pendingRoots: Array<() => void> = [];
+    const loadDirectory = vi.fn((relativeDirectory: string) => {
+      const listing =
+        relativeDirectory === ""
+          ? complete(directory("docs"))
+          : relativeDirectory === "docs"
+            ? complete(directory("docs/api"), file("docs/c.md"))
+            : complete(file("docs/api/d.md"));
+      if (relativeDirectory !== "" || loadDirectory.mock.calls.length === 1) {
+        return Promise.resolve(listing);
+      }
+      return new Promise<ProjectListDirectoryResult>((resolve) => {
+        pendingRoots.push(() => resolve(listing));
+      });
+    });
+    const harness = makeController(loadDirectory);
+    await harness.controller.start();
+    const docs = harness.model.getItem("docs");
+    if (docs && "expand" in docs) docs.expand();
+    await harness.controller.load("docs");
+
+    const first = harness.controller.refresh();
+    const api = harness.model.getItem("docs/api");
+    if (api && "expand" in api) api.expand();
+    if (docs && "collapse" in docs) docs.collapse();
+    harness.model.focusPath("docs/");
+    const second = harness.controller.refresh();
+    for (const resolve of pendingRoots) resolve();
+    await Promise.all([first, second]);
+
+    await vi.waitFor(() => expect(harness.model.getItem("docs/api/d.md")).not.toBeNull());
+    expect(api !== null && "isExpanded" in api && api.isExpanded()).toBe(true);
+    harness.destroy();
+  });
+
+  it("lists a closed folder afresh for a search hit after a refresh", async () => {
+    const docs = [file("docs/old.md")];
+    const loadDirectory = vi.fn(async (relativeDirectory: string) =>
+      relativeDirectory === ""
+        ? complete(directory("docs"), file("new-note-index.md"))
+        : complete(...docs),
+    );
+    const harness = makeController(loadDirectory);
+    await harness.controller.start();
+    await harness.controller.load("docs");
+
+    docs.push(file("docs/new-note.md"));
+    await harness.controller.refresh();
+    loadDirectory.mockClear();
+    harness.model.setSearch("new-note");
+    await Promise.all([
+      harness.controller.primePaths(["new-note-index.md", "docs/new-note.md"]),
+      harness.controller.primePaths(["new-note-index.md", "docs/new-note.md"]),
+    ]);
+
+    expect(loadDirectory.mock.calls.map(([path]) => path)).toEqual(["docs"]);
+    expect(harness.model.getSearchMatchingPaths().toSorted()).toEqual([
+      "docs/new-note.md",
+      "new-note-index.md",
+    ]);
+    harness.model.closeSearch();
+    harness.destroy();
+  });
+
+  it("lists a closed folder afresh to reveal a new file after a refresh", async () => {
+    const docs = [file("docs/old.md")];
+    const loadDirectory = vi.fn(async (relativeDirectory: string) =>
+      relativeDirectory === "" ? complete(directory("docs")) : complete(...docs),
+    );
+    const harness = makeController(loadDirectory);
+    await harness.controller.start();
+    await harness.controller.load("docs");
+
+    docs.push(file("docs/new.md"));
+    await harness.controller.refresh();
+    loadDirectory.mockClear();
+
+    expect(await harness.controller.ensurePath("docs/new.md")).toBe(true);
+    expect(loadDirectory.mock.calls.map(([path]) => path)).toEqual(["docs"]);
+    harness.destroy();
+  });
+
   it("loads ancestors on demand for files opened outside the tree", async () => {
     const loadDirectory = vi.fn(
       async (relativeDirectory: string): Promise<ProjectListDirectoryResult> => {
@@ -399,6 +563,8 @@ describe("LazyWorkspaceTreeController", () => {
     await harness.controller.start();
     expect(harness.model.getItem("project.txt")).not.toBeNull();
     expect(harness.model.getItem(".scient")).not.toBeNull();
+    const scient = harness.model.getItem(".scient");
+    if (scient && "expand" in scient) scient.expand();
     await harness.controller.load(".scient");
     expect(harness.model.getItem(".scient/skills")).not.toBeNull();
     expect(harness.model.getItem(".scient/sources")).not.toBeNull();
@@ -608,8 +774,11 @@ describe("LazyWorkspaceTreeController", () => {
       expect(harness.model.getItem("big/f00009.txt")).not.toBeNull();
       expect(harness.model.getItem("big/f00010.txt")).toBeNull();
       expect(harness.model.getItem("src/untitled.md")).not.toBeNull();
+      expect(harness.model.getItem("docs/untitled folder/")).not.toBeNull();
       expect(harness.model.getVisibleCount()).toBe(1 + 10 + 1 + 4 + 1);
-      expect(harness.snapshot()?.entries.size).toBe(4 + 2 + 1 + 10);
+      // The closed docs folder is unloaded, so its listing is gone until it opens again.
+      expect(harness.model.getItem("docs/guide.md")).toBeNull();
+      expect(harness.snapshot()?.entries.size).toBe(4 + 2 + 10);
       harness.destroy();
     });
 

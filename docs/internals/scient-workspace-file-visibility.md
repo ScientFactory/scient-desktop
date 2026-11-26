@@ -260,8 +260,11 @@ The Scient adapter will:
 - update the affected branch rather than reset the whole workspace model;
 - preserve selection, expansion, and focus through refresh;
 - keep the existing panel-level refresh action as the minimum recovery path by
-  re-enumerating the root and every loaded branch;
-- re-enumerate loaded branches when internal inspection changes; and
+  re-enumerating the root, each open branch and the branches above it or holding
+  the selection, and unloading every other loaded branch so it is enumerated
+  afresh when it is opened, revealed or holds a search result (while a filename
+  search is open, every loaded branch is re-enumerated instead);
+- treat loaded branches the same way when internal inspection changes; and
 - reveal an exact path by enumerating its ancestors in order.
 
 The whole tree is reset only when the workspace root changes. The tree library and its upstream behavior are not forked.
@@ -313,8 +316,10 @@ The exact file placement may follow current repository structure. The important 
 
 - Initial loading is proportional to root children, not total workspace size.
 - Expanding or refreshing one branch does not scan or rebuild unrelated branches.
-- The existing Files refresh action re-enumerates the root and loaded branches,
-  so recovery from stale rows does not depend on future watcher machinery.
+- The existing Files refresh action re-enumerates the root and the open branches
+  with the branches above them, and unloads the other closed ones, so recovery
+  from stale rows does not depend on future watcher machinery and costs what is
+  open, not every branch ever loaded.
 - Large hidden machinery does not create normal tree payload or model work.
 - Project switching cannot leak cached paths from the previous root.
 - Remote clients transfer requested branches rather than a complete tree.

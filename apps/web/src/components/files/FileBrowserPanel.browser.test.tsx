@@ -266,6 +266,33 @@ describe("Files panel search", () => {
     await expect.poll(screen.visiblePaths).toContain("from-elsewhere.tex");
   });
 
+  // SCIENT-FORK:START — Refresh on Scient's lazy tree reads only the open folders
+  it("refreshes the open folders and unloads a closed one listed before", async () => {
+    setup();
+    files.directories[""] = [entry("docs", "directory"), ...files.directories[""]!];
+    files.directories.docs = [entry("docs/guide.md")];
+    await using screen = await renderPanel({ cwd: "/repo-refresh-on-screen" });
+    await expect.poll(screen.visiblePaths).toEqual(["docs/", "src/", "package.json"]);
+    const treeRow = (path: string) =>
+      screen.container
+        .querySelector("file-tree-container")!
+        .shadowRoot!.querySelector<HTMLElement>(`[data-item-path="${CSS.escape(path)}"]`)!;
+    for (const folder of ["docs/", "src/"]) await act(() => treeRow(folder).click());
+    await expect.poll(screen.visiblePaths).toContain("docs/guide.md");
+    await expect.poll(screen.visiblePaths).toContain("src/app.ts");
+    await act(() => treeRow("docs/").click());
+    await expect.poll(screen.visiblePaths).not.toContain("docs/guide.md");
+    files.listDirectory.mockClear();
+
+    files.directories.src!.push(entry("src/new.ts"));
+    await chooseFromFilesMenu(screen.container, "Refresh files");
+    await expect.poll(screen.visiblePaths).toContain("src/new.ts");
+    expect(
+      new Set(files.listDirectory.mock.calls.map(([request]) => request.input.relativeDirectory)),
+    ).toEqual(new Set(["", "src"]));
+  });
+  // SCIENT-FORK:END
+
   it("shows no matching files instead of the full tree when a filename is absent", async () => {
     setup();
     await using screen = await renderPanel();
