@@ -14,6 +14,8 @@ import {
   hubRoutes,
   instanceHubs,
   type LimitPoolWindow,
+  // SCIENT-FORK: shared account identity for the hub pool.
+  providersReadingAccounts,
 } from "@t3tools/shared/usageLimits";
 import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
@@ -102,15 +104,8 @@ function hubPool(
     .filter((account) => limitsNotice(account.usageLimits) === null);
   if (readable.length === 0) return null;
   // A signed-in login joins the pool only as a fresher reading of an account the hub routes to.
-  const signedIn = providers.filter((provider) =>
-    readable.some(
-      (account) =>
-        account.driver === provider.driver &&
-        account.workspaceId === provider.auth.workspaceId &&
-        account.email !== undefined &&
-        account.email.toLowerCase() === provider.auth.email?.toLowerCase(),
-    ),
-  );
+  // SCIENT-FORK: matched like the Usage page, so Antigravity's credential fingerprint counts too.
+  const signedIn = providersReadingAccounts(providers, readable);
   const presentations = new Map([
     [
       CARD_ENVIRONMENT,
