@@ -1,6 +1,7 @@
 import {
   LiteratureWatchPublishError,
   literatureWatchRecentTriage,
+  retuneLiteratureWatch,
   type LiteratureWatch,
   type LiteratureWatchDefinition,
 } from "@scientfactory/scient-sources";
@@ -119,12 +120,16 @@ const saveWatch = Effect.fn("LiteratureWatchToolkit.save")(function* (
     const watch = yield* attempt(() =>
       changeLiteratureWatch(library, watchId, (current) => {
         const { paused: _paused, details: _details, ...rest } = current;
-        return {
+        const next = {
           ...rest,
           ...definition,
           ...((paused ?? current.paused) ? { paused: true as const } : {}),
           updatedAt: now.toISOString(),
         };
+        const retopic =
+          current.request !== definition.request ||
+          JSON.stringify(current.queries) !== JSON.stringify(definition.queries);
+        return retopic ? retuneLiteratureWatch(next, now) : next;
       }),
     );
     // A run fetched with the old queries must not move the edited watch's searched days.

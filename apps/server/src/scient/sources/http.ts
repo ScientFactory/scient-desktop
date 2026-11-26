@@ -142,7 +142,7 @@ import {
 } from "./literatureWatch/LiteratureWatchRoutes.ts";
 import {
   deleteLiteratureWatchSchedule,
-  literatureWatchRunUnfinished,
+  literatureWatchRunStatus,
   literatureWatchTaskId,
   restoreLiteratureWatchSchedules,
   runLiteratureWatchNow,
@@ -492,14 +492,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               .pipe(Effect.orElseSucceed(() => ({ tasks: [] })));
             const taskOf = (watchId: string) =>
               tasks.find((task) => task.id === literatureWatchTaskId(watchId));
-            return {
-              unread: listed.unread,
-              watches: listed.watches.map((summary, index) =>
-                literatureWatchRunUnfinished(listed.all[index]!, taskOf(summary.watchId))
-                  ? { ...summary, unfinished: true }
-                  : summary,
+            const watches = yield* Effect.forEach(listed.watches, (summary, index) =>
+              literatureWatchRunStatus(listed.all[index]!, taskOf(summary.watchId)).pipe(
+                Effect.map((status) => ({
+                  ...summary,
+                  paused: status.paused,
+                  ...(status.unfinished ? { unfinished: true } : {}),
+                })),
               ),
-            };
+            ).pipe(Effect.provideService(ProjectionStoreV2, projections));
+            return { unread: listed.unread, watches };
           }),
         )
         .handle("literatureWatch", (args) =>
@@ -522,12 +524,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               .list()
               .pipe(Effect.orElseSucceed(() => ({ tasks: [] })));
             const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watch.watchId));
+            const status = yield* literatureWatchRunStatus(watch, task).pipe(
+              Effect.provideService(ProjectionStoreV2, projections),
+            );
             return {
               watch: {
                 ...view,
                 ...(task?.threadId ? { threadId: task.threadId } : {}),
-                running: task?.lastRunStatus === "running",
-                ...(literatureWatchRunUnfinished(watch, task) ? { unfinished: true } : {}),
+                running: status.running,
+                paused: status.paused,
+                ...(status.unfinished ? { unfinished: true } : {}),
               },
             };
           }),

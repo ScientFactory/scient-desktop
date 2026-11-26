@@ -8,6 +8,7 @@ import {
   literatureWatchCandidates,
   literatureWatchWindow,
   publishLiteratureWatchRun,
+  retuneLiteratureWatch,
   triageLiteratureWatchItem,
 } from "./literatureWatch.ts";
 
@@ -171,5 +172,23 @@ describe("triageLiteratureWatchItem", () => {
     const cleared = triageLiteratureWatchItem(kept, target, { triage: null }, now);
     expect(cleared.briefings[0]!.items[0]).not.toHaveProperty("triage");
     expect(cleared.briefings[0]!.items[0]!.why).toBe("On topic.");
+  });
+});
+
+describe("retuneLiteratureWatch", () => {
+  it("reads the last month again and rejudges passed papers, keeping shown ones", () => {
+    const retuned = retuneLiteratureWatch(
+      watch({
+        covered: { pubmed: "2026-11-25", arxiv: "2026-10-01" },
+        seen: [
+          { keys: ["pmid:1"], fate: "shown", runId: "run-1" },
+          { keys: ["pmid:2"], fate: "passed", runId: "run-1" },
+        ],
+      }),
+      now,
+    );
+    expect(retuned.covered).toEqual({ pubmed: "2026-10-29", arxiv: "2026-10-01" });
+    expect(literatureWatchWindow(retuned, "pubmed", now).from).toBe("2026-10-27");
+    expect(retuned.seen.map((entry) => entry.keys[0])).toEqual(["pmid:1"]);
   });
 });

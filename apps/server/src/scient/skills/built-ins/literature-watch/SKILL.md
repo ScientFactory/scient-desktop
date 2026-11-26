@@ -36,4 +36,4 @@ The scheduled prompt names the watch. The run is done only when `scient_watch_pu
    - `why`: one specific line on why it matters for this watch, not a restated title. Call a result new or first only when the text says so.
    - `details`: one line for each thing the watch asks about, such as `Code: released (github.com/…)` or `Sample size: not stated in the abstract`, only from text you read. Never estimate numbers. arXiv abstracts end with the authors' comments, which often link code.
    - `evidence`: what you actually read for that paper.
-6. End with one line in the thread: how many papers were screened and picked.
+6. End with one line in the thread: how many papers were screened and picked, and that the briefing is in Library → Watches.

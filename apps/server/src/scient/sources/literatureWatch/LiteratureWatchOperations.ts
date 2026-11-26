@@ -3,8 +3,8 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   LITERATURE_WATCH_SERVICES,
+  LiteratureWatchCandidate,
   type LiteratureWatch,
-  type LiteratureWatchCandidate,
   type LiteratureWatchPick,
   type LiteratureWatchRun,
   literatureWatchCandidates,
@@ -19,10 +19,14 @@ import {
   resumableLiteratureWatchRun,
 } from "@scientfactory/scient-sources/literature-watch-store";
 import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
+import * as Schema from "effect/Schema";
 
 import { searchWatchService, type WatchSearchOptions } from "./watchSearch.ts";
 
 export const WATCH_TITLES_PAGE = 500;
+const isCandidate = Schema.is(LiteratureWatchCandidate);
+/** Long enough for any structured abstract, short enough that 30 fit one answer. */
+const ABSTRACT_SHOWN = 3_000;
 
 // @effect-diagnostics-next-line extendsNativeError:off - The watch store is Promise-based; handlers catch native errors.
 export class LiteratureWatchRunError extends Error {}
@@ -51,10 +55,12 @@ export async function startLiteratureWatchRun(
         : [];
     }),
   );
-  const { candidates, alreadySeen } = literatureWatchCandidates(
+  const { candidates: merged, alreadySeen } = literatureWatchCandidates(
     results.flatMap((result) => result.found),
     watch.seen,
   );
+  // One malformed record must not make the whole run unreadable.
+  const candidates = merged.filter(isCandidate);
   const run: LiteratureWatchRun = {
     formatVersion: 1,
     watchId,
@@ -113,7 +119,12 @@ export function literatureWatchAbstracts(
   const wanted = new Set(candidateIds);
   return run.candidates
     .slice(0, run.delivered)
-    .filter((candidate) => wanted.has(candidate.candidateId));
+    .filter((candidate) => wanted.has(candidate.candidateId))
+    .map((candidate) =>
+      candidate.abstract && candidate.abstract.length > ABSTRACT_SHOWN
+        ? { ...candidate, abstract: `${candidate.abstract.slice(0, ABSTRACT_SHOWN)}…` }
+        : candidate,
+    );
 }
 
 export function publishLiteratureWatch(

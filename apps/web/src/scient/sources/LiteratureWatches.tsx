@@ -469,6 +469,9 @@ export function LiteratureWatchesView(props: {
                         variant={entry.briefingId === briefing?.briefingId ? "secondary" : "ghost"}
                         onClick={() => setBriefingId(entry.briefingId)}
                       >
+                        {entry.openedAt ? null : (
+                          <span aria-hidden className="size-1.5 rounded-full bg-primary" />
+                        )}
                         {gt("{date} · {count}", {
                           date: day(entry.publishedAt),
                           count: entry.items.length,

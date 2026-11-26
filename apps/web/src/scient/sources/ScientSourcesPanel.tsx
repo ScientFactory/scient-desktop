@@ -475,6 +475,7 @@ export function ScientSourcesPanel(props: {
   useLiveRefresh(
     () => {
       void sources.refreshOverview().catch(() => undefined);
+      void watches.reload();
     },
     { key: `scient-sources:${panelContext}` },
   );

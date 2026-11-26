@@ -19,6 +19,9 @@ const OPENALEX_PAGE = 100;
 const ARXIV_PAGE = 500;
 const MAX_ABSTRACT = 6_000;
 const MAX_AUTHORS = 12;
+// A page of 200 PubMed records with abstracts runs to several megabytes.
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+const RESPONSE_DEADLINE_MS = 90_000;
 
 // OpenAlex limits searches with more than five boolean operators to one a second without a key.
 const runWithOpenAlexSearchLimit = createSerialRequestLane({ minimumStartIntervalMs: 1_050 });
@@ -45,7 +48,7 @@ const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"'
 // Raw XML text (PubMed's titles and abstracts keep their inline markup) loses tags and entities.
 const clean = (value: string | null | undefined) => {
   const text = (value ?? "")
-    .replace(/<[^>]+>/gu, " ")
+    .replace(/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/giu, " ")
     .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (whole, name: string) =>
       name.startsWith("#x") || name.startsWith("#X")
         ? String.fromCodePoint(Number.parseInt(name.slice(2), 16))
@@ -58,6 +61,13 @@ const clean = (value: string | null | undefined) => {
   return text || undefined;
 };
 
+const texts = (values: ReadonlyArray<string> | undefined) =>
+  (values ?? []).flatMap((value) => clean(value) ?? []);
+
+/**
+ * One record as the watch stores it. Services send names and venues with stray spaces and dates
+ * of every shape; the stored schema takes neither, so every field is cleaned here.
+ */
 function record(
   title: string | undefined,
   rest: Omit<LiteratureWatchFound, "title" | "authors" | "authorCount" | "abstract"> & {
@@ -65,15 +75,31 @@ function record(
     readonly abstract?: string | undefined;
   },
 ): ReadonlyArray<LiteratureWatchFound> {
-  if (!title) return [];
-  const { authors, abstract, ...fields } = rest;
+  const heading = clean(title)?.slice(0, 2_000).trim();
+  if (!heading) return [];
+  const authors = texts(rest.authors);
+  const abstract = clean(rest.abstract)?.slice(0, MAX_ABSTRACT).trim();
+  const venue = clean(rest.venue);
+  const kinds = texts(rest.kinds).slice(0, 12);
+  const ids = Object.fromEntries(
+    Object.entries(rest.ids).flatMap(([scheme, value]) => {
+      const id = clean(value);
+      return id ? [[scheme, id]] : [];
+    }),
+  );
   return [
     {
-      ...fields,
-      title: title.slice(0, 2_000),
+      title: heading,
       authors: authors.slice(0, MAX_AUTHORS),
       authorCount: authors.length,
-      ...(abstract ? { abstract: abstract.slice(0, MAX_ABSTRACT) } : {}),
+      ids,
+      services: rest.services,
+      ...(abstract ? { abstract } : {}),
+      ...(venue ? { venue } : {}),
+      ...(rest.published && /^\d{4}-\d{2}-\d{2}$/u.test(rest.published)
+        ? { published: rest.published }
+        : {}),
+      ...(kinds.length ? { kinds } : {}),
     },
   ];
 }
@@ -85,7 +111,11 @@ async function getOk(
   accept: string,
 ): Promise<string> {
   const response = await (options.pace ?? lane)(() =>
-    options.request(url, { Accept: accept, "User-Agent": METADATA_USER_AGENT }),
+    options.request(
+      url,
+      { Accept: accept, "User-Agent": METADATA_USER_AGENT },
+      { maxBytes: MAX_RESPONSE_BYTES, deadlineMs: RESPONSE_DEADLINE_MS },
+    ),
   );
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`HTTP ${response.status}`);

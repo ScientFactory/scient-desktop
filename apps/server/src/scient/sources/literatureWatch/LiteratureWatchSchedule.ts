@@ -107,8 +107,28 @@ export const restoreLiteratureWatchSchedules = Effect.fn("LiteratureWatch.restor
   },
 );
 
-/** A scheduled run that ended without a briefing, so the watch can say so and offer Run now. */
-export function literatureWatchRunUnfinished(
+/**
+ * Where the watch's runs stand. The task reports a run done once its prompt is sent, so a run
+ * counts as going while its thread is working, and unfinished only when it stopped unpublished.
+ * A task turned off in Scheduled tasks is a paused watch.
+ */
+export const literatureWatchRunStatus = Effect.fn("LiteratureWatch.runStatus")(function* (
+  watch: LiteratureWatch,
+  task: ScheduledTask | undefined,
+) {
+  const paused = watch.paused === true || task?.enabled === false;
+  if (!task) return { running: false, unfinished: false, paused };
+  const shell =
+    task.threadId === null
+      ? null
+      : yield* (yield* ProjectionStoreV2)
+          .getThreadShell(task.threadId)
+          .pipe(Effect.orElseSucceed(() => null));
+  const running = task.lastRunStatus === "running" || (shell?.activeRunId ?? null) !== null;
+  return { running, unfinished: !running && literatureWatchRunUnfinished(watch, task), paused };
+});
+
+function literatureWatchRunUnfinished(
   watch: Pick<LiteratureWatch, "briefings">,
   task: Pick<ScheduledTask, "lastRunAt" | "lastRunStatus"> | undefined,
 ): boolean {

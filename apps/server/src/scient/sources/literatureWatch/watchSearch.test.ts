@@ -80,6 +80,34 @@ describe("searchWatchService", () => {
     );
   });
 
+  it("cleans the spaces OpenAlex leaves around names, which the stored run would refuse", async () => {
+    const { request } = serve({
+      "/works": JSON.stringify({
+        meta: { count: 1 },
+        results: [
+          {
+            id: "https://openalex.org/W1",
+            title: " Working memory capacity in macaques ",
+            publication_date: "2026-11-20",
+            authorships: [{ author: { display_name: " Aditi Singh" } }],
+            primary_location: { source: { display_name: "Neuron " } },
+          },
+        ],
+      }),
+    });
+    const result = await searchWatchService("openalex", "memory", window, {
+      request,
+      keys: {},
+      pace,
+    });
+    expect(result.found[0]).toMatchObject({
+      title: "Working memory capacity in macaques",
+      authors: ["Aditi Singh"],
+      venue: "Neuron",
+      ids: { openalex: "W1" },
+    });
+  });
+
   it("reports a service that does not answer as failed, without throwing", async () => {
     const result = await searchWatchService("openalex", "replay", window, {
       request: serve({}).request,

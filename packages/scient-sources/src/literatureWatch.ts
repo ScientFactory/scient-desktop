@@ -351,6 +351,21 @@ export function publishLiteratureWatchRun(
   };
 }
 
+/**
+ * After the topic changes, the last month is read again and papers earlier runs passed over are
+ * judged anew; papers already shown, and what the person did with them, stay.
+ */
+export function retuneLiteratureWatch(watch: LiteratureWatch, now: Date): LiteratureWatch {
+  const today = literatureWatchDay(now);
+  const back = daysBefore(today, LITERATURE_WATCH_FIRST_DAYS - OVERLAP_DAYS);
+  const covered = { ...watch.covered };
+  for (const service of LITERATURE_WATCH_SERVICES) {
+    const day = covered[service];
+    if (day && day > back) covered[service] = back;
+  }
+  return { ...watch, covered, seen: watch.seen.filter((entry) => entry.fate === "shown") };
+}
+
 /** Sets or clears what the person did with one item; the briefing itself does not change. */
 export function triageLiteratureWatchItem(
   watch: LiteratureWatch,
