@@ -104,6 +104,7 @@ const layerFor = (
         Layer.succeed(HostProcess.Platform, "freebsd"),
         Layer.mock(Cloud.CloudEngines)({
           execute: () => Effect.succeed([]),
+          realtimeKey: () => Effect.undefined,
           resolve:
             cloudBinding ??
             (() =>
@@ -237,6 +238,68 @@ it.effect("leaves empty projects untouched and isolates corrupt revisions from v
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("lists project media that was never added and finds a file's transcripts by path", () =>
+  Effect.gen(function* () {
+    const project = yield* Effect.acquireRelease(
+      Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "transcription-discovery-")).then(
+          (directory) => NodeFSP.realpath(directory, "utf8"),
+        ),
+      ),
+      (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+    );
+    const jobs = yield* Jobs.TranscriptionJobs;
+    const downloaded = NodePath.join(project, "Downloads", "lecture.mp4");
+    const transcribed = NodePath.join(project, "interview.m4a");
+    const id = "2026-11-25-interview-12345678";
+    yield* Effect.promise(async () => {
+      for (const folder of ["Downloads", ".hidden", "node_modules/pkg", `Transcripts/${id}`])
+        await NodeFSP.mkdir(NodePath.join(project, folder), { recursive: true });
+      await NodeFSP.writeFile(downloaded, "video");
+      await NodeFSP.writeFile(transcribed, "audio");
+      await NodeFSP.writeFile(NodePath.join(project, "notes.txt"), "text");
+      await NodeFSP.writeFile(NodePath.join(project, ".hidden", "skip.mp3"), "audio");
+      await NodeFSP.writeFile(NodePath.join(project, "node_modules/pkg", "skip.wav"), "audio");
+      await NodeFSP.writeFile(NodePath.join(project, "Transcripts", "skip.webm"), "audio");
+      await NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", id, "job.json"),
+        JSON.stringify({ id, source: transcribed, settings: { engine: "local", model: large } }),
+      );
+      await NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", id, "state.json"),
+        JSON.stringify({ stage: "completed", completed: 1 }),
+      );
+    });
+    yield* jobs.execute({ action: "media-register", project, source: transcribed });
+    const listed = yield* jobs.execute({ action: "media-list", project });
+    expect(listed).toEqual({
+      media: expect.arrayContaining([
+        { source: downloaded, size: 5, created: expect.any(Number), queued: false },
+        expect.objectContaining({ source: transcribed }),
+      ]),
+    });
+    expect(listed).toHaveProperty("media.length", 2);
+    expect(
+      yield* jobs.execute({ action: "list", project, includeCreated: true, source: transcribed }),
+    ).toMatchObject([{ job: { id } }]);
+    for (const source of [downloaded, NodePath.join(project, "deleted.mp3")])
+      expect(yield* jobs.execute({ action: "list", project, source })).toEqual([]);
+    const alias = `${project}-alias`;
+    yield* Effect.acquireRelease(
+      Effect.promise(() => NodeFSP.symlink(project, alias)),
+      () => Effect.promise(() => NodeFSP.rm(alias, { force: true })),
+    );
+    const placed = (source: string) =>
+      jobs.execute({ action: "media-register", project: alias, source, onlyInProject: true });
+    expect(yield* placed(NodePath.join(alias, "Downloads", "lecture.mp4"))).toMatchObject({
+      media: [{ source: downloaded }],
+    });
+    expect(yield* placed(NodePath.join(NodePath.dirname(project), "elsewhere.mp4"))).toEqual({
+      media: [],
+    });
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "rejects concurrent starts, completes cancel, and creates a new revision after a source change",
   () => {
@@ -303,6 +366,76 @@ it.effect(
       })),
     );
   },
+);
+
+const trashHome = NodePath.join(NodeOS.tmpdir(), `recordings-trash-${process.pid}`);
+it.effect("renames a recording and moves it with its transcripts to the Trash", () =>
+  Effect.gen(function* () {
+    const project = yield* Effect.acquireRelease(
+      Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "transcription-manage-")).then((directory) =>
+          NodeFSP.realpath(directory, "utf8"),
+        ),
+      ),
+      (directory) =>
+        Effect.promise(async () => {
+          await NodeFSP.rm(directory, { recursive: true, force: true });
+          await NodeFSP.rm(trashHome, { recursive: true, force: true });
+        }),
+    );
+    const jobs = yield* Jobs.TranscriptionJobs;
+    const recording = NodePath.join(project, "lecture.wav");
+    const id = "2026-11-26-lecture-12345678";
+    yield* Effect.promise(async () => {
+      await NodeFSP.writeFile(recording, "audio");
+      await NodeFSP.mkdir(NodePath.join(project, "Transcripts", id), { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", id, "job.json"),
+        JSON.stringify({ id, source: recording }),
+      );
+    });
+    const named = () =>
+      jobs
+        .execute({ action: "media-list", project })
+        .pipe(Effect.map((result) => (result as { media: { title?: string }[] }).media[0]?.title));
+    yield* jobs.execute({ action: "media-register", project, source: recording });
+    yield* jobs.execute({
+      action: "recording-rename",
+      project,
+      source: recording,
+      title: " Week 3 ",
+    });
+    expect(yield* named()).toBe("Week 3");
+    yield* jobs.execute({ action: "media-register", project, source: recording });
+    expect(yield* named()).toBe("Week 3");
+    yield* jobs.execute({ action: "recording-rename", project, source: recording, title: "" });
+    expect(yield* named()).toBeUndefined();
+
+    yield* jobs.execute({ action: "recording-trash", project, source: recording });
+    expect(yield* Effect.promise(() => NodeFSP.readdir(project))).toEqual(["Transcripts"]);
+    expect(
+      yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(project, "Transcripts"))),
+    ).toEqual([]);
+    expect(
+      (yield* Effect.promise(() =>
+        NodeFSP.readdir(NodePath.join(trashHome, "Trash", "files")),
+      )).sort(),
+    ).toEqual([id, "lecture.wav"]);
+    // A record written back after the move, as by a rename that was still measuring, stays hidden.
+    yield* Effect.promise(() =>
+      NodeFSP.writeFile(
+        NodePath.join(project, "Transcripts", `recording-${"b".repeat(64)}.json`),
+        JSON.stringify({ source: recording, size: 5, created: 1 }),
+      ),
+    );
+    expect(yield* jobs.execute({ action: "media-list", project })).toEqual({ media: [] });
+  }).pipe(
+    Effect.provide(
+      layer.pipe(
+        Layer.provide(Layer.succeed(HostProcess.Environment, { XDG_DATA_HOME: trashHome })),
+      ),
+    ),
+  ),
 );
 
 it.effect("engine inventory exposes available engine configurations", () =>
@@ -1032,4 +1165,81 @@ it.effect("imports a standalone Hebrew transcript as a completed recording witho
     const transcript = yield* jobs.execute({ action: "revision", project, id: result.job.id });
     expect(transcript).toMatchObject({ segments: [{ start: 12, end: 19, text: "שלום לכולם" }] });
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "names a lesson's caption engine, keeps its captions and transcribes it as a lesson when it ends",
+  () =>
+    Effect.gen(function* () {
+      const project = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "lesson-capture-"))),
+        (directory) =>
+          Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+      );
+      const jobs = yield* Jobs.TranscriptionJobs;
+      const id = "00000000-0000-4000-8000-000000000001";
+      const started = yield* jobs.execute({ action: "capture-start", project, id });
+      expect(started).toEqual({
+        captured: true,
+        language: "auto",
+        captions: { kind: "local", modelId: large },
+        talk: { openai: false },
+      });
+      yield* jobs.execute({
+        action: "capture-chunk",
+        project,
+        id,
+        format: "webm",
+        index: 0,
+        bytes: Buffer.from("lesson audio").toString("base64"),
+      });
+      for (const caption of [
+        { window: 1, start: 12, end: 20, text: "Second law." },
+        { window: 0, start: 0, end: 12, text: "Entropy always increases." },
+        { window: 1, start: 12, end: 20, text: "Second law of thermodynamics." },
+      ])
+        yield* jobs.execute({ action: "capture-caption", project, id, ...caption });
+      const captions = yield* Effect.promise(() =>
+        NodeFSP.readFile(
+          NodePath.join(project, "Transcripts", `.recording-capture-${id}`, "captions.md"),
+          "utf8",
+        ),
+      );
+      expect(captions).toContain("[00:00] Entropy always increases.\n\n[00:12] Second law of");
+      expect(captions).not.toContain("Second law.\n");
+      expect(
+        (yield* jobs
+          .execute({ action: "capture-start", project, id }, { scoped: true })
+          .pipe(Effect.flip)).code,
+      ).toBe("invalid-input");
+      const finished = yield* jobs.execute({
+        action: "capture-finish",
+        project,
+        id,
+        lesson: { language: "auto" },
+      });
+      expect(finished).toMatchObject({ captured: true, transcription: "started" });
+      expect(
+        (yield* jobs.execute({ action: "capture-touch", project, id }).pipe(Effect.flip)).detail,
+      ).toBe("This recording was already saved.");
+      const source = "source" in finished ? finished.source : undefined;
+      const revisions = yield* jobs.execute({ action: "list", project });
+      expect(revisions).toEqual([
+        expect.objectContaining({
+          job: expect.objectContaining({
+            lesson: true,
+            source,
+            // Nobody is there to approve a Thorough estimate, so a lesson corrects quickly.
+            correction: expect.objectContaining({ mode: "quick" }),
+          }),
+        }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerFor(new Set([large]), false, {}, [], undefined, () => ({
+          ...DEFAULT_SERVER_SETTINGS,
+          recordingDefaults: { models: {}, correction: "thorough", notify: true },
+        })),
+      ),
+    ),
 );

@@ -11,7 +11,9 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { scientRecordingSurface } from "../rightPanel/surfaces";
 import { RecordingBadge } from "./RecordingBadge";
-import { fileName, type Recording, type Project } from "./recordingTypes";
+import { capturedAt, fileName, type Recording, type Project } from "./recordingTypes";
+import { formatBytes } from "../../lib/formatBytes";
+import { useRecordingTitle } from "./recordingTitle";
 import {
   Dialog,
   DialogPopup,
@@ -37,7 +39,6 @@ import {
   EllipsisIcon,
   FileAudioIcon,
   FileTextIcon,
-  MicIcon,
   PlusIcon,
   SearchIcon,
   XIcon,
@@ -49,6 +50,17 @@ import { languageLabel } from "../../lib/languageLabel";
 import { RecordingSelect } from "./RecordingSelect";
 import { copyRecording } from "./copyRecording";
 import { TranscribeDialog } from "./TranscribeDialog";
+import {
+  RecordingInfo,
+  RecordingMenuItems,
+  RecordingNameInput,
+  type RecordingDetails,
+  showRecordingMenu,
+  trashRecording,
+  type ManagedRecording,
+  type RecordingAction,
+} from "./RecordingManage";
+import { useRecycleBin } from "./serverPlatform";
 import { WorkspacePageContainer } from "../../components/WorkspacePageContainer";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -115,6 +127,14 @@ export function RecordingsPage({
   const [sort, setSort] = useState("newest");
   const [dragging, setDragging] = useState(false);
   const formatDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium" });
+  const recordingTitle = useRecordingTitle();
+  // The row whose name is being edited.
+  const [renaming, setRenaming] = useState<string>();
+  const [info, setInfo] = useState<{
+    details: RecordingDetails;
+    anchor: Element | { getBoundingClientRect: () => DOMRect };
+  }>();
+  const windows = useRecycleBin(environmentId);
   const router = useRouter();
   const newThread = useNewThreadHandler();
   const opening = useRef(false);
@@ -155,6 +175,53 @@ export function RecordingsPage({
           bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID &&
           typeof bootstrap.runningDistro === "string",
       );
+  const manageActions = (
+    key: string,
+    managed: ManagedRecording,
+    busy: boolean,
+    details: RecordingDetails,
+  ): RecordingAction[] => {
+    const os = windows ? "windows" : "other";
+    return [
+      {
+        id: "info",
+        label: gt("Info"),
+        run: (at) => {
+          const row = document.querySelector(`[data-recording="${CSS.escape(key)}"]`);
+          setInfo({
+            details,
+            anchor:
+              at || !row
+                ? {
+                    getBoundingClientRect: () =>
+                      DOMRect.fromRect({ x: at?.x ?? 0, y: at?.y ?? 0, width: 0, height: 0 }),
+                  }
+                : row,
+          });
+        },
+      },
+      { id: "rename", label: gt("Rename"), run: () => setRenaming(key) },
+      {
+        id: "trash",
+        label: gt("{os, select, windows {Move to Recycle Bin} other {Move to Trash}}", { os }),
+        destructive: true,
+        separatorBefore: true,
+        disabled: busy,
+        run: () =>
+          void trashRecording(managed, {
+            done: gt(
+              "{os, select, windows {Moved {name} to the Recycle Bin} other {Moved {name} to the Trash}}",
+              { os, name: managed.title },
+            ),
+            failed: gt("Could not move the recording"),
+          }).then((trashed) => {
+            if (!trashed) return;
+            setSelection(new Set());
+            refreshList();
+          }),
+      },
+    ];
+  };
   const copyTranscript = async (file: File, project: Project) => {
     const source = bridge?.getPathForFile(file);
     if (!source) fail("Transcript file is unavailable");
@@ -185,25 +252,40 @@ export function RecordingsPage({
     await andFinally(
       async () => {
         try {
-          const result = await importFile({
-            environmentId: target.environmentId,
-            input: {
-              cwd: target.workspaceRoot,
-              change: { _tag: "import", sources, folder: "", collision: "keep-both" },
-            },
-          });
-          if (result._tag !== "Success") fail("Recording import failed");
-          const registered = await Promise.all(
-            result.value.entries.flatMap(({ to }) =>
-              to
-                ? [
-                    transcriptionCommand("media-register", target.workspaceRoot, {
-                      source: resolveWorkspaceFilePath(to, target.workspaceRoot),
-                    }),
-                  ]
-                : [],
+          // A file already in the project is used where it is; others are copied into it.
+          const inPlace = await Promise.all(
+            sources.map((source) =>
+              transcriptionCommand("media-register", target.workspaceRoot, {
+                source,
+                onlyInProject: true,
+              }),
             ),
           );
+          const outside = sources.filter((_, index) => !inPlace[index]!.media.length);
+          const copied = outside.length
+            ? await importFile({
+                environmentId: target.environmentId,
+                input: {
+                  cwd: target.workspaceRoot,
+                  change: { _tag: "import", sources: outside, folder: "", collision: "keep-both" },
+                },
+              })
+            : undefined;
+          if (copied && copied._tag !== "Success") fail("Recording import failed");
+          const registered = [
+            ...inPlace,
+            ...(await Promise.all(
+              (copied?.value.entries ?? []).flatMap(({ to }) =>
+                to
+                  ? [
+                      transcriptionCommand("media-register", target.workspaceRoot, {
+                        source: resolveWorkspaceFilePath(to, target.workspaceRoot),
+                      }),
+                    ]
+                  : [],
+              ),
+            )),
+          ];
           const added = registered.flatMap(({ media }) => media.map(({ source }) => source));
           if (!added.length) fail("Recording registration failed");
           if (added.length <= 20)
@@ -294,6 +376,7 @@ export function RecordingsPage({
   const grouped = new Map<string, Recording>();
   const durations = new Map<string, number>();
   const queuedRecordings = new Set<string>();
+  const titles = new Map<string, string>();
   const added: {
     key: string;
     project: Project;
@@ -302,6 +385,7 @@ export function RecordingsPage({
     created: number;
     queued?: boolean;
     duration?: number;
+    title?: string;
   }[] = [];
   projects.forEach((project, index) => {
     const result = list.data?.[index];
@@ -312,6 +396,7 @@ export function RecordingsPage({
       const key = `${project.id}/${file.source}`;
       if (file.duration !== undefined) durations.set(key, file.duration);
       if (file.queued) queuedRecordings.add(key);
+      if (file.title) titles.set(key, file.title);
       if (!transcribed.has(file.source)) added.push({ key, project, ...file });
     }
     for (const revision of revisions) {
@@ -336,7 +421,15 @@ export function RecordingsPage({
     if (!latest) return;
     const panel = useRightPanelStore.getState();
     const open = (threadRef: ReturnType<typeof scopeThreadRef>) => {
-      panel.openScient(threadRef, scientRecordingSurface(project.id, latest.job.source, match));
+      panel.openScient(
+        threadRef,
+        scientRecordingSurface(
+          project.id,
+          latest.job.source,
+          match,
+          recordingTitle(latest.job.source, titles.get(`${project.id}/${latest.job.source}`)),
+        ),
+      );
       panel.requestMaximize(threadRef);
       panel.setMaximized(threadRef, true);
     };
@@ -424,6 +517,7 @@ export function RecordingsPage({
         key,
         project: recording.project,
         source: job.source,
+        title: recordingTitle(job.source, titles.get(key)),
         size: job.input.size,
         duration: durations.get(key) ?? duration,
         created: created ?? 0,
@@ -444,6 +538,7 @@ export function RecordingsPage({
     }),
     ...added.map((file) => ({
       ...file,
+      title: recordingTitle(file.source, file.title),
       recording: undefined,
       snippet: undefined,
       matchedRevision: undefined,
@@ -455,7 +550,9 @@ export function RecordingsPage({
       (row) =>
         (!projectFilter || projectFilter === row.project.id) &&
         (!statusFilter || statusFilter === row.status) &&
-        (fileName(row.source).toLocaleLowerCase().includes(query.toLocaleLowerCase()) ||
+        ([row.title, fileName(row.source)].some((name) =>
+          name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+        ) ||
           row.snippet),
     )
     .sort((left, right) =>
@@ -464,9 +561,11 @@ export function RecordingsPage({
         : sort === "longest"
           ? (right.duration ?? 0) - (left.duration ?? 0)
           : sort === "name"
-            ? fileName(left.source).localeCompare(fileName(right.source), locale)
+            ? left.title.localeCompare(right.title, locale)
             : right.created - left.created,
     );
+  // The project is named on each row only when the list mixes projects.
+  const manyProjects = new Set(rows.map((row) => row.project.id)).size > 1;
   const statusOptions = [
     { value: "", label: gt("All statuses") },
     { value: "untranscribed", label: gt("Not transcribed") },
@@ -477,11 +576,46 @@ export function RecordingsPage({
     { value: "completed", label: gt("Done") },
     { value: "failed", label: gt("Couldn’t finish") },
   ];
+  const statusLabels = new Map(statusOptions.map(({ value, label }) => [value, label]));
+  const formatWhen = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+  const recordingDetails = (row: {
+    title: string;
+    project: Project;
+    source: string;
+    size: number;
+    created: number;
+    duration?: number | undefined;
+    status: string;
+    language?: string | undefined;
+    versions?: number | undefined;
+  }): RecordingDetails => {
+    const recorded = capturedAt(row.source);
+    const status = statusLabels.get(row.status);
+    return {
+      title: row.title,
+      rows: [
+        recorded
+          ? [gt("Recorded"), formatWhen.format(recorded)]
+          : [gt("Added"), row.created > 0 ? formatWhen.format(row.created) : undefined],
+        [gt("Length"), row.duration ? recordingTime(row.duration) : undefined],
+        [gt("Size"), row.size > 0 ? formatBytes(row.size) : undefined],
+        [gt("Format"), /\.([^.]{1,5})$/.exec(row.source)?.[1]?.toUpperCase()],
+        [gt("Language"), row.language],
+        [
+          gt("Transcript"),
+          status && row.versions && row.versions > 1
+            ? gt("{status} · {count} versions", { status, count: row.versions })
+            : status,
+        ],
+        [gt("Project"), row.project.title],
+      ],
+    };
+  };
   const selectedFiles = added.filter((file) => !file.queued && selection.has(file.key));
   const batchProject = selectedFiles[0]?.project;
   return (
     <WorkspacePageContainer
-      width="wide"
+      width="readable"
       className={
         lockedProject
           ? "relative h-full min-h-0 gap-3! px-3! pt-3! pb-4"
@@ -508,12 +642,21 @@ export function RecordingsPage({
         void add([...event.dataTransfer.files]);
       }}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-lg font-medium">
           {gt("Recordings")}{" "}
           <span className="text-sm tabular-nums text-muted-foreground">{rows.length}</span>
         </h1>
-        <div className="flex w-full items-center gap-2 sm:w-auto">
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!available || !projects.length}
+            onClick={() => openRecordingCapture(destination?.id)}
+          >
+            <span aria-hidden className="size-2.5 rounded-full bg-destructive" />
+            {gt("Record")}
+          </Button>
           <Menu>
             <MenuTrigger
               render={
@@ -534,42 +677,12 @@ export function RecordingsPage({
                 <FileAudioIcon aria-hidden />
                 {gt("Audio or video files…")}
               </MenuItem>
-              <MenuItem onClick={() => openRecordingCapture(destination?.id)}>
-                <MicIcon aria-hidden />
-                {gt("Record with the microphone")}
-              </MenuItem>
               <MenuItem disabled={!canAdd} onClick={() => chooseTranscript()}>
                 <FileTextIcon aria-hidden />
                 {gt("Import a transcript…")}
               </MenuItem>
             </MenuPopup>
           </Menu>
-          {/* A pill, like Extensions: the control radius is a theme variable the input group reads. */}
-          <div className="min-w-0 flex-1 [--control-radius:9999px] sm:w-72 sm:flex-none">
-            <InputGroup>
-              <InputGroupAddon>
-                <SearchIcon aria-hidden />
-              </InputGroupAddon>
-              <InputGroupInput
-                value={search}
-                onChange={(event) => setSearch(event.currentTarget.value)}
-                aria-label={gt("Search recordings and transcripts")}
-                placeholder={gt("Search recordings")}
-              />
-              {search && (
-                <InputGroupAddon align="inline-end">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={gt("Clear search")}
-                    onClick={() => setSearch("")}
-                  >
-                    <XIcon />
-                  </Button>
-                </InputGroupAddon>
-              )}
-            </InputGroup>
-          </div>
           <input
             type="file"
             ref={transcriptPicker}
@@ -592,6 +705,78 @@ export function RecordingsPage({
               void add(files);
             }}
           />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+        {/* A pill, like Extensions: the control radius is a theme variable the input group reads. */}
+        <div className="w-full [--control-radius:9999px] sm:w-60">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden />
+            </InputGroupAddon>
+            <InputGroupInput
+              size="sm"
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+              aria-label={gt("Search recordings and transcripts")}
+              placeholder={gt("Search")}
+            />
+            {search && (
+              <InputGroupAddon align="inline-end">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={gt("Clear search")}
+                  onClick={() => setSearch("")}
+                >
+                  <XIcon />
+                </Button>
+              </InputGroupAddon>
+            )}
+          </InputGroup>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {!lockedProject && (
+            <RecordingSelect
+              label={gt("Project")}
+              value={projectFilter}
+              onChange={setProjectFilter}
+              options={[
+                { value: "", label: gt("All projects") },
+                ...projects.map((project) => ({ value: project.id, label: project.title })),
+              ]}
+            />
+          )}
+          <RecordingSelect
+            label={gt("Status")}
+            value={statusFilter}
+            options={statusOptions}
+            onChange={setStatusFilter}
+          />
+          <RecordingSelect
+            label={gt("Sort recordings")}
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "newest", label: gt("Newest") },
+              { value: "oldest", label: gt("Oldest") },
+              { value: "longest", label: gt("Longest") },
+              { value: "name", label: gt("Title") },
+            ]}
+          />
+          {(query || projectFilter || statusFilter) && (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                setSearch("");
+                setProjectFilter("");
+                setStatusFilter("");
+              }}
+            >
+              {gt("Clear filters")}
+            </Button>
+          )}
         </div>
       </div>
       {dragging && (
@@ -658,6 +843,13 @@ export function RecordingsPage({
           }}
         />
       )}
+      {info && (
+        <RecordingInfo
+          details={info.details}
+          anchor={info.anchor}
+          onClose={() => setInfo(undefined)}
+        />
+      )}
       {transcribe && (
         <TranscribeDialog
           key={transcribe.source}
@@ -679,49 +871,6 @@ export function RecordingsPage({
           }}
         />
       )}
-      <div className="-mx-2 flex flex-wrap items-center gap-1">
-        {!lockedProject && (
-          <RecordingSelect
-            label={gt("Project")}
-            value={projectFilter}
-            onChange={setProjectFilter}
-            options={[
-              { value: "", label: gt("All projects") },
-              ...projects.map((project) => ({ value: project.id, label: project.title })),
-            ]}
-          />
-        )}
-        <RecordingSelect
-          label={gt("Status")}
-          value={statusFilter}
-          options={statusOptions}
-          onChange={setStatusFilter}
-        />
-        <RecordingSelect
-          label={gt("Sort recordings")}
-          value={sort}
-          onChange={setSort}
-          options={[
-            { value: "newest", label: gt("Newest") },
-            { value: "oldest", label: gt("Oldest") },
-            { value: "longest", label: gt("Longest") },
-            { value: "name", label: gt("Title") },
-          ]}
-        />
-        {(query || projectFilter || statusFilter) && (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => {
-              setSearch("");
-              setProjectFilter("");
-              setStatusFilter("");
-            }}
-          >
-            {gt("Clear filters")}
-          </Button>
-        )}
-      </div>
       {!available && (
         <p role="status" className="text-sm text-muted-foreground">
           {gt("Recordings are unavailable in this session")}
@@ -795,16 +944,54 @@ export function RecordingsPage({
         estimatedItemSize={64}
         keyExtractor={(row) => row.key}
         renderItem={({ item }) => {
-          const { key, project, source, recording, created, duration, snippet, matchedRevision } =
-            item;
+          const {
+            key,
+            project,
+            source,
+            title,
+            recording,
+            created,
+            duration,
+            snippet,
+            matchedRevision,
+          } = item;
           const MediaIcon = /\.(mp4|webm|mov|m4v|ogv|mkv)$/i.test(source)
             ? ClapperboardIcon
             : AudioLinesIcon;
           const visibleDate = created > 0 ? formatDate.format(created) : undefined;
           const queued = "queued" in item && item.queued === true;
-          if (!recording)
+          const managed = { workspaceRoot: project.workspaceRoot, source, title };
+          const renamed = (changed: boolean) => {
+            setRenaming(undefined);
+            if (changed) refreshList();
+          };
+          if (!recording) {
+            const actions: RecordingAction[] = [
+              {
+                id: "transcribe",
+                label: gt("Transcribe…"),
+                disabled: queued,
+                run: () => setTranscribe({ project, source }),
+              },
+              {
+                id: "import",
+                label: gt("Import transcript"),
+                disabled: !canAdd || queued,
+                run: () => chooseTranscript({ project, source }),
+              },
+              ...manageActions(
+                key,
+                managed,
+                queued,
+                recordingDetails({ ...item, duration: item.duration }),
+              ),
+            ];
             return (
-              <div className="group/recording flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60">
+              <div
+                data-recording={key}
+                className="group/recording flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60"
+                onContextMenu={(event) => void showRecordingMenu(event, actions)}
+              >
                 {/* The checkbox takes the icon's place while the row is hovered, focused or chosen. */}
                 <span className="relative grid size-9 shrink-0 place-items-center text-muted-foreground">
                   <MediaIcon
@@ -833,17 +1020,13 @@ export function RecordingsPage({
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">
-                    <MiddleTruncate value={fileName(source)} />
+                    {renaming === key ? (
+                      <RecordingNameInput recording={managed} onDone={renamed} />
+                    ) : (
+                      <MiddleTruncate value={title} />
+                    )}
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    {[
-                      !projectFilter && !lockedProject ? project.title : undefined,
-                      duration ? recordingTime(duration) : undefined,
-                      visibleDate,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
+                  {manyProjects && <p className="text-xs text-muted-foreground">{project.title}</p>}
                 </div>
                 <Badge variant="secondary" size="sm">
                   {queued ? gt("Queued") : gt("Not transcribed")}
@@ -858,6 +1041,11 @@ export function RecordingsPage({
                     {gt("Transcribe")}
                   </Button>
                 )}
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {[duration ? recordingTime(duration) : undefined, visibleDate]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
                 <Menu>
                   <MenuTrigger
                     render={
@@ -871,64 +1059,114 @@ export function RecordingsPage({
                     <EllipsisIcon />
                   </MenuTrigger>
                   <MenuPopup>
-                    <MenuItem
-                      disabled={!canAdd || queued}
-                      onClick={() => chooseTranscript({ project, source })}
-                    >
-                      {gt("Import transcript")}
-                    </MenuItem>
-                    <MenuItem disabled={queued} onClick={() => setTranscribe({ project, source })}>
-                      {gt("Transcribe…")}
-                    </MenuItem>
+                    <RecordingMenuItems actions={actions} />
                   </MenuPopup>
                 </Menu>
               </div>
             );
+          }
           const { job, state, reviewCount } = recording.revisions[0]!;
-          return (
-            <div className="flex min-h-14 items-center gap-2 rounded-lg px-2 hover:bg-accent/60 has-focus-visible:bg-accent/60">
-              <button
-                type="button"
-                onClick={() => void openRecording(recording)}
-                className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 text-start outline-none"
-              >
-                <span className="grid size-9 shrink-0 place-items-center text-muted-foreground">
-                  <MediaIcon className="size-4" />
+          const working = queued || ["decoding", "transcribing", "writing"].includes(state.stage);
+          const actions: RecordingAction[] = [
+            { id: "open", label: gt("Open"), run: () => void openRecording(recording) },
+            ...(job.transcriptOnly
+              ? []
+              : [
+                  {
+                    id: "import",
+                    label: gt("Import transcript"),
+                    disabled: !canAdd || queued,
+                    run: () => chooseTranscript({ project, source, revision: job.id }),
+                  },
+                ]),
+            ...(!queued &&
+            !job.transcriptOnly &&
+            (state.stage === "completed" || state.stage === "failed")
+              ? [
+                  {
+                    id: "again",
+                    label: gt("Transcribe again"),
+                    run: () => setTranscribe({ project, source, previousId: job.id }),
+                  },
+                ]
+              : []),
+            ...manageActions(
+              key,
+              managed,
+              working,
+              recordingDetails({
+                ...item,
+                language:
+                  job.settings.language === "auto"
+                    ? undefined
+                    : languageLabel(job.settings.language, locale),
+                versions: recording.revisions.length,
+              }),
+            ),
+          ];
+          const opener =
+            "flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 text-start outline-none";
+          const content = (
+            <>
+              <span className="grid size-9 shrink-0 place-items-center text-muted-foreground">
+                <MediaIcon className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 space-y-1">
+                <span className="block text-sm font-medium">
+                  {renaming === key ? (
+                    <RecordingNameInput recording={managed} onDone={renamed} />
+                  ) : (
+                    <MiddleTruncate value={title} />
+                  )}
                 </span>
-                <span className="min-w-0 flex-1 space-y-1">
-                  <span className="block text-sm font-medium">
-                    <MiddleTruncate value={fileName(job.source)} />
-                  </span>
-                  <span className="block truncate text-xs tabular-nums text-muted-foreground">
+                {(manyProjects || job.settings.language !== "auto") && (
+                  <span className="block truncate text-xs text-muted-foreground">
                     {[
-                      !projectFilter && !lockedProject ? project.title : undefined,
-                      duration ? recordingTime(duration) : undefined,
+                      manyProjects ? project.title : undefined,
                       job.settings.language === "auto"
-                        ? gt("Auto-detect")
+                        ? undefined
                         : languageLabel(job.settings.language, locale),
-                      visibleDate,
                     ]
                       .filter(Boolean)
                       .join(" · ")}
                   </span>
-                  {snippet && (
-                    <bdi className="block truncate text-xs text-muted-foreground">{snippet}</bdi>
-                  )}
-                  {!queued && <RecordingProgress state={state} />}
-                  {!queued && (state.stage === "paused" || state.stage === "interrupted") && (
-                    <span className="block text-xs text-muted-foreground">
-                      {gt("Paused. Resumes where it stopped")}
-                    </span>
-                  )}
-                </span>
-                {queued ? (
-                  <Badge variant="secondary" size="sm">
-                    {gt("Queued")}
-                  </Badge>
-                ) : (
-                  <RecordingBadge state={state} reviewCount={reviewCount} />
                 )}
-              </button>
+                {snippet && (
+                  <bdi className="block truncate text-xs text-muted-foreground">{snippet}</bdi>
+                )}
+                {!queued && <RecordingProgress state={state} />}
+                {!queued && (state.stage === "paused" || state.stage === "interrupted") && (
+                  <span className="block text-xs text-muted-foreground">
+                    {gt("Paused. Resumes where it stopped")}
+                  </span>
+                )}
+              </span>
+              {queued ? (
+                <Badge variant="secondary" size="sm">
+                  {gt("Queued")}
+                </Badge>
+              ) : (
+                <RecordingBadge state={state} reviewCount={reviewCount} />
+              )}
+            </>
+          );
+          return (
+            <div
+              data-recording={key}
+              className="flex min-h-14 items-center gap-2 rounded-lg px-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
+              onContextMenu={(event) => void showRecordingMenu(event, actions)}
+            >
+              {renaming === key ? (
+                <div className={opener}>{content}</div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void openRecording(recording)}
+                  className={opener}
+                >
+                  {content}
+                </button>
+              )}
               {matchedRevision?.matchTime !== undefined ? (
                 <Button
                   size="sm"
@@ -976,6 +1214,11 @@ export function RecordingsPage({
                   {gt("Review")}
                 </Button>
               ) : null}
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {[duration ? recordingTime(duration) : undefined, visibleDate]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
               <Menu>
                 <MenuTrigger
                   render={
@@ -989,24 +1232,7 @@ export function RecordingsPage({
                   <EllipsisIcon />
                 </MenuTrigger>
                 <MenuPopup>
-                  <MenuItem onClick={() => void openRecording(recording)}>{gt("Open")}</MenuItem>
-                  {!job.transcriptOnly && (
-                    <MenuItem
-                      disabled={!canAdd || queued}
-                      onClick={() => chooseTranscript({ project, source, revision: job.id })}
-                    >
-                      {gt("Import transcript")}
-                    </MenuItem>
-                  )}
-                  {!queued &&
-                    !job.transcriptOnly &&
-                    (state.stage === "completed" || state.stage === "failed") && (
-                      <MenuItem
-                        onClick={() => setTranscribe({ project, source, previousId: job.id })}
-                      >
-                        {gt("Transcribe again")}
-                      </MenuItem>
-                    )}
+                  <RecordingMenuItems actions={actions} />
                 </MenuPopup>
               </Menu>
             </div>
