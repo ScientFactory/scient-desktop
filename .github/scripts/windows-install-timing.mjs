@@ -24,9 +24,22 @@ const run = (command, args) =>
   result.steps.installMs = ms(start);
   result.steps.installExit = install.status;
 }
-const installDir = Path.join(process.env.LOCALAPPDATA, "Programs", "Scient");
+// Where the installer put the app, from its uninstall entry.
+const registered = run("powershell.exe", [
+  "-NoProfile",
+  "-Command",
+  "Get-ItemProperty HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*, HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Scient*' } | Select-Object -First 1 -ExpandProperty InstallLocation",
+]).stdout.trim();
+const candidates = [
+  registered,
+  Path.join(process.env.LOCALAPPDATA, "Programs", "Scient"),
+  Path.join(process.env.LOCALAPPDATA, "Programs", "scient"),
+  Path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Scient"),
+].filter(Boolean);
+const installDir = candidates.find((dir) => FS.existsSync(Path.join(dir, "Scient.exe")));
+if (!installDir) throw new Error(`Installed app missing; looked in ${candidates.join(", ")}`);
 const exe = Path.join(installDir, "Scient.exe");
-if (!FS.existsSync(exe)) throw new Error(`Installed app missing at ${exe}`);
+result.installDir = installDir;
 const sizeOf = (dir) => {
   let bytes = 0;
   let files = 0;

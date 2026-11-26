@@ -28,7 +28,13 @@ jobs:
         shell: pwsh
         run: |
           $disable = '${{ matrix.scan }}' -eq 'off'
+          if (-not $disable) {
+            # The runner image turns real-time scanning off by policy; lift the policy first.
+            Remove-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Service WinDefend -ErrorAction SilentlyContinue
+          }
           try { Set-MpPreference -DisableRealtimeMonitoring $disable -ErrorAction Stop } catch { Write-Host "Set-MpPreference failed: $_" }
+          Start-Sleep -Seconds 5
           Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled | Format-List
           Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
           Get-PhysicalDisk | Select-Object FriendlyName, MediaType | Format-List
