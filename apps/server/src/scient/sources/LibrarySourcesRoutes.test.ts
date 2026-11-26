@@ -924,7 +924,7 @@ describe("Library routes on the library backend", () => {
           trial.citationKey,
           "next2026",
         ]);
-        expect(stored.pins[0].work.creators).toEqual(consortium);
+        expect((await readScientProjectPins(store.root))[0]?.work.creators).toEqual(consortium);
         expect((await readScientSourceRecord(store.library, trial.sourceId))?.creators).toEqual(
           consortium,
         );

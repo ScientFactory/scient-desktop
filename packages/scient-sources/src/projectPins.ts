@@ -36,7 +36,9 @@ import {
   ScientSavedCopyCreatorCount,
   scientFullerSavedRoster,
   scientSavedCopyList,
+  scientSavedCopyHead,
   scientSavedCopyRoster,
+  joinScientSavedCopy,
   withUsableCreatorCount,
 } from "./model.ts";
 import {
@@ -151,25 +153,29 @@ interface PinsDocument {
 }
 
 const PIN_FIELDS = Object.keys(ScientProjectPin.fields);
-const WORK_FIELDS = Object.keys(ScientPinWork.fields);
+const WORK_FIELDS = [...Object.keys(ScientPinWork.fields), "overflow"];
 const FILE_FIELDS = Object.keys(PinsFileHeader.fields);
 
+/** A pin's `work` as read from a file: its overflow joined on, an unusable count dropped. */
+const readableWork = (raw: unknown) => withUsableCreatorCount(joinScientSavedCopy(raw));
+
 function encodeWork(work: ScientPinWork, extra: JsonObject) {
+  const head = scientSavedCopyHead(work);
   return {
     type: work.type,
     title: work.title,
-    creators: work.creators.map((creator) => ({
+    creators: head.creators.map((creator) => ({
       creatorType: creator.creatorType,
       givenName: creator.givenName,
       familyName: creator.familyName,
       literalName: creator.literalName,
     })),
-    ...(work.incompleteCreatorRoles?.length
-      ? { incompleteCreatorRoles: [...work.incompleteCreatorRoles] }
+    ...(head.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: [...head.incompleteCreatorRoles] }
       : {}),
     ...(work.creatorCount !== undefined ? { creatorCount: work.creatorCount } : {}),
     issuedYear: work.issuedYear,
-    identifiers: work.identifiers.map((identifier) => ({
+    identifiers: head.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
       value: identifier.value,
     })),
@@ -180,7 +186,8 @@ function encodeWork(work: ScientPinWork, extra: JsonObject) {
       ),
     ),
     ...(work.more !== undefined ? { more: sortedExtra(work.more) } : {}),
-    ...(work.tags !== undefined ? { tags: [...work.tags] } : {}),
+    ...(head.tags !== undefined ? { tags: [...head.tags] } : {}),
+    ...(head.overflow ? { overflow: head.overflow } : {}),
     ...sortedExtra(extra),
   };
 }
@@ -450,9 +457,7 @@ function parsePinsText(text: string): Pick<PinsDocument, "pins" | "unread" | "ex
 
 function decodeStoredPin(raw: unknown): ScientProjectPin | null {
   try {
-    return decodePin(
-      isJsonObject(raw) ? { ...raw, work: withUsableCreatorCount(raw["work"]) } : raw,
-    );
+    return decodePin(isJsonObject(raw) ? { ...raw, work: readableWork(raw["work"]) } : raw);
   } catch {
     return null;
   }
@@ -1530,7 +1535,7 @@ export const scientProjectPinsInternals = {
     const restored: StoredPin = {
       ...found,
       workExtra: extraFields(copy["work"], WORK_FIELDS),
-      pin: { ...found.pin, work: decodePinWork(withUsableCreatorCount(copy["work"])) },
+      pin: { ...found.pin, work: decodePinWork(readableWork(copy["work"])) },
     };
     await writePinsDocument(
       root,

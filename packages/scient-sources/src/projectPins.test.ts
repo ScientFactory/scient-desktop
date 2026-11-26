@@ -1152,7 +1152,7 @@ describe("pins of works with thousands of authors", () => {
       note: "Primary trial.",
       actor: "user",
     });
-    expect((await storedWork(projectRoot)).creators).toEqual(consortium);
+    expect((await readScientProjectPins(projectRoot))[0]?.work.creators).toEqual(consortium);
 
     await resolveScientProjectPins({
       projectRoot,
@@ -1356,5 +1356,25 @@ describe("pins of works with thousands of authors", () => {
     ).toEqual({ outcome: "taken" });
     const written = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
     expect(written.pins).toContainEqual(unreadable);
+  });
+
+  it("writes a full list so an older Scient reads its first 256 names, marked et al.", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+
+    const stored = await storedWork(projectRoot);
+    expect(stored.creators).toEqual(consortium.slice(0, 256));
+    expect(stored.incompleteCreatorRoles).toEqual(["author"]);
+    expect(stored.overflow).toEqual({ creators: consortium.slice(256), markedRoles: ["author"] });
+    const [pin] = await readScientProjectPins(projectRoot);
+    expect(pin?.work.creators).toEqual(consortium);
+    expect(pin?.work).not.toHaveProperty("incompleteCreatorRoles");
+    expect(pin?.work).not.toHaveProperty("overflow");
   });
 });

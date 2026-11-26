@@ -31,7 +31,9 @@ import {
   type ScientSourceRecord,
   ScientSavedCopyCreatorCount,
   scientSavedCopyList,
+  scientSavedCopyHead,
   scientSavedCopyRoster,
+  joinScientSavedCopy,
   withUsableCreatorCount,
 } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
@@ -110,7 +112,8 @@ const SnapshotFileHeader = Schema.Struct({
 });
 const decodeSnapshotHeader = Schema.decodeUnknownSync(SnapshotFileHeader);
 const decodeWholeWork = Schema.decodeUnknownSync(ScientReviewWork);
-const decodeWork = (raw: unknown) => decodeWholeWork(withUsableCreatorCount(raw));
+const decodeWork = (raw: unknown) =>
+  decodeWholeWork(withUsableCreatorCount(joinScientSavedCopy(raw)));
 
 const decodeEntry = (raw: unknown): ScientReviewWork | null => {
   try {
@@ -141,16 +144,17 @@ const EMPTY_DOCUMENT: SnapshotDocument = {
   extra: {},
   text: null,
 };
-const WORK_FIELDS = Object.keys(ScientReviewWork.fields);
+const WORK_FIELDS = [...Object.keys(ScientReviewWork.fields), "overflow"];
 const FILE_FIELDS = Object.keys(SnapshotFileHeader.fields);
 
 const codeUnitOrder = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
 function encodeWork(work: ScientReviewWork, extra: JsonObject) {
+  const head = scientSavedCopyHead(work, false);
   return {
     type: work.type,
     title: work.title,
-    creators: work.creators.map((creator) => ({
+    creators: head.creators.map((creator) => ({
       creatorType: creator.creatorType,
       givenName: creator.givenName,
       familyName: creator.familyName,
@@ -158,7 +162,7 @@ function encodeWork(work: ScientReviewWork, extra: JsonObject) {
     })),
     ...(work.creatorCount !== undefined ? { creatorCount: work.creatorCount } : {}),
     issuedYear: work.issuedYear,
-    identifiers: work.identifiers.map((identifier) => ({
+    identifiers: head.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
       value: identifier.value,
     })),
@@ -170,6 +174,7 @@ function encodeWork(work: ScientReviewWork, extra: JsonObject) {
     })),
     capturedAt: work.capturedAt,
     capturedRevision: work.capturedRevision,
+    ...(head.overflow ? { overflow: head.overflow } : {}),
     ...sortedExtra(extra),
   };
 }

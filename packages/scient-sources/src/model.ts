@@ -84,6 +84,96 @@ const SCIENT_SAVED_COPY_LIST_LIMIT = 256;
 /** A saved copy's whole creator count, present only when its `creators` hold the first ones. */
 export const ScientSavedCopyCreatorCount = Schema.Int.check(Schema.isGreaterThan(0));
 
+type JsonRecord = Record<string, unknown>;
+const isRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * A saved copy as written: lists past 256 go in `overflow`, which older Scient versions skip while
+ * they read the first 256. A role cut there is marked incomplete for them, and `overflow` names it
+ * (`markedRoles`) so this version unmarks it. Pass `markRoles` false for a review entry.
+ */
+export function scientSavedCopyHead(
+  work: {
+    readonly creators: ReadonlyArray<ScientSourceCreator>;
+    readonly incompleteCreatorRoles?: ReadonlyArray<string>;
+    readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
+    readonly tags?: ReadonlyArray<string>;
+  },
+  markRoles = true,
+): {
+  readonly creators: ReadonlyArray<ScientSourceCreator>;
+  readonly incompleteCreatorRoles?: ReadonlyArray<string>;
+  readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
+  readonly tags?: ReadonlyArray<string>;
+  readonly overflow?: JsonRecord;
+} {
+  const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
+  const overflow: JsonRecord = {};
+  const cut = <T>(name: string, list: ReadonlyArray<T>) => {
+    if (list.length > limit) overflow[name] = list.slice(limit);
+    return list.slice(0, limit);
+  };
+  const creators = cut("creators", work.creators);
+  const identifiers = cut("identifiers", work.identifiers);
+  const tags = work.tags === undefined ? undefined : cut("tags", work.tags);
+  const marked: string[] = [];
+  for (const { creatorType } of markRoles ? work.creators.slice(limit) : []) {
+    if (
+      !scientCreatorRoleIncomplete(work.incompleteCreatorRoles, creatorType) &&
+      !scientCreatorRoleIncomplete(marked, creatorType)
+    ) {
+      marked.push(creatorType);
+    }
+  }
+  if (marked.length > 0) overflow["markedRoles"] = marked;
+  const roles = withIncompleteCreatorRoles(work.incompleteCreatorRoles, marked);
+  return {
+    creators,
+    ...(roles?.length ? { incompleteCreatorRoles: roles } : {}),
+    identifiers,
+    ...(tags !== undefined ? { tags } : {}),
+    ...(Object.keys(overflow).length > 0 ? { overflow } : {}),
+  };
+}
+
+/** A written saved copy with its `overflow` joined back on; a stale one is dropped. */
+export function joinScientSavedCopy(raw: unknown): unknown {
+  if (!isRecord(raw) || !("overflow" in raw)) return raw;
+  const { overflow, ...work } = raw;
+  if (!isRecord(overflow)) return work;
+  // Only a list still holding exactly the first 256 continues in `overflow`.
+  const joined = (name: string) => {
+    const head = work[name];
+    const rest = overflow[name];
+    if (
+      !Array.isArray(rest) ||
+      !Array.isArray(head) ||
+      head.length !== SCIENT_SAVED_COPY_LIST_LIMIT
+    )
+      return false;
+    work[name] = [...head, ...rest];
+    return true;
+  };
+  const creators = joined("creators");
+  joined("identifiers");
+  joined("tags");
+  const marked = overflow["markedRoles"];
+  const roles = work["incompleteCreatorRoles"];
+  if (creators && Array.isArray(marked) && Array.isArray(roles)) {
+    const kept = roles.filter(
+      (role) =>
+        typeof role !== "string" ||
+        !marked.some(
+          (entry) => typeof entry === "string" && scientCreatorRoleIncomplete([entry], role),
+        ),
+    );
+    if (kept.length > 0) work["incompleteCreatorRoles"] = kept;
+    else delete work["incompleteCreatorRoles"];
+  }
+  return work;
+}
+
 /** A saved copy as stored, without a `creatorCount` it cannot use: one bad count never hides it. */
 export function withUsableCreatorCount(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null || !("creatorCount" in raw)) return raw;
