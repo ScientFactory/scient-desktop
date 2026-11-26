@@ -1280,4 +1280,32 @@ describe("pins of works with thousands of authors", () => {
     expect(written.pins).toContainEqual(unreadable);
     expect(written.pins).toHaveLength(3);
   });
+
+  it("serves a pin from its copy when its full list is too long for a record", async () => {
+    const base = await fixture();
+    const { projectRoot } = await legacyPin(base);
+    const larger = Array.from({ length: 18_000 }, (_, index) => ({
+      ...ada,
+      givenName: `Author ${index + 1}`,
+    }));
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    file.pins[0].work.creators = larger;
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+    const collaborator = await newLibrary(base, "collaborator");
+
+    const [resolved] = await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    expect(resolved?.resolution).toMatchObject({ kind: "unresolved", reason: "no-match" });
+    expect(await listScientSourceRecords(collaborator.library)).toEqual([]);
+    const [work] = await listScientProjectPinnedWorks({
+      projectRoot,
+      library: collaborator.library,
+    });
+    expect(work).toMatchObject({ from: "snapshot", incompleteSnapshot: false });
+    expect(work?.record.creators).toEqual(larger);
+  });
 });

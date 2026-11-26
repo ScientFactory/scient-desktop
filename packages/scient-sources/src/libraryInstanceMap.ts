@@ -39,9 +39,16 @@ import {
   readScientSourceTombstones,
   readScientSourceTrashEntries,
   scientSourceIdFor,
+  scientSourceStoreInternals,
 } from "./store.ts";
 import { scientLibraryIdentityProblem, workLevelIdentifierKey } from "./sourceIdentity.ts";
-import { assertSafeIdentifier, atomicWriteJson, readBoundedJson, snapshot } from "./storeFiles.ts";
+import {
+  assertSafeIdentifier,
+  atomicWriteJson,
+  formatJson,
+  readBoundedJson,
+  snapshot,
+} from "./storeFiles.ts";
 
 const SCIENT_LIBRARY_PROJECTS_DIRECTORY = "projects";
 const MAX_INSTANCE_MAP_BYTES = 16 * 1024 * 1024;
@@ -381,6 +388,14 @@ function hydrationSourceKey(projectSourceId: string): string {
   return `project-source:${projectSourceId}`;
 }
 
+// Room for what a record adds to its candidate: IDs, origin, provenance, timestamps.
+const RECORD_FIELDS_ALLOWANCE = 64 * 1024;
+
+/** A saved copy too long for a record file stays unhydrated: the copy itself serves it whole. */
+const fitsRecord = (candidate: ScientSourceCandidate) =>
+  Buffer.byteLength(formatJson(candidate), "utf8") + RECORD_FIELDS_ALLOWANCE <=
+  scientSourceStoreInternals.maxRecordBytes;
+
 function hydrationCandidate(
   request: ScientProjectSourceRequest & { readonly work: ScientProjectSourceWork },
   citationKey: string | undefined,
@@ -600,7 +615,14 @@ async function resolveAt(
       });
       continue;
     }
-    if (input.mode === "write" && input.hydrate && request.work) {
+    const candidate =
+      input.mode === "write" && input.hydrate && request.work
+        ? hydrationCandidate(
+            { projectSourceId, work: request.work },
+            input.hydrate.citationKeys?.get(projectSourceId),
+          )
+        : null;
+    if (input.hydrate && request.work && candidate && fitsRecord(candidate)) {
       const work = request.work;
       const hydrated = await importScientSource({
         root: library,
@@ -609,10 +631,7 @@ async function resolveAt(
         hydratedCitationFields: SCIENT_PIN_OPTIONAL_CITATION_FIELDS.filter(
           (field) => field in work,
         ),
-        candidate: hydrationCandidate(
-          { projectSourceId, work },
-          input.hydrate.citationKeys?.get(projectSourceId),
-        ),
+        candidate,
         allowPossibleMetadataMatch: true,
         actor: input.hydrate.actor,
         intake: "file",
