@@ -5809,11 +5809,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
          */
         const emitNotice = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
+          // SCIENT-FORK:START — the severity sets the notice's level.
           notice: {
             readonly severity: string;
             readonly title: string;
             readonly description?: string;
           },
+          // SCIENT-FORK:END
         ) {
           const nativeItemId = `${context.nativeTurnId}:notice:${context.itemOrdinals.size}`;
           const now = yield* DateTime.now;
@@ -5832,11 +5834,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ordinal: yield* resolveItemOrdinal(context, nativeItemId),
               type: "system_notice",
               status: "completed",
-              // ACP severity is open: unknown values get the plain presentation, never a warning.
+              // SCIENT-FORK:START — ACP severity is open: unknown values get the plain
+              // presentation, never a warning (ACP session-notices RFD).
               level:
                 notice.severity === "warning" || notice.severity === "error"
                   ? notice.severity
                   : "info",
+              // SCIENT-FORK:END
               title: notice.title,
               message:
                 notice.description === undefined

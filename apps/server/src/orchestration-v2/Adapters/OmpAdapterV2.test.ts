@@ -4854,8 +4854,8 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
           {
             type: "notice",
             level: "info",
-            source: "toolCommands",
-            message: "Tool commands: added mcp__example_tool",
+            source: "compaction",
+            message: "Compaction dead-end recovery: dropped 2 attached images",
           },
           {
             type: "extension_ui_request",
@@ -4898,16 +4898,19 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
               item.status === "failed",
           ),
         );
-        assert.isTrue(
-          items.some(
-            (item) =>
-              item.type === "system_notice" &&
-              item.message === "Extension status" &&
-              item.level === "info",
-          ),
+        const notices = items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
         );
-        assert.isFalse(
-          items.some((item) => item.type === "system_notice" && item.message.includes("mcp__")),
+        // Info is shown plain, never dropped and never orange; the fallback stays a warning.
+        assert.deepInclude(notices, { message: "Extension status", level: "info" });
+        assert.deepInclude(notices, {
+          message: "compaction: Compaction dead-end recovery: dropped 2 attached images",
+          level: "info",
+        });
+        assert.isTrue(
+          notices.some(
+            (notice) => notice.message.includes("vendor/fallback") && notice.level === "warning",
+          ),
         );
         assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
       }),
@@ -4961,7 +4964,7 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
         yield* peer.finish();
         yield* h.takeUntil((event) => event.type === "turn.terminal");
         yield* peer.emit([
-          { type: "notice", level: "warning", source: "extension", message: "Idle notice" },
+          { type: "notice", level: "info", source: "extension", message: "Idle notice" },
           {
             type: "extension_ui_request",
             method: "notify",

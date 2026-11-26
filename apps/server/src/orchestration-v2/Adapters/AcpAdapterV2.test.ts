@@ -5250,8 +5250,13 @@ describe("AcpAdapterV2", () => {
         items.flatMap((item) =>
           item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
         ),
-        [{ message: title, level: "info" }],
-        "an info notice renders as a plain notice, not a warning",
+        [
+          { message: title, level: "info" },
+          { message: "warning notice", level: "warning" },
+          { message: "error notice", level: "error" },
+          { message: "_mock.custom notice", level: "info" },
+        ],
+        "only warning and error notices are shown as warnings",
       );
       const replies = new Map(
         items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),

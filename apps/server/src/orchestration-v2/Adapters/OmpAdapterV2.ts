@@ -1029,23 +1029,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 event.type === "notice" ? scientAgentSignedOutNotice(event) : undefined;
               if (signedOut !== undefined)
                 return Effect.andThen(options.onAccountSignedOut ?? Effect.void, notice(signedOut));
-              // SCIENT-FORK: an info notice is the agent's own housekeeping (tool mounts, prewalk,
-              // autosaves), never something the person must act on, so it stays out of the chat.
-              // Warnings, errors and an extension's explicit notify still reach the person.
-              if (event.type === "notice" && event.level === "info")
-                return Effect.logDebug("Scient Agent info notice", {
-                  source: event.source,
-                  message: client.redaction.text(`${event.message ?? ""}`),
-                });
-              if (event.type === "notice" || event.method === "notify")
+              // SCIENT-FORK: as in Pi, only a warning or error notice is shown as a warning.
+              if (event.type === "notice" || event.method === "notify") {
+                const level = event.type === "notice" ? event.level : event.notifyType;
                 return notice(
                   `${event.source ? `${event.source}: ` : ""}${event.message ?? `${target.name} notification.`}`,
-                  event.level === "error" || event.notifyType === "error"
-                    ? "error"
-                    : event.type === "notice" || event.notifyType === "warning"
-                      ? "warning"
-                      : "info",
+                  level === "warning" || level === "error" ? level : "info",
                 );
+              }
               return Effect.void;
             }
             case "assistant-delta":
