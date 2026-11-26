@@ -4852,6 +4852,12 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
             message: "Conversation is not being saved",
           },
           {
+            type: "notice",
+            level: "info",
+            source: "toolCommands",
+            message: "Tool commands: added mcp__example_tool",
+          },
+          {
             type: "extension_ui_request",
             method: "notify",
             message: "Extension status",
@@ -4896,6 +4902,9 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
           items.some(
             (item) => item.type === "system_notice" && item.message === "Extension status",
           ),
+        );
+        assert.isFalse(
+          items.some((item) => item.type === "system_notice" && item.message.includes("mcp__")),
         );
         assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
       }),
@@ -4949,7 +4958,7 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
         yield* peer.finish();
         yield* h.takeUntil((event) => event.type === "turn.terminal");
         yield* peer.emit([
-          { type: "notice", level: "info", source: "extension", message: "Idle notice" },
+          { type: "notice", level: "warning", source: "extension", message: "Idle notice" },
           {
             type: "extension_ui_request",
             method: "notify",
