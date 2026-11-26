@@ -1486,6 +1486,33 @@ can do all of this too, using the built-in **systematic-review** skill; its
 decisions are marked "by agent" and you can change any of them. Agent screening
 is not an independent second reviewer.
 
+## Watch a topic for new papers
+
+Ask in a chat to watch a topic, for example "Keep me posted weekly on new work
+about hippocampal replay; tell me the species and recording method for each
+paper." The agent writes a search for PubMed, OpenAlex and arXiv as fits the
+field, saves the watch and runs it at once over the last 30 days. After that it
+runs on its schedule (weekly unless you ask otherwise) while Scient is open. A
+week Scient was closed is searched at the next run, so nothing falls in the gap.
+
+Each run searches from the day the last one finished, drops papers an earlier
+run already showed or passed over, and has the agent read the titles, then the
+abstracts of the likely ones. Its briefing appears under **Watches** in the
+Library's **⋯** menu; when a briefing is unread, a count shows at the top of the
+Library. A briefing lists up to eight papers, then any further matches, each
+with why it is there, the details you asked for and what they rest on (the
+abstract, or only the title). **Keep** adds the paper to your Library and
+**Dismiss** sets it aside; the next run learns from both. The line under a
+briefing names the services searched, the days and how many papers were read;
+a service that did not answer is searched again next time.
+
+If a run ends without a briefing, the watch says so and offers **Run now**. To
+change what a watch follows or what it tells you about each paper, ask in a
+chat. **Run now**, **Pause** and **Delete watch** are in the watch's **⋯** menu.
+Deleting a watch keeps the papers you kept. Each run works in the watch's own thread; **Open run thread** in the same menu
+shows how it decided. Google Scholar cannot be
+searched automatically, so it is not one of the services.
+
 ## Choose a citation style
 
 Each project has one citation style. It formats the reference shown for each

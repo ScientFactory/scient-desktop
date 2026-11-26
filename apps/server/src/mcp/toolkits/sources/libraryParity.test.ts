@@ -6,6 +6,7 @@ import { BUILT_IN_SCIENT_PLUGINS } from "../../../scient/extensions/plugins/Buil
 import { operationDefinitionForTool } from "../../ScientOperationTool.ts";
 import { ScientAnnotationsToolkit } from "../annotations/tools.ts";
 import { ScientReferencesToolkit } from "../references/tools.ts";
+import { ScientLiteratureWatchToolkit } from "../literatureWatch/tools.ts";
 import { ScientSystematicReviewsToolkit } from "../systematicReviews/tools.ts";
 import {
   LIBRARY_COMMAND_PARITY,
@@ -25,6 +26,7 @@ const libraryTools = new Map<string, Tool.Any>(
     ScientSourcesToolkit,
     ScientReferencesToolkit,
     ScientSystematicReviewsToolkit,
+    ScientLiteratureWatchToolkit,
     ScientAnnotationsToolkit,
   ].flatMap((toolkit) => Object.values(toolkit.tools).map((tool) => [tool.name, tool] as const)),
 );

@@ -132,6 +132,8 @@ import { settleInBatches } from "./settleInBatches";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
 import { SystematicReviewsView } from "./SystematicReviews";
+import { LiteratureWatchesView } from "./LiteratureWatches";
+import { useLiteratureWatchList } from "./useLiteratureWatches";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
 import { ImportPackageSubmenu } from "./ProjectPackageMenu";
@@ -391,6 +393,8 @@ export function ScientSourcesPanel(props: {
   });
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
   const [showingReviews, setShowingReviews] = useState(false);
+  const [showingWatches, setShowingWatches] = useState(false);
+  const watches = useLiteratureWatchList({ environmentId: props.environmentId, root: props.root });
   const [showingDuplicates, setShowingDuplicates] = useState<DuplicatesSection | null>(null);
   const [showingRecentChanges, setShowingRecentChanges] = useState(false);
   /** The join whose differences are shown, over Recent changes. */
@@ -438,6 +442,7 @@ export function ScientSourcesPanel(props: {
   if (previousPanelContext.context !== panelContext) {
     setPreviousPanelContext({ context: panelContext });
     setShowingReviews(false);
+    setShowingWatches(false);
     setShowingDuplicates(null);
     setSelectedSourceId(null);
     setEditingSource(false);
@@ -499,6 +504,7 @@ export function ScientSourcesPanel(props: {
   useLiveRefresh(
     () => {
       void sources.refreshOverview().catch(() => undefined);
+      void watches.reload();
     },
     { key: `scient-sources:${panelContext}` },
   );
@@ -576,6 +582,7 @@ export function ScientSourcesPanel(props: {
     setEditingSource(false);
     setHistorySourceId(null);
     setShowingReviews(false);
+    setShowingWatches(false);
     setShowingDuplicates(null);
     selectScope("library");
   });
@@ -1748,6 +1755,25 @@ export function ScientSourcesPanel(props: {
     );
   }
 
+  if (showingWatches) {
+    return withActivity(
+      <LiteratureWatchesView
+        environmentId={props.environmentId}
+        root={props.root}
+        list={watches}
+        onOpenSource={(sourceId) => {
+          // A kept paper is in the personal Library, not necessarily in this project.
+          setShowingWatches(false);
+          setPackageSources(null);
+          organize.clearFilter();
+          organize.clearSelection();
+          void sources.selectScope("library").then(() => setSelectedSourceId(sourceId));
+        }}
+        onBack={() => setShowingWatches(false)}
+      />,
+    );
+  }
+
   if (showingReviews) {
     return withActivity(
       <SystematicReviewsView
@@ -2023,6 +2049,8 @@ export function ScientSourcesPanel(props: {
               onOpenReviews={() => setShowingReviews(true)}
               {...(scopes
                 ? {
+                    onOpenWatches: () => setShowingWatches(true),
+                    watchesUnread: watches.list?.unread ?? 0,
                     onOpenDuplicates: () => setShowingDuplicates("pairs"),
                     onOpenRecentChanges: () => setShowingRecentChanges(true),
                   }

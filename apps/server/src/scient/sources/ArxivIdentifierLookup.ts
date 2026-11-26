@@ -16,7 +16,7 @@ import type { IdentifierLookup, RequestPace } from "./SourceIdentifierResolver.t
 export const ARXIV_IDS_PER_REQUEST = 50;
 
 // arXiv's API terms ask for no more than one request every three seconds.
-const runWithArxivRequestLimit = createSerialRequestLane({ minimumStartIntervalMs: 3_000 });
+export const runWithArxivRequestLimit = createSerialRequestLane({ minimumStartIntervalMs: 3_000 });
 
 const arxivXmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -29,13 +29,15 @@ const arxivXmlParser = new XMLParser({
     name === "entry" || name === "author" || name === "link" || name === "category",
 });
 
-interface ArxivEntry {
+export interface ArxivEntry {
   readonly id: string;
   readonly title: string | null;
   readonly summary: string | null;
   readonly published: string | null;
   readonly authors: ReadonlyArray<string>;
   readonly doi: string | null;
+  /** The authors' comments line, which often names pages, venue or a code link. */
+  readonly comment: string | null;
   readonly categories: ReadonlyArray<ScientSourceTopic>;
 }
 
@@ -80,7 +82,7 @@ function entryArxivId(idUrl: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
+export function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
   const parsed: unknown = arxivXmlParser.parse(xml);
   const feed =
     parsed && typeof parsed === "object" && "feed" in parsed
@@ -99,6 +101,7 @@ function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
         published: textOf(entry["published"]),
         authors: records(entry["author"]).flatMap((author) => textOf(author["name"]) ?? []),
         doi: doi && isWellFormedDoi(doi.toLowerCase()) ? doi : null,
+        comment: textOf(entry["arxiv:comment"]),
         categories: entryCategories(entry),
       },
     ];

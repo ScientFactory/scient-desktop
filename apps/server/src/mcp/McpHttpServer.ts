@@ -162,6 +162,8 @@ import {
   ScientSystematicReviewsLibraryToolkit,
   ScientSystematicReviewsToolkit,
 } from "./toolkits/systematicReviews/tools.ts";
+import { ScientLiteratureWatchToolkitHandlersLive } from "./toolkits/literatureWatch/handlers.ts";
+import { ScientLiteratureWatchToolkit } from "./toolkits/literatureWatch/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import {
@@ -1783,6 +1785,10 @@ const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientRefe
   Layer.provide(ScientReferencesToolkitHandlersLive),
 );
 
+const ScientLiteratureWatchToolkitRegistrationLive = registerScientToolkit(
+  ScientLiteratureWatchToolkit,
+).pipe(Layer.provide(ScientLiteratureWatchToolkitHandlersLive));
+
 /** Library mode adds the pick between a review's versions to the same two tools. */
 const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -2038,6 +2044,7 @@ export const layerTools = Layer.mergeAll(
   ScientSourcesToolkitRegistrationLive,
   ScientReferencesToolkitRegistrationLive,
   ScientSystematicReviewsToolkitRegistrationLive,
+  ScientLiteratureWatchToolkitRegistrationLive,
   // SCIENT-FORK:START — PDF annotation agent tools.
   ScientAnnotationsToolkitRegistrationLive,
   // SCIENT-FORK:END

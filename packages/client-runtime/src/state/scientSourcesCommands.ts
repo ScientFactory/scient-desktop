@@ -103,6 +103,10 @@ export function createScientSourcesCommands<R, ER>(
       tags.systematicReviewConflict,
       http.changeEnvironmentScientSystematicReviewConflict,
     ),
+    literatureWatchChange: command(
+      tags.literatureWatchChange,
+      http.changeEnvironmentScientLiteratureWatch,
+    ),
     bulkUpdate: command(tags.bulkUpdate, http.bulkUpdateEnvironmentScientSources),
     addByIdentifier: command(tags.addByIdentifier, http.addEnvironmentScientSourcesByIdentifier),
     restore: command(tags.restore, http.restoreEnvironmentScientSource),

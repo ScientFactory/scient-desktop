@@ -128,6 +128,15 @@ import {
   searchCitationStyles,
   setProjectCitationStyle,
 } from "./CitationStyles.ts";
+import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
+import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import {
+  changeLibraryLiteratureWatch,
+  LiteratureWatchOperationError,
+  listLibraryLiteratureWatches,
+  readLibraryLiteratureWatch,
+} from "./literatureWatch/LiteratureWatchRoutes.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -190,6 +199,24 @@ const route = Effect.fn("ScientSourcesHttp.route")(function* <A>(
   );
 });
 
+const noWatchLibrary = () =>
+  new LiteratureWatchOperationError({ message: "Literature watches need the personal Library." });
+
+/** Like `route`, for the watch operations, which need the scheduler and thread records. */
+const watchRoute = Effect.fn("ScientSourcesHttp.watchRoute")(function* <A, E, R>(
+  endpointName: string,
+  scope: Scope,
+  root: string,
+  run: (library: ScientLibraryLocation | null) => Effect.Effect<A, E, R>,
+) {
+  yield* annotateEnvironmentRequest(endpointName);
+  yield* requireEnvironmentScope(scope);
+  const store = yield* libraryFor(root, scope);
+  return yield* run(store ? store.library : null).pipe(
+    Effect.catch((cause) => failEnvironmentInternal("scient_sources_operation_failed", cause)),
+  );
+});
+
 /** A project store keeps the request's own root; a library import takes its view's target. */
 const importTarget = (library: ScientSourcesLibraryStore | null, pin: boolean | undefined) =>
   library ? libraryImportTarget(library, pin) : {};
@@ -203,6 +230,13 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
     const projectStore = yield* ProjectStoreV2;
+    const scheduledTasks = yield* ScheduledTaskService;
+    const projections = yield* ProjectionStoreV2;
+    const withWatchServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(ScheduledTaskService, scheduledTasks),
+        Effect.provideService(ProjectionStoreV2, projections),
+      );
     startManagedBibliographySync();
     const zotero = {
       ...(yield* ZoteroTransports),
@@ -452,6 +486,42 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("systematicReview", (args) =>
           route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
             library ? libraryReview(library, args.payload) : getSystematicReview(args.payload),
+          ),
+        )
+        .handle("literatureWatches", (args) =>
+          watchRoute(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
+            withWatchServices(
+              library
+                ? listLibraryLiteratureWatches(library)
+                : Effect.succeed({ watches: [], unread: 0 }),
+            ),
+          ),
+        )
+        .handle("literatureWatch", (args) =>
+          watchRoute(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
+            withWatchServices(
+              library
+                ? readLibraryLiteratureWatch(library, args.payload.watchId)
+                : Effect.fail(noWatchLibrary()),
+            ),
+          ),
+        )
+        .handle("literatureWatchChange", (args) =>
+          watchRoute(
+            args.endpoint.name,
+            AuthOrchestrationOperateScope,
+            args.payload.root,
+            (library) =>
+              withWatchServices(
+                library
+                  ? changeLibraryLiteratureWatch(
+                      library,
+                      args.payload.watchId,
+                      args.payload.change,
+                      keyed.resolveIdentifiers,
+                    )
+                  : Effect.fail(noWatchLibrary()),
+              ),
           ),
         )
         .handle("systematicReviewConflicts", (args) =>

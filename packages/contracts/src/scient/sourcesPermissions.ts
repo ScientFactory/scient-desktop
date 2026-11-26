@@ -18,6 +18,7 @@ export const SCIENT_SOURCES_HTTP_COMMANDS = {
   organize: "scientSources.organize",
   systematicReviewChange: "scientSources.systematicReviewChange",
   systematicReviewConflict: "scientSources.systematicReviewConflict",
+  literatureWatchChange: "scientSources.literatureWatchChange",
   bulkUpdate: "scientSources.bulkUpdate",
   addByIdentifier: "scientSources.addByIdentifier",
   restore: "scientSources.restore",

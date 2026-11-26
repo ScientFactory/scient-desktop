@@ -88,6 +88,12 @@ import {
   ScientSystematicReviewConflictRequest,
   ScientSystematicReviewConflictResult,
   ScientSystematicReviewConflictsRequest,
+  ScientLiteratureWatchChangeRequest,
+  ScientLiteratureWatchChangeResult,
+  ScientLiteratureWatchRequest,
+  ScientLiteratureWatchResult,
+  ScientLiteratureWatchesRequest,
+  ScientLiteratureWatchesResult,
   ScientSystematicReviewConflictsResult,
   ScientSystematicReviewList,
   ScientSystematicReviewRequest,
@@ -501,6 +507,30 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSystematicReviewChangeRequest,
         success: ScientSystematicReviewChangeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("literatureWatches", "/api/scient/sources/watches", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLiteratureWatchesRequest,
+        success: ScientLiteratureWatchesResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("literatureWatch", "/api/scient/sources/watches/detail", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLiteratureWatchRequest,
+        success: ScientLiteratureWatchResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("literatureWatchChange", "/api/scient/sources/watches/change", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLiteratureWatchChangeRequest,
+        success: ScientLiteratureWatchChangeResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

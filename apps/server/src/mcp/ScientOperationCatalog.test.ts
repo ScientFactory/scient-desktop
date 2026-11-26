@@ -14,6 +14,7 @@ import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientPdfBuildTool } from "./toolkits/documents/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
+import { ScientLiteratureWatchToolkit } from "./toolkits/literatureWatch/tools.ts";
 import { ScientSystematicReviewsToolkit } from "./toolkits/systematicReviews/tools.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
@@ -48,11 +49,12 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
   // The three document builds, runtime discovery, the Word job, eight Overleaf tools, Sources,
-  // reference checks, systematic reviews, annotations and the Compute inventory.
+  // reference checks, systematic reviews, literature watches, annotations and the Compute inventory.
   const sources = [
     ...Object.values(ScientSourcesToolkit.tools),
     ...Object.values(ScientReferencesToolkit.tools),
     ...Object.values(ScientSystematicReviewsToolkit.tools),
+    ...Object.values(ScientLiteratureWatchToolkit.tools),
     ...Object.values(ScientAnnotationsToolkit.tools),
   ];
   expect(available).toHaveLength(3 + 1 + 1 + 8 + sources.length + 1);

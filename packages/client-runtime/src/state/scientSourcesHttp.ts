@@ -41,6 +41,9 @@ import type {
   ScientSourcesZoteroRefreshRequest,
   ScientSourcesZoteroSendRequest,
   ScientSystematicReviewChangeRequest,
+  ScientLiteratureWatchChangeRequest,
+  ScientLiteratureWatchRequest,
+  ScientLiteratureWatchesRequest,
   ScientSystematicReviewConflictRequest,
   ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewRequest,
@@ -545,6 +548,62 @@ export const changeEnvironmentScientSystematicReview = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.systematicReviewChange({ headers, payload }),
+  });
+});
+
+export const listEnvironmentScientLiteratureWatches = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientLiteratureWatches",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchesRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.literatureWatches(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.literatureWatches({ headers, payload }),
+  });
+});
+
+export const getEnvironmentScientLiteratureWatch = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientLiteratureWatch",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.literatureWatch(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.literatureWatch({ headers, payload }),
+  });
+});
+
+export const changeEnvironmentScientLiteratureWatch = Effect.fn(
+  "clientRuntime.state.changeEnvironmentScientLiteratureWatch",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientLiteratureWatchChangeRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.literatureWatchChange(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.literatureWatchChange({ headers, payload }),
   });
 });
 
