@@ -11,6 +11,7 @@ import { vi } from "vite-plus/test";
 import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { changeScientLibraryReview, refreshScientLibraryReviewSnapshot } from "./libraryReviews.ts";
 import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
@@ -1105,5 +1106,300 @@ describe("project pins", () => {
       first.sourceId,
       second.sourceId,
     ]);
+  });
+});
+
+describe("pins of works with thousands of authors", () => {
+  const consortium = Array.from({ length: 7_992 }, (_, index) => ({
+    ...ada,
+    givenName: `Author ${index + 1}`,
+  }));
+  const pinsPath = (projectRoot: string) =>
+    NodePath.join(projectRoot, ".scient", "library", "pins.json");
+  const storedWork = async (projectRoot: string) =>
+    JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8")).pins[0].work;
+
+  /** A project whose pin lists every author, as Scient wrote it before saved copies were cut. */
+  async function legacyPin(base: string) {
+    const author = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const record = await addRecord(author.library, "trial", {
+      creators: consortium,
+      identifiers: [{ scheme: "doi", value: "10.1000/trial" }],
+    });
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    if (pinned.outcome === "not-found") throw new Error("Expected the pin.");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    const { creatorCount: _count, incompleteCreatorRoles: _roles, ...work } = file.pins[0].work;
+    file.pins[0].work = { ...work, creators: consortium };
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+    return { author, projectRoot, record, citationKey: pinned.pin.citationKey };
+  }
+
+  it("keeps a pin's only full author list until a record holds it", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    const collaborator = await newLibrary(base, "collaborator");
+
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+    expect((await readScientProjectPins(projectRoot))[0]?.work.creators).toEqual(consortium);
+
+    await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    const [hydrated] = await listScientSourceRecords(collaborator.library);
+    expect(hydrated?.creators).toEqual(consortium);
+
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    const work = await storedWork(projectRoot);
+    expect(work.creators).toEqual(consortium.slice(0, 256));
+    expect(work.creatorCount).toBe(7_992);
+    expect(work.incompleteCreatorRoles).toEqual(["author"]);
+  });
+
+  it("keeps the whole author count through a record hydrated from the cut copy", async () => {
+    const base = await fixture();
+    const { author, projectRoot, record } = await legacyPin(base);
+    const created = await changeScientLibraryReview({
+      projectRoot,
+      library: author.library,
+      change: { action: "create-review", title: "Trials" },
+      actor: "user",
+    });
+    const reviewId = created.reviewId!;
+    await changeScientLibraryReview({
+      projectRoot,
+      library: author.library,
+      change: { action: "add-sources", reviewId, sourceIds: [record.sourceId] },
+      actor: "user",
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot, library: author.library });
+    const reviewEntry = async () =>
+      JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(projectRoot, ".scient", "library", "reviews", `${reviewId}.works.json`),
+          "utf8",
+        ),
+      ).records[record.sourceId];
+    expect((await reviewEntry()).creatorCount).toBe(7_992);
+
+    const collaborator = await newLibrary(base, "collaborator");
+    await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    const [hydrated] = await listScientSourceRecords(collaborator.library);
+    expect(hydrated?.creators).toHaveLength(256);
+
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    await refreshScientLibraryReviewSnapshot({
+      projectRoot,
+      library: collaborator.library,
+      reviewId,
+    });
+    expect(await storedWork(projectRoot)).toMatchObject({
+      creators: consortium.slice(0, 256),
+      creatorCount: 7_992,
+      incompleteCreatorRoles: ["author"],
+    });
+    expect((await reviewEntry()).creatorCount).toBe(7_992);
+  });
+
+  it("cites a pin's full author list over a shortened record that begins the same", async () => {
+    const base = await fixture();
+    const { projectRoot } = await legacyPin(base);
+    const collaborator = await newLibrary(base, "collaborator");
+    await addRecord(collaborator.library, "trial", {
+      creators: consortium.slice(0, 256),
+      incompleteCreatorRoles: ["author"],
+      identifiers: [{ scheme: "doi", value: "10.1000/trial" }],
+    });
+
+    const [work] = await listScientProjectPinnedWorks({
+      projectRoot,
+      library: collaborator.library,
+    });
+    expect(work?.from).toBe("library");
+    expect(work?.record.creators).toEqual(consortium);
+    expect(work?.record).not.toHaveProperty("incompleteCreatorRoles");
+    expect(work?.incompleteSnapshot).toBe(false);
+  });
+
+  it("reads past a pin it cannot read or a count it cannot use, and keeps that pin as written", async () => {
+    const base = await fixture();
+    const { author, projectRoot, citationKey } = await legacyPin(base);
+    const other = await addRecord(author.library, "other");
+    await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: other.sourceId,
+      actor: "user",
+    });
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    const trial = file.pins.find((pin: { citationKey: string }) => pin.citationKey === citationKey);
+    trial.work.creatorCount = 0;
+    const unreadable = {
+      ...trial,
+      citationKey: "unreadable2020",
+      sourceId: "src_unreadable",
+      work: { ...trial.work, creators: [{ creatorType: "" }] },
+    };
+    file.pins.push(unreadable);
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+
+    const pins = await readScientProjectPins(projectRoot);
+    expect(pins.map((pin) => pin.sourceId).toSorted()).toEqual(
+      [trial.sourceId, other.sourceId].toSorted(),
+    );
+    expect(pins.find((pin) => pin.citationKey === citationKey)?.work).not.toHaveProperty(
+      "creatorCount",
+    );
+
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+    const written = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    expect(written.pins).toContainEqual(unreadable);
+    expect(written.pins).toHaveLength(3);
+  });
+
+  it("serves a pin from its copy when its full list is too long for a record", async () => {
+    const base = await fixture();
+    const { projectRoot } = await legacyPin(base);
+    const larger = Array.from({ length: 18_000 }, (_, index) => ({
+      ...ada,
+      givenName: `Author ${index + 1}`,
+    }));
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    file.pins[0].work.creators = larger;
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+    const collaborator = await newLibrary(base, "collaborator");
+
+    const [resolved] = await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    expect(resolved?.resolution).toMatchObject({ kind: "unresolved", reason: "no-match" });
+    expect(await listScientSourceRecords(collaborator.library)).toEqual([]);
+    const [work] = await listScientProjectPinnedWorks({
+      projectRoot,
+      library: collaborator.library,
+    });
+    expect(work).toMatchObject({ from: "snapshot", incompleteSnapshot: false });
+    expect(work?.record.creators).toEqual(larger);
+  });
+
+  it("keeps the whole author count over a short record listing more names than the copy", async () => {
+    const base = await fixture();
+    const { author, projectRoot } = await legacyPin(base);
+    await refreshScientProjectPinSnapshots({ projectRoot, library: author.library });
+    const collaborator = await newLibrary(base, "collaborator");
+    await addRecord(collaborator.library, "trial", {
+      creators: consortium.slice(0, 500),
+      incompleteCreatorRoles: ["author"],
+      identifiers: [{ scheme: "doi", value: "10.1000/trial" }],
+    });
+
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    expect(await storedWork(projectRoot)).toMatchObject({
+      creators: consortium.slice(0, 256),
+      creatorCount: 7_992,
+      incompleteCreatorRoles: ["author"],
+    });
+  });
+
+  it("never gives an unreadable pin's key to another work", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    file.pins[0].work.creators = [{ creatorType: "" }];
+    const unreadable = file.pins[0];
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+    const elsewhere = await newLibrary(base, "elsewhere");
+    const twin = await addRecord(elsewhere.library, "twin", { citationKey, title: "Another" });
+    expect(twin.citationKey).toBe(citationKey);
+
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library: elsewhere.library,
+      sourceId: twin.sourceId,
+      actor: "user",
+    });
+    if (pinned.outcome === "not-found") throw new Error("Expected the pin.");
+    expect(pinned.pin.citationKey).not.toBe(citationKey);
+    expect(
+      await renameScientProjectPinKey({
+        projectRoot,
+        citationKey: pinned.pin.citationKey,
+        to: citationKey,
+      }),
+    ).toEqual({ outcome: "taken" });
+    const written = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    expect(written.pins).toContainEqual(unreadable);
+  });
+
+  it("writes a full list so an older Scient reads its first 256 names, marked et al.", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+
+    const stored = await storedWork(projectRoot);
+    expect(stored.creators).toEqual(consortium.slice(0, 256));
+    expect(stored.incompleteCreatorRoles).toEqual(["author"]);
+    expect(stored.overflow).toMatchObject({
+      creators: consortium.slice(256),
+      markedRoles: ["author"],
+    });
+    const [pin] = await readScientProjectPins(projectRoot);
+    expect(pin?.work.creators).toEqual(consortium);
+    expect(pin?.work).not.toHaveProperty("incompleteCreatorRoles");
+    expect(pin?.work).not.toHaveProperty("overflow");
+  });
+
+  it("drops an overflow left after a list an older Scient replaced", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+    // An older Scient rewrote the first 256 names and carried `overflow` along unread.
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    const replaced = consortium
+      .slice(0, 256)
+      .map((creator) => ({ ...creator, familyName: "Other" }));
+    file.pins[0].work.creators = replaced;
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+
+    const [pin] = await readScientProjectPins(projectRoot);
+    expect(pin?.work.creators).toEqual(replaced);
+    expect(pin?.work.incompleteCreatorRoles).toEqual(["author"]);
   });
 });

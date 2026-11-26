@@ -23,6 +23,7 @@ import {
 import { withScientLibraryLock } from "./libraryLock.ts";
 import { scientLibraryMoveInternals } from "./libraryMove.ts";
 import {
+  boundScientReviewSnapshotText,
   decodeScientReviewSnapshotText,
   publishScientReviewSnapshotAt,
   readScientReviewSnapshotEntries,
@@ -659,6 +660,18 @@ async function publishCopy(from: string, to: string, sha256: string): Promise<vo
   try {
     await NodeFSP.copyFile(from, temporary, NodeFS.constants.COPYFILE_EXCL);
     if ((await hashFile(temporary)) !== sha256) throw new Error(`${to} did not copy whole.`);
+    if (await NodeFSP.lstat(to).catch(() => null)) throw new Error(`${to} already exists.`);
+    await NodeFSP.rename(temporary, to);
+  } finally {
+    await NodeFSP.rm(temporary, { force: true });
+  }
+}
+
+async function publishText(to: string, text: string): Promise<void> {
+  await ensureDirectory(NodePath.dirname(to));
+  const temporary = `${to}.${NodeCrypto.randomUUID()}.tmp`;
+  try {
+    await NodeFSP.writeFile(temporary, text, { flag: "wx" });
     if (await NodeFSP.lstat(to).catch(() => null)) throw new Error(`${to} already exists.`);
     await NodeFSP.rename(temporary, to);
   } finally {
@@ -1327,6 +1340,20 @@ async function importReviews(
         const snapshots = files.filter((file) =>
           file.path.startsWith(`project/reviews/${reviewId}.works`),
         );
+        // A snapshot an older Scient wrote with lists past 256 is published as older ones read it.
+        const bounded = new Map<string, { readonly text: string; readonly sha256: string }>();
+        for (const file of snapshots) {
+          const text = await readText(absolute(state.folder, file.path));
+          const fitted = text === null ? null : boundScientReviewSnapshotText(text, reviewId);
+          if (fitted !== null) {
+            bounded.set(file.path, {
+              text: fitted,
+              sha256: NodeCrypto.createHash("sha256").update(fitted).digest("hex"),
+            });
+          }
+        }
+        const shaOf = (file: { readonly path: string; readonly sha256: string }) =>
+          bounded.get(file.path)?.sha256 ?? file.sha256;
         const localSnapshots = await Promise.all(
           snapshots.map(async (file) =>
             hashFile(absolute(root, `${REVIEWS}/${file.path.slice("project/reviews/".length)}`)),
@@ -1334,7 +1361,7 @@ async function importReviews(
         );
         const snapshotsMissing = localSnapshots.every((hash) => hash === null);
         const snapshotsEqual = snapshots.every(
-          (file, index) => localSnapshots[index] === file.sha256,
+          (file, index) => localSnapshots[index] === shaOf(file),
         );
         if (own === theirs && snapshotsEqual) continue;
         const keepAside = own !== null && !(own === theirs && snapshotsMissing);
@@ -1373,9 +1400,12 @@ async function importReviews(
           own === theirs && !keepAside ? snapshots : keepAside ? [review] : [...snapshots, review];
         for (const file of order) {
           const target = targetOf(file.path);
-          if ((await hashFile(absolute(root, target))) === file.sha256) continue;
-          await publishCopy(absolute(state.folder, file.path), absolute(root, target), file.sha256);
-          published.push({ path: target, sha256: file.sha256 });
+          const sha256 = shaOf(file);
+          if ((await hashFile(absolute(root, target))) === sha256) continue;
+          const fitted = bounded.get(file.path);
+          if (fitted) await publishText(absolute(root, target), fitted.text);
+          else await publishCopy(absolute(state.folder, file.path), absolute(root, target), sha256);
+          published.push({ path: target, sha256 });
         }
         state.receipt.reviewFiles.push(...published);
         if (keepAside) conflicts += 1;

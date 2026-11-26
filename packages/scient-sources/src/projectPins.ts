@@ -32,6 +32,15 @@ import {
   ScientSourceIncompleteCreatorRoles,
   ScientSourceMore,
   type ScientSourceRecord,
+  type ScientSavedRoster,
+  ScientSavedCopyCreatorCount,
+  scientFullerSavedRoster,
+  scientRecordShortOfSavedCopy,
+  scientSavedCopyList,
+  scientSavedCopyHead,
+  scientSavedCopyRoster,
+  joinScientSavedCopy,
+  withUsableCreatorCount,
 } from "./model.ts";
 import {
   SCIENT_PIN_CITATION_TEXT_FIELDS,
@@ -78,17 +87,20 @@ const NullableText = Schema.NullOr(Schema.String);
 /**
  * The pin's metadata snapshot: every citation input, so a collaborator with no Library cites the
  * same; never an abstract, note or PDF. A snapshot from before the optional fields lacks them:
- * unknown, never an instruction to empty them.
+ * unknown, never an instruction to empty them. Lists are cut to 256 only from a record that
+ * holds them whole (`scientSavedCopyRoster`).
  */
 export const ScientPinWork = Schema.Struct({
   // Plain text, so a type a newer Scient adds never hides the whole file.
   type: NonEmptyString,
   title: NullableText,
-  creators: Schema.Array(ScientSourceCreator).pipe(Schema.check(Schema.isMaxLength(256))),
+  creators: Schema.Array(ScientSourceCreator),
   /** Present only when a role's list stops short; the managed entry ends it with "and others". */
   incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
+  /** The work's whole creator count, when `creators` holds only the first 256. */
+  creatorCount: Schema.optionalKey(ScientSavedCopyCreatorCount),
   issuedYear: Schema.NullOr(Schema.Int),
-  identifiers: Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
+  identifiers: Schema.Array(ScientSourceIdentifier),
   containerTitle: NullableText,
   customType: Schema.optionalKey(NullableText),
   issuedRaw: Schema.optionalKey(NullableText),
@@ -99,7 +111,7 @@ export const ScientPinWork = Schema.Struct({
   language: Schema.optionalKey(NullableText),
   url: Schema.optionalKey(NullableText),
   more: Schema.optionalKey(ScientSourceMore),
-  tags: Schema.optionalKey(Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(256)))),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientPinWork = typeof ScientPinWork.Type;
 
@@ -134,30 +146,37 @@ interface StoredPin {
 
 interface PinsDocument {
   readonly pins: ReadonlyArray<StoredPin>;
+  /** Pins this version cannot read: kept as written, their keys reserved and their entries kept. */
+  readonly unread: ReadonlyArray<unknown>;
   readonly extra: JsonObject;
   /** The file's bytes as read, or null when there is no file. */
   readonly text: string | null;
 }
 
 const PIN_FIELDS = Object.keys(ScientProjectPin.fields);
-const WORK_FIELDS = Object.keys(ScientPinWork.fields);
+const WORK_FIELDS = [...Object.keys(ScientPinWork.fields), "overflow"];
 const FILE_FIELDS = Object.keys(PinsFileHeader.fields);
 
+/** A pin's `work` as read from a file: its overflow joined on, an unusable count dropped. */
+const readableWork = (raw: unknown) => withUsableCreatorCount(joinScientSavedCopy(raw));
+
 function encodeWork(work: ScientPinWork, extra: JsonObject) {
+  const head = scientSavedCopyHead(work);
   return {
     type: work.type,
     title: work.title,
-    creators: work.creators.map((creator) => ({
+    creators: head.creators.map((creator) => ({
       creatorType: creator.creatorType,
       givenName: creator.givenName,
       familyName: creator.familyName,
       literalName: creator.literalName,
     })),
-    ...(work.incompleteCreatorRoles?.length
-      ? { incompleteCreatorRoles: [...work.incompleteCreatorRoles] }
+    ...(head.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: [...head.incompleteCreatorRoles] }
       : {}),
+    ...(work.creatorCount !== undefined ? { creatorCount: work.creatorCount } : {}),
     issuedYear: work.issuedYear,
-    identifiers: work.identifiers.map((identifier) => ({
+    identifiers: head.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
       value: identifier.value,
     })),
@@ -168,7 +187,8 @@ function encodeWork(work: ScientPinWork, extra: JsonObject) {
       ),
     ),
     ...(work.more !== undefined ? { more: sortedExtra(work.more) } : {}),
-    ...(work.tags !== undefined ? { tags: [...work.tags] } : {}),
+    ...(head.tags !== undefined ? { tags: [...head.tags] } : {}),
+    ...(head.overflow ? { overflow: head.overflow } : {}),
     ...sortedExtra(extra),
   };
 }
@@ -186,20 +206,23 @@ function comparePins(left: ScientProjectPin, right: ScientProjectPin): number {
 }
 
 /** Sorted by key, fields in a fixed order and unknown fields after them, so equal pins are equal bytes. */
-function encodePins(document: Pick<PinsDocument, "pins" | "extra">) {
+function encodePins(document: Pick<PinsDocument, "pins" | "unread" | "extra">) {
   return {
     formatVersion: 1,
-    pins: document.pins
-      .toSorted((left, right) => comparePins(left.pin, right.pin))
-      .map(({ pin, extra, workExtra }) => ({
-        citationKey: pin.citationKey,
-        sourceId: pin.sourceId,
-        pinnedAt: pin.pinnedAt,
-        pinnedBy: pin.pinnedBy,
-        ...(pin.note !== undefined ? { note: pin.note } : {}),
-        work: encodeWork(pin.work, workExtra),
-        ...sortedExtra(extra),
-      })),
+    pins: [
+      ...document.pins
+        .toSorted((left, right) => comparePins(left.pin, right.pin))
+        .map(({ pin, extra, workExtra }) => ({
+          citationKey: pin.citationKey,
+          sourceId: pin.sourceId,
+          pinnedAt: pin.pinnedAt,
+          pinnedBy: pin.pinnedBy,
+          ...(pin.note !== undefined ? { note: pin.note } : {}),
+          work: encodeWork(pin.work, workExtra),
+          ...sortedExtra(extra),
+        })),
+      ...document.unread,
+    ],
     ...sortedExtra(document.extra),
   };
 }
@@ -221,7 +244,7 @@ const pinsStamp = (stats: NodeFS.BigIntStats) =>
 async function readPinsDocument(root: string): Promise<PinsDocument> {
   const filePath = pinsPath(root);
   const state = await snapshot(filePath);
-  if (state === "missing") return { pins: [], extra: {}, text: null };
+  if (state === "missing") return { pins: [], unread: [], extra: {}, text: null };
   if (state !== "file") throw new Error("pins.json is not a safe regular file.");
   const readStartedNs = BigInt(Date.now()) * 1_000_000n;
   const stats = await NodeFSP.lstat(filePath, { bigint: true });
@@ -252,7 +275,7 @@ async function writePinsDocument(
   current: PinsDocument,
   pins: ReadonlyArray<StoredPin>,
 ): Promise<boolean> {
-  const encoded = encodePins({ pins, extra: current.extra });
+  const encoded = encodePins({ pins, unread: current.unread, extra: current.extra });
   if (current.text === `${JSON.stringify(encoded, null, 2)}\n`) return false;
   await atomicWriteJson(pinsPath(root), encoded, MAX_PINS_BYTES);
   return true;
@@ -320,21 +343,24 @@ function noteChange(
   };
 }
 
+/**
+ * The pin's copy of `record`. `copy` is the copy it replaces, whose roster it keeps when only the
+ * copy holds the whole list; null for a copy that must be the record's alone (an undone merge).
+ */
 export function scientPinWorkFromRecord(
   record: ScientSourceRecord,
   earlier: ScientPinWork | null = null,
+  copy: ScientPinWork | null = earlier,
 ): ScientPinWork {
+  const roster = scientSavedCopyRoster(record, copy);
   return scientPinWorkKeepingUnknown(
     earlier,
     {
       type: record.type,
       title: record.title,
-      creators: record.creators,
-      ...(record.incompleteCreatorRoles?.length
-        ? { incompleteCreatorRoles: record.incompleteCreatorRoles }
-        : {}),
+      ...roster,
       issuedYear: record.issuedYear,
-      identifiers: record.identifiers,
+      identifiers: scientSavedCopyList(record.identifiers, copy?.identifiers),
       containerTitle: record.containerTitle,
       customType: record.customType ?? null,
       issuedRaw: record.issuedRaw,
@@ -345,7 +371,7 @@ export function scientPinWorkFromRecord(
       language: record.language,
       url: record.url,
       more: record.more ?? {},
-      tags: record.tags,
+      tags: scientSavedCopyList(record.tags, copy?.tags),
     },
     record,
   );
@@ -354,6 +380,26 @@ export function scientPinWorkFromRecord(
 function normalizePinNote(note: string | null | undefined): string | undefined {
   const trimmed = note?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+/** The keys of pins this version cannot read, where they name one. */
+function unreadKeys(unread: ReadonlyArray<unknown>): ReadonlyArray<string> {
+  return unread.flatMap((raw) => {
+    const key = isJsonObject(raw) ? raw["citationKey"] : undefined;
+    return typeof key === "string" && key.trim() !== "" ? [key] : [];
+  });
+}
+
+/** Every key the project's pins hold, unreadable ones included, as keys compare. */
+function takenKeys(
+  document: Pick<PinsDocument, "unread">,
+  pins: ReadonlyArray<StoredPin>,
+): Set<string> {
+  return new Set(
+    [...pins.map(({ pin }) => pin.citationKey), ...unreadKeys(document.unread)].map(
+      citationKeyComparisonValue,
+    ),
+  );
 }
 
 function findPin(pins: ReadonlyArray<StoredPin>, citationKey: string): StoredPin | undefined {
@@ -380,30 +426,63 @@ export function scientProjectPinsText(
   extra: Readonly<Record<string, unknown>> = {},
 ): string {
   return `${JSON.stringify(
-    encodePins({ pins: pins.map((pin) => ({ pin, extra: {}, workExtra: {} })), extra }),
+    encodePins({
+      pins: pins.map((pin) => ({ pin, extra: {}, workExtra: {} })),
+      unread: [],
+      extra,
+    }),
     null,
     2,
   )}\n`;
 }
 
-function parsePinsText(text: string): Pick<PinsDocument, "pins" | "extra"> {
+function parsePinsText(text: string): Pick<PinsDocument, "pins" | "unread" | "extra"> {
   const value: unknown = JSON.parse(text);
   const header = decodePinsHeader(value);
-  return {
-    pins: header.pins.map((raw) => ({
-      pin: decodePin(raw),
-      extra: extraFields(raw, PIN_FIELDS),
-      workExtra: extraFields(isJsonObject(raw) ? raw["work"] : undefined, WORK_FIELDS),
-    })),
-    extra: extraFields(value, FILE_FIELDS),
-  };
+  const pins: StoredPin[] = [];
+  const unread: unknown[] = [];
+  for (const raw of header.pins) {
+    const pin = decodeStoredPin(raw);
+    if (pin) {
+      pins.push({
+        pin,
+        extra: extraFields(raw, PIN_FIELDS),
+        workExtra: extraFields(isJsonObject(raw) ? raw["work"] : undefined, WORK_FIELDS),
+      });
+    } else {
+      unread.push(raw);
+    }
+  }
+  return { pins, unread, extra: extraFields(value, FILE_FIELDS) };
 }
 
-/** Decodes `pins.json` bytes; throws when they are not a pins file this version reads. */
+function decodeStoredPin(raw: unknown): ScientProjectPin | null {
+  try {
+    return decodePin(isJsonObject(raw) ? { ...raw, work: readableWork(raw["work"]) } : raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Decodes `pins.json` bytes, leaving out pins this version cannot read; throws for another file. */
 export function decodeScientProjectPinsText(text: string): ReadonlyArray<ScientProjectPin> {
   return parsePinsText(text)
     .pins.map(({ pin }) => pin)
     .toSorted(comparePins);
+}
+
+/** Every key a `pins.json` holds, including those of pins this version cannot read. */
+export function scientProjectPinsTextKeys(text: string): ReadonlyArray<string> {
+  const document = parsePinsText(text);
+  return [...document.pins.map(({ pin }) => pin.citationKey), ...unreadKeys(document.unread)];
+}
+
+/** The keys of the project's pins this version cannot read; their managed entries stay. */
+export async function readScientProjectUnreadPinKeys(
+  projectRoot: string,
+): Promise<ReadonlyArray<string>> {
+  const root = await projectRootFor(projectRoot);
+  return unreadKeys((await readPinsDocument(root)).unread);
 }
 
 /** `pins.json` bytes with more pins added; every existing pin keeps its bytes and newer fields. */
@@ -415,6 +494,7 @@ export function joinScientProjectPinsText(
   return `${JSON.stringify(
     encodePins({
       pins: [...document.pins, ...additions.map((pin) => ({ pin, extra: {}, workExtra: {} }))],
+      unread: document.unread,
       extra: document.extra,
     }),
     null,
@@ -470,9 +550,7 @@ export async function pinScientLibrarySource(input: {
     );
     if (resolvedIndex >= 0) return { outcome: "existing", pin: document.pins[resolvedIndex]!.pin };
 
-    const taken = new Set(
-      document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)),
-    );
+    const taken = takenKeys(document, document.pins);
     const note = normalizePinNote(input.note);
     const pin: ScientProjectPin = {
       citationKey: assignCitationKey({
@@ -567,6 +645,8 @@ export async function bindScientProjectCitationKeys(input: {
       const existing = findPin(document.pins, citationKey);
       if (existing) {
         bindings.push({ citationKey, outcome: citesRecord(existing) ? "cited" : "taken" });
+      } else if (takenKeys(document, []).has(wanted)) {
+        bindings.push({ citationKey, outcome: "taken" });
       } else {
         pins.push(added(citationKey));
         bindings.push({ citationKey, outcome: "added" });
@@ -577,7 +657,7 @@ export async function bindScientProjectCitationKeys(input: {
       const pinned = document.pins.find(citesRecord);
       if (pinned) projectKey = pinned.pin.citationKey;
       else {
-        const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+        const taken = takenKeys(document, pins);
         projectKey = assignCitationKey({
           preferred: record.citationKey ?? null,
           creators: record.creators,
@@ -774,9 +854,7 @@ export async function changeScientProjectPins(input: {
   return withPinsLock(root, async () => {
     const document = await readPinsDocument(root);
     let changed = false;
-    const taken = new Set(
-      document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)),
-    );
+    const taken = takenKeys(document, document.pins);
     const pinning = input.changes.some((change) => change.action === "pin");
     const aliases = pinning ? await readScientLibraryAliases(input.library) : null;
     // Resolutions depend on the library only; pins added here are found by their own ID.
@@ -1005,6 +1083,9 @@ export async function renameScientProjectPinKey(input: {
     if (found.pin.citationKey === input.to) return { outcome: "unchanged", pin: found.pin };
     const other = findPin(document.pins, input.to);
     if (other && other !== found) return { outcome: "taken" };
+    if (!other && takenKeys(document, []).has(citationKeyComparisonValue(input.to))) {
+      return { outcome: "taken" };
+    }
     const pin: ScientProjectPin = { ...found.pin, citationKey: input.to };
     await writePinsDocument(
       root,
@@ -1094,7 +1175,7 @@ export async function refreshScientProjectPinSnapshots(input: {
     // What an unmerged source's copy knew and its record does not is kept aside, not dropped.
     const displaced: Array<Parameters<typeof keepScientDisplacedCopies>[2][number]> = [];
     const whole = (stored: StoredPin, record: ScientSourceRecord): ScientPinWork => {
-      const work = scientPinWorkFromRecord(record, stored.pin.work);
+      const work = scientPinWorkFromRecord(record, stored.pin.work, null);
       const differs = scientValuesChangedBy(stored.pin.work, work);
       const undoneAt = unmergedSince.get(record.sourceId);
       if (differs.length > 0 && undoneAt !== undefined) {
@@ -1183,10 +1264,26 @@ export interface ScientProjectPinnedWork {
   readonly projectNote: string | null;
   readonly pinnedAt: string;
   /**
-   * The citation comes only from a snapshot written before it held every citation input (the
-   * snapshot itself, or a record hydrated from it): an earlier managed entry may be fuller.
+   * The citation comes only from a snapshot written before it held every citation input, or one
+   * holding the first names of a longer list (the snapshot itself, or a record hydrated from it):
+   * an earlier managed entry may be fuller.
    */
   readonly incompleteSnapshot: boolean;
+}
+
+/** The copy holds only the first names of a longer list. */
+const rosterCut = (roster: ScientSavedRoster) =>
+  (roster.creatorCount ?? 0) > roster.creators.length;
+
+function withRoster(record: ScientSourceRecord, roster: ScientSavedRoster): ScientSourceRecord {
+  const { incompleteCreatorRoles: _roles, ...rest } = record;
+  return {
+    ...rest,
+    creators: roster.creators,
+    ...(roster.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: roster.incompleteCreatorRoles }
+      : {}),
+  };
 }
 
 function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
@@ -1269,7 +1366,7 @@ export async function listScientProjectPinnedWorks(input: {
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
     const ownId = ownIds[index];
     const own = ownId === undefined ? undefined : removed.get(ownId);
-    const pin = own ? { ...stored, work: scientPinWorkFromRecord(own, stored.work) } : stored;
+    const pin = own ? { ...stored, work: scientPinWorkFromRecord(own, stored.work, null) } : stored;
     const projectNote = pin.note ?? null;
     const incomplete = !scientPinWorkIsComplete(pin.work);
     if (!found) {
@@ -1280,13 +1377,15 @@ export async function listScientProjectPinnedWorks(input: {
         record: recordFromSnapshot(pin),
         projectNote,
         pinnedAt: pin.pinnedAt,
-        incompleteSnapshot: incomplete,
+        incompleteSnapshot: incomplete || rosterCut(pin.work),
       };
     }
     // As the refresh: an unmerged source is cited from its record alone.
-    const { note: _personal, ...record } = unmerged.has(found.sourceId)
-      ? found
-      : withKnownPinCitationValues(found, pin.work);
+    const whole = unmerged.has(found.sourceId);
+    const known = whole ? found : withKnownPinCitationValues(found, pin.work);
+    const fuller = whole ? null : scientFullerSavedRoster(known, pin.work);
+    const { note: _personal, ...record } =
+      fuller && fuller.creators.length > known.creators.length ? withRoster(known, fuller) : known;
     return {
       citationKey: pin.citationKey,
       projectSourceId: pin.sourceId,
@@ -1294,7 +1393,11 @@ export async function listScientProjectPinnedWorks(input: {
       record: { ...record, citationKey: pin.citationKey },
       projectNote,
       pinnedAt: pin.pinnedAt,
-      incompleteSnapshot: scientPinCitationStillUnknown(pin.work, found),
+      incompleteSnapshot:
+        scientPinCitationStillUnknown(pin.work, found) ||
+        (fuller !== null
+          ? rosterCut(fuller)
+          : !whole && scientRecordShortOfSavedCopy(known, pin.work)),
     };
   });
 }
@@ -1349,7 +1452,7 @@ export async function joinScientProjectPins(input: {
     }
     const document = await readPinsDocument(root);
     const pins = [...document.pins];
-    const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+    const taken = takenKeys(document, pins);
     const addedKeys: string[] = [];
     const joinedKeys: string[] = [];
     let notesAdded = 0;
@@ -1436,7 +1539,7 @@ export const scientProjectPinsInternals = {
     const restored: StoredPin = {
       ...found,
       workExtra: extraFields(copy["work"], WORK_FIELDS),
-      pin: { ...found.pin, work: decodePinWork(copy["work"]) },
+      pin: { ...found.pin, work: decodePinWork(readableWork(copy["work"])) },
     };
     await writePinsDocument(
       root,

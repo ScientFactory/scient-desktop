@@ -29,6 +29,7 @@ import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   changeScientLibraryReview,
   readScientLibraryReviewRecord,
+  readScientReviewSnapshotEntries,
   scientReviewSnapshotLimits,
 } from "./libraryReviews.ts";
 import {
@@ -1195,6 +1196,50 @@ describe("importing a project package", () => {
       failed: [{ part: "review", item: reviewId }],
     });
     expect(await NodeFSP.readdir(reviews(blocked))).toEqual([`${reviewId}.works.json`]);
+  });
+
+  it("brings a snapshot an older Scient wrote with every author in the form older ones read", async () => {
+    const { base, mine, source } = await setup();
+    const paper = await add(mine, "paper");
+    await pinned(mine, source, paper.sourceId);
+    const { reviewId } = await changeScientLibraryReview({
+      projectRoot: source,
+      library: mine,
+      change: { action: "create-review", title: "Screening" },
+      actor: "user",
+    });
+    await changeScientLibraryReview({
+      projectRoot: source,
+      library: mine,
+      change: { action: "add-sources", reviewId: reviewId!, sourceIds: [paper.sourceId] },
+      actor: "user",
+    });
+    const consortium = Array.from({ length: 7_992 }, (_, index) => ({
+      ...ada,
+      givenName: `Author ${index + 1}`,
+    }));
+    const snapshotOf = (root: string) =>
+      NodePath.join(root, ".scient/library/reviews", `${reviewId}.works.json`);
+    const legacy = JSON.parse(await NodeFSP.readFile(snapshotOf(source), "utf8"));
+    legacy.records[paper.sourceId].creators = consortium;
+    await NodeFSP.writeFile(snapshotOf(source), `${JSON.stringify(legacy, null, 2)}\n`);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+
+    const clean = await project(base, "clean");
+    expect(await importInto(clean, mine, handoff)).toMatchObject({ reviews: { added: 1 } });
+    const stored = JSON.parse(await NodeFSP.readFile(snapshotOf(clean), "utf8")).records[
+      paper.sourceId
+    ];
+    expect(stored.creators).toEqual(consortium.slice(0, 256));
+    expect(stored.overflow).toMatchObject({ creators: consortium.slice(256) });
+    expect(
+      (await readScientReviewSnapshotEntries(clean, reviewId!)).get(paper.sourceId)?.creators,
+    ).toEqual(consortium);
+    // Importing it again finds the same snapshot: nothing is kept aside.
+    expect(await importInto(clean, mine, handoff)).toMatchObject({
+      reviews: { added: 0, conflicts: 0, snapshotsAdded: 0 },
+    });
   });
 
   it("keeps a sharded snapshot's version sharded and readable, and choosing it loses no record", async () => {
