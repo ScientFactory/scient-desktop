@@ -138,6 +138,8 @@ export function zoteroDataFromRecord(input: {
   readonly roles?: ReadonlyArray<string>;
   readonly existingExtra?: string;
   readonly creating: boolean;
+  /** Creators are not sent, so Extra keeps the creator lines it would otherwise replace. */
+  readonly creatorsKept?: boolean;
 }): Record<string, unknown> {
   const { record, fields } = input;
   const data: Record<string, unknown> = {};
@@ -212,7 +214,7 @@ export function zoteroDataFromRecord(input: {
     const said = new Set(ours);
     // A line of Zotero's that Scient has no value for stays, so sending never deletes it; one
     // that names a detail written above (to its field or as a line) is replaced by it.
-    const sent = new Set(record.creators.map(creatorIdentity));
+    const sent = new Set(input.creatorsKept ? [] : record.creators.map(creatorIdentity));
     const kept = zoteroExtraLines(input.existingExtra).flatMap(({ line, name, value }) => {
       if (said.has(line)) return [];
       // A creator the import read from this line is sent as a creator: not kept twice.
@@ -286,13 +288,6 @@ export function zoteroPatchFor(input: {
   // reading of the item leaves out.
   const fields = new Set(input.current.fieldNames ?? Object.keys(raw));
   const itemType = zoteroItemTypeFor(input.record, input.current.data.itemType);
-  const data = zoteroDataFromRecord({
-    record: input.record,
-    itemType,
-    fields,
-    ...(input.current.data.extra ? { existingExtra: input.current.data.extra } : {}),
-    creating: false,
-  });
   // What Zotero has now: a field Scient's own reading of the item leaves out is in `fields`,
   // so a detail that has not changed is not sent again.
   const zoteroHas = (field: string) => raw[field] ?? input.current.fields?.[field];
@@ -302,6 +297,14 @@ export function zoteroPatchFor(input: {
     (input.record.incompleteCreatorRoles?.length ?? 0) > 0 &&
     Array.isArray(zoteroCreators) &&
     zoteroCreators.length > input.record.creators.length;
+  const data = zoteroDataFromRecord({
+    record: input.record,
+    itemType,
+    fields,
+    ...(input.current.data.extra ? { existingExtra: input.current.data.extra } : {}),
+    creating: false,
+    creatorsKept: keepCreators,
+  });
   const patch: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(data)) {
     if (field === "creators" && keepCreators) continue;
