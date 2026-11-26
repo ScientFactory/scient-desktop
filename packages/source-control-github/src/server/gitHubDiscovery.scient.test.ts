@@ -1,5 +1,6 @@
 import { ServerSettings, VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
@@ -114,5 +115,5 @@ it.effect(
         second.auth.accounts?.map((entry) => entry.account),
         ["octo", "second"],
       );
-    }),
+    }).pipe(Effect.provideService(SpawnExecutableResolution, (command) => `/usr/bin/${command}`)),
 );
