@@ -53,8 +53,9 @@ export const setWslBackendEnabled = makeIpcMethod({
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
     const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-    // SCIENT-FORK: when WSL is unavailable in this build or host, preserve saved preferences and avoid relaunching.
+    // SCIENT-FORK: unavailable WSL keeps saved preferences until the user turns it off; Windows is already primary.
     if (!(yield* wslEnvironment.isAvailable)) {
+      if (!enabled) yield* appSettings.applyWslWindowsFallback;
       return yield* readWslState;
     }
     const previousSettings = yield* appSettings.get;
@@ -112,6 +113,7 @@ export const setWslOnly = makeIpcMethod({
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
     if (!(yield* wslEnvironment.isAvailable)) {
+      if (!enabled) yield* appSettings.setWslOnly(false);
       return yield* readWslState;
     }
     const change = yield* appSettings.setWslOnly(enabled);

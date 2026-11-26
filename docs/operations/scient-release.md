@@ -91,6 +91,17 @@ the stable scheduler and production gate.
   The resource monitor and capture helpers reuse release.yml's caches by their
   sources, the receipt-verified SyncTeX input is cached by its staging script
   and runner image; a miss builds as before, and the packaged binaries are executed either way.
+- Production Windows releases are slim: `release.yml` builds them with
+  `--omit-wsl-runtime`, which leaves out `wsl-runtime.tar.gz`, the Linux sidecar
+  natives and Linux Cursor helpers, and stamps `scientWslRuntimeOmitted: true`
+  into `app.asar`'s `package.json`. A slim app reports WSL unavailable without
+  probing `wsl.exe` or the registry, starts on Windows, and keeps saved WSL
+  preferences until the user chooses Switch to Windows. The release verifier runs
+  with `--omit-wsl-runtime`; without it the verifier requires the WSL archive.
+  Windows Packaging builds and qualifies both the full WSL package below and the
+  slim installer (silent install and launch smoke). Shipping WSL again means
+  dropping the flag and restoring the release workflow's WSL node-pty and Linux
+  SyncTeX inputs.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
   WSL installation restores execute permissions for Cursor's Linux `rg` and

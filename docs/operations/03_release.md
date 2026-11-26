@@ -45,7 +45,7 @@ Labeling a same-repo PR `relay:preview` deploys stage `pr-<number>` (cleaned up 
 
 ## Windows payload topology and update validation
 
-Windows packages the bundled server and its unpacked native modules in `resources/server.asar` (+ `server.asar.unpacked`) and embeds the matching-architecture Linux CLI archive as `resources/wsl-runtime.tar.gz` + SHA-256 sidecar (passed via `--wsl-runtime`). Avoid whole-package smart unpacking (keeps unpacked file counts and NSIS differential blockmaps bounded). `scripts/build-desktop-artifact.ts` enforces all structural, native-load, and WSL archive checks at build time.
+Windows packages the bundled server and its unpacked native modules in `resources/server.asar` (+ `server.asar.unpacked`). Full WSL builds also embed the matching-architecture Linux CLI archive as `resources/wsl-runtime.tar.gz` + SHA-256 sidecar; production releases pass `--omit-wsl-runtime` and ship without it (see [Scient release](./scient-release.md)). Avoid whole-package smart unpacking (keeps unpacked file counts and NSIS differential blockmaps bounded). `scripts/build-desktop-artifact.ts` enforces all structural, native-load, and WSL archive checks at build time.
 
 ## One-time credentials setup
 

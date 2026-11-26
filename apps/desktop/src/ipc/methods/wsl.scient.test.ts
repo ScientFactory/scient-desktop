@@ -126,65 +126,106 @@ describe("WSL package capability in slim Windows builds", () => {
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("preserves saved WSL preferences and never relaunches when WSL is unavailable", () =>
+  it.effect(
+    "keeps saved WSL preferences while WSL is unavailable until the user turns WSL off, without relaunching",
+    () =>
+      Effect.gen(function* () {
+        const relaunchReasons: Array<string> = [];
+        let reconcileCount = 0;
+        const layer = Layer.mergeAll(
+          layerUnusedLifecycleRuntime,
+          DesktopAppSettings.layerTest({
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: true,
+            wslBackendEnabled: true,
+            wslOnly: true,
+            wslDistro: "Ubuntu",
+          }),
+          DesktopWslEnvironment.layerTest({ isAvailable: false }),
+          Layer.succeed(
+            DesktopWslBackend.DesktopWslBackend,
+            DesktopWslBackend.DesktopWslBackend.of({
+              reconcile: Effect.sync(() => {
+                reconcileCount += 1;
+              }),
+              lastPreflightError: Effect.succeedNone,
+            }),
+          ),
+          Layer.succeed(
+            DesktopLifecycle.DesktopLifecycle,
+            DesktopLifecycle.DesktopLifecycle.of({
+              relaunch: (reason) =>
+                Effect.sync(() => {
+                  relaunchReasons.push(reason);
+                }),
+              register: Effect.void,
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const initial = yield* getWslState
+            .handler(undefined)
+            .pipe(Effect.flatMap(decodeWslState));
+          assert.isFalse(initial.available);
+          assert.deepEqual(initial.distros, []);
+          assert.isTrue(initial.enabled);
+          assert.isTrue(initial.wslOnly);
+          assert.equal(initial.distro, "Ubuntu");
+
+          yield* setWslBackendEnabled.handler(true);
+          yield* setWslOnly.handler(true);
+          const afterDistro = yield* setWslDistro
+            .handler("Debian")
+            .pipe(Effect.flatMap(decodeWslState));
+          assert.isTrue(afterDistro.enabled);
+          assert.isTrue(afterDistro.wslOnly);
+          assert.equal(afterDistro.distro, "Ubuntu");
+
+          // Settings' "Switch to Windows" on the unavailable WSL row.
+          const afterDisable = yield* setWslBackendEnabled
+            .handler(false)
+            .pipe(Effect.flatMap(decodeWslState));
+          assert.isFalse(afterDisable.enabled);
+          assert.isFalse(afterDisable.wslOnly);
+        }).pipe(Effect.provide(layer));
+
+        assert.deepEqual(relaunchReasons, []);
+        assert.equal(reconcileCount, 0);
+      }),
+  );
+
+  it.effect("clears a staged WSL-only preference while WSL is unavailable", () =>
     Effect.gen(function* () {
-      const relaunchReasons: Array<string> = [];
-      let reconcileCount = 0;
       const layer = Layer.mergeAll(
         layerUnusedLifecycleRuntime,
         DesktopAppSettings.layerTest({
           ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
           localEnvironmentEnabled: true,
-          wslBackendEnabled: true,
+          wslBackendEnabled: false,
           wslOnly: true,
-          wslDistro: "Ubuntu",
         }),
         DesktopWslEnvironment.layerTest({ isAvailable: false }),
         Layer.succeed(
           DesktopWslBackend.DesktopWslBackend,
           DesktopWslBackend.DesktopWslBackend.of({
-            reconcile: Effect.sync(() => {
-              reconcileCount += 1;
-            }),
+            reconcile: Effect.void,
             lastPreflightError: Effect.succeedNone,
           }),
         ),
         Layer.succeed(
           DesktopLifecycle.DesktopLifecycle,
           DesktopLifecycle.DesktopLifecycle.of({
-            relaunch: (reason) =>
-              Effect.sync(() => {
-                relaunchReasons.push(reason);
-              }),
+            relaunch: () => Effect.die("unexpected relaunch"),
             register: Effect.void,
           }),
         ),
       );
 
-      const initial = yield* getWslState
-        .handler(undefined)
-        .pipe(Effect.flatMap(decodeWslState), Effect.provide(layer));
-      assert.isFalse(initial.available);
-      assert.deepEqual(initial.distros, []);
-      assert.isTrue(initial.enabled);
-      assert.isTrue(initial.wslOnly);
-      assert.equal(initial.distro, "Ubuntu");
-
-      const afterEnable = yield* setWslBackendEnabled
+      const state = yield* setWslOnly
         .handler(false)
         .pipe(Effect.flatMap(decodeWslState), Effect.provide(layer));
-      const afterOnly = yield* setWslOnly
-        .handler(false)
-        .pipe(Effect.flatMap(decodeWslState), Effect.provide(layer));
-      const afterDistro = yield* setWslDistro
-        .handler("Debian")
-        .pipe(Effect.flatMap(decodeWslState), Effect.provide(layer));
-
-      assert.isTrue(afterEnable.enabled);
-      assert.isTrue(afterOnly.wslOnly);
-      assert.equal(afterDistro.distro, "Ubuntu");
-      assert.deepEqual(relaunchReasons, []);
-      assert.equal(reconcileCount, 0);
+      assert.isFalse(state.wslOnly);
     }),
   );
 });
