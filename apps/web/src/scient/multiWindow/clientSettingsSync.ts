@@ -56,9 +56,9 @@ export function createClientSettingsWindowSync(settings: {
     if (locks === null) return work();
     return runWithWindowLock(locks, CLIENT_SETTINGS_WRITE_LOCK, async () => {
       if (settings.isHydrated()) {
-        const saved = await ensureLocalApi()
-          .persistence.getClientSettings()
-          .catch(() => null);
+        // A failed read must fail the write: saving this window's possibly stale snapshot
+        // would erase changes other windows saved since.
+        const saved = await ensureLocalApi().persistence.getClientSettings();
         if (saved) applySaved(saved);
       }
       return work();

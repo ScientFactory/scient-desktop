@@ -19,6 +19,7 @@ import {
   getClientSettings,
   isClientSettingsHydrated,
   persistClientSettingsPatch,
+  persistClientSettingsUpdate,
 } from "./useSettings";
 
 /** This window of the desktop app; `otherWindowSaved` delivers another window's save notice. */
@@ -134,5 +135,21 @@ describe("client settings saved by another desktop window", () => {
       diffLayout: "split",
       wordWrap: false,
     });
+  });
+
+  it("are not overwritten when that read fails", async () => {
+    using _desktop = setup({
+      request: (_name: string, callback: () => Promise<unknown>) => callback(),
+    } as unknown as Pick<LockManager, "request">);
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    // Another window saved since; this window cannot read it.
+    const failure = new Error("Could not read desktop client settings.");
+    persistenceMocks.getClientSettings.mockRejectedValue(failure);
+
+    await expect(
+      persistClientSettingsUpdate((current) => ({ ...current, wordWrap: false })),
+    ).rejects.toBe(failure);
+
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
   });
 });
