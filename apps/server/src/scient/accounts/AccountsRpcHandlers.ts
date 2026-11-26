@@ -159,7 +159,28 @@ export const makeAccountsRpcHandlers = ({
             input.browserSessionSourceId,
             input.defaultProfileId,
           );
-          if (ended.length === 0) return yield* withSpeechConsumers(snapshot);
+          const withCompatibilityManagedElsewhere = (value: typeof snapshot) =>
+            input.omitExternalIdentities === true
+              ? Effect.succeed(value)
+              : accounts.externalIdentities.pipe(
+                  Effect.map(({ identities }) => ({
+                    ...value,
+                    managedElsewhere: [
+                      ...identities,
+                      ...(value.managedElsewhere ?? []).filter(
+                        (row) =>
+                          row.kind !== "github" ||
+                          !identities.some((ext) => ext.kind === row.kind && ext.id === row.id),
+                      ),
+                    ],
+                  })),
+                  Effect.orElseSucceed(() => value),
+                );
+          if (ended.length === 0) {
+            return yield* withSpeechConsumers(snapshot).pipe(
+              Effect.flatMap(withCompatibilityManagedElsewhere),
+            );
+          }
           // Kept like any other look at the site, so every reader sees the session end.
           yield* Effect.forEach(
             ended,
@@ -167,8 +188,17 @@ export const makeAccountsRpcHandlers = ({
               accounts.recordCheck(accountId, { state: "signed-out" }).pipe(Effect.ignore),
             { discard: true },
           );
-          return yield* accounts.snapshot.pipe(Effect.flatMap(withSpeechConsumers));
+          return yield* accounts.snapshot.pipe(
+            Effect.flatMap(withSpeechConsumers),
+            Effect.flatMap(withCompatibilityManagedElsewhere),
+          );
         }),
+        attributes,
+      ),
+    [WS_METHODS.accountsExternalIdentities]: () =>
+      observeRpcEffect(
+        WS_METHODS.accountsExternalIdentities,
+        accounts.externalIdentities,
         attributes,
       ),
     [WS_METHODS.accountsSubscribeChanges]: () =>
@@ -617,6 +647,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         signInAttempts: Effect.succeed(makeSignInAttempts()),
         passwordStore: unavailable,
         snapshot: missingService,
+        externalIdentities: missingService,
         changes: Stream.empty,
         save: unavailable,
         remove: unavailable,

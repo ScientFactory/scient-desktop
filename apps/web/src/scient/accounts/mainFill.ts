@@ -550,7 +550,7 @@ const readSnapshot = async (environmentId: EnvironmentId) => {
   const read = await runAtomCommand(
     appAtomRegistry,
     accountsState.readSnapshot,
-    { environmentId, input: {} },
+    { environmentId, input: { omitExternalIdentities: true } },
     { reportFailure: false },
   ).catch((cause: unknown) => {
     warn("Couldn't read Accounts to fill Main", cause);

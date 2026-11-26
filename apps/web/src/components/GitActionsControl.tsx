@@ -461,8 +461,9 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const messages = useMessages();
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
+  // SCIENT-FORK: only probe source-control CLIs while the publish dialog is actually open.
   const sourceControlDiscovery = useEnvironmentQuery(
-    props.environmentId === null
+    props.environmentId === null || !props.open
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: props.environmentId,
@@ -655,6 +656,12 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               {sortedPublishProviderOptions.map((option) => {
                 const readiness = publishProviderReadiness(option.value);
                 const isSelected = publishProvider === option.value && readiness.ready;
+                // SCIENT-FORK:START — avoid flashing a clickable Setup Required button before cold discovery finishes.
+                const isDiscoveryPending =
+                  props.open &&
+                  sourceControlDiscovery.isPending &&
+                  sourceControlDiscovery.data === null;
+                // SCIENT-FORK:END
                 if (!readiness.ready) {
                   return (
                     <div
@@ -665,26 +672,38 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                         {option.label}
                       </span>
-                      <SharedTooltipTrigger
-                        render={
-                          <Button
-                            variant="warning-outline"
-                            size="micro"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              openSourceControlSettings();
-                            }}
-                          >
-                            <T>Setup Required</T>
-                          </Button>
-                        }
-                        label={
-                          readiness.hint ??
-                          gt("Open Settings -> Source control & issues to configure this provider.")
-                        }
-                        align="end"
-                      />
+                      {/* SCIENT-FORK:START */}
+                      {isDiscoveryPending ? (
+                        <span className="text-xs text-muted-foreground">
+                          <T>Checking…</T>
+                        </span>
+                      ) : (
+                        /* SCIENT-FORK:END */
+                        <SharedTooltipTrigger
+                          render={
+                            <Button
+                              variant="warning-outline"
+                              size="micro"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                openSourceControlSettings();
+                              }}
+                            >
+                              <T>Setup Required</T>
+                            </Button>
+                          }
+                          label={
+                            readiness.hint ??
+                            gt(
+                              "Open Settings -> Source control & issues to configure this provider.",
+                            )
+                          }
+                          align="end"
+                        />
+                        /* SCIENT-FORK:START */
+                      )}
+                      {/* SCIENT-FORK:END */}
                     </div>
                   );
                 }

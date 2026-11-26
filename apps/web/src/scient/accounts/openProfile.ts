@@ -10,7 +10,7 @@ import { accountsState } from "./accountsState";
 const SNAPSHOT_WAIT_MS = 1_500;
 
 export async function accountsSnapshot(threadRef: ScopedThreadRef) {
-  const input = { environmentId: threadRef.environmentId, input: {} };
+  const input = { environmentId: threadRef.environmentId, input: { omitExternalIdentities: true } };
   const current = appAtomRegistry.get(accountsState.snapshot(input));
   if (AsyncResult.isSuccess(current)) return current.value;
   // A locked or unreachable store must not hold up opening a link.

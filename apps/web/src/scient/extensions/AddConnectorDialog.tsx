@@ -31,6 +31,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
+import { useAccountsExternalIdentities } from "../accounts/useAccountsExternalIdentities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
@@ -276,6 +277,7 @@ function RemoteConnectorDialog({
   const [signInError, setSignInError] = useState<string | null>(null);
   const [blockedSignInUrl, setBlockedSignInUrl] = useState<string | null>(null);
   const accountsQuery = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
+  const externalIdentitiesQuery = useAccountsExternalIdentities(environmentId, open && github);
   const matchingAccounts = accountsQuery.isSuccess
     ? (accountsQuery.data?.accounts.filter(
         ({ details }) =>
@@ -285,8 +287,10 @@ function RemoteConnectorDialog({
           ),
       ) ?? [])
     : [];
+  const managedElsewhereRows =
+    externalIdentitiesQuery.data?.identities ?? accountsQuery.data?.managedElsewhere;
   const githubLogins: ReadonlyArray<SourceControlLogin> =
-    accountsQuery.data?.managedElsewhere?.flatMap((row) =>
+    managedElsewhereRows?.flatMap((row) =>
       row.kind === "github" && (row.detail ?? "github.com").toLowerCase() === "github.com"
         ? [{ login: row.name, via: row.via }]
         : [],
@@ -431,6 +435,11 @@ function RemoteConnectorDialog({
                 <GitHubConnect
                   environmentId={environmentId}
                   logins={githubLogins}
+                  checkingLogins={
+                    githubLogins.length === 0 &&
+                    (externalIdentitiesQuery.isPending ||
+                      (externalIdentitiesQuery.data === null && accountsQuery.isPending))
+                  }
                   busy={submitting}
                   onConnect={(account) => void connectWithSourceControl(account)}
                   onUseToken={() => {

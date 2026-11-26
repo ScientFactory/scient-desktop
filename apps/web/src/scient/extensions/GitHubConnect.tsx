@@ -52,12 +52,14 @@ function signInFailure(result: AtomCommandResult<unknown, unknown>): string {
 export function GitHubConnect({
   environmentId,
   logins,
+  checkingLogins = false,
   busy,
   onConnect,
   onUseToken,
 }: {
   readonly environmentId: EnvironmentId;
   readonly logins: ReadonlyArray<SourceControlLogin>;
+  readonly checkingLogins?: boolean;
   readonly busy: boolean;
   readonly onConnect: (account: string) => void;
   readonly onUseToken: () => void;
@@ -200,6 +202,10 @@ export function GitHubConnect({
             </T>
           </p>
         </>
+      ) : checkingLogins ? (
+        <Button disabled>
+          <T>Checking…</T>
+        </Button>
       ) : (
         <Button
           disabled={busy || !canSignIn || signIn.status === "starting"}

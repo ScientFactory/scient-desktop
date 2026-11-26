@@ -764,6 +764,7 @@ function makeManager(input?: {
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
+          discoverProvider: () => Effect.succeedNone,
         }),
       ),
     ),

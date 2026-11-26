@@ -82,6 +82,7 @@ import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
 import { AccountLogo, SiteFavicon } from "./AccountLogo";
 import { accountsState } from "./accountsState";
+import { useAccountsExternalIdentities } from "./useAccountsExternalIdentities";
 import {
   KIND_LABELS,
   accountIconUrl,
@@ -1178,7 +1179,21 @@ function AccountsContent({
   // and browser sign-ins are under their profiles, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const importingPasswords = useImportingPasswords();
-  const githubRows = githubIdentities(snapshot.managedElsewhere, inventory.data?.connectors ?? []);
+  const externalIdentitiesQuery = useAccountsExternalIdentities(environmentId);
+  const managedElsewhereWithExternal = [
+    ...(externalIdentitiesQuery.data?.identities ?? []),
+    ...(snapshot.managedElsewhere ?? []).filter(
+      (row) =>
+        row.kind !== "github" ||
+        !(externalIdentitiesQuery.data?.identities ?? []).some(
+          (ext) => ext.kind === row.kind && ext.id === row.id,
+        ),
+    ),
+  ];
+  const githubRows = githubIdentities(
+    managedElsewhereWithExternal,
+    inventory.data?.connectors ?? [],
+  );
   // Connections you sign in to. GitHub's are its identities above; Custom models' are API keys.
   const managedRows = [
     ...providerRows,
