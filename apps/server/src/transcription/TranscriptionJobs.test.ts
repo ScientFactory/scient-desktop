@@ -1087,10 +1087,27 @@ it.effect(
         lesson: { language: "auto" },
       });
       expect(finished).toMatchObject({ captured: true, transcription: "started" });
+      expect(
+        (yield* jobs.execute({ action: "capture-touch", project, id }).pipe(Effect.flip)).detail,
+      ).toBe("This recording was already saved.");
       const source = "source" in finished ? finished.source : undefined;
       const revisions = yield* jobs.execute({ action: "list", project });
       expect(revisions).toEqual([
-        expect.objectContaining({ job: expect.objectContaining({ lesson: true, source }) }),
+        expect.objectContaining({
+          job: expect.objectContaining({
+            lesson: true,
+            source,
+            // Nobody is there to approve a Thorough estimate, so a lesson corrects quickly.
+            correction: expect.objectContaining({ mode: "quick" }),
+          }),
+        }),
       ]);
-    }).pipe(Effect.provide(layerFor(new Set([large])))),
+    }).pipe(
+      Effect.provide(
+        layerFor(new Set([large]), false, {}, [], undefined, () => ({
+          ...DEFAULT_SERVER_SETTINGS,
+          recordingDefaults: { models: {}, correction: "thorough", notify: true },
+        })),
+      ),
+    ),
 );

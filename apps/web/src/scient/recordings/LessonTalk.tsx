@@ -5,7 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 
 import { transcriptionCommand } from "../../rpc/transcription";
 import {
@@ -33,6 +33,10 @@ export function lessonTalkAgent(providers: readonly ServerProvider[] | undefined
 
 type Phase = "connecting" | "listening" | "working" | "speaking";
 
+/** Set by the open call: closes it, so the lesson records again only once the call is quiet. */
+type CloseRef = RefObject<(() => Promise<void>) | null>;
+const CLOSE_WAIT_MS = 2_000;
+
 function PhaseLine({ phase, line }: { readonly phase: Phase; readonly line: string | null }) {
   const gt = useGT();
   const label = {
@@ -56,11 +60,29 @@ function ChatGptTalk(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly instanceId: ProviderInstanceId;
+  readonly closeRef: CloseRef;
   readonly onEnded: (error?: string) => void;
 }) {
   const call = useScientLiveVoiceCall(props);
   const hangUp = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const { onEnded } = props;
+  const callState = useRef(call.state);
+  const { onEnded, closeRef } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the close function reads the call's latest state.
+  useEffect(() => {
+    callState.current = call.state;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the recorder closes this call before it records again.
+  useEffect(() => {
+    closeRef.current = async () => {
+      call.hangUp();
+      const until = Date.now() + CLOSE_WAIT_MS;
+      while (
+        (callState.current.status === "active" || callState.current.status === "starting") &&
+        Date.now() < until
+      )
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    };
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the call starts when the question opens and hangs up when it closes.
   useEffect(() => {
     // A remount at once, as React's checks do, keeps the call; `start` joins a running one.
@@ -89,12 +111,13 @@ function OpenAiTalk(props: {
   readonly project: string;
   readonly captureId: string;
   readonly stream: MediaStream;
+  readonly closeRef: CloseRef;
   readonly onEnded: (error?: string) => void;
 }) {
   const gt = useGT();
   const [phase, setPhase] = useState<Phase>("connecting");
   const [line, setLine] = useState<string | null>(null);
-  const { onEnded } = props;
+  const { onEnded, closeRef } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the call lives while the question is open.
   useEffect(() => {
     let closed = false;
@@ -132,11 +155,13 @@ function OpenAiTalk(props: {
         if (!closed) onEnded(gt("Could not start the conversation."));
       }
     })();
-    return () => {
+    const close = () => {
       closed = true;
       peer?.close();
       for (const track of microphone.getTracks()) track.stop();
     };
+    closeRef.current = async () => close();
+    return close;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- one call per question.
   }, []);
   return <PhaseLine phase={phase} line={line} />;
@@ -144,6 +169,7 @@ function OpenAiTalk(props: {
 
 /** The question being asked while the lesson is paused; unmounting hangs up. */
 export function LessonTalk(props: {
+  readonly closeRef: CloseRef;
   readonly route: LessonTalkRoute;
   readonly environmentId: EnvironmentId;
   readonly project: string;
@@ -158,6 +184,7 @@ export function LessonTalk(props: {
         project={props.project}
         captureId={props.captureId}
         stream={props.stream}
+        closeRef={props.closeRef}
         onEnded={props.onEnded}
       />
     );
@@ -167,6 +194,7 @@ export function LessonTalk(props: {
       environmentId={props.environmentId}
       threadId={props.threadId}
       instanceId={props.route.instanceId}
+      closeRef={props.closeRef}
       onEnded={props.onEnded}
     />
   );

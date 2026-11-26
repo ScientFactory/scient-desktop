@@ -46,8 +46,11 @@ it("transcribes one clip at a time and keeps only the newest waiting clip", asyn
   expect(delayed).toHaveBeenCalledTimes(1);
   releases.shift()!();
   await vi.waitFor(() => expect(releases).toHaveLength(1));
+  let idle = false;
+  void queue.idle().then(() => (idle = true));
   releases.shift()!();
   await vi.waitFor(() => expect(done).toEqual([0, 2]));
+  await vi.waitFor(() => expect(idle).toBe(true));
   queue.close();
   queue.add(clip(3));
   expect(releases).toHaveLength(0);

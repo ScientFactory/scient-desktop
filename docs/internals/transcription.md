@@ -49,7 +49,9 @@ and the recording `language`, renews the capture lease and returns the
 recording default engine for that language as `captions`
 (`{ kind: "local", modelId }`, `{ kind: "cloud", engineId }` or
 `{ kind: "chatgpt", instanceId }`), or `transcription: "unavailable"` when no
-engine can transcribe. `talk.openai` says whether an OpenAI speech engine with
+engine can transcribe. Dictation carries no project, so a cloud default whose
+key is kept for one project gets no captions; its job still uses that key.
+`talk.openai` says whether an OpenAI speech engine with
 upload consent exists.
 
 The window cuts its own microphone stream into clips at a pause after 10
@@ -62,11 +64,14 @@ and are deleted with the capture.
 `capture-finish` with `lesson: { language }` publishes the recording, then
 starts a normal transcription job with the recording default, as
 `transcription: "started"`, or `"queued"` behind the running job. The job is
-marked `lesson` in `job.json`. When it completes, the server makes notes with
+marked `lesson` in `job.json`. It uses Quick correction when the default is
+Thorough, because nobody is there to approve an estimate. When it completes, the server makes notes with
 the `lesson` recipe, which reads the whole transcript section by section. A
 nonempty project notes recipe replaces the built-in lesson instruction. The
 direct `notes.md` generator skips lesson jobs. Finishing keeps every saved
-chunk in index order, so a lost chunk costs only its own audio.
+chunk in index order, so a lost chunk costs only its own audio. The window
+keeps the lease while it saves, and the server refuses later chunks, captions
+and touches for a capture it has already published.
 
 `capture-talk` takes the window's WebRTC offer, resolves the key of the first
 OpenAI speech engine with upload consent, and posts the offer to

@@ -92,6 +92,7 @@ export class CaptionQueue {
   private running = false;
   private waiting: CaptionClip | undefined;
   private closed = false;
+  private idleWaiters: (() => void)[] = [];
   readonly controller = new AbortController();
 
   constructor(
@@ -115,6 +116,12 @@ export class CaptionQueue {
     this.controller.abort();
   }
 
+  /** Resolves once nothing is being transcribed or waiting. */
+  idle(): Promise<void> {
+    if (!this.running) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
   private async run(clip: CaptionClip) {
     this.running = true;
     let current: CaptionClip | undefined = clip;
@@ -128,6 +135,7 @@ export class CaptionQueue {
       this.waiting = undefined;
     }
     this.running = false;
+    for (const resolve of this.idleWaiters.splice(0)) resolve();
   }
 }
 
@@ -135,6 +143,8 @@ export type LessonCaptionsTap = {
   /** Ends the current clip, so what was said before a pause or a question is captioned. */
   readonly cut: () => void;
   readonly setPaused: (paused: boolean) => void;
+  /** Waits, at most `ms`, for the captions said so far to be saved. */
+  readonly settle: (ms: number) => Promise<void>;
   readonly close: () => void;
 };
 
@@ -182,6 +192,8 @@ export async function tapLessonCaptions(input: {
       if (next && !paused) windows.cut();
       paused = next;
     },
+    settle: (ms) =>
+      Promise.race([queue.idle(), new Promise<void>((resolve) => setTimeout(resolve, ms))]),
     close: () => {
       queue.close();
       worklet.port.close();

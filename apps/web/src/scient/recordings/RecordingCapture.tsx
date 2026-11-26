@@ -61,6 +61,7 @@ type Status = "idle" | "starting" | "recording" | "paused" | "talking" | "saving
 /** Captions kept on screen; the saved captions file has them all. */
 const SHOWN_CAPTIONS = 6;
 const SAVE_RETRY_MS = 2_000;
+const CAPTION_SETTLE_MS = 8_000;
 
 function captureClock() {
   return performance.now();
@@ -116,6 +117,10 @@ export function RecordingCapture() {
     stream: MediaStream;
   } | null>(null);
   const session = useRef<Session | null>(null);
+  /** The question being asked; ending one makes its late results stale. */
+  const talkAttempt = useRef(0);
+  /** Closes the question's call; set by the call while it is open. */
+  const closeTalk = useRef<(() => Promise<void>) | null>(null);
   const target =
     projects.find((project) => project.id === (destination || projectId)) ??
     (projects.length === 1 ? projects[0] : undefined);
@@ -161,7 +166,8 @@ export function RecordingCapture() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- samples the live microphone and keeps the interrupted-capture lease current.
   useEffect(() => {
-    if (status !== "recording" && status !== "paused" && status !== "talking") return;
+    // The lease is kept while saving too, so a slow save is never taken for an abandoned one.
+    if (status === "idle" || status === "starting") return;
     const current = session.current;
     if (!current) return;
     const meter = setInterval(() => {
@@ -196,15 +202,18 @@ export function RecordingCapture() {
           setError((value) => (value === "save" ? undefined : value));
         }
         return;
-      } catch {
+      } catch (cause) {
         current.failedSaves += 1;
         setError("save");
+        // The server refused the piece, as for a recording already saved: retrying can't help.
+        if (cause instanceof Error && /\(4\d\d\)/.test(cause.message)) return;
         await wait(SAVE_RETRY_MS);
       }
     }
   };
 
-  const startCaptions = async (
+  /** Starts captions on the recorder's stream; they begin with the recording, never before. */
+  const openCaptions = async (
     current: Session,
     engine: NonNullable<Awaited<ReturnType<typeof captureStart>>["captions"]>,
   ) => {
@@ -213,7 +222,7 @@ export function RecordingCapture() {
     const language =
       current.language === "auto" ? undefined : (current.language as VoiceTranscriptionLanguage);
     try {
-      current.captions = await tapLessonCaptions({
+      return await tapLessonCaptions({
         stream: current.stream,
         transcribe: async (clip, signal) =>
           (
@@ -242,10 +251,8 @@ export function RecordingCapture() {
           if (session.current === current) setCaptionsState("delayed");
         },
       });
-      if (session.current === current) setCaptionsState("on");
-      else current.captions.close();
     } catch {
-      setCaptionsState("off");
+      return undefined;
     }
   };
 
@@ -313,7 +320,9 @@ export function RecordingCapture() {
         });
       });
       recorder.addEventListener("error", () => setError("microphone"));
+      if (lesson.captions) current.captions = await openCaptions(current, lesson.captions);
       recorder.start(1000);
+      current.started = captureClock();
       session.current = current;
       setReadings({ level: 0, seconds: 0 });
       setActiveProject(target.title);
@@ -325,7 +334,7 @@ export function RecordingCapture() {
             ? { kind: "openai" }
             : null,
       );
-      if (lesson.captions) void startCaptions(current, lesson.captions);
+      setCaptionsState(current.captions ? "on" : "off");
       void listBrowserMicrophones()
         .then(setMicrophones)
         .catch(() => undefined);
@@ -367,10 +376,16 @@ export function RecordingCapture() {
     }
   };
 
-  const endTalk = (message?: string) => {
+  /** Ends the question: the call is closed before the lesson records again. */
+  const endTalk = async (message?: string) => {
     const current = session.current;
     if (!current) return;
+    talkAttempt.current += 1;
     if (message) setTalkError(message);
+    const close = closeTalk.current;
+    closeTalk.current = null;
+    await close?.().catch(() => undefined);
+    if (session.current !== current) return;
     setTalking(null);
     if (resumeAfterTalk && !message) {
       resumeRecording(current);
@@ -382,27 +397,32 @@ export function RecordingCapture() {
   const talk = async () => {
     const current = session.current;
     if (!current || !talkRoute || (status !== "recording" && status !== "paused")) return;
+    const attempt = (talkAttempt.current += 1);
+    const live = () => talkAttempt.current === attempt && session.current === current;
     setTalkError(undefined);
     setResumeAfterTalk(status === "recording");
     if (status === "recording") pauseRecording(current);
-    setTalking({
-      environmentId: current.project.environmentId,
-      project: current.project.workspaceRoot,
-      id: current.id,
-      stream: current.stream,
-    });
     setStatus("talking");
+    // What was said just before the question is captioned first, so the answer can use it.
+    await current.captions?.settle(CAPTION_SETTLE_MS);
     if (talkRoute.kind === "chatgpt" && !current.talkThread) {
       try {
         const thread = await startLessonTalkThread(current.project.workspaceRoot, current.id);
         if (!("threadId" in thread)) fail("No model for the conversation");
         current.talkThread = thread.threadId as ThreadId;
       } catch {
-        endTalk(gt("Could not start the conversation."));
+        if (live()) void endTalk(gt("Could not start the conversation."));
         return;
       }
     }
-    if (session.current === current) setTalkThread(current.talkThread);
+    if (!live()) return;
+    setTalkThread(current.talkThread);
+    setTalking({
+      environmentId: current.project.environmentId,
+      project: current.project.workspaceRoot,
+      id: current.id,
+      stream: current.stream,
+    });
   };
 
   const stop = async () => {
@@ -443,6 +463,9 @@ export function RecordingCapture() {
         void current.context.close().catch(() => undefined);
         void current.wakeLock?.release().catch(() => undefined);
         session.current = null;
+        talkAttempt.current += 1;
+        void closeTalk.current?.();
+        closeTalk.current = null;
         setTalkThread(null);
         setTalking(null);
         setStatus("idle");
@@ -497,15 +520,20 @@ export function RecordingCapture() {
                     aria-label={gt("Microphone level")}
                   />
                 </div>
-                {status === "talking" && talking && talkRoute ? (
+                {status === "talking" && !talking ? (
+                  <p role="status" className="py-1 text-sm font-medium">
+                    {gt("Connecting…")}
+                  </p>
+                ) : status === "talking" && talking && talkRoute ? (
                   <LessonTalk
+                    closeRef={closeTalk}
                     route={talkRoute}
                     environmentId={talking.environmentId}
                     project={talking.project}
                     captureId={talking.id}
                     threadId={talkThread}
                     stream={talking.stream}
-                    onEnded={(message) => endTalk(message)}
+                    onEnded={(message) => void endTalk(message)}
                   />
                 ) : captionsState !== "off" ? (
                   <div
@@ -577,7 +605,7 @@ export function RecordingCapture() {
           </DialogPanel>
           <DialogFooter>
             {status === "talking" ? (
-              <Button onClick={() => endTalk()}>
+              <Button onClick={() => void endTalk()}>
                 {resumeAfterTalk ? gt("End and resume") : gt("End")}
               </Button>
             ) : active ? (

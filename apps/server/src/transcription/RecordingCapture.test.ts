@@ -38,3 +38,18 @@ it("recovers only interrupted captures and keeps every saved piece, even after a
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 });
+
+it("refuses a late piece of a recording already saved, so the rest is never saved on its own", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "recording-finished-"));
+  const id = "00000000-0000-0000-0000-000000000003";
+  try {
+    await saveCaptureChunk(root, id, "webm", 0, Buffer.from("header").toString("base64"));
+    await finishCapture(root, id, async () => undefined);
+    await expect(
+      saveCaptureChunk(root, id, "webm", 1, Buffer.from("late").toString("base64")),
+    ).rejects.toThrow("already saved");
+    expect((await NodeFSP.readdir(root)).filter((name) => name.startsWith("."))).toEqual([]);
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});

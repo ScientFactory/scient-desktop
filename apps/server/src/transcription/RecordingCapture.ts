@@ -7,8 +7,17 @@ const prefix = ".recording-capture-";
 const captureName = /^\.recording-capture-([0-9a-f-]{36})$/;
 const chunkName = /^(\d{8})\.chunk$/;
 const leaseMs = 12_000;
+/**
+ * Captures already published in this process. A late piece of one must not start a new capture
+ * under its ID, which would publish the rest of the recording on its own.
+ */
+const finished = new Set<string>();
+const FINISHED_LIMIT = 1_000;
+
+export const isCaptureFinished = (id: string) => finished.has(id);
 
 async function captureDirectory(root: string, id: string) {
+  if (finished.has(id)) throw new Error("This recording was already saved.");
   const directory = NodePath.join(root, prefix + id);
   await NodeFSP.mkdir(root, { recursive: true });
   await NodeFSP.mkdir(directory, { recursive: true });
@@ -124,6 +133,8 @@ export async function finishCapture(
   }
   if (!(await NodeFSP.stat(temporary)).size) return undefined;
   await NodeFSP.rename(temporary, path);
+  if (finished.size >= FINISHED_LIMIT) finished.delete(finished.values().next().value!);
+  finished.add(id);
   await register(path);
   await NodeFSP.rm(directory, { recursive: true });
   return path;

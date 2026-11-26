@@ -92,6 +92,7 @@ import {
 } from "./subtitleMedia.ts";
 import {
   finishCapture,
+  isCaptureFinished,
   readCaptions,
   recoverCaptures,
   saveCaption,
@@ -963,7 +964,12 @@ const make = Effect.gen(function* () {
             ? undefined
             : engine.value.engine === "local"
               ? { kind: "local" as const, modelId: engine.value.model }
-              : engine.value.engine === "cloud" && engine.value.cloudEngineId
+              : engine.value.engine === "cloud" &&
+                  engine.value.cloudEngineId &&
+                  // Dictation carries no project, so a key kept for this project can't caption.
+                  Option.isSome(
+                    await run(cloud.resolve(engine.value.cloudEngineId).pipe(Effect.option)),
+                  )
                 ? { kind: "cloud" as const, engineId: engine.value.cloudEngineId }
                 : engine.value.engine === "chatgpt" && engine.value.providerInstanceId
                   ? { kind: "chatgpt" as const, instanceId: engine.value.providerInstanceId }
@@ -1007,6 +1013,8 @@ const make = Effect.gen(function* () {
           input.action === "capture-caption" ||
           input.action === "capture-finish"
         ) {
+          if (input.action !== "capture-finish" && isCaptureFinished(input.id))
+            throw invalid("This recording was already saved.");
           const result = await run(
             captureGate.withPermit(
               Effect.promise(async () => {
@@ -2439,7 +2447,15 @@ const make = Effect.gen(function* () {
       }
       model = candidate.id;
     } else if (selection?.kind === "cloud") {
-      const resolved = yield* cloud.resolve(selection.engineId).pipe(Effect.mapError(unavailable));
+      const registered = yield* projects
+        .findActiveByWorkspaceRoot(project)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const resolved = yield* cloud
+        .resolve(
+          selection.engineId,
+          Option.isSome(registered) ? registered.value.projectId : undefined,
+        )
+        .pipe(Effect.mapError(unavailable));
       cloudEngineId = selection.engineId;
       model = resolved.model;
     } else if (selection?.kind === "chatgpt") {
@@ -2528,6 +2544,8 @@ const make = Effect.gen(function* () {
       language: resolved.language,
       ...(resolved.cloudEngineId ? { cloudEngineId: resolved.cloudEngineId } : {}),
       ...(resolved.providerInstanceId ? { providerInstanceId: resolved.providerInstanceId } : {}),
+      // Thorough asks for a cost estimate first, so nobody is there to approve it: use Quick.
+      mode: resolved.defaults?.correction === "off" ? ("off" as const) : ("quick" as const),
     };
     const attempt = execute(request, { lesson: true }).pipe(Effect.result);
     const first = yield* attempt;

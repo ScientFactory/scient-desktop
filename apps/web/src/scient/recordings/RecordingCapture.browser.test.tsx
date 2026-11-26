@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   captions: vi.fn(),
   setPaused: vi.fn(),
+  closeCall: vi.fn(async () => {}),
 }));
 vi.mock("../../speech/requestMicrophone", () => ({ requestMicrophone: mocks.microphone }));
 vi.mock("../../speech/browserMicrophones", () => ({
@@ -29,9 +30,16 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }
 vi.mock("./lessonCaptions", () => ({ tapLessonCaptions: mocks.captions }));
 vi.mock("./LessonTalk", () => ({
   lessonTalkAgent: () => null,
-  LessonTalk: ({ onEnded }: { onEnded: (error?: string) => void }) => (
-    <button onClick={() => onEnded("The conversation stopped.")}>Lesson answer</button>
-  ),
+  LessonTalk: ({
+    onEnded,
+    closeRef,
+  }: {
+    onEnded: (error?: string) => void;
+    closeRef: { current: (() => Promise<void>) | null };
+  }) => {
+    closeRef.current = mocks.closeCall;
+    return <button onClick={() => onEnded("The conversation stopped.")}>Lesson answer</button>;
+  },
 }));
 vi.mock("./TranscribeDialog", () => ({
   TranscribeDialog: () => <p>Transcribe saved recording</p>,
@@ -144,7 +152,12 @@ it("shows live captions, pauses the lesson while you talk, and opens the lesson 
     setTimeout(() =>
       input.onCaption({ window: 0, start: 0, end: 12, text: "Entropy always increases." }),
     );
-    return { cut: vi.fn(), setPaused: mocks.setPaused, close: vi.fn() };
+    return {
+      cut: vi.fn(),
+      setPaused: mocks.setPaused,
+      settle: async () => {},
+      close: vi.fn(),
+    };
   });
   mocks.command.mockImplementation(async (action: string) =>
     action === "capture-start"
@@ -172,8 +185,13 @@ it("shows live captions, pauses the lesson while you talk, and opens the lesson 
     await page.getByRole("button", { name: "Talk", exact: true }).click();
     await expect.element(page.getByText(/Paused · Talking/)).toBeVisible();
     expect(mocks.setPaused).toHaveBeenLastCalledWith(true);
+    await expect.element(page.getByRole("button", { name: "Lesson answer" })).toBeVisible();
     await page.getByRole("button", { name: "End and resume" }).click();
-    expect(mocks.setPaused).toHaveBeenLastCalledWith(false);
+    // The call is closed before the lesson records again.
+    await vi.waitFor(() => expect(mocks.setPaused).toHaveBeenLastCalledWith(false));
+    expect(mocks.closeCall.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.setPaused.mock.invocationCallOrder.at(-1)!,
+    );
     await page.getByRole("button", { name: "Talk", exact: true }).click();
     await page.getByRole("button", { name: "Lesson answer" }).click();
     await expect.element(page.getByText("The conversation stopped.")).toBeVisible();
