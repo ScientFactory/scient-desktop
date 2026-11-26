@@ -1063,6 +1063,24 @@ jobs:
             throw "An unsigned Windows build must not pin publisher '$($pinned -join "', '")'"
           }
 
+  # The exact installer on a clean Windows runner: install, first and second launch times, with
+  # regressions against the previous release flagged in its summary. Advisory: assembly and
+  # publication do not wait for it, and a failed stage never fails this run.
+  windows_install_timing:
+    name: Time the real Windows installer
+    needs: preflight
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
+    uses: ./.github/workflows/windows-install-timing.yml
+    with:
+      wait_for_job: Package Windows x64
+      artifact: desktop-win-x64
+      kind: release
+      version: ${{ needs.preflight.outputs.version }}
+      channel: ${{ needs.preflight.outputs.channel }}
+      source_sha: ${{ needs.preflight.outputs.source_sha }}
+      rehearsal: ${{ needs.preflight.outputs.rehearsal == 'true' }}
+      advisory: true
+
   # Needs every target's resource monitor and SyncTeX runtime, not their installers.
   build_server_asset:
     name: Package exact remote server asset

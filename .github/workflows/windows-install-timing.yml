@@ -1,0 +1,194 @@
+name: Windows install timing
+
+# Installs a real Windows installer on a clean runner and times the install, the first launch
+# and a second launch until the app shell is ready. Every release calls it; run it by hand for
+# any installer an Actions run built, or any published installer URL.
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: Artifact holding exactly one installer .exe
+        type: string
+        default: ""
+      run_id:
+        description: Run that uploaded the artifact; blank for this run
+        type: string
+        default: ""
+      installer_url:
+        description: HTTPS URL of an installer, instead of an artifact
+        type: string
+        default: ""
+      wait_for_job:
+        description: Job of this run that uploads the artifact, to wait for
+        type: string
+        default: ""
+      kind:
+        description: release, for the numbers later releases compare against; otherwise manual
+        type: string
+        default: manual
+      version:
+        type: string
+        default: ""
+      channel:
+        type: string
+        default: ""
+      source_sha:
+        type: string
+        default: ""
+      rehearsal:
+        type: boolean
+        default: false
+      samples:
+        type: number
+        default: 3
+      advisory:
+        description: Never fail the calling run, even when a stage fails
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Run that built the installer (a release run, or CI's Windows Packaging)
+        type: string
+        default: ""
+      artifact:
+        description: Its artifact holding exactly one installer .exe (release runs desktop-win-x64; CI windows-packaging-installer)
+        type: string
+        default: desktop-win-x64
+      installer_url:
+        description: Or an HTTPS URL of a published installer (leave run_id blank)
+        type: string
+        default: ""
+      samples:
+        description: Installs to time; each launches the app twice. The median is reported
+        type: number
+        default: 3
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  timing:
+    name: Windows install and launch timing
+    runs-on: windows-2025
+    # A release waits here for its Windows package, like the payload verifier, with no deadline of
+    # its own; the measurement itself is bounded per stage.
+    timeout-minutes: ${{ inputs.wait_for_job != '' && 240 || 60 }}
+    continue-on-error: ${{ inputs.advisory == true }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - name: Wait for the Windows package
+        if: inputs.wait_for_job != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB: ${{ inputs.wait_for_job }}
+          ARTIFACT: ${{ inputs.artifact }}
+        run: bash .github/scripts/wait-for-job.sh "$JOB" "$ARTIFACT"
+      - name: Download the installer artifact
+        if: inputs.installer_url == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id || github.run_id }}
+          name: ${{ inputs.artifact }}
+          path: installer
+      - name: Download the installer
+        if: inputs.installer_url != ''
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ inputs.installer_url }}
+        run: |
+          $uri = [Uri]$env:INSTALLER_URL
+          if ($uri.Scheme -ne 'https') { throw 'The installer URL must use HTTPS' }
+          New-Item -ItemType Directory -Path installer | Out-Null
+          $watch = [Diagnostics.Stopwatch]::StartNew()
+          Invoke-WebRequest -Uri $uri -OutFile (Join-Path installer ([IO.Path]::GetFileName($uri.AbsolutePath)))
+          Write-Host "Downloaded in $($watch.ElapsedMilliseconds) ms"
+      - name: Locate the installer
+        id: installer
+        shell: pwsh
+        run: |
+          $found = @(Get-ChildItem installer -Recurse -File -Filter *.exe)
+          if ($found.Count -ne 1) { throw "Expected exactly one installer .exe, found $($found.Count): $($found.Name -join ', ')" }
+          "path=$($found[0].FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Installer: $($found[0].Name), $($found[0].Length) bytes"
+      # The newest earlier release run's numbers; the committed baseline when none is still kept.
+      - name: Find the previous release's numbers
+        id: baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          found=""
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=windows-install-timing&per_page=30" \
+            --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | reverse | .[].workflow_run.id')"
+          for run in $runs; do
+            [[ "$run" == "$GITHUB_RUN_ID" ]] && continue
+            dir="baseline/$run"
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" --name windows-install-timing --dir "$dir" >/dev/null 2>&1 || continue
+            file="$dir/windows-install-timing.json"
+            if [[ -f "$file" ]] && jq -e --arg version "$VERSION" \
+              '.context.kind == "release" and (.context.rehearsal | not) and .context.version != $version and (.measurement.failures | length) == 0' \
+              "$file" >/dev/null; then
+              found="$file"
+              break
+            fi
+          done
+          committed=false
+          if [[ -z "$found" ]]; then
+            found=.github/windows-install-timing-baseline.json
+            committed=true
+          fi
+          echo "Baseline: $found"
+          { echo "file=$found"; echo "committed=$committed"; } >> "$GITHUB_OUTPUT"
+      - name: Time install and launches
+        shell: bash
+        env:
+          INSTALLER: ${{ steps.installer.outputs.path }}
+          SAMPLES: ${{ inputs.samples }}
+        run: node .github/scripts/windows-install-timing.mjs "$INSTALLER" timing "$SAMPLES"
+      - name: Compare and summarize
+        if: ${{ !cancelled() && hashFiles('timing/measurement.json') != '' }}
+        shell: bash
+        env:
+          BASELINE: ${{ steps.baseline.outputs.file }}
+          COMMITTED: ${{ steps.baseline.outputs.committed }}
+          KIND: ${{ inputs.kind || 'manual' }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          REHEARSAL: ${{ inputs.rehearsal == true }}
+          SOURCE: ${{ inputs.installer_url || format('artifact {0} of run {1}', inputs.artifact, inputs.run_id || github.run_id) }}
+        run: |
+          set -euo pipefail
+          context="$(jq -nc \
+            --arg kind "$KIND" --arg version "$VERSION" --arg channel "$CHANNEL" \
+            --arg sourceSha "$SOURCE_SHA" --argjson rehearsal "$REHEARSAL" --arg installer "$SOURCE" \
+            --arg runId "$GITHUB_RUN_ID" --arg runUrl "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            'def blank: if . == "" then null else . end;
+             {kind: $kind, version: ($version | blank), channel: ($channel | blank),
+              sourceSha: ($sourceSha | blank), rehearsal: $rehearsal, installer: $installer,
+              runId: $runId, runUrl: $runUrl}')"
+          committed=()
+          [[ "$COMMITTED" == true ]] && committed=(--committed-baseline)
+          node .github/scripts/windows-install-timing-report.mjs \
+            --measurement timing/measurement.json --context "$context" \
+            --baseline "$BASELINE" "${committed[@]}" \
+            --out timing/windows-install-timing.json --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: windows-install-timing
+          path: timing
+          if-no-files-found: warn
+          retention-days: 90
