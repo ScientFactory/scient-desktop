@@ -639,7 +639,11 @@ describe("trigger 3: the one-time back-fill", () => {
           done.push(ids);
           return true;
         },
-        makeMainDefault: async () => void (defaults += 1),
+        mainDefault: {
+          pending: async () => false,
+          markPending: async () => undefined,
+          apply: async () => void (defaults += 1),
+        },
       });
       return { filled, done, defaults };
     };
@@ -659,6 +663,39 @@ describe("trigger 3: the one-time back-fill", () => {
       done: [["late"], ["unlinked"]],
       defaults: 0,
     });
+  });
+
+  it("makes Main the default on a later run when saving it failed after the first was recorded", async () => {
+    let pending = false;
+    let defaults = 0;
+    let failApply = true;
+    const run = (main: object, recorded = true) =>
+      backfillMain(snapshot([], [record("default", main)]), {
+        profiles: [],
+        fill: async () => true,
+        done: async () => recorded,
+        mainDefault: {
+          pending: async () => pending,
+          markPending: async () => void (pending = true),
+          apply: async () => {
+            if (failApply) throw new Error("Could not save client settings.");
+            defaults += 1;
+            pending = false;
+          },
+        },
+      });
+
+    await expect(run({})).rejects.toThrow();
+    failApply = false;
+    await run({ main: { backfilled: [] } });
+    await run({ main: { backfilled: [] } });
+    expect(defaults).toBe(1);
+
+    // An environment that can't record the back-fill never sets the default.
+    pending = false;
+    await run({}, false);
+    await run({}, false);
+    expect(defaults).toBe(1);
   });
 
   it("waits for an offline environment's first snapshot, then runs once", async () => {

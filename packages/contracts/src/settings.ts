@@ -556,6 +556,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
   mainDefaultNotice: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Set before the first back-fill is recorded, cleared once Main is the default, so a failed
+  // save of the default retries on a later launch.
+  mainDefaultPending: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // SCIENT-FORK:END
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmTerminalClose: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -2499,6 +2502,7 @@ export const ClientSettingsPatch = Schema.Struct({
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
   mainDefaultNotice: Schema.optionalKey(Schema.Boolean),
+  mainDefaultPending: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmTerminalClose: Schema.optionalKey(Schema.Boolean),

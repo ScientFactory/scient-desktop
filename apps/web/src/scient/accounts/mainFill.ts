@@ -22,7 +22,11 @@ import { siteOf, siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
-import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
+import {
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  persistClientSettingsUpdate,
+} from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readActivePreviewSessions } from "~/previewStateStore";
 import { useBrowserShortcuts } from "~/scient/browser/browserShortcuts";
@@ -478,13 +482,25 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
               { reportFailure: false },
             )
           )._tag === "Success",
-        makeMainDefault: () =>
-          persistClientSettingsUpdate((current) => ({
-            ...current,
-            browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
-            // Browser profiles says so once, until dismissed.
-            mainDefaultNotice: true,
-          })).then(() => undefined),
+        mainDefault: {
+          pending: async () => {
+            await ensureClientSettingsHydrated();
+            return getClientSettings().mainDefaultPending;
+          },
+          markPending: () =>
+            persistClientSettingsUpdate((current) => ({
+              ...current,
+              mainDefaultPending: true,
+            })).then(() => undefined),
+          apply: () =>
+            persistClientSettingsUpdate((current) => ({
+              ...current,
+              browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
+              // Browser profiles says so once, until dismissed.
+              mainDefaultNotice: true,
+              mainDefaultPending: false,
+            })).then(() => undefined),
+        },
       });
       const after = await readSnapshot(environmentId);
       if (!after || recordOf(after, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
@@ -698,7 +714,8 @@ export function backfillOrder(
 /**
  * Trigger 3: once per environment and profile, each unrestricted profile's sessions fill Main;
  * no source profile is changed. The primary environment's first back-fill also makes Main the
- * new-tab default, once; "Use for new tabs" changes it back.
+ * new-tab default, once; "Use for new tabs" changes it back. The default is marked pending
+ * before the back-fill is recorded, so a failed save of it retries on a later run.
  */
 export async function backfillMain(
   snapshot: AccountsSnapshot,
@@ -706,17 +723,24 @@ export async function backfillMain(
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly fill: (profileId: string) => Promise<boolean>;
     readonly done: (profileIds: ReadonlyArray<string>) => Promise<boolean>;
-    readonly makeMainDefault?: () => Promise<void>;
+    readonly mainDefault?: {
+      readonly pending: () => Promise<boolean>;
+      readonly markPending: () => Promise<void>;
+      readonly apply: () => Promise<void>;
+    };
   },
 ) {
   const first = recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.backfilled === undefined;
+  const pending = (await deps.mainDefault?.pending()) ?? false;
+  if (first && !pending) await deps.mainDefault?.markPending();
   let recorded = false;
   for (const profileId of backfillOrder(snapshot, deps.profiles)) {
     if (!(await deps.fill(profileId))) continue;
     recorded = (await deps.done([profileId])) || recorded;
   }
   if (first && !recorded) recorded = await deps.done([]);
-  if (first && recorded) await deps.makeMainDefault?.();
+  // A later run finishes a default whose save failed after the first back-fill was recorded.
+  if (first ? recorded : pending) await deps.mainDefault?.apply();
 }
 
 /**
