@@ -27,9 +27,11 @@ const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-art
     Flag.withDescription("The artifact's build version."),
   ),
   verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+  // SCIENT-FORK: releases leave the WSL runtime archive out unless the build bundled it.
+  expectWslRuntime: Flag.Boolean("expect-wsl-runtime").pipe(Flag.withDefault(false)),
 }).pipe(
   Command.withDescription("Verify a Windows desktop artifact's packaged natives load."),
-  Command.withHandler(({ appDir, arch, buildVersion, verbose }) =>
+  Command.withHandler(({ appDir, arch, buildVersion, verbose, expectWslRuntime }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const hostPlatform = yield* HostProcess.Platform;
@@ -39,7 +41,7 @@ const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-art
         packagedAppDir: appDir,
         appExecutableName: `${resolveDesktopProductName(buildVersion)}.exe`,
         targetArch: arch,
-        expectWslRuntime: true,
+        expectWslRuntime,
         verbose,
       });
       if (hostPlatform !== "win32" || hostArch !== arch)

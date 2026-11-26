@@ -1,6 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { findForbiddenWslRuntimeArchiveMember } from "./build-desktop-artifact.ts";
+import {
+  bundlesWslRuntime,
+  findForbiddenWslRuntimeArchiveMember,
+} from "./build-desktop-artifact.ts";
 
 describe("Scient WSL runtime archive", () => {
   it("accepts the Linux runtime and the Windows-named sources Linux packages carry", () => {
@@ -24,5 +27,14 @@ describe("Scient WSL runtime archive", () => {
     ]) {
       assert.strictEqual(findForbiddenWslRuntimeArchiveMember([member]), member);
     }
+  });
+
+  it("leaves the archive out when the build omits it, even with a Linux pty.node", () => {
+    assert.isFalse(
+      bundlesWslRuntime({ arch: "x64", prebuildPath: "/tmp/pty.node", omitArchive: true }),
+    );
+    assert.isTrue(
+      bundlesWslRuntime({ arch: "x64", prebuildPath: "/tmp/pty.node", omitArchive: false }),
+    );
   });
 });

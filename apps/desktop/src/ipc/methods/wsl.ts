@@ -1,8 +1,11 @@
 import { DesktopWslStateSchema, type DesktopWslState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+// SCIENT-FORK: a build without the WSL runtime archive offers no WSL backend.
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
@@ -16,12 +19,25 @@ const readWslState: Effect.Effect<
   | DesktopAppSettings.DesktopAppSettings
   | DesktopWslEnvironment.DesktopWslEnvironment
   | DesktopWslBackend.DesktopWslBackend
+  | DesktopEnvironment.DesktopEnvironment
 > = Effect.gen(function* () {
   const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const settings = yield* appSettings.get;
-  const available = settings.localEnvironmentEnabled && (yield* wslEnvironment.isAvailable);
+  // SCIENT-FORK:START — an installed app runs WSL only from its runtime archive. Releases leave
+  // the archive out while no one uses WSL, so the option is hidden rather than failing to start.
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const runtimeShipped =
+    environment.isPackaged !== true ||
+    Option.isNone(fileSystem) ||
+    (yield* fileSystem.value
+      .exists(environment.path.join(environment.resourcesPath, "wsl-runtime.tar.gz"))
+      .pipe(Effect.orElseSucceed(() => false)));
+  const available =
+    runtimeShipped && settings.localEnvironmentEnabled && (yield* wslEnvironment.isAvailable);
+  // SCIENT-FORK:END
   // Listing distros on non-WSL hosts spawns wsl.exe only to time out.
   const distros = available ? yield* wslEnvironment.listDistros : [];
   const preflightError = yield* wslBackend.lastPreflightError;

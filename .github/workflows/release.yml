@@ -873,6 +873,9 @@ jobs:
             args+=(--keep-stage)
             args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
             args+=(--wsl-synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/wsl")
+            # The 166 MB WSL runtime archive stays out of the installer while no user runs WSL;
+            # WSL still starts from the installed server tree. CI keeps building and qualifying it.
+            args+=(--omit-wsl-runtime-archive)
             if [[ "${SCIENT_WINDOWS_SIGNING_READY:-false}" == "true" ]]; then
               args+=(--signed)
               signed=true

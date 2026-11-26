@@ -230,6 +230,8 @@ interface BuildCliInput {
   readonly wslPrebuild: Option.Option<string>;
   readonly syncTexRuntime: Option.Option<string>;
   readonly wslSyncTexRuntime: Option.Option<string>;
+  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
+  readonly omitWslRuntimeArchive?: Option.Option<boolean>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -1063,6 +1065,8 @@ interface ResolvedBuildOptions {
   readonly wslPrebuild: string | undefined;
   readonly syncTexRuntime: string | undefined;
   readonly wslSyncTexRuntime: string | undefined;
+  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
+  readonly omitWslRuntimeArchive: boolean;
 }
 
 interface StagePackageJson {
@@ -1395,7 +1399,12 @@ export const findForbiddenWslRuntimeArchiveMember = (members: ReadonlyArray<stri
 export const bundlesWslRuntime = (input: {
   readonly arch: typeof BuildArch.Type;
   readonly prebuildPath: string | undefined;
-}): boolean => input.prebuildPath !== undefined && resolveWslPrebuildArch(input.arch) !== undefined;
+  // SCIENT-FORK: an installer without the archive still starts WSL from the mounted server tree.
+  readonly omitArchive?: boolean;
+}): boolean =>
+  input.omitArchive !== true &&
+  input.prebuildPath !== undefined &&
+  resolveWslPrebuildArch(input.arch) !== undefined;
 
 export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
@@ -2037,6 +2046,10 @@ const BuildEnvConfig = Config.all({
   outputDir: Config.String("T3CODE_DESKTOP_OUTPUT_DIR").pipe(Config.option),
   skipBuild: Config.Boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.Boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
+  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
+  omitWslRuntimeArchive: Config.Boolean("SCIENT_DESKTOP_OMIT_WSL_RUNTIME_ARCHIVE").pipe(
+    Config.withDefault(false),
+  ),
   signed: Config.Boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
   verbose: Config.Boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.Boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
@@ -2123,6 +2136,11 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
+  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
+  const omitWslRuntimeArchive = resolveBooleanFlag(
+    input.omitWslRuntimeArchive ?? Option.none(),
+    env.omitWslRuntimeArchive,
+  );
   const signed = resolveBooleanFlag(input.signed, env.signed);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
@@ -2160,6 +2178,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     wslPrebuild,
     syncTexRuntime,
     wslSyncTexRuntime,
+    omitWslRuntimeArchive,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -3672,6 +3691,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly minimumReleaseAgeExclude: ReadonlyArray<string>;
   readonly wslPrebuildPath: string | undefined;
   readonly wslSyncTexRuntimePath: string | undefined;
+  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
+  readonly omitWslRuntimeArchive: boolean;
   readonly asarPath: string;
   readonly cursorSdkResourcesPath: string;
   readonly wslRuntimeArchivePath: string;
@@ -3787,7 +3808,13 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   // Skip the archive entirely rather than shipping one the install script must
   // extract and reject on every launch. The desktop app treats a missing
   // archive as "no WSL-local runtime" and goes straight to the mounted tree.
-  if (bundlesWslRuntime({ arch: input.arch, prebuildPath: input.wslPrebuildPath })) {
+  if (
+    bundlesWslRuntime({
+      arch: input.arch,
+      prebuildPath: input.wslPrebuildPath,
+      omitArchive: input.omitWslRuntimeArchive,
+    })
+  ) {
     yield* stageWslRuntimeArchive({
       sourceDir: serverStageDir,
       archivePath: input.wslRuntimeArchivePath,
@@ -4431,6 +4458,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       bundlesWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
+        omitArchive: options.omitWslRuntimeArchive,
       }),
     });
   }
@@ -4875,7 +4903,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
-      bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
+      bundlesWslRuntime({
+        arch: options.arch,
+        prebuildPath: options.wslPrebuild,
+        omitArchive: options.omitWslRuntimeArchive,
+      }),
       options.arch,
       nativePreviewPath,
     ),
@@ -4948,6 +4980,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       minimumReleaseAgeExclude: workspaceMinimumReleaseAgeExclude,
       wslPrebuildPath: options.wslPrebuild,
       wslSyncTexRuntimePath: options.wslSyncTexRuntime,
+      omitWslRuntimeArchive: options.omitWslRuntimeArchive,
       asarPath: windowsServerAsarPath,
       cursorSdkResourcesPath,
       wslRuntimeArchivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
@@ -5133,6 +5166,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       expectWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
+        omitArchive: options.omitWslRuntimeArchive,
       }),
       verbose: options.verbose,
     });
@@ -5337,6 +5371,14 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
+  // SCIENT-FORK:START — the WSL runtime archive can be left out of the installer.
+  omitWslRuntimeArchive: Flag.Boolean("omit-wsl-runtime-archive").pipe(
+    Flag.withDescription(
+      "Leave the WSL runtime archive out of the Windows installer; WSL starts from the mounted server tree (env: SCIENT_DESKTOP_OMIT_WSL_RUNTIME_ARCHIVE).",
+    ),
+    Flag.optional,
+  ),
+  // SCIENT-FORK:END
   wslPrebuild: Flag.String("wsl-prebuild").pipe(
     Flag.withDescription(
       "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
