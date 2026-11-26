@@ -120,6 +120,32 @@ describe("thread details pool for a hub-routed Antigravity instance", () => {
     ]);
   });
 
+  it("an older account's Claude quota stays off a GPT thread", () => {
+    const shared: ServerProviderUsageLimits = {
+      checkedAt: "2026-10-30T11:50:00.000Z",
+      credentialFingerprint: "fp-google-1",
+      windows: [{ ...gemini(80, "", "").windows[0]!, id: "3p-5h", label: "Claude & GPT" }],
+    };
+    const local = instance(ProviderInstanceId.make("antigravity_local"), {
+      checkedAt: "2026-10-30T11:59:00.000Z",
+      credentialFingerprint: "fp-google-1",
+      windows: [
+        { ...gemini(30, "", "").windows[0]!, id: "gpt-quota", label: "GPT" },
+        { ...gemini(90, "", "").windows[0]!, id: "claude-quota", label: "Claude" },
+      ],
+    });
+    const resolved = resolveThreadDetailsLimits(
+      routedId,
+      "gpt-6.1-sol",
+      [routed, local],
+      [hub(shared)],
+      now,
+    );
+    if (resolved?.kind !== "pool") throw new Error("expected a pool");
+    expect(resolved.windows.map((window) => window.label)).not.toContain("Claude");
+    expect(resolved.windows.map((window) => window.label)).toContain("GPT");
+  });
+
   it("keeps the hub reading when the local login is another Google account", () => {
     const other = instance(
       ProviderInstanceId.make("antigravity_local"),
