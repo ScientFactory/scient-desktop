@@ -43,11 +43,12 @@ const decodeRunner = Schema.decodeUnknownOption(LiteratureWatchRunner);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One task per watch, named after it, so a lost task is rebuilt rather than duplicated. */
-const WATCH_TASK_PREFIX = "scheduled-task:watch-";
+const TASK_ID_PREFIX = "scheduled-task:";
+const WATCH_TASK_PREFIX = `${TASK_ID_PREFIX}watch-`;
 export const literatureWatchTaskId = (watchId: string) =>
-  ScheduledTaskId.make(`scheduled-task:${watchId}`);
+  ScheduledTaskId.make(`${TASK_ID_PREFIX}${watchId}`);
 
-export function literatureWatchPrompt(watch: Pick<LiteratureWatch, "watchId" | "title">): string {
+function literatureWatchPrompt(watch: Pick<LiteratureWatch, "watchId" | "title">): string {
   return `Run the literature watch "${watch.title}" (${watch.watchId}) with the literature-watch skill: scient_watch_run, screen, then scient_watch_publish.`;
 }
 
@@ -102,43 +103,64 @@ const needsRestore = Effect.fn("LiteratureWatch.needsRestore")(function* (
   return shell === null || shell.archivedAt !== null;
 });
 
+/** Writes the watch's task only when it is missing or bound to an archived or deleted thread. */
+export const ensureLiteratureWatchSchedule = Effect.fn("LiteratureWatch.ensureSchedule")(function* (
+  watch: LiteratureWatch,
+) {
+  const { tasks } = yield* (yield* ScheduledTaskService).list();
+  const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watch.watchId));
+  if (yield* needsRestore(task)) yield* syncLiteratureWatchSchedule(watch);
+});
+
+const watchExists = (library: ScientLibraryLocation, watchId: string) =>
+  Effect.promise(() =>
+    readLiteratureWatch(library, watchId).then(
+      () => true,
+      () => false,
+    ),
+  );
+
 /**
- * Brings every task in line with its watch: rebuilds a lost one, rebinds one whose run thread was
- * archived, follows a pause made in Scheduled tasks, and removes tasks whose watch is gone. Each
- * watch is read again just before its task is written, so a delete or edit meanwhile wins.
+ * Brings tasks and watches together: rebuilds a lost task, rebinds one whose run thread was
+ * archived, takes on a pause or resume made in Scheduled tasks, and removes tasks whose watch is
+ * gone. Each watch is read again just before anything is written, so a delete or edit wins.
  */
-export const restoreLiteratureWatchSchedules = Effect.fn("LiteratureWatch.restoreSchedules")(
-  function* (library: ScientLibraryLocation) {
-    const listed = yield* Effect.promise(() => listLiteratureWatches(library).catch(() => null));
-    if (!listed) return;
-    const scheduler = yield* ScheduledTaskService;
-    const { tasks } = yield* scheduler.list();
-    const owned = new Set(listed.watches.map((watch) => literatureWatchTaskId(watch.watchId)));
-    // A watch file that could not be read still owns its task.
-    if (listed.issues.length === 0) {
-      for (const task of tasks) {
-        if (task.id.startsWith(WATCH_TASK_PREFIX) && !owned.has(task.id)) {
-          yield* scheduler.delete({ id: task.id }).pipe(Effect.ignore);
-        }
-      }
+const restoreLiteratureWatchSchedules = Effect.fn("LiteratureWatch.restoreSchedules")(function* (
+  library: ScientLibraryLocation,
+) {
+  const listed = yield* Effect.promise(() => listLiteratureWatches(library).catch(() => null));
+  if (!listed) return;
+  const scheduler = yield* ScheduledTaskService;
+  const { tasks } = yield* scheduler.list();
+  const owned = new Set(listed.watches.map((watch) => literatureWatchTaskId(watch.watchId)));
+  // A watch file that could not be read still owns its task.
+  if (listed.issues.length === 0) {
+    for (const task of tasks) {
+      if (!task.id.startsWith(WATCH_TASK_PREFIX) || owned.has(task.id)) continue;
+      // A watch created since the listing owns its task too.
+      if (yield* watchExists(library, task.id.slice(TASK_ID_PREFIX.length))) continue;
+      yield* scheduler.delete({ id: task.id }).pipe(Effect.ignore);
     }
-    for (const { watchId } of listed.watches) {
-      const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watchId));
-      const current = yield* Effect.promise(() =>
-        readLiteratureWatch(library, watchId).catch(() => null),
-      );
-      if (!current) continue;
-      if (task && !task.enabled && current.paused !== true) {
-        yield* Effect.promise(() =>
-          changeLiteratureWatch(library, watchId, (watch) => ({ ...watch, paused: true })),
-        ).pipe(Effect.ignore);
-        continue;
-      }
-      const drifted = task !== undefined && task.enabled === (current.paused === true);
-      if (drifted || (yield* needsRestore(task))) yield* syncLiteratureWatchSchedule(current);
+  }
+  for (const { watchId } of listed.watches) {
+    const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watchId));
+    const current = yield* Effect.promise(() =>
+      readLiteratureWatch(library, watchId).catch(() => null),
+    );
+    if (!current) continue;
+    if (task && task.enabled === (current.paused === true)) {
+      const paused = !task.enabled;
+      yield* Effect.promise(() =>
+        changeLiteratureWatch(library, watchId, (watch) => {
+          const { paused: _paused, ...rest } = watch;
+          return paused ? { ...rest, paused: true as const } : rest;
+        }),
+      ).pipe(Effect.ignore);
+      continue;
     }
-  },
-);
+    if (yield* needsRestore(task)) yield* syncLiteratureWatchSchedule(current);
+  }
+});
 
 /**
  * Where the watch's runs stand. The task reports a run done once its prompt is sent, so a run
@@ -149,7 +171,8 @@ export const literatureWatchRunStatus = Effect.fn("LiteratureWatch.runStatus")(f
   watch: LiteratureWatch,
   task: ScheduledTask | undefined,
 ) {
-  const paused = watch.paused === true || task?.enabled === false;
+  // The task's switch is the schedule; Scheduled tasks can flip it, and the pass follows it.
+  const paused = task ? !task.enabled : watch.paused === true;
   if (!task) return { running: false, unfinished: false, paused };
   const shell =
     task.threadId === null

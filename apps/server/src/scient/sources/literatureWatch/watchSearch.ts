@@ -14,11 +14,12 @@ import { createSerialRequestLane, runWithNcbiRequestLimit } from "../NcbiRequest
 import type { RequestPace, ResearchKeys } from "../SourceIdentifierResolver.ts";
 
 /** A run reads at most this many records from one service; more marks the service partial. */
-export const WATCH_SERVICE_CAP = 2_000;
+const WATCH_SERVICE_CAP = 2_000;
 const PUBMED_FETCH_CHUNK = 200;
 const OPENALEX_PAGE = 100;
 const ARXIV_PAGE = 500;
-const MAX_ABSTRACT = 6_000;
+// What the agent is shown of an abstract; storing more would only grow the run file.
+const MAX_ABSTRACT = 3_000;
 const MAX_AUTHORS = 12;
 // A page of 200 PubMed records with abstracts runs to several megabytes.
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
@@ -390,6 +391,7 @@ export async function searchWatchService(
   const found: LiteratureWatchFound[] = [];
   let total = 0;
   const pending: Window[] = [window];
+  let skipped = false;
   try {
     while (pending.length > 0) {
       const span = pending.shift()!;
@@ -404,7 +406,14 @@ export async function searchWatchService(
         );
         continue;
       }
-      if (capped || found.length + result.found.length > RUN_SERVICE_CAP) {
+      if (capped) {
+        // One day alone holds more than a search returns: it is skipped, and the briefing says
+        // so, rather than stopping every later day behind it.
+        skipped = true;
+        total += result.total;
+        continue;
+      }
+      if (found.length + result.found.length > RUN_SERVICE_CAP) {
         const coveredTo = dayOffset(span.from, -1);
         return {
           run: {
@@ -421,7 +430,17 @@ export async function searchWatchService(
       found.push(...result.found);
       total += result.total;
     }
-    return { run: { service, ...window, status: "complete", found: found.length, total }, found };
+    return {
+      run: {
+        service,
+        ...window,
+        status: skipped ? "partial" : "complete",
+        found: found.length,
+        total,
+        ...(skipped ? { coveredTo: window.to } : {}),
+      },
+      found,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The service did not answer.";
     return {

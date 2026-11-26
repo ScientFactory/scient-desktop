@@ -85,7 +85,7 @@ export const LiteratureWatchRun = Schema.Struct({
 });
 export type LiteratureWatchRun = typeof LiteratureWatchRun.Type;
 
-export const LITERATURE_WATCH_MAX_ITEMS = 40;
+const LITERATURE_WATCH_MAX_ITEMS = 40;
 
 export const LiteratureWatchEvidence = Schema.Literals(["title", "abstract", "full-text"]);
 export type LiteratureWatchEvidence = typeof LiteratureWatchEvidence.Type;
@@ -159,6 +159,14 @@ export const LiteratureWatch = Schema.Struct({
     openalex: Schema.optionalKey(Day),
     arxiv: Schema.optionalKey(Day),
   }),
+  /** Per service, where a run that ran out of room left off; the next starts there, no overlap. */
+  resumeAt: Schema.optionalKey(
+    Schema.Struct({
+      pubmed: Schema.optionalKey(Day),
+      openalex: Schema.optionalKey(Day),
+      arxiv: Schema.optionalKey(Day),
+    }),
+  ),
   seen: Schema.Array(LiteratureWatchSeen),
   briefings: Schema.Array(LiteratureWatchBriefing),
   createdAt: NonEmptyString,
@@ -168,19 +176,19 @@ export const LiteratureWatch = Schema.Struct({
 export type LiteratureWatch = typeof LiteratureWatch.Type;
 
 /** A first run looks back this far, so the first briefing doubles as a preview. */
-export const LITERATURE_WATCH_FIRST_DAYS = 30;
+const LITERATURE_WATCH_FIRST_DAYS = 30;
 /**
  * OpenAlex filters only by publication date without a paid plan, and papers reach it weeks after
  * that date; every run reads this many days back and the seen ledger drops what was judged.
  */
-export const LITERATURE_WATCH_OPENALEX_DAYS = 30;
+const LITERATURE_WATCH_OPENALEX_DAYS = 30;
 /** PubMed and arXiv records land a little late in their own date fields. */
 const OVERLAP_DAYS = 2;
-const KEPT_BRIEFINGS = 104;
+const KEPT_BRIEFINGS = 52;
 /** About a year of a busy watch; older entries are past every service's rescan. */
 const KEPT_SEEN = 60_000;
 
-export function literatureWatchDay(at: Date): string {
+function literatureWatchDay(at: Date): string {
   return at.toISOString().slice(0, 10);
 }
 
@@ -190,7 +198,7 @@ function daysBefore(day: string, days: number): string {
 
 /** The days a run searches one service, inclusive. */
 export function literatureWatchWindow(
-  watch: Pick<LiteratureWatch, "covered" | "createdAt">,
+  watch: Pick<LiteratureWatch, "covered" | "createdAt" | "resumeAt">,
   service: LiteratureWatchService,
   now: Date,
 ): { readonly from: string; readonly to: string } {
@@ -200,6 +208,8 @@ export function literatureWatchWindow(
     [to, watch.createdAt.slice(0, 10)].toSorted()[0]!,
     LITERATURE_WATCH_FIRST_DAYS,
   );
+  const resumeAt = watch.resumeAt?.[service];
+  if (resumeAt) return { from: resumeAt > to ? to : resumeAt, to };
   const covered = watch.covered[service];
   const resume = covered ? daysBefore(covered, OVERLAP_DAYS) : first;
   // After a long closure the gap reaches past the usual rescan, so it starts at the gap instead.
@@ -220,7 +230,7 @@ function titleKey(title: string): string | null {
 }
 
 /** Every key a work is known by: its identifiers, then its normalized title. */
-export function literatureWatchKeys(found: Pick<LiteratureWatchFound, "ids" | "title">) {
+function literatureWatchKeys(found: Pick<LiteratureWatchFound, "ids" | "title">) {
   const keys: string[] = [];
   const { ids } = found;
   if (ids.doi) keys.push(`doi:${normalizePersistentIdentifier("doi", ids.doi)}`);
@@ -352,10 +362,19 @@ export function publishLiteratureWatchRun(
   const screened = run.candidates.slice(0, run.delivered);
   const unscreened = run.candidates.length - screened.length;
   const covered = { ...watch.covered };
+  const resumeAt = { ...watch.resumeAt };
   if (unscreened === 0) {
-    for (const service of run.services) {
-      const day = service.status === "complete" ? service.to : service.coveredTo;
-      if (day) covered[service.service] = day;
+    for (const { service, status, from, to, coveredTo } of run.services) {
+      // A partial service that reached its last day only skipped days too full to read.
+      if (status === "complete" || coveredTo === to) {
+        covered[service] = to;
+        delete resumeAt[service];
+      } else if (status === "partial") {
+        // A run that ran out of room within days already covered must still move on.
+        const reached = [covered[service], coveredTo].filter(Boolean).toSorted().at(-1);
+        if (reached) covered[service] = reached;
+        resumeAt[service] = reached ? daysBefore(reached, -1) : from;
+      }
     }
   }
   const summary = input.summary?.trim();
@@ -368,9 +387,11 @@ export function publishLiteratureWatchRun(
     ...(summary ? { summary } : {}),
     items,
   };
+  const { resumeAt: _resumeAt, ...rest } = watch;
   return {
-    ...watch,
+    ...rest,
     covered,
+    ...(Object.keys(resumeAt).length > 0 ? { resumeAt } : {}),
     seen: [
       ...watch.seen,
       ...screened.map((candidate): LiteratureWatchSeen => ({
@@ -396,7 +417,8 @@ export function retuneLiteratureWatch(watch: LiteratureWatch, now: Date): Litera
     const day = covered[service];
     if (day && day > back) covered[service] = back;
   }
-  return { ...watch, covered, seen: watch.seen.filter((entry) => entry.fate === "shown") };
+  const { resumeAt: _resumeAt, ...rest } = watch;
+  return { ...rest, covered, seen: watch.seen.filter((entry) => entry.fate === "shown") };
 }
 
 /** Sets or clears what the person did with one item; the briefing itself does not change. */

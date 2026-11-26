@@ -29,6 +29,7 @@ import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskServi
 import { literatureWatchItemEntry } from "./LiteratureWatchOperations.ts";
 import {
   deleteLiteratureWatchSchedule,
+  ensureLiteratureWatchSchedule,
   literatureWatchRunStatus,
   literatureWatchTaskId,
   runLiteratureWatchNow,
@@ -242,7 +243,7 @@ export const changeLibraryLiteratureWatch = Effect.fn("LiteratureWatch.changeFro
         return {};
       case "run-now": {
         const watch = yield* attempt(() => readLiteratureWatch(library, watchId));
-        yield* syncLiteratureWatchSchedule(watch);
+        yield* ensureLiteratureWatchSchedule(watch);
         if (!(yield* runLiteratureWatchNow(watchId))) {
           return yield* new LiteratureWatchOperationError({ message: "The run did not start." });
         }

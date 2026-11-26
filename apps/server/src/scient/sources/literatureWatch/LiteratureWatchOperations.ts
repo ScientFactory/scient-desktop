@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 
 import { searchWatchService, type WatchSearchOptions } from "./watchSearch.ts";
 
-export const WATCH_TITLES_PAGE = 500;
+const WATCH_TITLES_PAGE = 500;
 const isCandidate = Schema.is(LiteratureWatchCandidate);
 /** Long enough for any structured abstract, short enough that 30 fit one answer. */
 const ABSTRACT_SHOWN = 3_000;

@@ -231,6 +231,9 @@ describe("review findings", () => {
     };
     const next = publishLiteratureWatchRun(watch(), partial, { picks: [] }, now);
     expect(next.covered).toEqual({ pubmed: "2026-11-21" });
+    // The next run goes on from the next day, without re-reading the overlap that filled it.
+    expect(next.resumeAt).toEqual({ pubmed: "2026-11-22" });
+    expect(literatureWatchWindow(next, "pubmed", now).from).toBe("2026-11-22");
   });
 
   it("refuses a run from before the watch was edited, and stores briefings without abstracts", () => {

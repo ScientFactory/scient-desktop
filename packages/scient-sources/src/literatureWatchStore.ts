@@ -141,14 +141,17 @@ export async function deleteLiteratureWatch(
   });
 }
 
-/** The open run if it is recent enough to resume, else null. */
+/** The open run if it is recent and searched what the watch searches now, else null. */
 export async function resumableLiteratureWatchRun(
   library: ScientLibraryLocation,
   watchId: string,
   now: Date,
 ): Promise<LiteratureWatchRun | null> {
   const open = await readLiteratureWatchRun(library, watchId);
-  return open && now.getTime() - Date.parse(open.startedAt) < RUN_REUSE_MS ? open : null;
+  if (!open || now.getTime() - Date.parse(open.startedAt) >= RUN_REUSE_MS) return null;
+  // A run left from before an edit (say, by a crash before its removal) cannot publish.
+  const watch = await readLiteratureWatch(library, watchId);
+  return (open.revision ?? 0) === (watch.revision ?? 0) ? open : null;
 }
 
 /** Saves a fetched run unless another start saved one first; returns the run that stands. */

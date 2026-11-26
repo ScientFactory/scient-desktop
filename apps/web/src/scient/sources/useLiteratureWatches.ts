@@ -58,25 +58,35 @@ export function useLiteratureWatch(input: {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const canChange = useCanChangeLibrary(input.environmentId);
-  // Only the newest read for the watch on screen may land; an older or another watch's is dropped.
+  // Only the newest read of the watch on screen may land; an older one, or another watch's, is
+  // dropped. A poll waits for the read before it rather than overtaking it.
   const latest = useRef(0);
+  const shown = useRef<string | null>(null);
+  const reading = useRef(false);
 
   const reload = useStableCallback((watchId: string) => {
     const request = ++latest.current;
-    return readLiteratureWatch(input.environmentId, { root: input.root, watchId }).then(
-      (next) => {
-        if (request !== latest.current) return;
-        setWatch(next.watch);
-        setError(null);
-      },
-      (cause: unknown) => {
-        if (request === latest.current) setError(message(cause));
-      },
-    );
+    reading.current = true;
+    const landed = () => request === latest.current && shown.current === watchId;
+    return readLiteratureWatch(input.environmentId, { root: input.root, watchId })
+      .then(
+        (next) => {
+          if (!landed()) return;
+          setWatch(next.watch);
+          setError(null);
+        },
+        (cause: unknown) => {
+          if (landed()) setError(message(cause));
+        },
+      )
+      .finally(() => {
+        if (request === latest.current) reading.current = false;
+      });
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the open watch from the environment server when it opens
   useEffect(() => {
+    shown.current = input.watchId;
     if (input.watchId) void reload(input.watchId);
     else latest.current += 1;
   }, [input.watchId, reload]);
@@ -95,7 +105,7 @@ export function useLiteratureWatch(input: {
     if (!running || !input.watchId) return;
     const watchId = input.watchId;
     const timer = setInterval(() => {
-      void reload(watchId).then(onListChanged);
+      if (!reading.current) void reload(watchId).then(onListChanged);
     }, RUNNING_POLL_MS);
     return () => clearInterval(timer);
   }, [running, input.watchId, reload, onListChanged]);

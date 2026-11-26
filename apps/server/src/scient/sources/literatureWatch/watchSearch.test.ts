@@ -141,6 +141,30 @@ describe("searchWatchService", () => {
     expect(result.run).toMatchObject({ status: "complete", found: 2 });
   });
 
+  it("skips a single day too full to read and goes on with the rest", async () => {
+    // Every span holding Nov 19 is too full; the other days hold one paper each.
+    const request: MetadataRequest = async (url) => {
+      const filter = url.searchParams.get("filter") ?? "";
+      const from = /from_publication_date:([\d-]+)/u.exec(filter)?.[1] ?? "";
+      const to = /to_publication_date:([\d-]+)/u.exec(filter)?.[1] ?? "";
+      const full = from <= "2026-11-19" && to >= "2026-11-19";
+      const body = full
+        ? { meta: { count: 5_000 }, results: [] }
+        : {
+            meta: { count: 1 },
+            results: [{ id: `https://openalex.org/W${from}`, title: `Paper about memory ${from}` }],
+          };
+      return { status: 200, body: JSON.stringify(body), url };
+    };
+    const result = await searchWatchService("openalex", "memory", window, {
+      request,
+      keys: {},
+      pace,
+    });
+    expect(result.run).toMatchObject({ status: "partial", coveredTo: "2026-11-26" });
+    expect(result.found.length).toBeGreaterThan(0);
+  });
+
   it("reports a service that does not answer as failed, without throwing", async () => {
     const result = await searchWatchService("openalex", "replay", window, {
       request: serve({}).request,

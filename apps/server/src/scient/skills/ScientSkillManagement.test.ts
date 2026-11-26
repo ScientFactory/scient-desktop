@@ -51,6 +51,7 @@ describe("Scient skill management", () => {
           "overleaf-sync",
           "references",
           "systematic-review",
+          "literature-watch",
           "compare-sources",
           "statistics-review",
           "check-reported-numbers",
@@ -71,6 +72,7 @@ describe("Scient skill management", () => {
           "Document creation",
           "Document creation",
           "Document creation",
+          "Research",
           "Research",
           "Research",
           "Research",
@@ -211,7 +213,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(20);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(21);
         yield* Effect.promise(() =>
           NodeFSP.appendFile(
             NodePath.join(projectRoot, ".scient", "skills", "project-method", "SKILL.md"),
