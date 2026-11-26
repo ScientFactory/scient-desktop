@@ -1327,4 +1327,34 @@ describe("pins of works with thousands of authors", () => {
       incompleteCreatorRoles: ["author"],
     });
   });
+
+  it("never gives an unreadable pin's key to another work", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    file.pins[0].work.creators = [{ creatorType: "" }];
+    const unreadable = file.pins[0];
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+    const elsewhere = await newLibrary(base, "elsewhere");
+    const twin = await addRecord(elsewhere.library, "twin", { citationKey, title: "Another" });
+    expect(twin.citationKey).toBe(citationKey);
+
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library: elsewhere.library,
+      sourceId: twin.sourceId,
+      actor: "user",
+    });
+    if (pinned.outcome === "not-found") throw new Error("Expected the pin.");
+    expect(pinned.pin.citationKey).not.toBe(citationKey);
+    expect(
+      await renameScientProjectPinKey({
+        projectRoot,
+        citationKey: pinned.pin.citationKey,
+        to: citationKey,
+      }),
+    ).toEqual({ outcome: "taken" });
+    const written = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    expect(written.pins).toContainEqual(unreadable);
+  });
 });

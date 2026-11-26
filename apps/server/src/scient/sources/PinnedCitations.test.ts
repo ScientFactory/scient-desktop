@@ -445,4 +445,42 @@ describe("pinned citations travel with the project", () => {
     });
     expect(await managedFiles(projectRoot)).toEqual(written);
   });
+
+  it("keeps the entries of a pin this version cannot read", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pinned-citations-")),
+    );
+    fixtures.push(base);
+    const original = await computer(base, "author");
+    const projectRoot = NodePath.join(base, "project");
+    await NodeFSP.mkdir(projectRoot);
+    await initializeScientProject({ root: projectRoot });
+    for (const work of works) {
+      const record = await add(original, work);
+      await pinScientLibrarySource({
+        projectRoot,
+        library: original,
+        sourceId: record.sourceId,
+        actor: "user",
+      });
+    }
+    const sync = () =>
+      syncPinnedBibliography({
+        root: projectRoot,
+        library: original,
+        access: "write",
+        actor: "user",
+      });
+    await sync();
+    const written = await managedFiles(projectRoot);
+
+    const pinsPath = NodePath.join(projectRoot, ".scient", "library", "pins.json");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
+    file.pins[1].work.creators = [{ creatorType: "" }];
+    await NodeFSP.writeFile(pinsPath, `${JSON.stringify(file, null, 2)}\n`);
+
+    const status = await sync();
+    expect(await managedFiles(projectRoot)).toEqual(written);
+    expect(status.keptEntries).toEqual([file.pins[1].citationKey]);
+  });
 });

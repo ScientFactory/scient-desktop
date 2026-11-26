@@ -691,7 +691,8 @@ sources in `<project>/.scient/library/pins.json`:
   one an older Scient wrote stays whole until a record holds it, and a copy keeps
   its fuller list over a shortened record that begins the same. Records keep
   every author. A pin or entry this version cannot read is left out of view and
-  written back as it was; an unusable `creatorCount` is ignored.
+  written back as it was; a pin's key stays reserved and its managed entries
+  stay. An unusable `creatorCount` is ignored.
 - `work` snapshots every citation input the formatter reads (type, title,
   creators with roles and incompleteness, issued year, identifiers, container
   title, and the optional `customType`, `issuedRaw`, `publisher`, `volume`,

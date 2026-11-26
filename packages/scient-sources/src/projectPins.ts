@@ -143,7 +143,7 @@ interface StoredPin {
 
 interface PinsDocument {
   readonly pins: ReadonlyArray<StoredPin>;
-  /** Pins this version cannot read, kept as written until a pin of their key or source replaces them. */
+  /** Pins this version cannot read: kept as written, their keys reserved and their entries kept. */
   readonly unread: ReadonlyArray<unknown>;
   readonly extra: JsonObject;
   /** The file's bytes as read, or null when there is no file. */
@@ -199,16 +199,6 @@ function comparePins(left: ScientProjectPin, right: ScientProjectPin): number {
 
 /** Sorted by key, fields in a fixed order and unknown fields after them, so equal pins are equal bytes. */
 function encodePins(document: Pick<PinsDocument, "pins" | "unread" | "extra">) {
-  const keys = new Set(document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
-  const sources = new Set(document.pins.map(({ pin }) => pin.sourceId));
-  const unread = document.unread.filter((raw) => {
-    const key = isJsonObject(raw) ? raw["citationKey"] : undefined;
-    const sourceId = isJsonObject(raw) ? raw["sourceId"] : undefined;
-    return !(
-      (typeof key === "string" && keys.has(citationKeyComparisonValue(key))) ||
-      (typeof sourceId === "string" && sources.has(sourceId))
-    );
-  });
   return {
     formatVersion: 1,
     pins: [
@@ -223,7 +213,7 @@ function encodePins(document: Pick<PinsDocument, "pins" | "unread" | "extra">) {
           work: encodeWork(pin.work, workExtra),
           ...sortedExtra(extra),
         })),
-      ...unread,
+      ...document.unread,
     ],
     ...sortedExtra(document.extra),
   };
@@ -384,6 +374,26 @@ function normalizePinNote(note: string | null | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+/** The keys of pins this version cannot read, where they name one. */
+function unreadKeys(unread: ReadonlyArray<unknown>): ReadonlyArray<string> {
+  return unread.flatMap((raw) => {
+    const key = isJsonObject(raw) ? raw["citationKey"] : undefined;
+    return typeof key === "string" && key.trim() !== "" ? [key] : [];
+  });
+}
+
+/** Every key the project's pins hold, unreadable ones included, as keys compare. */
+function takenKeys(
+  document: Pick<PinsDocument, "unread">,
+  pins: ReadonlyArray<StoredPin>,
+): Set<string> {
+  return new Set(
+    [...pins.map(({ pin }) => pin.citationKey), ...unreadKeys(document.unread)].map(
+      citationKeyComparisonValue,
+    ),
+  );
+}
+
 function findPin(pins: ReadonlyArray<StoredPin>, citationKey: string): StoredPin | undefined {
   const wanted = citationKeyComparisonValue(citationKey);
   return pins.find(({ pin }) => citationKeyComparisonValue(pin.citationKey) === wanted);
@@ -455,6 +465,20 @@ export function decodeScientProjectPinsText(text: string): ReadonlyArray<ScientP
     .toSorted(comparePins);
 }
 
+/** Every key a `pins.json` holds, including those of pins this version cannot read. */
+export function scientProjectPinsTextKeys(text: string): ReadonlyArray<string> {
+  const document = parsePinsText(text);
+  return [...document.pins.map(({ pin }) => pin.citationKey), ...unreadKeys(document.unread)];
+}
+
+/** The keys of the project's pins this version cannot read; their managed entries stay. */
+export async function readScientProjectUnreadPinKeys(
+  projectRoot: string,
+): Promise<ReadonlyArray<string>> {
+  const root = await projectRootFor(projectRoot);
+  return unreadKeys((await readPinsDocument(root)).unread);
+}
+
 /** `pins.json` bytes with more pins added; every existing pin keeps its bytes and newer fields. */
 export function joinScientProjectPinsText(
   text: string,
@@ -520,9 +544,7 @@ export async function pinScientLibrarySource(input: {
     );
     if (resolvedIndex >= 0) return { outcome: "existing", pin: document.pins[resolvedIndex]!.pin };
 
-    const taken = new Set(
-      document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)),
-    );
+    const taken = takenKeys(document, document.pins);
     const note = normalizePinNote(input.note);
     const pin: ScientProjectPin = {
       citationKey: assignCitationKey({
@@ -617,6 +639,8 @@ export async function bindScientProjectCitationKeys(input: {
       const existing = findPin(document.pins, citationKey);
       if (existing) {
         bindings.push({ citationKey, outcome: citesRecord(existing) ? "cited" : "taken" });
+      } else if (takenKeys(document, []).has(wanted)) {
+        bindings.push({ citationKey, outcome: "taken" });
       } else {
         pins.push(added(citationKey));
         bindings.push({ citationKey, outcome: "added" });
@@ -627,7 +651,7 @@ export async function bindScientProjectCitationKeys(input: {
       const pinned = document.pins.find(citesRecord);
       if (pinned) projectKey = pinned.pin.citationKey;
       else {
-        const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+        const taken = takenKeys(document, pins);
         projectKey = assignCitationKey({
           preferred: record.citationKey ?? null,
           creators: record.creators,
@@ -824,9 +848,7 @@ export async function changeScientProjectPins(input: {
   return withPinsLock(root, async () => {
     const document = await readPinsDocument(root);
     let changed = false;
-    const taken = new Set(
-      document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)),
-    );
+    const taken = takenKeys(document, document.pins);
     const pinning = input.changes.some((change) => change.action === "pin");
     const aliases = pinning ? await readScientLibraryAliases(input.library) : null;
     // Resolutions depend on the library only; pins added here are found by their own ID.
@@ -1055,6 +1077,9 @@ export async function renameScientProjectPinKey(input: {
     if (found.pin.citationKey === input.to) return { outcome: "unchanged", pin: found.pin };
     const other = findPin(document.pins, input.to);
     if (other && other !== found) return { outcome: "taken" };
+    if (!other && takenKeys(document, []).has(citationKeyComparisonValue(input.to))) {
+      return { outcome: "taken" };
+    }
     const pin: ScientProjectPin = { ...found.pin, citationKey: input.to };
     await writePinsDocument(
       root,
@@ -1418,7 +1443,7 @@ export async function joinScientProjectPins(input: {
     }
     const document = await readPinsDocument(root);
     const pins = [...document.pins];
-    const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+    const taken = takenKeys(document, pins);
     const addedKeys: string[] = [];
     const joinedKeys: string[] = [];
     let notesAdded = 0;

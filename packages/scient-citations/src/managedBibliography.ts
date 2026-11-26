@@ -18,24 +18,29 @@ export interface ManagedBibliographyKeptEntries {
   readonly cslJson: ReadonlyMap<string, string>;
 }
 
+const compareKeys = (left: string, right: string) =>
+  left.localeCompare(right, "en", { sensitivity: "base" }) || left.localeCompare(right);
+
 /**
  * Both managed files, sorted by citation key, with the entries a Library export
  * writes minus notes (private) and abstracts (large, and no document needs them).
- * Sources without a key are left out. An entry in `keep` replaces that key's render.
+ * Sources without a key are left out. An entry in `keep` replaces that key's render;
+ * a key in `unrendered` (no record to render) keeps its entry from `keep` as it is.
  */
 export function renderManagedBibliography(
   records: ReadonlyArray<ScientSourceRecord>,
   keep?: ManagedBibliographyKeptEntries,
+  unrendered: ReadonlyArray<string> = [],
 ): ManagedBibliographyContents {
   const items = records
     .flatMap((record) => (record.citationKey ? [{ record, citationKey: record.citationKey }] : []))
-    .toSorted(
-      (left, right) =>
-        left.citationKey.localeCompare(right.citationKey, "en", { sensitivity: "base" }) ||
-        left.citationKey.localeCompare(right.citationKey),
-    );
+    .toSorted((left, right) => compareKeys(left.citationKey, right.citationKey));
   const options = { includeNotes: false, includeAbstracts: false };
-  const keys = items.map(({ citationKey }) => citationKey);
+  const rendered = new Set(items.map(({ citationKey }) => citationKey));
+  const held = unrendered.filter(
+    (key) => !rendered.has(key) && (keep?.bibtex.has(key) || keep?.cslJson.has(key)),
+  );
+  const keys = [...items.map(({ citationKey }) => citationKey), ...held].toSorted(compareKeys);
   if (!keep || (keep.bibtex.size === 0 && keep.cslJson.size === 0)) {
     return {
       bibtex: `${MANAGED_BIBTEX_HEADER}\n${formatBibliography(items, "bibtex", options)}`,
@@ -44,24 +49,42 @@ export function renderManagedBibliography(
       keptKeys: [],
     };
   }
-  const kept = new Set<string>();
+  const kept = new Set<string>(held);
   // Each entry exactly as formatBibliography joins them, so an unkept entry keeps its bytes.
-  const bibtex = items
-    .map((item) => {
+  const bibtex = [
+    ...items.map((item) => {
       const earlier = keep.bibtex.get(item.citationKey);
-      if (earlier === undefined) return formatBibliography([item], "bibtex", options);
+      if (earlier === undefined) {
+        return [item.citationKey, formatBibliography([item], "bibtex", options)] as const;
+      }
       kept.add(item.citationKey);
-      return `${earlier}\n`;
-    })
+      return [item.citationKey, `${earlier}\n`] as const;
+    }),
+    ...held.flatMap((key) => {
+      const earlier = keep.bibtex.get(key);
+      return earlier === undefined ? [] : [[key, `${earlier}\n`] as const];
+    }),
+  ]
+    .toSorted(([left], [right]) => compareKeys(left, right))
+    .map(([, entry]) => entry)
     .join("\n");
   const cslItems: unknown[] = JSON.parse(formatBibliography(items, "csl-json", options));
   const cslJson = `${JSON.stringify(
-    cslItems.map((item, index) => {
-      const earlier = keep.cslJson.get(keys[index]!);
-      if (earlier === undefined) return item;
-      kept.add(keys[index]!);
-      return JSON.parse(earlier);
-    }),
+    [
+      ...cslItems.map((item, index) => {
+        const key = items[index]!.citationKey;
+        const earlier = keep.cslJson.get(key);
+        if (earlier === undefined) return [key, item] as const;
+        kept.add(key);
+        return [key, JSON.parse(earlier) as unknown] as const;
+      }),
+      ...held.flatMap((key) => {
+        const earlier = keep.cslJson.get(key);
+        return earlier === undefined ? [] : [[key, JSON.parse(earlier) as unknown] as const];
+      }),
+    ]
+      .toSorted(([left], [right]) => compareKeys(left, right))
+      .map(([, item]) => item),
     null,
     2,
   )}\n`;
