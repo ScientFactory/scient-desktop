@@ -315,7 +315,10 @@ async function searchArxiv(query: string, window: Window, options: WatchSearchOp
     found.push(
       ...entries.flatMap((entry) =>
         record(entry.title ?? undefined, {
-          abstract: entry.summary ?? undefined,
+          abstract:
+            [entry.summary, entry.comment ? `Comments: ${entry.comment}` : null]
+              .filter(Boolean)
+              .join(" ") || undefined,
           authors: entry.authors,
           venue: "arXiv",
           ...(entry.published ? { published: entry.published.slice(0, 10) } : {}),

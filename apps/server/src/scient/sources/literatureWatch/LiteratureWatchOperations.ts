@@ -22,7 +22,7 @@ import type { ScientLibraryLocation } from "@scientfactory/scient-sources/librar
 
 import { searchWatchService, type WatchSearchOptions } from "./watchSearch.ts";
 
-export const WATCH_TITLES_PAGE = 200;
+export const WATCH_TITLES_PAGE = 500;
 
 // @effect-diagnostics-next-line extendsNativeError:off - The watch store is Promise-based; handlers catch native errors.
 export class LiteratureWatchRunError extends Error {}
@@ -100,6 +100,7 @@ export async function literatureWatchTitles(
   }
   return {
     titles: page.map(titleLine),
+    allTitlesRead: end >= run.candidates.length,
     ...(end < run.candidates.length ? { nextOffset: end } : {}),
   };
 }

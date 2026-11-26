@@ -36,6 +36,8 @@ export interface ArxivEntry {
   readonly published: string | null;
   readonly authors: ReadonlyArray<string>;
   readonly doi: string | null;
+  /** The authors' comments line, which often names pages, venue or a code link. */
+  readonly comment: string | null;
   readonly categories: ReadonlyArray<ScientSourceTopic>;
 }
 
@@ -99,6 +101,7 @@ export function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
         published: textOf(entry["published"]),
         authors: records(entry["author"]).flatMap((author) => textOf(author["name"]) ?? []),
         doi: doi && isWellFormedDoi(doi.toLowerCase()) ? doi : null,
+        comment: textOf(entry["arxiv:comment"]),
         categories: entryCategories(entry),
       },
     ];

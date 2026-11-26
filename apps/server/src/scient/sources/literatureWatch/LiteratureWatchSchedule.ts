@@ -4,14 +4,26 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  type ScheduledTask,
   ScheduledTaskId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import {
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
+import { listLiteratureWatches } from "@scientfactory/scient-sources/literature-watch-store";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
+import { ServerConfig } from "../../../config.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
+import { forkParked } from "../../../serverActivation.ts";
+import { ScientSourcesBackend } from "../SourcesBackend.ts";
 
 /** The thread settings a watch's scheduled runs use, taken from the thread that set it up. */
 export const LiteratureWatchRunner = Schema.Struct({
@@ -72,11 +84,59 @@ export const syncLiteratureWatchSchedule = Effect.fn("LiteratureWatch.syncSchedu
   return task;
 });
 
-/** Rewrites each watch's task, rebuilding one that was lost and rebinding an archived thread. */
+/** Whether a watch's task needs writing: it was lost, or its run thread is archived or gone. */
+const needsRestore = Effect.fn("LiteratureWatch.needsRestore")(function* (
+  task: { readonly threadId: ThreadId | null } | undefined,
+) {
+  if (!task) return true;
+  if (task.threadId === null) return false;
+  const shell = yield* (yield* ProjectionStoreV2)
+    .getThreadShell(task.threadId)
+    .pipe(Effect.orElseSucceed(() => null));
+  return shell === null || shell.archivedAt !== null;
+});
+
+/** Rebuilds the task of a watch that lost it and rebinds one whose run thread was archived. */
 export const restoreLiteratureWatchSchedules = Effect.fn("LiteratureWatch.restoreSchedules")(
   function* (watches: ReadonlyArray<LiteratureWatch>) {
-    for (const watch of watches) yield* syncLiteratureWatchSchedule(watch);
+    const { tasks } = yield* (yield* ScheduledTaskService).list();
+    for (const watch of watches) {
+      const task = tasks.find((entry) => entry.id === literatureWatchTaskId(watch.watchId));
+      if (yield* needsRestore(task)) yield* syncLiteratureWatchSchedule(watch);
+    }
   },
+);
+
+/** A scheduled run that ended without a briefing, so the watch can say so and offer Run now. */
+export function literatureWatchRunUnfinished(
+  watch: Pick<LiteratureWatch, "briefings">,
+  task: Pick<ScheduledTask, "lastRunAt" | "lastRunStatus"> | undefined,
+): boolean {
+  if (!task?.lastRunAt || task.lastRunStatus === "running") return false;
+  const published = watch.briefings[0]?.publishedAt;
+  return !published || published < task.lastRunAt;
+}
+
+/** Restores lost schedules soon after start and every few hours, while Scient is open. */
+export const literatureWatchSchedulePassLayer = Layer.effectDiscard(
+  Effect.gen(function* () {
+    if ((yield* ScientSourcesBackend) !== "library") return;
+    const config = yield* ServerConfig;
+    const library = scientLibraryLocation(scientLibraryRootFor(config.stateDir));
+    const pass = Effect.promise(() =>
+      listLiteratureWatches(library).catch(() => ({ watches: [] })),
+    ).pipe(
+      Effect.flatMap(({ watches }) => restoreLiteratureWatchSchedules(watches)),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Literature watch schedules were not restored.", { cause }),
+      ),
+    );
+    yield* forkParked(
+      Effect.sleep("1 minute").pipe(
+        Effect.andThen(pass.pipe(Effect.repeat(Schedule.spaced("6 hours")))),
+      ),
+    );
+  }),
 );
 
 export const runLiteratureWatchNow = Effect.fn("LiteratureWatch.runNow")(function* (

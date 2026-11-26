@@ -8,9 +8,12 @@ import type {
 import { useEffect, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { changeLiteratureWatch, readLiteratureWatch, readLiteratureWatches } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { useCanChangeLibrary } from "./sourcesCommands";
+
+const RUNNING_POLL_MS = 5_000;
 
 const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
 
@@ -83,6 +86,18 @@ export function useLiteratureWatch(input: {
       current = false;
     };
   }, [input.environmentId, input.root, input.watchId]);
+
+  const running = input.watchId !== null && watch?.watchId === input.watchId && watch.running;
+  const followRun = useStableCallback((watchId: string) => {
+    void reload(watchId).then(() => input.onListChanged());
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows a run on the environment server until it publishes
+  useEffect(() => {
+    if (!running || !input.watchId) return;
+    const watchId = input.watchId;
+    const timer = setInterval(() => followRun(watchId), RUNNING_POLL_MS);
+    return () => clearInterval(timer);
+  }, [running, input.watchId, followRun]);
 
   /** Applies a change, then reads the watch and the list again. `key` marks what is busy. */
   const change = async (

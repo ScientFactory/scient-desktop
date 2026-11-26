@@ -3714,6 +3714,51 @@ lock.
 - The built-in `systematic-review` skill tells agents how to use these tools
   and that agent screening is not independent dual screening.
 
+## Literature watches
+
+`packages/scient-sources/src/literatureWatch.ts` holds the watch schema and the
+pure run logic (windows, candidate merging, publishing, triage);
+`literatureWatchStore.ts` keeps one `watches/<id>.json` per watch and its open
+run in `watches/<id>.run.json`, both in the personal Library under its lock. The
+server's `scient/sources/literatureWatch/` owns the service searches, the run
+operations and the schedule; `mcp/toolkits/literatureWatch/` exposes them as
+`scient_watches`, `scient_watch_save`, `scient_watch_run` and
+`scient_watch_publish`, and the built-in `literature-watch` skill tells agents
+how to set one up and run it. The Library reads and changes watches over the
+`literatureWatches`, `literatureWatch` and `literatureWatchChange` routes.
+
+- Scient owns coverage; the agent only judges. `covered[service]` is the last
+  day a run searched that service completely. A run searches from two days
+  before it (records land late in PubMed's creation date and arXiv's submission
+  date); until a service first answers, from 30 days before the watch began.
+  OpenAlex filters only by publication date without a paid plan, so it always
+  reads the last 30 days, or from the gap after a longer closure, and the seen
+  ledger drops what was judged.
+- `seen` holds every work a run judged, by all its identity keys (DOI, PMID,
+  arXiv, OpenAlex, normalized title), so no later run shows it again. Records
+  merge on any shared key, except two with the same title and different DOIs.
+- A run hands out titles in pages, in order; only handed-out candidates are
+  recorded and only when all were handed out do the services' days move. A
+  failed service keeps its day. A service holding more than a run reads (2,000)
+  is `partial` and the briefing says so.
+- A run is claimed under the lock (a second start resumes it), is discarded
+  when the watch's queries change, and is resumed for 24 hours. Publishing is
+  idempotent by run ID and validates the file before writing it.
+- Each watch has the scheduled task `scheduled-task:<watchId>` (interval,
+  `fresh_session`), written from the watch with the project and thread settings
+  of the chat that created it (`runner`). A minute after start, every six hours
+  and when a watch is opened, a lost task is rebuilt and one bound to an
+  archived or deleted run thread is unbound, so the next run starts a new one.
+  A run that ended after the last briefing without publishing marks the watch
+  `unfinished`.
+- Briefings never change after publishing except for each item's triage and
+  note and the briefing's `openedAt`. Keep adds the paper through the identifier
+  intake (DOI, then PMID, arXiv, OpenAlex) without pinning it to a project.
+- OpenAlex without a key refuses cursor paging (pages by number instead) and
+  allows one search a second when it has more than five boolean operators; its
+  plain `search` also matches full text, so watches use
+  `title_and_abstract.search`.
+
 ## Reference files
 
 `packages/scient-sources/src/bibliography/` reads and writes BibTeX/BibLaTeX,

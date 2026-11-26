@@ -142,6 +142,7 @@ import {
 } from "./literatureWatch/LiteratureWatchRoutes.ts";
 import {
   deleteLiteratureWatchSchedule,
+  literatureWatchRunUnfinished,
   literatureWatchTaskId,
   restoreLiteratureWatchSchedules,
   runLiteratureWatchNow,
@@ -476,13 +477,30 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("literatureWatches", (args) =>
-          route(
-            args.endpoint.name,
-            AuthOrchestrationReadScope,
-            args.payload.root,
-            async (library) =>
-              library ? literatureWatchList(library.library) : { watches: [], unread: 0 },
-          ),
+          Effect.gen(function* () {
+            const listed = yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              async (library) =>
+                library
+                  ? literatureWatchList(library.library)
+                  : { watches: [], unread: 0, all: [] },
+            );
+            const { tasks } = yield* scheduledTasks
+              .list()
+              .pipe(Effect.orElseSucceed(() => ({ tasks: [] })));
+            const taskOf = (watchId: string) =>
+              tasks.find((task) => task.id === literatureWatchTaskId(watchId));
+            return {
+              unread: listed.unread,
+              watches: listed.watches.map((summary, index) =>
+                literatureWatchRunUnfinished(listed.all[index]!, taskOf(summary.watchId))
+                  ? { ...summary, unfinished: true }
+                  : summary,
+              ),
+            };
+          }),
         )
         .handle("literatureWatch", (args) =>
           Effect.gen(function* () {
@@ -509,6 +527,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 ...view,
                 ...(task?.threadId ? { threadId: task.threadId } : {}),
                 running: task?.lastRunStatus === "running",
+                ...(literatureWatchRunUnfinished(watch, task) ? { unfinished: true } : {}),
               },
             };
           }),

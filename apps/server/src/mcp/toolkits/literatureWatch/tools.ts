@@ -106,7 +106,7 @@ const TitleLine = Schema.Struct({
 
 const ScientWatchRunTool = Tool.make("scient_watch_run", {
   description:
-    "Start or resume a watch's run. Scient searches each service from the day it was searched up to, removes duplicates and papers earlier runs judged, and returns the services' status and the candidate titles from offset (page with nextOffset, in order; every title handed out counts as screened). Pass abstractsFor with candidate ids to read their abstracts and details. Pass the runId on every call after the first.",
+    "Start or resume a watch's run. Scient searches each service from the day it was searched up to, removes duplicates and papers earlier runs judged, and returns the services' status and the candidate titles from offset, 500 at a time (page with nextOffset, in order, until allTitlesRead; every title handed out counts as screened). Pass abstractsFor with candidate ids to read their abstracts and details. Pass the runId on every call after the first.",
   parameters: Schema.Struct({
     watchId: Id,
     runId: Schema.optionalKey(Id),
@@ -121,6 +121,8 @@ const ScientWatchRunTool = Tool.make("scient_watch_run", {
     candidates: Schema.Int,
     alreadySeen: Schema.Int,
     titles: Schema.optionalKey(Schema.Array(TitleLine)),
+    /** True once every candidate title has been handed out; publish only then. */
+    allTitlesRead: Schema.optionalKey(Schema.Boolean),
     nextOffset: Schema.optionalKey(Schema.Int),
     abstracts: Schema.optionalKey(Schema.Array(LiteratureWatchCandidate)),
   }),

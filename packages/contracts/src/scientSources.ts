@@ -815,6 +815,8 @@ export const ScientLiteratureWatchSummary = Schema.Struct({
   lastBriefingAt: Schema.optionalKey(Schema.String),
   /** Papers in briefings the person has not opened yet. */
   unread: Schema.Int,
+  /** The last scheduled run ended without publishing a briefing. */
+  unfinished: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientLiteratureWatchSummary = typeof ScientLiteratureWatchSummary.Type;
 

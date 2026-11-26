@@ -1721,8 +1721,12 @@ export function ScientSourcesPanel(props: {
         root={props.root}
         list={watches}
         onOpenSource={(sourceId) => {
+          // A kept paper is in the personal Library, not necessarily in this project.
           setShowingWatches(false);
-          void sources.refreshOverview().then(() => openSourceDetails(sourceId));
+          setPackageSources(null);
+          organize.clearFilter();
+          organize.clearSelection();
+          void sources.selectScope("library").then(() => setSelectedSourceId(sourceId));
         }}
         onBack={() => setShowingWatches(false)}
       />,

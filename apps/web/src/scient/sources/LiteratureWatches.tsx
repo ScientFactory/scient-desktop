@@ -15,7 +15,6 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { readLocalApi } from "../../localApi";
-import { SOURCES_COLUMN } from "./PanelChrome";
 import { useLiteratureWatch, type LiteratureWatchList } from "./useLiteratureWatches";
 
 const FEATURED = 8;
@@ -206,9 +205,6 @@ function Briefing(props: {
   );
   return (
     <section className="space-y-2">
-      {briefing.summary ? (
-        <p className="text-sm text-muted-foreground">{briefing.summary}</p>
-      ) : null}
       {featured.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           <T>Nothing new this time.</T>
@@ -374,7 +370,7 @@ export function LiteratureWatchesView(props: {
         ) : null}
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className={`${SOURCES_COLUMN} space-y-4 p-4`}>
+        <div className="mx-auto w-full max-w-3xl space-y-4 p-4">
           {opened.error && watchId ? (
             <p className="text-sm text-destructive-foreground">{opened.error}</p>
           ) : null}
@@ -408,6 +404,7 @@ export function LiteratureWatchesView(props: {
                           {entry.lastBriefingAt
                             ? gt(" · {date}", { date: day(entry.lastBriefingAt) })
                             : null}
+                          {entry.unfinished ? gt(" · Last run did not finish") : null}
                         </span>
                       </span>
                       {entry.unread > 0 ? (
@@ -422,6 +419,25 @@ export function LiteratureWatchesView(props: {
             )
           ) : watch ? (
             <>
+              {watch.unfinished && !watch.running ? (
+                <div className="flex items-center gap-2 text-sm text-warning-foreground">
+                  <span className="min-w-0 flex-1">
+                    <T>The last run did not finish.</T>
+                  </span>
+                  {opened.canChange ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={opened.pending !== null}
+                      onClick={() =>
+                        void opened.change("run-now", { action: "run-now" }, gt("Did not start"))
+                      }
+                    >
+                      <T>Run now</T>
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
               {briefing ? (
                 <Briefing
                   key={briefing.briefingId}
@@ -453,7 +469,10 @@ export function LiteratureWatchesView(props: {
                         variant={entry.briefingId === briefing?.briefingId ? "secondary" : "ghost"}
                         onClick={() => setBriefingId(entry.briefingId)}
                       >
-                        {day(entry.publishedAt)}
+                        {gt("{date} · {count}", {
+                          date: day(entry.publishedAt),
+                          count: entry.items.length,
+                        })}
                       </Button>
                     ))}
                   </div>

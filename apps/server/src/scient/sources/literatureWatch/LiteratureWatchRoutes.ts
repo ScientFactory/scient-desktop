@@ -50,6 +50,7 @@ export async function literatureWatchList(library: ScientLibraryLocation) {
   return {
     watches: summaries,
     unread: summaries.reduce((count, entry) => count + entry.unread, 0),
+    all: watches,
   };
 }
 
