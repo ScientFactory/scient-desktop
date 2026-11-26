@@ -355,40 +355,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  build_wsl_node_pty:
-    name: Build WSL node-pty
-    needs: preflight
-    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-      - name: Build Linux x64 node-pty for WSL
-        shell: bash
-        env:
-          PREVIEW: ${{ inputs.channel == 'preview' }}
-        run: |
-          set -euo pipefail
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
-          pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp@12.3.0 rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
-          if-no-files-found: error
-
   build_synctex_runtime:
     name: Build native prerequisites / ${{ matrix.label }}
     needs: preflight
@@ -737,17 +703,6 @@ jobs:
           set -euo pipefail
           wait_for() { bash .github/scripts/wait-for-job.sh "$@"; }
           wait_for "Build native prerequisites / ${{ matrix.label }}" "synctex-runtime-${{ matrix.resource_key }}"
-          if [[ "${{ matrix.platform }}" == "win" ]]; then
-            wait_for "Build WSL node-pty" wsl-node-pty-x64
-            wait_for "Build native prerequisites / Linux x64" synctex-runtime-linux-x64
-          fi
-
-      - name: Download WSL native dependency
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild
 
       - name: Download target SyncTeX runtime
         if: matrix.platform != 'mac'
@@ -755,13 +710,6 @@ jobs:
         with:
           name: synctex-runtime-${{ matrix.resource_key }}
           path: synctex-runtime/current
-
-      - name: Download WSL SyncTeX runtime
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: synctex-runtime-linux-x64
-          path: synctex-runtime/wsl
 
       - name: Download Windows native prerequisites
         if: matrix.platform == 'win'
@@ -871,8 +819,10 @@ jobs:
             fi
           elif [[ "$RELEASE_PLATFORM" == "win" ]]; then
             args+=(--keep-stage)
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
-            args+=(--wsl-synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/wsl")
+            # Releases ship a slim Windows installer without the WSL runtime archive or Linux
+            # sidecar dependencies while no user runs WSL. The app hides WSL in slim builds, and
+            # PR CI (windows-packaging.yml) keeps building and qualifying the full WSL package.
+            args+=(--omit-wsl-runtime)
             if [[ "${SCIENT_WINDOWS_SIGNING_READY:-false}" == "true" ]]; then
               args+=(--signed)
               signed=true
@@ -1058,7 +1008,7 @@ jobs:
           tar -C verify -xf verify/unpacked.tar
           node verify/verify-windows-desktop-artifact.mjs \
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
-            --arch x64 --build-version "$RELEASE_VERSION" --verbose
+            --arch x64 --build-version "$RELEASE_VERSION" --omit-wsl-runtime --verbose
       - name: Cache verified speech probe inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

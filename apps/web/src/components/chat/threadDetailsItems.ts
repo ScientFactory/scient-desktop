@@ -1,7 +1,9 @@
 import type { ClientSettings } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
-// Ids are stored in client settings, so never rename one.
+import { persistClientSettingsUpdate } from "../../hooks/useSettings";
+
+// Ids are stored in client settings, so renaming one resets everyone's choice for that item.
 export const THREAD_DETAILS_ITEMS = [
   { id: "environment", label: msg("Environment and worktree"), defaultVisible: true },
   { id: "openIn", label: msg("Open in editor"), defaultVisible: true },
@@ -26,7 +28,8 @@ export const THREAD_DETAILS_ITEMS = [
   },
   { id: "sideChats", label: msg("Side chats"), defaultVisible: true },
   { id: "usage", label: msg("Usage limits"), defaultVisible: false },
-  { id: "context", label: msg("Context window"), defaultVisible: false },
+  // Was "context" while it defaulted to off; the new id turns it on once for everyone.
+  { id: "contextWindow", label: msg("Context window"), defaultVisible: true },
 ] as const;
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];
@@ -38,11 +41,9 @@ type ThreadDetailsItemSettings = Pick<
   "threadDetailsItems" | "threadDetailsUsageEnabled"
 >;
 
-// People who turned on the retired Labs toggle keep Usage and Context until they change them here.
+// People who turned on the retired Labs toggle keep Usage until they change it here.
 function defaultVisible(item: ThreadDetailsItem, settings: ThreadDetailsItemSettings) {
-  return item.id === "usage" || item.id === "context"
-    ? settings.threadDetailsUsageEnabled
-    : item.defaultVisible;
+  return item.id === "usage" ? settings.threadDetailsUsageEnabled : item.defaultVisible;
 }
 
 export function resolveThreadDetailsVisibility(
@@ -66,11 +67,19 @@ export function setThreadDetailsItem(
   return visible === defaultVisible(item, settings) ? rest : { ...rest, [item.id]: visible };
 }
 
+/** Applies the choice to the latest saved settings, so a change from another window survives. */
+export function saveThreadDetailsItem(item: ThreadDetailsItem, visible: boolean) {
+  return persistClientSettingsUpdate((current) => ({
+    ...current,
+    threadDetailsItems: setThreadDetailsItem(current, item, visible),
+  }));
+}
+
 export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibility) {
   return THREAD_DETAILS_ITEMS.every((item) => visibility[item.id] === item.defaultVisible);
 }
 
-/** Also clears the retired Labs flag, so Usage and Context return to off. */
+/** Also clears the retired Labs flag, so Usage returns to off. */
 export const RESET_THREAD_DETAILS_ITEMS = {
   threadDetailsItems: {},
   threadDetailsUsageEnabled: false,
