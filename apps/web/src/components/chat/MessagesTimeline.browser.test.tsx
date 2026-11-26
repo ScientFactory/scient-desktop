@@ -617,9 +617,19 @@ describe("MessagesTimeline messages", () => {
               `turn-${index}`,
             ),
     );
+    // SCIENT-FORK:START — the opening restore owns the viewport until the thread is positioned;
+    // a scroll before then is pulled back to the end.
+    const positioned = Promise.withResolvers<void>();
     await using screen = await renderElement(
-      <MessagesTimeline {...props} timelineEntries={entries} />,
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        onPositionedThreadKeyChange={(key) => {
+          if (key === props.routeThreadKey) positioned.resolve();
+        }}
+      />,
     );
+    // SCIENT-FORK:END
     const headings = () => [...screen.container.querySelectorAll("h3")];
     const headingFor = (text: string) =>
       headings().find((heading) => heading.parentElement?.textContent?.includes(text));
@@ -641,6 +651,8 @@ describe("MessagesTimeline messages", () => {
       expect(headings()[0]).toBe(headingFor("First turn"));
       expect(headings().at(-1)).toBe(headingFor("Last turn"));
     });
+    // SCIENT-FORK: see above.
+    await positioned.promise;
 
     await expectHeadingInView("First turn", "Turn 1:");
     expect(headingFor("Last turn")).toBeDefined();
