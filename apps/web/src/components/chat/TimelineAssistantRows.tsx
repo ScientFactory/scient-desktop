@@ -21,12 +21,12 @@ import { readResponseSubagents, useAssistantMessageText } from "../../state/enti
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { readThreadTurnItems } from "../../state/entities";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // Cached Markdown link handlers must retain only the inputs needed for directory lookup.
 function createAgentDirectoriesReader(
@@ -82,6 +82,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                 agentDirectories={createAgentDirectoriesReader(ctx.threadRef, row.projectedItem)}
                 threadRef={ctx.threadRef ?? undefined}
                 isStreaming={Boolean(row.message.streaming)}
+                streamingId={row.message.id}
                 messageId={row.message.id}
                 changedFiles={row.assistantTurnChangedFiles}
                 directionHint={row.assistantDirectionHint}
@@ -242,20 +243,12 @@ function AssistantMessageMeta({
         <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />
       ) : null}
       {!message.streaming && (
-        <Tooltip>
-          <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-            {formatDayAwareTimestamp(
-              message.updatedAt,
-              ctx.timestampFormat,
-              undefined,
-              undefined,
-              m,
-            )}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat, m)}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={<p className="text-muted-foreground text-xs tabular-nums" />}
+          label={formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat, m)}
+        >
+          {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat, undefined, undefined, m)}
+        </SharedTooltipTrigger>
       )}
     </div>
   );
@@ -289,24 +282,24 @@ function AssistantReplyButton({ message, itemId }: { message: ChatMessage; itemI
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost-muted"
-            onClick={reply}
-            aria-label={gt("Reply to this response")}
-          />
-        }
-      >
-        <ReplyIcon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        <T>Reply to this response</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost-muted"
+          onClick={reply}
+          aria-label={gt("Reply to this response")}
+        />
+      }
+      label={
+        <>
+          <T>Reply to this response</T>
+        </>
+      }
+    >
+      <ReplyIcon className="size-3" />
+    </SharedTooltipTrigger>
   );
 }
 

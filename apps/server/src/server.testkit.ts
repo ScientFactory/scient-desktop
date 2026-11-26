@@ -871,7 +871,8 @@ export const buildAppUnderTest = (options?: {
       listLocalBranchNames: () => Effect.succeed([]),
       // Status refreshes read refs first; no snapshot always rereads local status.
       readRefSnapshot: () => Effect.succeed(null),
-      readLocalStatusRefSnapshot: () => Effect.succeed(null),
+      readStatusRefreshRefs: () => Effect.succeed(null),
+      readStatusPoll: () => Effect.succeed(null),
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({

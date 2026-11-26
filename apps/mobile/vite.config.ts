@@ -9,6 +9,7 @@ import { ReactCompilerFirstSequencer } from "./src/reactCompilerFirstSequencer";
 const reactTests = [
   "src/features/browser/LocalPreviewRouteScreen.test.tsx",
   "src/features/threads/LinkedThreadSheet.test.tsx",
+  "src/features/workflows/WorkflowStepCard.test.tsx",
   "src/features/threads/ThreadGuestShareSheet.test.tsx",
   "src/features/threads/useSubmitAfterNativeImages.test.tsx",
   "src/features/threads/git/GitBranchesSheet.test.tsx",
@@ -51,6 +52,7 @@ const reactTests = [
   "src/components/ComposerEditor.ios.test.tsx",
   "src/native/V5StackHeader.ios.test.tsx",
   "src/native/createV5StackNavigator.ios.test.tsx",
+  "src/features/layout/useCollapsedSplitColumn.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-state.test.tsx",
@@ -59,6 +61,7 @@ const reactTests = [
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/threads/use-composer-command-menu.select.test.tsx",
   "src/features/threads/useSidebarRowThreadKey.test.tsx",
+  "src/features/threads/ThreadScreenHost.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",

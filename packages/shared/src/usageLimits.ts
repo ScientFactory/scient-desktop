@@ -73,16 +73,6 @@ function windowAppliesToModel(
         return scopeToken(canonical).includes(window.id.slice("seven_day_".length));
       }
       return true;
-    case "antigravity": {
-      const family = canonical.match(/^(gemini|claude|gpt)-/)?.[1];
-      const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
-      return (
-        pool === undefined ||
-        family === undefined ||
-        pool === family ||
-        (pool === "3p" && (family === "claude" || family === "gpt"))
-      );
-    }
     case "opencode":
       return !window.id.startsWith("go_") || canonical.startsWith("opencode-go/");
     default:
@@ -849,16 +839,6 @@ function hasDuplicateCursorTotal(pool: LimitPool): boolean {
 }
 
 export function displayLimitWindows(pool: LimitPool) {
-  if (pool.driver === "antigravity") {
-    return [...pool.windows].sort(
-      (left, right) =>
-        Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
-        left.id
-          .replace(/-(5h|weekly|quota)$/, "")
-          .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
-        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
-    );
-  }
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
@@ -1227,24 +1207,6 @@ export function instanceHubs(
 ): UsageLimitSourceSnapshots {
   const endpoint = provider.auth.endpoint;
   return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
-}
-
-// Antigravity meters Gemini Argon, Gemini Carbon, other Gemini, and Claude/GPT models apart.
-function antigravityQuotaFamily(id: string) {
-  if (!id.startsWith("gemini")) return "shared";
-  return id.includes("argon") ? "argon" : id.includes("carbon") ? "carbon" : "gemini";
-}
-
-/** Each Antigravity quota blocks only the models it meters. */
-export function antigravityWindowLimitsModel(
-  window: Pick<ServerProviderUsageWindow, "id">,
-  model: string | null,
-): boolean {
-  // A hub can prefix model ids, such as "ag/gemini-3.1-pro".
-  const base = model?.slice(model.lastIndexOf("/") + 1);
-  // An alias such as "fast" may route to either quota, so both hold it back.
-  if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
-  return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
 }
 
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */

@@ -72,6 +72,7 @@ import {
 import {
   copyPngToClipboard,
   getAppBranding,
+  getDatabaseMigrationProgress,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
   installRelayTelemetryEnabled,
@@ -162,6 +163,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:END
 
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handle(getDatabaseMigrationProgress);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);

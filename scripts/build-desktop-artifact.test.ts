@@ -1079,6 +1079,39 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("packages every platform with Node inspector flags off and run-as-Node left on", () =>
+    Effect.gen(function* () {
+      const fuses = (platform: "mac" | "linux" | "win", target: string, signed: boolean) =>
+        createBuildConfig(platform, target, "0.0.33", signed, false, undefined, undefined).pipe(
+          Effect.map((config) => config.electronFuses),
+        );
+
+      // The desktop app starts its server and the `t3` shim by running its own binary as Node.
+      // SCIENT-FORK: every build also keeps packaged browser cookies encrypted.
+      assert.deepEqual(yield* fuses("linux", "AppImage", false), {
+        enableCookieEncryption: true,
+        enableNodeCliInspectArguments: false,
+        resetAdHocDarwinSignature: false,
+      });
+      assert.deepEqual(yield* fuses("win", "nsis", false), {
+        enableCookieEncryption: true,
+        enableNodeCliInspectArguments: false,
+        resetAdHocDarwinSignature: false,
+      });
+      // Nothing signs an unsigned macOS build after the flip, so the flip re-signs it ad hoc.
+      assert.deepEqual(yield* fuses("mac", "dmg", false), {
+        enableCookieEncryption: true,
+        enableNodeCliInspectArguments: false,
+        resetAdHocDarwinSignature: true,
+      });
+      assert.deepEqual(yield* fuses("mac", "dmg", true), {
+        enableCookieEncryption: true,
+        enableNodeCliInspectArguments: false,
+        resetAdHocDarwinSignature: false,
+      });
+    }),
+  );
+
   // SCIENT-FORK: AppImages keep Scient's versioned name (see createBuildConfig).
 
   it.effect("declares Calendar and Apple Events access for hosted commands in macOS builds", () =>

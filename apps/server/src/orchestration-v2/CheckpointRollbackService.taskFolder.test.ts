@@ -64,6 +64,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 // SCIENT-FORK:END task-folder-rewind
 
 const threadId = ThreadId.make("thread:task-folder-rewind");
@@ -999,6 +1000,7 @@ const layerRollbackExecutor = (dispatched: Array<string>) =>
             }),
         }),
         Layer.mock(ConversationForkService)({}),
+        Layer.mock(ProjectionMaintenance.ProjectionMaintenanceV2)({}),
         ServerSettings.layerTest(),
       ),
     ),

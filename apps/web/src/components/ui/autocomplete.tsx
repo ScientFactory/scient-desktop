@@ -194,8 +194,13 @@ function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.
 function AutocompleteList({
   className,
   scrollable = true,
+  scrollAreaClassName,
   ...props
-}: AutocompletePrimitive.List.Props & { scrollable?: boolean }) {
+}: AutocompletePrimitive.List.Props & {
+  scrollable?: boolean;
+  /** Put height caps here, not on `className`: a capped list never resizes, so the scrollbar goes stale. */
+  scrollAreaClassName?: string;
+}) {
   const list = (
     <AutocompletePrimitive.List
       className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
@@ -205,7 +210,12 @@ function AutocompleteList({
   );
   return scrollable ? (
     // A flex column lets the viewport shrink with a height-capped parent instead of overflowing it.
-    <ScrollArea className="flex flex-col" scrollbarGutter scrollFade>
+    <ScrollArea
+      className={cn("flex flex-col", scrollAreaClassName)}
+      observeContent
+      scrollbarGutter
+      scrollFade
+    >
       {list}
     </ScrollArea>
   ) : (

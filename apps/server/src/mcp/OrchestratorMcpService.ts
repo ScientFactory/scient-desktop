@@ -139,6 +139,7 @@ import {
 import * as Metrics from "../observability/Metrics.ts";
 import {
   interactionModeRank,
+  refuseAgentModePick,
   resolveInteractionMode,
   resolveRuntimeMode,
   runtimeModeRank,
@@ -1904,6 +1905,11 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    /** A retry replays its accepted command; refusing it here would lose that replay. */
+    readonly skipAgentModeRefusal?: boolean;
+    // SCIENT-FORK:START — the caller's mode is its native invocation policy, as everywhere else here.
+    readonly callerRuntimeMode: RuntimeMode;
+    // SCIENT-FORK:END
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -2006,6 +2012,17 @@ const make = Effect.gen(function* () {
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = yield* validateModelOptions(provider, model, input.target?.options);
+    if (input.skipAgentModeRefusal !== true) {
+      yield* refuseAgentModePick({
+        callerRuntimeMode: input.callerRuntimeMode, // SCIENT-FORK: native invocation policy.
+        picked: requestedOptions,
+        descriptors: descriptors ?? [],
+        held:
+          instanceId === input.parent.thread.modelSelection.instanceId
+            ? input.parent.thread.modelSelection.options
+            : undefined,
+      });
+    }
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId &&
@@ -3226,6 +3243,8 @@ const make = Effect.gen(function* () {
         providers,
         cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        skipAgentModeRefusal: isRetryOfAcceptedDelegation,
+        callerRuntimeMode: policy.runtimeMode, // SCIENT-FORK: native invocation policy.
       });
       const runtimeMode = yield* resolveRuntimeMode(policy.runtimeMode, input.runtimeMode, target);
       const interactionMode = yield* resolveInteractionMode(
@@ -3619,6 +3638,7 @@ const make = Effect.gen(function* () {
                       target: request.target,
                       providers,
                       cwd,
+                      callerRuntimeMode: policy.runtimeMode,
                     })
                   : {
                       modelSelection: accepted.thread.modelSelection,

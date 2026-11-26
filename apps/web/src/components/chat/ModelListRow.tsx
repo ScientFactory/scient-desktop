@@ -7,11 +7,11 @@ import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { modelCompanyLabel } from "../../scient/modelPicker/modelCompanyLabel";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -89,20 +89,21 @@ export const ModelListRow = memo(function ModelListRow(props: {
           ) : null}
           {/* SCIENT-FORK:START - provider-reported token cost. */}
           {props.providerCostLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
-                }
-              >
-                {props.providerCostLabel}
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <T>
-                  Costs <Var>{props.providerCostLabel}</Var> of the provider&apos;s base token rate
-                </T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
+              }
+              label={
+                <>
+                  <T>
+                    Costs <Var>{props.providerCostLabel}</Var> of the provider&apos;s base token
+                    rate
+                  </T>
+                </>
+              }
+            >
+              {props.providerCostLabel}
+            </SharedTooltipTrigger>
           ) : null}
           {/* SCIENT-FORK:END */}
           {props.unavailable ? (
@@ -117,37 +118,34 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onToggleFavorite(props.instanceId, props.slug);
-                }}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                }}
-                disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-              >
-                <StarIcon
-                  className={cn(
-                    "size-3.5 sm:size-3",
-                    props.isFavorite && "fill-current text-warning",
-                    (!props.isFavorite || props.favoriteStarOnHover) &&
-                      "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
-                  )}
-                />
-              </Button>
-            }
-          />
-          <TooltipPopup side="top" align="center">
-            {props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onToggleFavorite(props.instanceId, props.slug);
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+              }}
+              disabled={Boolean(props.disabledReason)}
+              aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+            >
+              <StarIcon
+                className={cn(
+                  "size-3.5 sm:size-3",
+                  props.isFavorite && "fill-current text-warning",
+                  (!props.isFavorite || props.favoriteStarOnHover) &&
+                    "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
+                )}
+              />
+            </Button>
+          }
+          label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+          align="center"
+        />
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
       </div>
     </ComboboxItem>
@@ -158,11 +156,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger render={row} />
-      <TooltipPopup side="left" align="center">
-        {props.disabledReason}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger render={row} label={props.disabledReason} side="left" align="center" />
   );
 });

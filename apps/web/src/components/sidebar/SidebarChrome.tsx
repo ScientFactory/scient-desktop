@@ -46,7 +46,6 @@ import {
   SidebarMenuItem,
   SidebarTrigger,
 } from "../ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 // SCIENT-FORK:END
 import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
@@ -58,6 +57,7 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 import { APP_BASE_NAME } from "../../branding";
 // SCIENT-FORK:START — the What's new card; its dialog is mounted at app level.
@@ -199,27 +199,28 @@ function HistoryNavigationButton({ direction }: { direction: HistoryDirection })
   );
   const Icon = direction === "back" ? ArrowLeftIcon : ArrowRightIcon;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={label}
-            className="[-webkit-app-region:no-drag]"
-            disabled={!enabled}
-            onClick={() => navigateHistory(direction)}
-            size="icon-sm"
-            // SCIENT-FORK: Scient's stage keeps theme colors, where white media icons would vanish.
-            variant="ghost"
-          />
-        }
-      >
-        <Icon className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">
-        {label}
-        {shortcutLabel ? ` (${shortcutLabel})` : ""}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          aria-label={label}
+          className="[-webkit-app-region:no-drag]"
+          disabled={!enabled}
+          onClick={() => navigateHistory(direction)}
+          size="icon-sm"
+          // SCIENT-FORK: Scient's stage keeps theme colors, where white media icons would vanish.
+          variant="ghost"
+        />
+      }
+      label={
+        <>
+          {label}
+          {shortcutLabel ? ` (${shortcutLabel})` : ""}
+        </>
+      }
+      side="bottom"
+    >
+      <Icon className="size-3.5" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -289,16 +290,14 @@ function SidebarUtilityItem({
       className="shrink-0"
       data-sidebar-utility={secondary ? "secondary" : undefined}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
-              {icon}
-            </SidebarMenuButton>
-          }
-        />
-        <TooltipPopup side="top">{label}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            {icon}
+          </SidebarMenuButton>
+        }
+        label={label}
+      />
     </SidebarMenuItem>
   );
 }

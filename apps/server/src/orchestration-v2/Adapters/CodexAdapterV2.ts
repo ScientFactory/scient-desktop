@@ -117,6 +117,7 @@ import type {
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
   ProviderApprovalOption,
+  ProviderApprovalPushHooks,
   ProviderRequestKind,
   ProviderThreadId,
   ProviderTurnId,
@@ -1803,9 +1804,16 @@ export const CODEX_THREAD_CONFIG = {
 
 // request_secret can wait an hour; keep Codex's MCP timeout above that.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
+// SCIENT-FORK: Scient registers its MCP server as `scient`.
+const CODEX_T3_MCP_SERVER = "scient";
 // Holds T3 tools Codex must call directly, never from Code Mode. Calls arrive as
 // `scient-direct.<tool>`; t3McpToolPresentation.ts must keep resolving that form.
 const CODEX_T3_DIRECT_MCP_SERVER = "scient-direct";
+// The names this adapter registers T3's MCP server under, and so the ones Codex gives for it.
+const CODEX_T3_MCP_SERVERS: ReadonlySet<string> = new Set([
+  CODEX_T3_MCP_SERVER,
+  CODEX_T3_DIRECT_MCP_SERVER,
+]);
 // SCIENT-FORK:START — tools that wait on the person's card are direct-only as well.
 const CODEX_DIRECT_ONLY_T3_TOOLS = [
   "scient_thread_wait",
@@ -1873,9 +1881,11 @@ export function codexThreadRuntimeParams(input: {
       ...(t3Server === undefined || mcpSession === undefined
         ? {}
         : {
-            // SCIENT-FORK:START — override only the owned servers, retaining user MCP configuration.
-            "mcp_servers.scient": { ...t3Server, disabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS },
-            // SCIENT-FORK:END
+            // Override only T3's servers so launch-argument MCP servers survive.
+            [`mcp_servers.${CODEX_T3_MCP_SERVER}`]: {
+              ...t3Server,
+              disabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
+            },
             // Code Mode runs a blocking wait or delegate wait as a nested call, and the model
             // keeps polling it. A second, direct-only registration makes it a plain tool call.
             [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
@@ -2303,6 +2313,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   const threadMcpStatus = yield* Effect.serviceOption(
     ThreadMcpStatusRegistry.ThreadMcpStatusRegistry,
   );
+  // The elicitation handler shows T3 Code's own requests and passes on the person's answer to each.
+  yield* mcpSessions.showsApprovalRequests(adapterOptions.instanceId);
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, path, idAllocator, serverConfig } = adapterOptions;
@@ -5378,6 +5390,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly prompt?: string | null;
           readonly reason?: string | null | undefined;
           readonly appName?: string;
+          readonly pushHooks?: ProviderApprovalPushHooks | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) {
           const createdAt = yield* DateTime.now;
@@ -5463,6 +5476,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               : { prompt: input.prompt }),
             ...(reason === undefined ? {} : { reason }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
+            ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
             ...(input.options === undefined ? {} : { options: input.options }),
           };
           return { node, request, turnItem };
@@ -6925,7 +6939,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+            // T3's own tools leave what they ask with the thread's MCP session while they wait.
+            // A request is T3's when it is one of those, whatever a server calls itself.
+            const ownRequest = CODEX_T3_MCP_SERVERS.has(payload.serverName)
+              ? yield* mcpSessions.findApprovalRequest(context.input.threadId, payload.message)
+              : undefined;
+            // T3 Code asks only when a person has to answer, so its own request is never
+            // answered here: a turn's runtime mode alone does not say the thread is in Full access.
+            if (
+              ownRequest === undefined &&
+              context.input.runtimePolicy.runtimeMode === "full-access"
+            ) {
               return acceptance;
             }
 
@@ -6940,7 +6964,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeRequestId,
               requestKind: "mcp-elicitation",
               prompt: payload.message,
-              appName: described.appName,
+              // T3 Code asking is the app itself, so there is no other app to name.
+              ...(ownRequest === undefined
+                ? { appName: described.appName }
+                : { pushHooks: ownRequest.pushHooks }),
               options: described.options,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
@@ -6979,7 +7006,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            return toMcpElicitationResponse(payload, resolved);
+            const response = toMcpElicitationResponse(payload, resolved);
+            // The person's answer in the app is what T3 Code's own request goes by, so it is
+            // left with the request before Codex carries a reply back.
+            if (ownRequest !== undefined) {
+              yield* mcpSessions.answerApprovalRequests(
+                context.input.threadId,
+                payload.message,
+                response.action === "accept",
+              );
+            }
+            return response;
           }).pipe(Effect.orDie),
         );
 

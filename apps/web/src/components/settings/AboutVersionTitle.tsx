@@ -4,7 +4,7 @@ import { APP_VERSION } from "../../branding";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { InlineButton } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // SCIENT-FORK: dev builds show their stage; the copied value stays the plain version.
 export function AboutVersionTitle({ label = APP_VERSION }: { label?: string }) {
@@ -32,22 +32,22 @@ export function AboutVersionTitle({ label = APP_VERSION }: { label?: string }) {
         <T>Version</T>
       </span>
       <code className="text-2xs font-medium">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <InlineButton
-                tone="muted"
-                aria-label={gt("Copy version {version}", { version: APP_VERSION })}
-                onClick={() => copyToClipboard(APP_VERSION, undefined)}
-              >
-                {label}
-              </InlineButton>
-            }
-          />
-          <TooltipPopup>
-            <T>Copy version</T>
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <InlineButton
+              tone="muted"
+              aria-label={gt("Copy version {version}", { version: APP_VERSION })}
+              onClick={() => copyToClipboard(APP_VERSION, undefined)}
+            >
+              {label}
+            </InlineButton>
+          }
+          label={
+            <>
+              <T>Copy version</T>
+            </>
+          }
+        />
       </code>
     </span>
   );

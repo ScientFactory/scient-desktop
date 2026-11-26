@@ -32,7 +32,6 @@ import {
 } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
@@ -44,6 +43,7 @@ import {
   ULTRATHINK_IN_BODY_NOTE,
   useTraitsSelection,
 } from "./TraitsPicker";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
@@ -247,12 +247,14 @@ function ColumnRow(props: {
   );
   if (!props.description) return <button {...rowProps}>{content}</button>;
   return (
-    <Tooltip>
-      <TooltipTrigger render={<button {...rowProps} />}>{content}</TooltipTrigger>
-      <TooltipPopup side="right" className="max-w-56">
-        {props.description}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<button {...rowProps} />}
+      label={props.description}
+      side="right"
+      className="max-w-56"
+    >
+      {content}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -619,10 +621,9 @@ function SpeedSegment(props: {
   const content = <SpeedLabel label={props.label} speed={props.speed} />;
   if (!props.description) return <Toggle value={props.value}>{content}</Toggle>;
   return (
-    <Tooltip>
-      <TooltipTrigger render={<Toggle value={props.value} />}>{content}</TooltipTrigger>
-      <TooltipPopup side="top">{props.description}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger render={<Toggle value={props.value} />} label={props.description}>
+      {content}
+    </SharedTooltipTrigger>
   );
 }
 

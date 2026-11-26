@@ -3279,10 +3279,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
-    // SCIENT-FORK:START — Scient Accounts: encrypt packaged browser cookies.
-    // Never turn this fuse off: doing so makes existing encrypted cookies unreadable.
-    electronFuses: { enableCookieEncryption: true },
-    // SCIENT-FORK:END
+    // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
+    // binary as Node, and that mode still accepts inspector flags.
+    electronFuses: {
+      // SCIENT-FORK:START — Scient Accounts: encrypt packaged browser cookies.
+      // Never turn this fuse off: doing so makes existing encrypted cookies unreadable.
+      enableCookieEncryption: true,
+      // SCIENT-FORK:END
+      enableNodeCliInspectArguments: false,
+      // Nothing signs an unsigned macOS build after the flip, which voids its ad hoc signature.
+      resetAdHocDarwinSignature: platform === "mac" && !signed,
+    },
     // SCIENT-FORK:START
     fileAssociations:
       platform === "linux"

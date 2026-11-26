@@ -660,12 +660,20 @@ const connectLinkCommand = Command.make("link", {
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
           const config = yield* ServerConfig.ServerConfig;
-          const serveCommand = yield* resolveCliCommand(["serve", "--base-dir", config.baseDir]);
-          yield* Console.log(
-            flags.publishOnly
-              ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start Scient to publish agent activity (no managed tunnel).`
-              : `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
-          );
+          const running = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+          const purpose = flags.publishOnly
+            ? "publish agent activity (no managed tunnel)"
+            : "make this machine reachable";
+          // SCIENT-FORK:START — the hint always names the base directory this command used.
+          const command = (subcommand: ReadonlyArray<string>) =>
+            resolveCliCommand([...subcommand, "--base-dir", config.baseDir]);
+          const next = Option.isSome(running)
+            ? `A Scient server is already running. Restart it to ${purpose}: run \`${yield* command(["service", "restart"])}\` for the background service, or stop the server and start it again.`
+            : flags.publishOnly
+              ? `Start Scient to ${purpose}.`
+              : `Start the server with \`${yield* command(["serve"])}\` to ${purpose}.`;
+          // SCIENT-FORK:END
+          yield* Console.log(`✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  ${next}`);
         }
       }),
     ),

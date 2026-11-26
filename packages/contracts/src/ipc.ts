@@ -7,6 +7,7 @@ import type {
 } from "./scient/desktopBridge.ts";
 // SCIENT-FORK:END
 import * as Schema from "effect/Schema";
+import type { DatabaseMigrationProgress } from "./server.ts";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -1212,6 +1213,7 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 export interface DesktopBridge extends ScientDesktopBridge {
   // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
+  getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;
   // SCIENT-FORK:START — null when Electron cannot resolve a dropped file's path.

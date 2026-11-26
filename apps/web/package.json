@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,6 @@
     "test": "vp test run --passWithNoTests --project unit --project browser",
     "test:performance": "vp test bench --run --project \"unit*\" --project \"browser*\" --fileParallelism=false --maxWorkers=1 src/scient/latex/latexWordCount.bench.ts src/scient/latex/mathReadingPreview.browser.bench.ts src/scient/markdownEditor/prosemirror/performance.browser.bench.ts",
     "templates:previews": "node scripts/render-template-previews.ts",
-    "bench": "vp test bench --passWithNoTests --project \"unit (bench)\"",
     "i18n:translate": "gt translate"
   },
   "dependencies": {
