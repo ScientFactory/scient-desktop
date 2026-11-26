@@ -1328,6 +1328,34 @@ describe("Send to Zotero", () => {
     });
   });
 
+  it("never sends a list marked et al. over a longer one in Zotero", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const record = await readScientSourceRecord(root, sourceId);
+    if (!record) throw new Error("missing");
+    const names = Array.from({ length: 300 }, (_, index) => ({
+      creatorType: "author",
+      givenName: "Ada",
+      familyName: `Member${index + 1}`,
+      literalName: null,
+    }));
+    const current = zoteroItem("OLDA2345", {
+      itemType: "journalArticle",
+      title: "Written in Scient",
+      creators: names.map(({ givenName, familyName }) => ({
+        creatorType: "author",
+        firstName: givenName,
+        lastName: familyName,
+      })),
+    });
+    const short = { ...record, creators: names.slice(0, 256) };
+
+    expect(
+      zoteroPatchFor({ record: { ...short, incompleteCreatorRoles: ["author"] }, current }),
+    ).not.toHaveProperty("creators");
+    // A shorter list that is not marked short is a correction, and is sent.
+    expect(zoteroPatchFor({ record: short, current })).toHaveProperty("creators");
+  });
+
   it("does not overwrite an item changed in Zotero since Scient read it", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg();

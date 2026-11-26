@@ -296,8 +296,15 @@ export function zoteroPatchFor(input: {
   // What Zotero has now: a field Scient's own reading of the item leaves out is in `fields`,
   // so a detail that has not changed is not sent again.
   const zoteroHas = (field: string) => raw[field] ?? input.current.fields?.[field];
+  // A list Scient knows is short ("et al.") never replaces a longer one Zotero holds.
+  const zoteroCreators = zoteroHas("creators");
+  const keepCreators =
+    (input.record.incompleteCreatorRoles?.length ?? 0) > 0 &&
+    Array.isArray(zoteroCreators) &&
+    zoteroCreators.length > input.record.creators.length;
   const patch: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(data)) {
+    if (field === "creators" && keepCreators) continue;
     if (
       JSON.stringify(comparable(field, value)) !==
       JSON.stringify(comparable(field, zoteroHas(field)))
