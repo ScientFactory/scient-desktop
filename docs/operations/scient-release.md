@@ -78,7 +78,10 @@ the stable scheduler and production gate.
   fails the build. The verifier and Windows Packaging then require the packaged
   engine, loaded through the backend's own preload, to accept every prepared
   module (`check`). At runtime a missing, damaged, foreign-engine or stale entry
-  is not used and the module compiles from its shipped source.
+  is not used and the module compiles from its shipped source. A Windows backend
+  never exits normally, so it flushes the compile cache after startup even when
+  prepared bytecode was used; otherwise modules outside the prepared set would
+  compile on every launch.
 - CI calls Windows Packaging for changes affecting packaged code on pull
   requests, merge groups, and main. Successful qualification is part of the
   existing required `Test` check; an unresolved diff runs qualification, and
