@@ -263,6 +263,18 @@ alignment integrator. These checks do not replace any complete local, hosted, na
 migration, provenance, protected-seam, or visual qualification required by
 [AGENTS.md](../../AGENTS.md) and the [alignment protocol](./upstream-alignment-protocol.md).
 
+## Fork footprint
+
+`pnpm alignment:footprint --base <ref> --head <ref>` (`--format json` for data) measures each
+ref's divergence from the T3 `integrationBase` in its own `upstream-state.json`: files present
+in both trees with different content, their added and removed lines (binary files count as files
+only), and T3 files the ref deleted. Scient-only files and `.repos/` do not count. It prints both
+footprints with deltas and, when the baseline is the same, the T3 files the range newly diverges,
+newly deletes or returns to identical. When the baseline moved (an alignment), it says so and
+omits the per-file lists. It reads commits only and finishes in about a second on this repository.
+The provenance workflow appends it to each pull request's job summary for information; it never
+fails the job, and a baseline commit missing from the clone prints a note instead.
+
 ## Desktop artifacts
 
 - `vp run dist:desktop:artifact --platform <mac|linux|win> --target <target> --arch <arch>`: Builds a desktop artifact for a specific platform/target/arch.

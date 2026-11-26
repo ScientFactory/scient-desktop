@@ -94,6 +94,7 @@
     "alignment:start": "node scripts/scient-alignment.mjs start",
     "alignment:facts": "node scripts/scient-alignment.mjs facts",
     "alignment:gates": "node scripts/scient-alignment-gates.mjs",
+    "alignment:footprint": "node scripts/scient-fork-footprint.mjs",
     "build:synctex-runtime": "node scripts/stage-synctex-runtime.ts"
   },
   "devDependencies": {

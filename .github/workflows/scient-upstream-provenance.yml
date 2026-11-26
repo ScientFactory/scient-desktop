@@ -59,3 +59,14 @@ jobs:
           node scripts/scient-seam-check.mjs \
             --base "$seam_base" \
             --head "$seam_head"
+
+      # Information only: the PR's change in Scient's divergence from T3, measured on
+      # GitHub's merge like the seam check. Full history already holds both
+      # integrationBase commits as second parents of alignment merges.
+      - name: Summarize fork footprint
+        if: github.event_name == 'pull_request' && !cancelled()
+        continue-on-error: true
+        timeout-minutes: 2
+        run: |
+          git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null || git fetch --no-tags origin "$GITHUB_SHA"
+          node scripts/scient-fork-footprint.mjs --base "$GITHUB_SHA^1" --head "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
