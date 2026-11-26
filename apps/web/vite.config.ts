@@ -16,6 +16,9 @@ import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { scientPdfAssets } from "./scripts/scientPdfAssets";
+// SCIENT-FORK:START — CJK office fonts ship Brotli-compressed.
+import { scientCjkFonts } from "./scripts/scientCjkFonts";
+// SCIENT-FORK:END
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
@@ -350,6 +353,9 @@ export default defineConfig(({ command, mode }) => {
     plugins: [
       bootstrapTitlePlugin(),
       scientPdfAssets(),
+      // SCIENT-FORK:START — CJK office fonts ship Brotli-compressed.
+      scientCjkFonts(),
+      // SCIENT-FORK:END
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
       builtDev
@@ -543,7 +549,12 @@ export default defineConfig(({ command, mode }) => {
       },
       // SCIENT-FORK:END
     },
-    worker: { format: "es" },
+    worker: {
+      format: "es",
+      // SCIENT-FORK:START — the office workers load the CJK fonts.
+      plugins: () => [scientCjkFonts()],
+      // SCIENT-FORK:END
+    },
     test: {
       projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
       // SCIENT-FORK:START — balance both test projects by recorded duration.

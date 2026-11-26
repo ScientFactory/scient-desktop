@@ -8,6 +8,9 @@ import {
   resolveScriptFallbackFace,
   type BundledFontFace,
 } from "@betteroffice/fonts";
+// SCIENT-FORK:START — CJK faces ship Brotli-compressed; Scient restores their bytes.
+import { isCompressedCjkFace, loadCjkFaceBytes } from "~/scient/office/cjkFonts";
+// SCIENT-FORK:END
 
 // Every face loads from the app's own files, so no font request leaves the machine. The engines draw only with the
 // faces they are handed, never the system's, so CJK text needs the `@betteroffice/fonts-cjk` faces to show at all.
@@ -50,5 +53,8 @@ export function sheetFace(family: string, bold: boolean, italic: boolean) {
  * caches, which every worker shares, serve the files to the next.
  */
 export function loadFace(face: BundledFontFace) {
+  // SCIENT-FORK:START — CJK faces ship Brotli-compressed; Scient restores their bytes.
+  if (isCompressedCjkFace(face)) return loadCjkFaceBytes(face);
+  // SCIENT-FORK:END
   return loadBundledFontBytes(face);
 }

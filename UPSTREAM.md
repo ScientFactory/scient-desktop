@@ -2547,6 +2547,27 @@ own worker; they reached T3 as pingdotgg/t3code#32040 and the file is T3's, unch
 `WordDocument.tsx` adds one thing: once layout passes 1,000 pages it shows the first 1,000 with the
 "Preview limited" notice instead of replacing them with an error.
 
+## Office CJK fonts
+
+T3 bundles `@betteroffice/fonts-cjk`'s five Noto CJK faces as raw OTF, about 35 MB of every
+installed app. Scient ships them Brotli-compressed (about 25 MB) and restores the identical bytes
+when an office file first needs one. WOFF2 would not help: the Word and PowerPoint engines'
+WebAssembly reads only raw OpenType, and the faces are CFF, which WOFF2 only Brotli-compresses.
+
+- `apps/web/scripts/scientCjkFonts.ts` aliases the add-on to an empty stub
+  (`scient/office/fontsCjkAddon.ts`), so its raw files are never emitted, and provides
+  `virtual:scient-cjk-fonts`, the URLs of the compressed copies. It is mounted in `vite.config.ts`'s
+  plugins and worker plugins and in the share page's config. Builds compress at Brotli's best
+  setting into `apps/web/node_modules/.cache/scient-cjk-fonts`; the dev server uses a fast one.
+- `scient/office/cjkFonts.ts` fetches and decodes a face with `brotli-dec-wasm` and checks its
+  length against the font package's manifest. T3's `office/fonts.ts` `loadFace` routes CJK faces
+  there in a marked seam; every office engine loads its faces through `loadFace`.
+- The files keep a `.brotli` suffix: static servers, Vite's included, send `.br` files with
+  `Content-Encoding: br`, and the browser would then hand over already-decoded bytes.
+
+When T3 changes how the office viewers load fonts, keep every CJK load on `loadFace`; a direct
+`loadBundledFontBytes` call for a CJK face fails against the stub.
+
 ## Office reader
 
 Word and PowerPoint files read with the PDF reader's controls: page number, zoom (buttons, keys

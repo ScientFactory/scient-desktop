@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
 import pkg from "../package.json" with { type: "json" };
+import { scientCjkFonts } from "../scripts/scientCjkFonts";
 import { tailwindPlugins } from "./tailwind";
 
 const repoRoot = NodeURL.fileURLToPath(new URL("../../..", import.meta.url));
@@ -17,7 +18,7 @@ export function sharePageConfig(root: string) {
   return defineConfig({
     root,
     base: "/s/_app/",
-    plugins: [react({ compiler: true }), tailwindPlugins(false)],
+    plugins: [react({ compiler: true }), tailwindPlugins(false), scientCjkFonts()],
     define: {
       "import.meta.env.VITE_WS_URL": '""',
       "import.meta.env.VITE_HTTP_URL": '""',
@@ -36,11 +37,6 @@ export function sharePageConfig(root: string) {
     },
     resolve: {
       tsconfigPaths: true,
-      alias: {
-        "@betteroffice/fonts-cjk": NodeURL.fileURLToPath(
-          new URL("../src/components/files/office/fonts-cjk.ts", import.meta.url),
-        ),
-      },
       dedupe: ["react", "react-dom"],
     },
     server: { fs: { allow: [repoRoot] } },
@@ -49,6 +45,6 @@ export function sharePageConfig(root: string) {
       emptyOutDir: true,
       sourcemap: false,
     },
-    worker: { format: "es" },
+    worker: { format: "es", plugins: () => [scientCjkFonts()] },
   });
 }
