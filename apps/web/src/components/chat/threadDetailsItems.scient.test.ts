@@ -18,6 +18,7 @@ import {
 } from "../../hooks/useSettings";
 import {
   resolveThreadDetailsVisibility,
+  RESET_THREAD_DETAILS_ITEMS,
   saveThreadDetailsItem,
   THREAD_DETAILS_ITEMS,
 } from "./threadDetailsItems";
@@ -58,6 +59,20 @@ describe("Usage limits in thread details", () => {
       threadDetailsUsageEnabled: row.legacy,
     });
     expect(visibility.usageLimits).toBe(row.visible);
+  });
+
+  it("leaves Context window off when #1143's contextWindow choice is still saved", () => {
+    const visibility = resolveThreadDetailsVisibility({
+      threadDetailsItems: { contextWindow: true },
+      threadDetailsUsageEnabled: false,
+    });
+    expect(visibility.context).toBe(false);
+  });
+
+  it("Reset to default shows Usage limits and hides Context window", () => {
+    const saved = { threadDetailsItems: { usageLimits: false }, threadDetailsUsageEnabled: true };
+    const visibility = resolveThreadDetailsVisibility({ ...saved, ...RESET_THREAD_DETAILS_ITEMS });
+    expect(visibility).toMatchObject({ usageLimits: true, context: false });
   });
 
   it("stays off when another window hides a different item before hearing about it", async () => {
