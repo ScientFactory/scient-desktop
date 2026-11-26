@@ -914,13 +914,17 @@ describe("Library routes on the library backend", () => {
           trial.citationKey,
           "next2026",
         ]);
-        const work = stored.pins[0].work;
-        expect(work.creators).toHaveLength(256);
-        expect(work.creatorCount).toBe(7_992);
-        expect(work.incompleteCreatorRoles).toEqual(["author"]);
+        expect(stored.pins[0].work.creators).toEqual(consortium);
         expect((await readScientSourceRecord(store.library, trial.sourceId))?.creators).toEqual(
           consortium,
         );
+
+        // The record holds every name, so the refreshed pin keeps the first 256 and the count.
+        await refreshScientProjectPinSnapshots({ projectRoot: store.root, library: store.library });
+        const work = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8")).pins[0].work;
+        expect(work.creators).toEqual(consortium.slice(0, 256));
+        expect(work.creatorCount).toBe(7_992);
+        expect(work.incompleteCreatorRoles).toEqual(["author"]);
       });
     }),
   );

@@ -32,10 +32,9 @@ import {
   ScientSourceIncompleteCreatorRoles,
   ScientSourceMore,
   type ScientSourceRecord,
-  SCIENT_SAVED_COPY_LIST_LIMIT,
   ScientSavedCopyCreatorCount,
-  scientSavedCopyCreators,
-  withIncompleteCreatorRoles,
+  scientSavedCopyList,
+  scientSavedCopyRoster,
 } from "./model.ts";
 import {
   SCIENT_PIN_CITATION_TEXT_FIELDS,
@@ -82,8 +81,8 @@ const NullableText = Schema.NullOr(Schema.String);
 /**
  * The pin's metadata snapshot: every citation input, so a collaborator with no Library cites the
  * same; never an abstract, note or PDF. A snapshot from before the optional fields lacks them:
- * unknown, never an instruction to empty them. Lists are kept to 256 (`boundedPinWork`); a longer
- * one read from an older file is cut on read, never refused.
+ * unknown, never an instruction to empty them. Lists are cut to 256 only from a record that
+ * holds them whole (`scientSavedCopyRoster`).
  */
 export const ScientPinWork = Schema.Struct({
   // Plain text, so a type a newer Scient adds never hides the whole file.
@@ -110,36 +109,6 @@ export const ScientPinWork = Schema.Struct({
 });
 export type ScientPinWork = typeof ScientPinWork.Type;
 
-/** The copy a pin keeps: at most 256 creators, identifiers and tags. */
-function boundedPinWork(work: ScientPinWork): ScientPinWork {
-  const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
-  if (
-    work.creators.length <= limit &&
-    work.identifiers.length <= limit &&
-    (work.tags?.length ?? 0) <= limit &&
-    (work.creatorCount === undefined || work.creatorCount > work.creators.length)
-  ) {
-    return work;
-  }
-  const { creatorCount: _count, incompleteCreatorRoles: _roles, ...rest } = work;
-  const { creators, creatorCount, shortenedRoles } = scientSavedCopyCreators(
-    work.creators,
-    work.creatorCount,
-  );
-  const incompleteCreatorRoles = withIncompleteCreatorRoles(
-    work.incompleteCreatorRoles,
-    shortenedRoles,
-  );
-  return {
-    ...rest,
-    creators,
-    ...(incompleteCreatorRoles?.length ? { incompleteCreatorRoles } : {}),
-    ...(creatorCount !== undefined ? { creatorCount } : {}),
-    identifiers: work.identifiers.slice(0, limit),
-    ...(work.tags !== undefined ? { tags: work.tags.slice(0, limit) } : {}),
-  };
-}
-
 export const ScientProjectPin = Schema.Struct({
   /** The project key: copied from the library's preferred key once, then frozen. */
   citationKey: ScientSourceCitationKey,
@@ -160,11 +129,7 @@ const PinsFileHeader = Schema.Struct({
   pins: Schema.Array(Schema.Unknown),
 });
 const decodePinsHeader = Schema.decodeUnknownSync(PinsFileHeader);
-const decodeWholePin = Schema.decodeUnknownSync(ScientProjectPin);
-const decodePin = (raw: unknown): ScientProjectPin => {
-  const pin = decodeWholePin(raw);
-  return { ...pin, work: boundedPinWork(pin.work) };
-};
+const decodePin = Schema.decodeUnknownSync(ScientProjectPin);
 
 /** A pin with the fields a newer Scient wrote, which every rewrite keeps. */
 interface StoredPin {
@@ -184,8 +149,7 @@ const PIN_FIELDS = Object.keys(ScientProjectPin.fields);
 const WORK_FIELDS = Object.keys(ScientPinWork.fields);
 const FILE_FIELDS = Object.keys(PinsFileHeader.fields);
 
-function encodeWork(whole: ScientPinWork, extra: JsonObject) {
-  const work = boundedPinWork(whole);
+function encodeWork(work: ScientPinWork, extra: JsonObject) {
   return {
     type: work.type,
     title: work.title,
@@ -363,21 +327,24 @@ function noteChange(
   };
 }
 
+/**
+ * The pin's copy of `record`. `copy` is the copy it replaces, whose roster it keeps when only the
+ * copy holds the whole list; null for a copy that must be the record's alone (an undone merge).
+ */
 export function scientPinWorkFromRecord(
   record: ScientSourceRecord,
   earlier: ScientPinWork | null = null,
+  copy: ScientPinWork | null = earlier,
 ): ScientPinWork {
-  const work = scientPinWorkKeepingUnknown(
+  const roster = scientSavedCopyRoster(record, copy);
+  return scientPinWorkKeepingUnknown(
     earlier,
     {
       type: record.type,
       title: record.title,
-      creators: record.creators,
-      ...(record.incompleteCreatorRoles?.length
-        ? { incompleteCreatorRoles: record.incompleteCreatorRoles }
-        : {}),
+      ...roster,
       issuedYear: record.issuedYear,
-      identifiers: record.identifiers,
+      identifiers: scientSavedCopyList(record.identifiers, copy?.identifiers),
       containerTitle: record.containerTitle,
       customType: record.customType ?? null,
       issuedRaw: record.issuedRaw,
@@ -388,11 +355,10 @@ export function scientPinWorkFromRecord(
       language: record.language,
       url: record.url,
       more: record.more ?? {},
-      tags: record.tags,
+      tags: scientSavedCopyList(record.tags, copy?.tags),
     },
     record,
   );
-  return boundedPinWork(work);
 }
 
 function normalizePinNote(note: string | null | undefined): string | undefined {
@@ -1138,7 +1104,7 @@ export async function refreshScientProjectPinSnapshots(input: {
     // What an unmerged source's copy knew and its record does not is kept aside, not dropped.
     const displaced: Array<Parameters<typeof keepScientDisplacedCopies>[2][number]> = [];
     const whole = (stored: StoredPin, record: ScientSourceRecord): ScientPinWork => {
-      const work = scientPinWorkFromRecord(record, stored.pin.work);
+      const work = scientPinWorkFromRecord(record, stored.pin.work, null);
       const differs = scientValuesChangedBy(stored.pin.work, work);
       const undoneAt = unmergedSince.get(record.sourceId);
       if (differs.length > 0 && undoneAt !== undefined) {
@@ -1313,7 +1279,7 @@ export async function listScientProjectPinnedWorks(input: {
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
     const ownId = ownIds[index];
     const own = ownId === undefined ? undefined : removed.get(ownId);
-    const pin = own ? { ...stored, work: scientPinWorkFromRecord(own, stored.work) } : stored;
+    const pin = own ? { ...stored, work: scientPinWorkFromRecord(own, stored.work, null) } : stored;
     const projectNote = pin.note ?? null;
     const incomplete = !scientPinWorkIsComplete(pin.work);
     if (!found) {
@@ -1480,7 +1446,7 @@ export const scientProjectPinsInternals = {
     const restored: StoredPin = {
       ...found,
       workExtra: extraFields(copy["work"], WORK_FIELDS),
-      pin: { ...found.pin, work: boundedPinWork(decodePinWork(copy["work"])) },
+      pin: { ...found.pin, work: decodePinWork(copy["work"]) },
     };
     await writePinsDocument(
       root,

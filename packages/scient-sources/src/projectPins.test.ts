@@ -1107,3 +1107,65 @@ describe("project pins", () => {
     ]);
   });
 });
+
+describe("pins of works with thousands of authors", () => {
+  const consortium = Array.from({ length: 7_992 }, (_, index) => ({
+    ...ada,
+    givenName: `Author ${index + 1}`,
+  }));
+  const pinsPath = (projectRoot: string) =>
+    NodePath.join(projectRoot, ".scient", "library", "pins.json");
+  const storedWork = async (projectRoot: string) =>
+    JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8")).pins[0].work;
+
+  /** A project whose pin lists every author, as Scient wrote it before saved copies were cut. */
+  async function legacyPin(base: string) {
+    const author = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const record = await addRecord(author.library, "trial", {
+      creators: consortium,
+      identifiers: [{ scheme: "doi", value: "10.1000/trial" }],
+    });
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    if (pinned.outcome === "not-found") throw new Error("Expected the pin.");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    const { creatorCount: _count, incompleteCreatorRoles: _roles, ...work } = file.pins[0].work;
+    file.pins[0].work = { ...work, creators: consortium };
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+    return { author, projectRoot, record, citationKey: pinned.pin.citationKey };
+  }
+
+  it("keeps a pin's only full author list until a record holds it", async () => {
+    const base = await fixture();
+    const { projectRoot, citationKey } = await legacyPin(base);
+    const collaborator = await newLibrary(base, "collaborator");
+
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+    expect((await storedWork(projectRoot)).creators).toEqual(consortium);
+
+    await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    const [hydrated] = await listScientSourceRecords(collaborator.library);
+    expect(hydrated?.creators).toEqual(consortium);
+
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    const work = await storedWork(projectRoot);
+    expect(work.creators).toEqual(consortium.slice(0, 256));
+    expect(work.creatorCount).toBe(7_992);
+    expect(work.incompleteCreatorRoles).toEqual(["author"]);
+  });
+});
