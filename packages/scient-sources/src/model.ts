@@ -52,8 +52,9 @@ export const ScientSourceIdentifier = Schema.Struct({
 });
 export type ScientSourceIdentifier = typeof ScientSourceIdentifier.Type;
 
+// Above the largest consortium author lists; a record file's 2 MiB limit is the nearer bound.
 const BoundedCreators = Schema.Array(ScientSourceCreator).pipe(
-  Schema.check(Schema.isMaxLength(256)),
+  Schema.check(Schema.isMaxLength(20_000)),
 );
 const BoundedIdentifiers = Schema.Array(ScientSourceIdentifier).pipe(
   Schema.check(Schema.isMaxLength(256)),
