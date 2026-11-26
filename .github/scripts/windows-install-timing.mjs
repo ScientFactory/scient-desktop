@@ -147,12 +147,14 @@ function connect(wsUrl) {
   });
 }
 
-// Ready: the renderer mounted the app shell, which the root route renders only after the
-// bundled server answered its authentication gate.
+// Ready: the app shell and its main view are mounted. The root route renders the shell only after
+// the bundled server answered its authentication gate; the home view (onboarding for a new
+// profile) mounts its main element once the workspace snapshot and server config have arrived.
 const PROBE = `(() => ({
   href: location.href,
   readyState: document.readyState,
   shell: document.querySelector('[data-slot="sidebar-wrapper"]') !== null,
+  main: document.querySelector('[data-slot="sidebar-wrapper"] main[data-slot="sidebar-inset"]') !== null,
 }))()`;
 
 async function quit(child, installDir) {
@@ -214,8 +216,9 @@ async function launch({ exe, installDir, profile, name }) {
       const value = reply?.result?.value;
       if (!value) continue;
       if (value.readyState === "complete") mark("pageLoadedMs", "page loaded");
-      if (value.shell) {
-        mark("readyMs", "app shell ready");
+      if (value.shell) mark("appShellMs", "app shell");
+      if (value.main) {
+        mark("readyMs", "main view ready");
         readyPage = session;
         break;
       }
@@ -226,8 +229,8 @@ async function launch({ exe, installDir, profile, name }) {
     readyPage !== null
       ? null
       : appExit.code !== null
-        ? `${name}: the app exited (code ${appExit.code}) before its app shell was ready`
-        : `${name}: the app shell was not ready within ${seconds(READY_TIMEOUT_MS)}`;
+        ? `${name}: the app exited (code ${appExit.code}) before it was ready`
+        : `${name}: the app was not ready within ${seconds(READY_TIMEOUT_MS)}`;
   // What a person sees at readiness, or at the failure.
   const shotSession = readyPage ?? [...sessions.values()].find((session) => session.open);
   const shot = await shotSession?.send("Page.captureScreenshot", { format: "png" });
@@ -312,7 +315,8 @@ const defenderRealtime = (() => {
 })();
 const measurement = {
   schemaVersion: 1,
-  readiness: 'app shell mounted ([data-slot="sidebar-wrapper"]) after the server auth gate',
+  readiness:
+    'app shell and its main view mounted ([data-slot="sidebar-wrapper"] main[data-slot="sidebar-inset"])',
   installer: {
     name: NodePath.basename(installer),
     bytes: NodeFS.statSync(installer).size,

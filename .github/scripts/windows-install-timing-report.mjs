@@ -9,8 +9,8 @@ import * as NodeUtil from "node:util";
 export const RELATIVE_TOLERANCE = 0.25;
 export const METRICS = [
   { key: "installMs", label: "Install", floorMs: 5_000 },
-  { key: "firstLaunchMs", label: "First launch to app shell", floorMs: 1_500 },
-  { key: "secondLaunchMs", label: "Second launch to app shell", floorMs: 1_000 },
+  { key: "firstLaunchMs", label: "First launch to ready", floorMs: 1_500 },
+  { key: "secondLaunchMs", label: "Second launch to ready", floorMs: 1_000 },
 ];
 
 export function median(values) {

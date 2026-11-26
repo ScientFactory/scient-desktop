@@ -49,13 +49,13 @@ NodeTest.test("the summary names the baseline, every sample, regressions and fai
     second: { readyMs: second },
   });
   const measurement = {
-    readiness: "app shell",
+    readiness: "app shell and main view",
     installer: { name: "Scient-0.6.36-x64.exe", bytes: 250e6, sha256: "a".repeat(64) },
     installedVersion: "0.6.36.0",
     runner: { image: "win25 1.0", logicalCpus: 4, defenderRealtime: false },
     samples: [sample(28_000, 9_000, 3_000), sample(29_000, 9_500, null)],
     median: { installMs: 28_500, firstLaunchMs: 9_250, secondLaunchMs: 3_000 },
-    failures: ["sample-2-second: the app shell was not ready within 180.0 s"],
+    failures: ["sample-2-second: the app was not ready within 180.0 s"],
   };
   const baseline = {
     context: { kind: "release", version: "0.6.35", runId: 7, runUrl: "https://example.test/7" },
@@ -75,9 +75,9 @@ NodeTest.test("the summary names the baseline, every sample, regressions and fai
   );
   NodeAssert.match(
     summary,
-    /\| First launch to app shell \| 9\.3 s \| 9\.0 s, 9\.5 s \| 6\.0 s \| \+3\.3 s \| ⚠️ regressed \|/,
+    /\| First launch to ready \| 9\.3 s \| 9\.0 s, 9\.5 s \| 6\.0 s \| \+3\.3 s \| ⚠️ regressed \|/,
   );
-  NodeAssert.match(summary, /\| Second launch to app shell \| 3\.0 s \| 3\.0 s, — \|/);
-  NodeAssert.match(summary, /1 stage\(s\) regressed:\*\* First launch to app shell/);
-  NodeAssert.match(summary, /- sample-2-second: the app shell was not ready/);
+  NodeAssert.match(summary, /\| Second launch to ready \| 3\.0 s \| 3\.0 s, — \|/);
+  NodeAssert.match(summary, /1 stage\(s\) regressed:\*\* First launch to ready/);
+  NodeAssert.match(summary, /- sample-2-second: the app was not ready/);
 });
