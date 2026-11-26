@@ -1473,6 +1473,14 @@ const program = Effect.gen(function* () {
             title: "skill discovery warning: candidate was skipped because its metadata is invalid",
           },
         });
+        // SCIENT-FORK:START — one notice per severity, including an unknown one.
+        for (const severity of ["warning", "error", "_mock.custom"]) {
+          writeJsonRpcNotification("session/update", {
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "notice", severity, title: `${severity} notice` },
+          });
+        }
+        // SCIENT-FORK:END
         chunk("after the notice");
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
