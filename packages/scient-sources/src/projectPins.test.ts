@@ -1308,4 +1308,23 @@ describe("pins of works with thousands of authors", () => {
     expect(work).toMatchObject({ from: "snapshot", incompleteSnapshot: false });
     expect(work?.record.creators).toEqual(larger);
   });
+
+  it("keeps the whole author count over a short record listing more names than the copy", async () => {
+    const base = await fixture();
+    const { author, projectRoot } = await legacyPin(base);
+    await refreshScientProjectPinSnapshots({ projectRoot, library: author.library });
+    const collaborator = await newLibrary(base, "collaborator");
+    await addRecord(collaborator.library, "trial", {
+      creators: consortium.slice(0, 500),
+      incompleteCreatorRoles: ["author"],
+      identifiers: [{ scheme: "doi", value: "10.1000/trial" }],
+    });
+
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    expect(await storedWork(projectRoot)).toMatchObject({
+      creators: consortium.slice(0, 256),
+      creatorCount: 7_992,
+      incompleteCreatorRoles: ["author"],
+    });
+  });
 });

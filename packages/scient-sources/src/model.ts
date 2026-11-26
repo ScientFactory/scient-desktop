@@ -116,16 +116,31 @@ export function scientFullerSavedRoster(
 ): ScientSavedRoster | null {
   if (!copy) return null;
   if (record.creators === copy.creators) return copy;
-  const known = Math.max(copy.creators.length, copy.creatorCount ?? 0);
   const names = record.creators;
-  return (record.incompleteCreatorRoles?.length ?? 0) > 0 &&
-    names.length > 0 &&
-    names.length <= copy.creators.length &&
-    known > names.length &&
-    names.every((creator, index) => sameCreator(creator, copy.creators[index]!))
+  return names.length <= copy.creators.length &&
+    knownLength(copy) > names.length &&
+    stillShortOf(record, copy)
     ? copy
     : null;
 }
+
+const knownLength = (copy: ScientSavedRoster) =>
+  Math.max(copy.creators.length, copy.creatorCount ?? 0);
+
+/** The record marks its list short and begins as the copy does: both are cuts of one list. */
+const stillShortOf = (
+  record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
+  copy: ScientSavedRoster,
+) => {
+  const shared = Math.min(record.creators.length, copy.creators.length);
+  return (
+    (record.incompleteCreatorRoles?.length ?? 0) > 0 &&
+    shared > 0 &&
+    record.creators
+      .slice(0, shared)
+      .every((creator, index) => sameCreator(creator, copy.creators[index]!))
+  );
+};
 
 /**
  * The roster a saved copy keeps when rebuilt from `record`: the record's first 256 names, the
@@ -139,9 +154,12 @@ export function scientSavedCopyRoster(
   const fuller = scientFullerSavedRoster(record, copy);
   const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
   const kept = fuller?.creators ?? record.creators.slice(0, limit);
+  // A short record listing more names than the cut copy still lacks the copy's known total.
   const whole = fuller
-    ? Math.max(fuller.creators.length, fuller.creatorCount ?? 0)
-    : record.creators.length;
+    ? knownLength(fuller)
+    : copy && stillShortOf(record, copy)
+      ? Math.max(record.creators.length, knownLength(copy))
+      : record.creators.length;
   const shortenedRoles: string[] = [];
   for (const { creatorType } of fuller ? [] : record.creators.slice(limit)) {
     if (!scientCreatorRoleIncomplete(shortenedRoles, creatorType)) shortenedRoles.push(creatorType);
