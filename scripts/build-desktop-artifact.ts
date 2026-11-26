@@ -25,6 +25,7 @@ import Plist from "plist";
 import {
   createPackageWithOptions,
   extractAll,
+  extractFile,
   getRawHeader,
   listPackage,
   statFile,
@@ -4122,6 +4123,16 @@ export const verifyWindowsPackagedRuntime = Effect.fn(
   yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose });
 });
 
+// SCIENT-FORK:START
+const decodeAppAsarPackageJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      scientWslRuntimeOmitted: Schema.optional(Schema.Boolean),
+    }),
+  ),
+);
+// SCIENT-FORK:END
+
 export const validateWindowsPackagedPayload = Effect.fn(
   "desktopArtifact.validateWindowsPackagedPayload",
 )(function* (input: {
@@ -4167,6 +4178,59 @@ export const validateWindowsPackagedPayload = Effect.fn(
   }
 
   const resourcesDir = path.join(packagedAppDir, "resources");
+  // SCIENT-FORK:START — slim Windows packages must stamp scientWslRuntimeOmitted into app.asar so
+  // DesktopWslEnvironment hides WSL without probing or offering a backend whose Linux payload was omitted.
+  const appAsarPath = path.join(resourcesDir, "app.asar");
+  const appAsarExists = yield* fs.exists(appAsarPath).pipe(Effect.orElseSucceed(() => false));
+  if (!linuxServerBackend && !appAsarExists) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "sidecar-invalid",
+      packagedAppDir,
+      cause: new Error(
+        "resources/app.asar is missing; slim Windows packages must carry scientWslRuntimeOmitted metadata.",
+      ),
+    });
+  }
+  if (appAsarExists) {
+    const rawPackageJson = yield* Effect.try({
+      try: () => extractFile(appAsarPath, "package.json").toString("utf8"),
+      catch: (cause) =>
+        new WindowsPackagedPayloadValidationError({
+          reason: "sidecar-invalid",
+          packagedAppDir,
+          cause,
+        }),
+    });
+    const parsed = yield* decodeAppAsarPackageJson(rawPackageJson).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WindowsPackagedPayloadValidationError({
+            reason: "sidecar-invalid",
+            packagedAppDir,
+            cause,
+          }),
+      ),
+    );
+    if (!linuxServerBackend && parsed.scientWslRuntimeOmitted !== true) {
+      return yield* new WindowsPackagedPayloadValidationError({
+        reason: "sidecar-invalid",
+        packagedAppDir,
+        cause: new Error(
+          "resources/app.asar package.json must set scientWslRuntimeOmitted: true for slim Windows builds.",
+        ),
+      });
+    }
+    if (linuxServerBackend && parsed.scientWslRuntimeOmitted === true) {
+      return yield* new WindowsPackagedPayloadValidationError({
+        reason: "sidecar-invalid",
+        packagedAppDir,
+        cause: new Error(
+          "resources/app.asar package.json sets scientWslRuntimeOmitted: true on a full Windows build.",
+        ),
+      });
+    }
+  }
+  // SCIENT-FORK:END
   const asarPath = path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE);
   if (!(yield* fs.exists(asarPath).pipe(Effect.orElseSucceed(() => false)))) {
     return yield* new WindowsPackagedPayloadValidationError({

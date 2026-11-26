@@ -1,3 +1,4 @@
+import { createPackage } from "@electron/asar";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
@@ -23,6 +24,7 @@ const makeSlimWindowsFixture = Effect.fn("test.makeSlimWindowsFixture")(function
   readonly injectLinuxAsarEntry?: boolean;
   readonly injectWslArchive?: boolean;
   readonly omitResourceMonitor?: boolean;
+  readonly omitSlimWslMarker?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -62,6 +64,16 @@ const makeSlimWindowsFixture = Effect.fn("test.makeSlimWindowsFixture")(function
   yield* fs.makeDirectory(path.join(resourcesDir, "resource-monitor"), { recursive: true });
   yield* fs.makeDirectory(path.join(resourcesDir, "file-exchange"), { recursive: true });
   yield* fs.makeDirectory(path.join(resourcesDir, "synctex-runtime"), { recursive: true });
+  const appAsarSourceDir = path.join(tempDir, "app-asar-source");
+  yield* fs.makeDirectory(appAsarSourceDir, { recursive: true });
+  yield* fs.writeFileString(
+    path.join(appAsarSourceDir, "package.json"),
+    JSON.stringify({
+      name: "scient-next",
+      ...(options?.omitSlimWslMarker ? {} : { scientWslRuntimeOmitted: true }),
+    }),
+  );
+  yield* Effect.promise(() => createPackage(appAsarSourceDir, path.join(resourcesDir, "app.asar")));
   yield* fs.copyFile(generatedAsarPath, path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE));
   yield* fs.copy(
     `${generatedAsarPath}.unpacked`,
@@ -223,6 +235,19 @@ describe("Scient WSL runtime archive", () => {
           assert.strictEqual(missingFailure._tag, "WindowsPackagedPayloadValidationError");
           if (missingFailure._tag === "WindowsPackagedPayloadValidationError") {
             assert.strictEqual(missingFailure.reason, "resource-monitor-missing");
+          }
+
+          const missingMarker = yield* makeSlimWindowsFixture({ omitSlimWslMarker: true });
+          const markerFailure = yield* validateWindowsPackagedPayload({
+            stageDistDir: missingMarker.stageDistDir,
+            appExecutableName: missingMarker.appExecutableName,
+            targetArch: "x64",
+            expectWslRuntime: false,
+            linuxServerBackend: false,
+          }).pipe(Effect.flip);
+          assert.strictEqual(markerFailure._tag, "WindowsPackagedPayloadValidationError");
+          if (markerFailure._tag === "WindowsPackagedPayloadValidationError") {
+            assert.strictEqual(markerFailure.reason, "sidecar-invalid");
           }
         }),
       ).pipe(Effect.provide(linuxHostLayer)),
