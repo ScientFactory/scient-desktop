@@ -1239,4 +1239,45 @@ describe("pins of works with thousands of authors", () => {
     expect(work?.record).not.toHaveProperty("incompleteCreatorRoles");
     expect(work?.incompleteSnapshot).toBe(false);
   });
+
+  it("reads past a pin it cannot read or a count it cannot use, and keeps that pin as written", async () => {
+    const base = await fixture();
+    const { author, projectRoot, citationKey } = await legacyPin(base);
+    const other = await addRecord(author.library, "other");
+    await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: other.sourceId,
+      actor: "user",
+    });
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    const trial = file.pins.find((pin: { citationKey: string }) => pin.citationKey === citationKey);
+    trial.work.creatorCount = 0;
+    const unreadable = {
+      ...trial,
+      citationKey: "unreadable2020",
+      sourceId: "src_unreadable",
+      work: { ...trial.work, creators: [{ creatorType: "" }] },
+    };
+    file.pins.push(unreadable);
+    await NodeFSP.writeFile(pinsPath(projectRoot), `${JSON.stringify(file, null, 2)}\n`);
+
+    const pins = await readScientProjectPins(projectRoot);
+    expect(pins.map((pin) => pin.sourceId).toSorted()).toEqual(
+      [trial.sourceId, other.sourceId].toSorted(),
+    );
+    expect(pins.find((pin) => pin.citationKey === citationKey)?.work).not.toHaveProperty(
+      "creatorCount",
+    );
+
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey,
+      note: "Primary trial.",
+      actor: "user",
+    });
+    const written = JSON.parse(await NodeFSP.readFile(pinsPath(projectRoot), "utf8"));
+    expect(written.pins).toContainEqual(unreadable);
+    expect(written.pins).toHaveLength(3);
+  });
 });

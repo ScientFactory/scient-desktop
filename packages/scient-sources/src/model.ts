@@ -84,6 +84,14 @@ const SCIENT_SAVED_COPY_LIST_LIMIT = 256;
 /** A saved copy's whole creator count, present only when its `creators` hold the first ones. */
 export const ScientSavedCopyCreatorCount = Schema.Int.check(Schema.isGreaterThan(0));
 
+/** A saved copy as stored, without a `creatorCount` it cannot use: one bad count never hides it. */
+export function withUsableCreatorCount(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || !("creatorCount" in raw)) return raw;
+  const { creatorCount, ...rest } = raw as Record<string, unknown>;
+  const listed = Array.isArray(rest["creators"]) ? rest["creators"].length : 0;
+  return Number.isSafeInteger(creatorCount) && (creatorCount as number) > listed ? raw : rest;
+}
+
 /** A saved copy's creators, with what it knows of the whole list. */
 export interface ScientSavedRoster {
   readonly creators: ReadonlyArray<ScientSourceCreator>;

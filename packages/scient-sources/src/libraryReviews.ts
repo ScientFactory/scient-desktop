@@ -32,6 +32,7 @@ import {
   ScientSavedCopyCreatorCount,
   scientSavedCopyList,
   scientSavedCopyRoster,
+  withUsableCreatorCount,
 } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { listScientSourceRecords, scientSourceStoreInternals } from "./store.ts";
@@ -108,7 +109,16 @@ const SnapshotFileHeader = Schema.Struct({
   records: Schema.Record(Schema.String, Schema.Unknown),
 });
 const decodeSnapshotHeader = Schema.decodeUnknownSync(SnapshotFileHeader);
-const decodeWork = Schema.decodeUnknownSync(ScientReviewWork);
+const decodeWholeWork = Schema.decodeUnknownSync(ScientReviewWork);
+const decodeWork = (raw: unknown) => decodeWholeWork(withUsableCreatorCount(raw));
+
+const decodeEntry = (raw: unknown): ScientReviewWork | null => {
+  try {
+    return decodeWork(raw);
+  } catch {
+    return null;
+  }
+};
 
 interface StoredWork {
   readonly work: ScientReviewWork;
@@ -118,12 +128,19 @@ interface StoredWork {
 
 interface SnapshotDocument {
   readonly entries: ReadonlyMap<string, StoredWork>;
+  /** Entries this version cannot read, kept as written until an entry for the source replaces them. */
+  readonly unread: ReadonlyMap<string, unknown>;
   readonly extra: JsonObject;
   /** The file's bytes as read, or null when there is no file. */
   readonly text: string | null;
 }
 
-const EMPTY_DOCUMENT: SnapshotDocument = { entries: new Map(), extra: {}, text: null };
+const EMPTY_DOCUMENT: SnapshotDocument = {
+  entries: new Map(),
+  unread: new Map(),
+  extra: {},
+  text: null,
+};
 const WORK_FIELDS = Object.keys(ScientReviewWork.fields);
 const FILE_FIELDS = Object.keys(SnapshotFileHeader.fields);
 
@@ -158,14 +175,21 @@ function encodeWork(work: ScientReviewWork, extra: JsonObject) {
 }
 
 /** Keys in code-unit order and fields in a fixed order, so equal content is equal bytes. */
-function encodeSnapshot(reviewId: string, document: Pick<SnapshotDocument, "entries" | "extra">) {
+function encodeSnapshot(
+  reviewId: string,
+  document: Pick<SnapshotDocument, "entries" | "extra"> & Partial<Pick<SnapshotDocument, "unread">>,
+) {
+  const unread = [...(document.unread ?? [])].filter(([id]) => !document.entries.has(id));
   return {
     formatVersion: 1,
     reviewId,
     records: Object.fromEntries(
-      [...document.entries]
-        .toSorted(([left], [right]) => codeUnitOrder(left, right))
-        .map(([sourceId, { work, extra }]) => [sourceId, encodeWork(work, extra)]),
+      [
+        ...[...document.entries].map(
+          ([sourceId, { work, extra }]) => [sourceId, encodeWork(work, extra)] as const,
+        ),
+        ...unread,
+      ].toSorted(([left], [right]) => codeUnitOrder(left, right)),
     ),
     ...sortedExtra(document.extra),
   };
@@ -206,16 +230,14 @@ async function readSnapshotDocument(filePath: string, reviewId: string): Promise
     const value: unknown = JSON.parse(text);
     const header = decodeSnapshotHeader(value);
     if (header.reviewId !== reviewId) return { broken: true };
-    return {
-      entries: new Map(
-        Object.entries(header.records).map(([sourceId, raw]) => [
-          sourceId,
-          { work: decodeWork(raw), extra: extraFields(raw, WORK_FIELDS) },
-        ]),
-      ),
-      extra: extraFields(value, FILE_FIELDS),
-      text,
-    };
+    const entries = new Map<string, StoredWork>();
+    const unread = new Map<string, unknown>();
+    for (const [sourceId, raw] of Object.entries(header.records)) {
+      const work = decodeEntry(raw);
+      if (work) entries.set(sourceId, { work, extra: extraFields(raw, WORK_FIELDS) });
+      else unread.set(sourceId, raw);
+    }
+    return { entries, unread, extra: extraFields(value, FILE_FIELDS), text };
   } catch {
     return { broken: true };
   }
@@ -310,8 +332,13 @@ async function publishSnapshot(
   required: ReadonlyArray<string>,
   name = reviewId,
 ): Promise<SnapshotState> {
+  const unread = new Map(
+    [current.single, ...(current.shards?.values() ?? [])].flatMap((document) => [
+      ...document.unread,
+    ]),
+  );
   if (current.shards === null) {
-    const encoded = encodeSnapshot(reviewId, { entries, extra: current.single.extra });
+    const encoded = encodeSnapshot(reviewId, { entries, unread, extra: current.single.extra });
     const text = formatJson(encoded);
     if (Buffer.byteLength(text, "utf8") <= scientReviewSnapshotLimits.shardThresholdBytes) {
       if (current.single.text === text) return current;
@@ -331,10 +358,14 @@ async function publishSnapshot(
   await assertScientProjectDirectory(folder.root, directory, { create: true });
   const shards = new Map(current.shards ?? []);
   let changed = false;
-  for (const shard of [...new Set([...groups.keys(), ...shards.keys()])].toSorted()) {
+  const unreadShards = [...unread.keys()].map(shardOf);
+  for (const shard of [
+    ...new Set([...groups.keys(), ...shards.keys(), ...unreadShards]),
+  ].toSorted()) {
     const existing = shards.get(shard);
     const encoded = encodeSnapshot(reviewId, {
       entries: groups.get(shard) ?? new Map(),
+      unread: new Map([...unread].filter(([sourceId]) => shardOf(sourceId) === shard)),
       // Fields a newer Scient put on the single file go to every shard.
       extra: existing?.extra ?? current.single.extra,
     });
@@ -444,7 +475,12 @@ export function decodeScientReviewSnapshotText(
   try {
     const header = decodeSnapshotHeader(JSON.parse(text));
     if (header.reviewId !== reviewId) return null;
-    return new Map(Object.entries(header.records).map(([id, raw]) => [id, decodeWork(raw)]));
+    return new Map(
+      Object.entries(header.records).flatMap(([id, raw]) => {
+        const work = decodeEntry(raw);
+        return work ? [[id, work] as const] : [];
+      }),
+    );
   } catch {
     return null;
   }

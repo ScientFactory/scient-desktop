@@ -37,6 +37,7 @@ import {
   scientFullerSavedRoster,
   scientSavedCopyList,
   scientSavedCopyRoster,
+  withUsableCreatorCount,
 } from "./model.ts";
 import {
   SCIENT_PIN_CITATION_TEXT_FIELDS,
@@ -142,6 +143,8 @@ interface StoredPin {
 
 interface PinsDocument {
   readonly pins: ReadonlyArray<StoredPin>;
+  /** Pins this version cannot read, kept as written until a pin of their key or source replaces them. */
+  readonly unread: ReadonlyArray<unknown>;
   readonly extra: JsonObject;
   /** The file's bytes as read, or null when there is no file. */
   readonly text: string | null;
@@ -195,20 +198,33 @@ function comparePins(left: ScientProjectPin, right: ScientProjectPin): number {
 }
 
 /** Sorted by key, fields in a fixed order and unknown fields after them, so equal pins are equal bytes. */
-function encodePins(document: Pick<PinsDocument, "pins" | "extra">) {
+function encodePins(document: Pick<PinsDocument, "pins" | "unread" | "extra">) {
+  const keys = new Set(document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+  const sources = new Set(document.pins.map(({ pin }) => pin.sourceId));
+  const unread = document.unread.filter((raw) => {
+    const key = isJsonObject(raw) ? raw["citationKey"] : undefined;
+    const sourceId = isJsonObject(raw) ? raw["sourceId"] : undefined;
+    return !(
+      (typeof key === "string" && keys.has(citationKeyComparisonValue(key))) ||
+      (typeof sourceId === "string" && sources.has(sourceId))
+    );
+  });
   return {
     formatVersion: 1,
-    pins: document.pins
-      .toSorted((left, right) => comparePins(left.pin, right.pin))
-      .map(({ pin, extra, workExtra }) => ({
-        citationKey: pin.citationKey,
-        sourceId: pin.sourceId,
-        pinnedAt: pin.pinnedAt,
-        pinnedBy: pin.pinnedBy,
-        ...(pin.note !== undefined ? { note: pin.note } : {}),
-        work: encodeWork(pin.work, workExtra),
-        ...sortedExtra(extra),
-      })),
+    pins: [
+      ...document.pins
+        .toSorted((left, right) => comparePins(left.pin, right.pin))
+        .map(({ pin, extra, workExtra }) => ({
+          citationKey: pin.citationKey,
+          sourceId: pin.sourceId,
+          pinnedAt: pin.pinnedAt,
+          pinnedBy: pin.pinnedBy,
+          ...(pin.note !== undefined ? { note: pin.note } : {}),
+          work: encodeWork(pin.work, workExtra),
+          ...sortedExtra(extra),
+        })),
+      ...unread,
+    ],
     ...sortedExtra(document.extra),
   };
 }
@@ -230,7 +246,7 @@ const pinsStamp = (stats: NodeFS.BigIntStats) =>
 async function readPinsDocument(root: string): Promise<PinsDocument> {
   const filePath = pinsPath(root);
   const state = await snapshot(filePath);
-  if (state === "missing") return { pins: [], extra: {}, text: null };
+  if (state === "missing") return { pins: [], unread: [], extra: {}, text: null };
   if (state !== "file") throw new Error("pins.json is not a safe regular file.");
   const readStartedNs = BigInt(Date.now()) * 1_000_000n;
   const stats = await NodeFSP.lstat(filePath, { bigint: true });
@@ -261,7 +277,7 @@ async function writePinsDocument(
   current: PinsDocument,
   pins: ReadonlyArray<StoredPin>,
 ): Promise<boolean> {
-  const encoded = encodePins({ pins, extra: current.extra });
+  const encoded = encodePins({ pins, unread: current.unread, extra: current.extra });
   if (current.text === `${JSON.stringify(encoded, null, 2)}\n`) return false;
   await atomicWriteJson(pinsPath(root), encoded, MAX_PINS_BYTES);
   return true;
@@ -392,26 +408,47 @@ export function scientProjectPinsText(
   extra: Readonly<Record<string, unknown>> = {},
 ): string {
   return `${JSON.stringify(
-    encodePins({ pins: pins.map((pin) => ({ pin, extra: {}, workExtra: {} })), extra }),
+    encodePins({
+      pins: pins.map((pin) => ({ pin, extra: {}, workExtra: {} })),
+      unread: [],
+      extra,
+    }),
     null,
     2,
   )}\n`;
 }
 
-function parsePinsText(text: string): Pick<PinsDocument, "pins" | "extra"> {
+function parsePinsText(text: string): Pick<PinsDocument, "pins" | "unread" | "extra"> {
   const value: unknown = JSON.parse(text);
   const header = decodePinsHeader(value);
-  return {
-    pins: header.pins.map((raw) => ({
-      pin: decodePin(raw),
-      extra: extraFields(raw, PIN_FIELDS),
-      workExtra: extraFields(isJsonObject(raw) ? raw["work"] : undefined, WORK_FIELDS),
-    })),
-    extra: extraFields(value, FILE_FIELDS),
-  };
+  const pins: StoredPin[] = [];
+  const unread: unknown[] = [];
+  for (const raw of header.pins) {
+    const pin = decodeStoredPin(raw);
+    if (pin) {
+      pins.push({
+        pin,
+        extra: extraFields(raw, PIN_FIELDS),
+        workExtra: extraFields(isJsonObject(raw) ? raw["work"] : undefined, WORK_FIELDS),
+      });
+    } else {
+      unread.push(raw);
+    }
+  }
+  return { pins, unread, extra: extraFields(value, FILE_FIELDS) };
 }
 
-/** Decodes `pins.json` bytes; throws when they are not a pins file this version reads. */
+function decodeStoredPin(raw: unknown): ScientProjectPin | null {
+  try {
+    return decodePin(
+      isJsonObject(raw) ? { ...raw, work: withUsableCreatorCount(raw["work"]) } : raw,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Decodes `pins.json` bytes, leaving out pins this version cannot read; throws for another file. */
 export function decodeScientProjectPinsText(text: string): ReadonlyArray<ScientProjectPin> {
   return parsePinsText(text)
     .pins.map(({ pin }) => pin)
@@ -427,6 +464,7 @@ export function joinScientProjectPinsText(
   return `${JSON.stringify(
     encodePins({
       pins: [...document.pins, ...additions.map((pin) => ({ pin, extra: {}, workExtra: {} }))],
+      unread: document.unread,
       extra: document.extra,
     }),
     null,
@@ -1467,7 +1505,7 @@ export const scientProjectPinsInternals = {
     const restored: StoredPin = {
       ...found,
       workExtra: extraFields(copy["work"], WORK_FIELDS),
-      pin: { ...found.pin, work: decodePinWork(copy["work"]) },
+      pin: { ...found.pin, work: decodePinWork(withUsableCreatorCount(copy["work"])) },
     };
     await writePinsDocument(
       root,
