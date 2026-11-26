@@ -111,6 +111,7 @@ describe("Scient release machinery", () => {
       "scheduled-stable-candidate.yml",
       "scient-compute-python-kernel.yml",
       "scient-compute-recipes.yml",
+      "windows-install-timing.yml",
     ]) {
       const workflow = NodeFS.readFileSync(
         NodePath.join(import.meta.dirname, "../.github/workflows", workflowName),
@@ -125,7 +126,8 @@ describe("Scient release machinery", () => {
         // Its external actions are inspected when this loop reads that workflow directly.
         if (
           action === "./.github/workflows/scient-compute-python-kernel.yml" ||
-          action === "./.github/workflows/desktop-update-qualification.yml"
+          action === "./.github/workflows/desktop-update-qualification.yml" ||
+          action === "./.github/workflows/windows-install-timing.yml"
         )
           continue;
         // This repository-local action is pinned by the release checkout itself.
