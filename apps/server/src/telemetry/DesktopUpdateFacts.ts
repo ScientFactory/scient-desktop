@@ -1,6 +1,6 @@
 /**
- * Update facts the desktop app journaled (outcomes of check, download, install and apply, and
- * update summaries). They keep the desktop's event ids and times, so a fact offered again after a
+ * Update facts (check, download, install and apply outcomes, summaries) and startup timing the
+ * desktop journaled. They keep the desktop's event ids and times, so a fact offered again after a
  * lost acknowledgement stays one event in the outbox and at the gateway.
  *
  * @module DesktopUpdateFacts

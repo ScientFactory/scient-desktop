@@ -24,6 +24,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.diagnostics",
   "app.update.outcome",
   "app.update.summary",
+  "app.startup.timing",
   "server.boot.heartbeat",
   "install.owner_observed",
   "install.account_observed",
@@ -1134,6 +1135,40 @@ function updateSummaryProperties(input: Readonly<Record<string, unknown>>) {
   };
 }
 
+/**
+ * How long a launch took to reach a stage. Steps roughly double, so each one is equally coarse
+ * relative to the time: a warm launch on a fast computer lands under 2 s, while a first open the
+ * operating system scans or reads from a cold disk can take a minute, so the slow end keeps steps
+ * of its own rather than one "over 15 s".
+ */
+export function startupBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 2_000) return "under-2s";
+  if (value < 4_000) return "2-4s";
+  if (value < 8_000) return "4-8s";
+  if (value < 15_000) return "8-15s";
+  if (value < 30_000) return "15-30s";
+  if (value < 60_000) return "30-60s";
+  return "over-60s";
+}
+
+const LAUNCH_KINDS = ["first-after-install", "first-after-update", "later"];
+
+function startupTimingProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const backendReadyMs = property(input, "backendReadyMs");
+  const windowShownMs = property(input, "windowShownMs");
+  return {
+    launchKind: closedCategory(property(input, "launchKind"), LAUNCH_KINDS),
+    platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
+    architecture: closedCategory(property(input, "architecture"), [...ARCHITECTURE_VALUES]),
+    uiReadyBucket: startupBucket(property(input, "uiReadyMs")),
+    ...(backendReadyMs === undefined ? {} : { backendReadyBucket: startupBucket(backendReadyMs) }),
+    ...(windowShownMs === undefined ? {} : { windowShownBucket: startupBucket(windowShownMs) }),
+    projectRestored: normalizedBoolean(property(input, "projectRestored")),
+  };
+}
+
 function turnTerminalStatus(value: unknown): string {
   if (value === "cancelled" || value === "interrupted") return "stopped";
   return normalizedEnum(value, new Set(["completed", "failed", "stopped"]), "other");
@@ -1443,6 +1478,13 @@ function normalizeEvent(
         privacyLevel: "essential",
         priority: "summary",
         properties: updateSummaryProperties(input),
+      };
+    case "app.startup.timing":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "core",
+        properties: startupTimingProperties(input),
       };
     case "app.session.started":
       return {

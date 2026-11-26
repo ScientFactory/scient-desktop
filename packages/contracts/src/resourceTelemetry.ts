@@ -285,11 +285,12 @@ export const DesktopUpdateRemoteOutcome = Schema.Literals([
 ]);
 export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
 
-// SCIENT-FORK:START — update facts the desktop journaled, delivered to one backend's analytics.
+// SCIENT-FORK:START — update and startup facts the desktop journaled, delivered to one backend's
+// analytics.
 export const DESKTOP_UPDATE_FACTS_LIMIT = 64;
 export const DesktopUpdateFact = Schema.Struct({
   id: TrimmedNonEmptyString,
-  name: Schema.Literals(["app.update.outcome", "app.update.summary"]),
+  name: Schema.Literals(["app.update.outcome", "app.update.summary", "app.startup.timing"]),
   occurredAt: TrimmedNonEmptyString,
   appVersion: TrimmedNonEmptyString,
   buildChannel: Schema.Literals(["stable", "beta", "nightly", "development", "unknown"]),

@@ -4,6 +4,7 @@ import { useMessages } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
+import { DesktopWorkspaceReadiness } from "../../components/desktop/DesktopWorkspaceReadiness";
 import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
 import {
@@ -207,6 +208,12 @@ export function ScientGettingStartedFlow(props: {
       onBack={goBack}
       onSkip={skip}
     >
+      {/* A first launch opens here, so startup timing must see it as a ready workspace. */}
+      <DesktopWorkspaceReadiness
+        environmentId={primaryEnvironmentId}
+        initialized
+        projectRestored={false}
+      />
       {activeStep === "agent" ? (
         <GettingStartedAgentStep
           canContinue={providerReady}

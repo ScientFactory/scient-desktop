@@ -6,6 +6,8 @@ import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentShellStatus } from "../../state/shell";
 import { workspaceReadiness } from "./workspaceReadiness";
 
+let startupReported = false;
+
 export function DesktopWorkspaceReadiness(props: {
   readonly environmentId: EnvironmentId | null;
   readonly initialized: boolean;
@@ -27,14 +29,16 @@ export function DesktopWorkspaceReadiness(props: {
   });
   const bridge = window.desktopBridge;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native restart owner
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native startup and restart owners
   useEffect(() => {
     if (!ready || !bridge?.getRestartReadinessToken || !bridge.reportWorkspaceReady) return;
     let current = true;
     void bridge
       .getRestartReadinessToken()
       .then(async (token) => {
-        if (!current || token === null) return;
+        // Startup timing takes the first report; later ones matter only with a restart token.
+        if (!current || (token === null && startupReported)) return;
+        startupReported = true;
         await bridge.reportWorkspaceReady?.({ ...token, projectRestored: props.projectRestored });
       })
       .catch(() => undefined);

@@ -407,6 +407,37 @@ export function buildAnalyticsConformanceFixture() {
       message: "Updates are turned off by PRIVATE-CONTENT.",
     }),
   );
+  // Desktop startup: coarse buckets of time since the process started, nothing finer.
+  cases.push(
+    fixtureCase("startup-first-after-install", "app.startup.timing", {
+      launchKind: "first-after-install",
+      platform: "windows",
+      architecture: "x64",
+      uiReadyMs: 41_250,
+      backendReadyMs: 33_900,
+      windowShownMs: 36_100,
+      projectRestored: false,
+    }),
+    fixtureCase("startup-later", "app.startup.timing", {
+      launchKind: "later",
+      platform: "macos",
+      architecture: "arm64",
+      uiReadyMs: 1_480,
+      backendReadyMs: 640,
+      windowShownMs: 910,
+      projectRestored: true,
+    }),
+    fixtureCase("startup-hostile", "app.startup.timing", {
+      launchKind: "PRIVATE-CONTENT",
+      platform: "/private/os",
+      architecture: "PRIVATE-CONTENT",
+      uiReadyMs: -3,
+      backendReadyMs: "fast",
+      projectRestored: "yes",
+      hostname: "PRIVATE-CONTENT",
+      ...privateProperties,
+    }),
+  );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {
     const rejected = captureOutcome === "partial" || captureOutcome === "failed";
     const retained = captureOutcome === "partial" || captureOutcome === "retained";

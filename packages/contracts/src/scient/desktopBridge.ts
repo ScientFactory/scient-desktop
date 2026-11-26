@@ -38,9 +38,13 @@ export interface ScientDesktopBridge {
     readonly attemptId: string;
     readonly launchId: string;
   } | null>;
+  /**
+   * The workspace is connected, hydrated and local. Ends this launch's startup timing; with a
+   * restart token it also ends that update restart's measurement.
+   */
   reportWorkspaceReady?: (input: {
-    readonly attemptId: string;
-    readonly launchId: string;
+    readonly attemptId?: string;
+    readonly launchId?: string;
     readonly projectRestored: boolean;
   }) => Promise<boolean>;
   onPrepareUpdateSave?: (

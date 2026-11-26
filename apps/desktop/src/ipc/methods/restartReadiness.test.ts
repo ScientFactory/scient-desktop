@@ -8,12 +8,14 @@ vi.mock("electron", () => ({}));
 
 import { DesktopRestartTiming } from "../../app/DesktopRestartTiming.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
+import { DesktopStartupTiming } from "../../scient/startupTiming/DesktopStartupTiming.ts";
 import { getToken, reportReady } from "./restartReadiness.ts";
 
 function fixture(destroyed = false) {
   const mainFrame = {};
   const token = { attemptId: "attempt-1", launchId: "launch-1" };
   const acknowledgements: unknown[] = [];
+  const startupReports: unknown[] = [];
   const window = {
     isDestroyed: () => destroyed,
     webContents: { id: 41, mainFrame },
@@ -28,8 +30,11 @@ function fixture(destroyed = false) {
           return true;
         }),
     }),
+    Layer.mock(DesktopStartupTiming, {
+      workspaceReady: (input) => Effect.sync(() => void startupReports.push(input)),
+    }),
   );
-  return { layer, mainFrame, token, acknowledgements };
+  return { layer, mainFrame, token, acknowledgements, startupReports };
 }
 
 it.effect("accepts only a registered app top frame and forwards no renderer timestamps", () =>
@@ -75,5 +80,18 @@ it.effect.each(["preview", "subframe", "destroyed", "missing-event"] as const)(
           .pipe(Effect.provide(f.layer)),
       );
       assert.deepEqual(f.acknowledgements, []);
+      assert.deepEqual(f.startupReports, []);
     }),
+);
+
+it.effect("ends startup timing on every launch, and a restart measurement only with a token", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const event = { sender: { id: 41 }, senderFrame: f.mainFrame };
+    assert.isFalse(
+      yield* reportReady.handler({ projectRestored: false }, event).pipe(Effect.provide(f.layer)),
+    );
+    assert.deepEqual(f.startupReports, [{ projectRestored: false }]);
+    assert.deepEqual(f.acknowledgements, []);
+  }),
 );

@@ -937,6 +937,36 @@ pipes and only to the desktop's own bootstrap session), polled every 30 seconds
 while facts are pending; its response lists the ids the outbox holds, as the pipe's acknowledgement
 does.
 
+## Desktop startup timing
+
+`app.startup.timing` says how long a launch took to show a usable workspace, so slow first opens
+(for example on Windows) show up in real users' data. It is an Essential event, fully closed like
+the update events, recorded once per desktop process by
+[`DesktopStartupTiming.ts`](../../apps/desktop/src/scient/startupTiming/DesktopStartupTiming.ts)
+into the update-facts journal above, so it follows the same gate (nothing is journaled while
+analytics is off for that launch) and the same delivery to one backend.
+
+- `uiReadyBucket`: from the desktop process's start to the first time a renderer reports the
+  existing workspace readiness (local primary connected, settings hydrated, live snapshot, not
+  navigating; the same signal an update restart's measurement ends on) on a chat, the no-project
+  screen or Getting Started, where a first launch opens.
+- `backendReadyBucket` and `windowShownBucket`: the primary backend's first readiness and the
+  first main window shown; a stage the launch never reached is absent.
+- `launchKind`: `first-after-install`, `first-after-update` or `later`, from the version startup
+  recovery records in `desktop-last-started-version` once a launch's primary backend is ready
+  (whether or not analytics is on), read before this launch overwrites it. With no record, an
+  existing local environment id or desktop settings mean an older build ran here, so the launch
+  counts as after an update. A launch whose backend never became ready leaves the next one first.
+- `platform`, `architecture` and the envelope's `appVersion`/`buildChannel`, as on
+  `app.session.started`, and `projectRestored` (a project opened rather than the no-project screen).
+
+Times leave the computer only as buckets: `under-2s`, `2-4s`, `4-8s`, `8-15s`, `15-30s`, `30-60s`,
+`over-60s` (`startupBucket` in the contract). Steps roughly double, so each is equally coarse
+relative to the time; a warm launch lands under 2 s, while a first open that the operating system
+scans or reads from a cold disk can take a minute, so the slow end keeps its own steps. A launch
+that never reaches readiness (quit or crashed first, a remote-only primary, or a first screen such
+as Settings) records nothing; count launches with `app.session.started`, not with this event.
+
 ## Privacy invariants
 
 Analytics must never include prompts, responses, file contents or paths, URLs (except a public skill

@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as DesktopRestartTiming from "../../app/DesktopRestartTiming.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopStartupTiming from "../../scient/startupTiming/DesktopStartupTiming.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
@@ -35,13 +36,32 @@ export const getToken = DesktopIpc.makeIpcMethod({
   }),
 });
 
+/**
+ * Every launch's workspace readiness: it ends this launch's startup timing, and with a restart
+ * token also the update restart it belongs to. True only when it completed a restart measurement.
+ */
 export const reportReady = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.REPORT_WORKSPACE_READY_CHANNEL,
-  payload: Schema.Struct({ ...Token.fields, projectRestored: Schema.Boolean }),
+  payload: Schema.Struct({
+    attemptId: Schema.optionalKey(Token.fields.attemptId),
+    launchId: Schema.optionalKey(Token.fields.launchId),
+    projectRestored: Schema.Boolean,
+  }),
   result: Schema.Boolean,
   handler: Effect.fn("desktop.restartReadiness.reportReady")(function* (ack, event) {
     if (!(yield* isAppFrame(event))) return false;
+    const startup = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
+    if (Option.isSome(startup)) {
+      yield* startup.value.workspaceReady({ projectRestored: ack.projectRestored });
+    }
+    if (ack.attemptId === undefined || ack.launchId === undefined) return false;
     const timing = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
-    return Option.isSome(timing) ? yield* timing.value.workspaceReady(ack) : false;
+    return Option.isSome(timing)
+      ? yield* timing.value.workspaceReady({
+          attemptId: ack.attemptId,
+          launchId: ack.launchId,
+          projectRestored: ack.projectRestored,
+        })
+      : false;
   }),
 });
