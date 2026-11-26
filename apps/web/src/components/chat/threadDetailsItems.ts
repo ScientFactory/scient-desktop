@@ -1,6 +1,8 @@
 import type { ClientSettings } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
+import { persistClientSettingsUpdate } from "../../hooks/useSettings";
+
 // Ids are stored in client settings, so renaming one resets everyone's choice for that item.
 export const THREAD_DETAILS_ITEMS = [
   { id: "environment", label: msg("Environment and worktree"), defaultVisible: true },
@@ -63,6 +65,14 @@ export function setThreadDetailsItem(
 ): ClientSettings["threadDetailsItems"] {
   const { [item.id]: _previous, ...rest } = settings.threadDetailsItems;
   return visible === defaultVisible(item, settings) ? rest : { ...rest, [item.id]: visible };
+}
+
+/** Applies the choice to the latest saved settings, so a change from another window survives. */
+export function saveThreadDetailsItem(item: ThreadDetailsItem, visible: boolean) {
+  return persistClientSettingsUpdate((current) => ({
+    ...current,
+    threadDetailsItems: setThreadDetailsItem(current, item, visible),
+  }));
 }
 
 export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibility) {

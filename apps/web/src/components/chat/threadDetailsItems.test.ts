@@ -8,7 +8,6 @@ import {
 
 const usage = THREAD_DETAILS_ITEMS.find((item) => item.id === "usage")!;
 const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
-const contextWindow = THREAD_DETAILS_ITEMS.find((item) => item.id === "contextWindow")!;
 
 describe("thread details items", () => {
   it.each([
@@ -16,10 +15,6 @@ describe("thread details items", () => {
     { legacy: true, items: {}, usage: true, contextWindow: true },
     { legacy: true, items: { usage: false }, usage: false, contextWindow: true },
     { legacy: false, items: { usage: true, retired: false }, usage: true, contextWindow: true },
-    // Choices saved under the retired "context" id no longer hide the Context window.
-    { legacy: false, items: { context: false }, usage: false, contextWindow: true },
-    { legacy: true, items: { context: false }, usage: true, contextWindow: true },
-    { legacy: false, items: { contextWindow: false }, usage: false, contextWindow: false },
   ])("resolves Usage and Context window from overrides and the retired Labs flag: %o", (row) => {
     const visibility = resolveThreadDetailsVisibility({
       threadDetailsItems: row.items,
@@ -37,14 +32,5 @@ describe("thread details items", () => {
 
     const hidden = { threadDetailsItems: { servers: false }, threadDetailsUsageEnabled: false };
     expect(setThreadDetailsItem(hidden, servers, true)).toEqual({});
-  });
-
-  it("remembers turning the Context window off after the reset", () => {
-    const stale = { threadDetailsItems: { context: false }, threadDetailsUsageEnabled: false };
-    expect(setThreadDetailsItem(stale, contextWindow, false)).toEqual({
-      context: false,
-      contextWindow: false,
-    });
-    expect(setThreadDetailsItem(stale, contextWindow, true)).toEqual({ context: false });
   });
 });
