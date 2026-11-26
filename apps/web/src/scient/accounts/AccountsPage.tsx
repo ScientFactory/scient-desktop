@@ -1178,7 +1178,23 @@ function AccountsContent({
   // and browser sign-ins are under their profiles, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const importingPasswords = useImportingPasswords();
-  const githubRows = githubIdentities(snapshot.managedElsewhere, inventory.data?.connectors ?? []);
+  const externalIdentitiesQuery = useEnvironmentQuery(
+    accountsState.externalIdentities({ environmentId, input: {} }),
+  );
+  const managedElsewhereWithExternal = [
+    ...(externalIdentitiesQuery.data?.identities ?? []),
+    ...(snapshot.managedElsewhere ?? []).filter(
+      (row) =>
+        row.kind !== "github" ||
+        !(externalIdentitiesQuery.data?.identities ?? []).some(
+          (ext) => ext.kind === row.kind && ext.id === row.id,
+        ),
+    ),
+  ];
+  const githubRows = githubIdentities(
+    managedElsewhereWithExternal,
+    inventory.data?.connectors ?? [],
+  );
   // Connections you sign in to. GitHub's are its identities above; Custom models' are API keys.
   const managedRows = [
     ...providerRows,

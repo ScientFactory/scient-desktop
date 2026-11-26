@@ -22,6 +22,12 @@ const snapshot = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   refreshTrigger: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
     changes({ environmentId, input: {} }),
 });
+const externalIdentities = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "accounts:externalIdentities",
+  tag: WS_METHODS.accountsExternalIdentities,
+  staleTimeMs: 30_000,
+  idleTtlMs: 60_000,
+});
 const lane = {
   scheduler: createAtomCommandScheduler(),
   concurrency: {
@@ -42,6 +48,7 @@ const savedAccounts = Atom.family((_environmentId: EnvironmentId) =>
 
 export const accountsState = {
   snapshot,
+  externalIdentities,
   passwordStore: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:passwordStore",
     tag: WS_METHODS.accountsPasswordStore,

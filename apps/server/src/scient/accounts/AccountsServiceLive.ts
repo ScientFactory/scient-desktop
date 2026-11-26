@@ -31,6 +31,7 @@ import {
   type BrowserProfileRecord,
   type AccountValueSource,
   type AccountWriteStore,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
   Clock,
@@ -196,11 +197,15 @@ export const layer = Layer.effect(
       }
     >();
 
-    // Discovery runs the source-control CLIs: too slow to repeat for every snapshot.
-    const githubSignIns = yield* Effect.cachedWithTTL(
+    // Discovery runs the GitHub CLI and optional /user lookup: keep it off snapshots and the write
+    // semaphore, probe only GitHub (never unrelated forges like Azure), and cache for 1 minute.
+    const externalIdentities = yield* Effect.cachedWithTTL(
       Effect.gen(function* () {
-        const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
-        const github = providers.find((provider) => provider.kind === "github");
+        const github = Option.isSome(sourceControl)
+          ? Option.getOrUndefined(
+              yield* sourceControl.value.discoverProvider(SourceControlProviderKind.make("github")),
+            )
+          : undefined;
         const githubAccounts =
           github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
         if (
@@ -216,7 +221,40 @@ export const layer = Layer.effect(
             authenticated: true,
           });
         }
-        return githubAccounts;
+        // Source Control's own choice first, as GitHub names it; then gh's other logins.
+        const effective = Option.isSome(githubCredential)
+          ? yield* githubCredential.value.get("github.com").pipe(
+              Effect.timeoutOption(GITHUB_IDENTITY_TIMEOUT),
+              Effect.map(Option.flatten),
+              Effect.orElseSucceed(() => Option.none()),
+            )
+          : Option.none();
+        const githubRows = [
+          ...Option.toArray(effective).map((credential) => ({
+            host: "github.com",
+            account: credential.login,
+            via: credential.via === "cli" ? ("gh" as const) : credential.via,
+          })),
+          ...githubAccounts
+            .filter(
+              (account) =>
+                !Option.exists(
+                  effective,
+                  (credential) =>
+                    account.host.toLowerCase() === "github.com" &&
+                    account.account.toLowerCase() === credential.login.toLowerCase(),
+                ),
+            )
+            .map((account) => ({ ...account, via: "gh" as const })),
+        ];
+        return githubRows.map((account) => ({
+          kind: "github" as const,
+          id: `${account.host.toLowerCase()}:${account.account.toLowerCase()}`,
+          name: account.account,
+          detail: account.host,
+          href: "/settings/source-control" as const,
+          via: account.via,
+        })) satisfies NonNullable<AccountsSnapshot["managedElsewhere"]>;
       }),
       "1 minute",
     );
@@ -247,52 +285,15 @@ export const layer = Layer.effect(
       const keyConsumersIncomplete =
         connections._tag === "Failure" || transcription._tag === "Failure";
       const migratedIds = new Set(modelConsumers.map(({ id }) => id));
-      const githubAccounts = yield* githubSignIns;
-      // Source Control's own choice first, as GitHub names it; then gh's other logins.
-      const effective = Option.isSome(githubCredential)
-        ? yield* githubCredential.value.get("github.com").pipe(
-            Effect.timeoutOption(GITHUB_IDENTITY_TIMEOUT),
-            Effect.map(Option.flatten),
-            Effect.orElseSucceed(() => Option.none()),
-          )
-        : Option.none();
-      const githubRows = [
-        ...Option.toArray(effective).map((credential) => ({
-          host: "github.com",
-          account: credential.login,
-          via: credential.via === "cli" ? ("gh" as const) : credential.via,
-        })),
-        ...githubAccounts
-          .filter(
-            (account) =>
-              !Option.exists(
-                effective,
-                (credential) =>
-                  account.host.toLowerCase() === "github.com" &&
-                  account.account.toLowerCase() === credential.login.toLowerCase(),
-              ),
-          )
-          .map((account) => ({ ...account, via: "gh" as const })),
-      ];
-      const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = [
-        ...githubRows.map((account) => ({
-          kind: "github" as const,
-          id: `${account.host.toLowerCase()}:${account.account.toLowerCase()}`,
-          name: account.account,
-          detail: account.host,
-          href: "/settings/source-control" as const,
-          via: account.via,
-        })),
-        ...customModelKeys
-          .filter(({ connectionId }) => !migratedIds.has(connectionId))
-          .map((connection) => ({
-            kind: "custom-model" as const,
-            id: connection.connectionId,
-            name: connection.name,
-            detail: connection.origin,
-            href: "/settings/custom-models" as const,
-          })),
-      ];
+      const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = customModelKeys
+        .filter(({ connectionId }) => !migratedIds.has(connectionId))
+        .map((connection) => ({
+          kind: "custom-model" as const,
+          id: connection.connectionId,
+          name: connection.name,
+          detail: connection.origin,
+          href: "/settings/custom-models" as const,
+        }));
       return {
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
@@ -1267,6 +1268,7 @@ export const layer = Layer.effect(
         ),
       ),
       snapshot: locked(snapshotNow),
+      externalIdentities,
       recordBoundDenial: Effect.fn("AccountsService.recordBoundDenial")((ref, consumer) => {
         const id = boundAccountId(ref);
         return Option.isSome(id)

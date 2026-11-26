@@ -66,6 +66,10 @@ export class SourceControlProviderRegistry extends Context.Service<
       SourceControlProviderError
     >;
     readonly discover: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
+    // SCIENT-FORK: probe a single forge without spawning unrelated source-control CLIs.
+    readonly discoverProvider: (
+      kind: SourceControlProviderKind,
+    ) => Effect.Effect<Option.Option<SourceControlProviderDiscoveryItem>>;
   }
 >()("t3/sourceControl/SourceControlProviderRegistry") {}
 
@@ -385,6 +389,19 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           lastDiscovery = fingerprint;
           return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
         }),
+      ),
+      // SCIENT-FORK: probe a single forge without spawning unrelated source-control CLIs.
+      discoverProvider: Effect.fn("SourceControlProviderRegistry.discoverProvider")(
+        function (kind) {
+          const spec = discoverySpecs.find((candidate) => candidate.kind === kind);
+          return spec === undefined
+            ? Effect.succeedNone
+            : probeSourceControlProvider({
+                spec,
+                process,
+                cwd: config.cwd,
+              }).pipe(Effect.asSome);
+        },
       ),
     });
   },

@@ -276,6 +276,9 @@ function RemoteConnectorDialog({
   const [signInError, setSignInError] = useState<string | null>(null);
   const [blockedSignInUrl, setBlockedSignInUrl] = useState<string | null>(null);
   const accountsQuery = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
+  const externalIdentitiesQuery = useEnvironmentQuery(
+    open && github ? accountsState.externalIdentities({ environmentId, input: {} }) : null,
+  );
   const matchingAccounts = accountsQuery.isSuccess
     ? (accountsQuery.data?.accounts.filter(
         ({ details }) =>
@@ -285,8 +288,10 @@ function RemoteConnectorDialog({
           ),
       ) ?? [])
     : [];
+  const managedElsewhereRows =
+    externalIdentitiesQuery.data?.identities ?? accountsQuery.data?.managedElsewhere;
   const githubLogins: ReadonlyArray<SourceControlLogin> =
-    accountsQuery.data?.managedElsewhere?.flatMap((row) =>
+    managedElsewhereRows?.flatMap((row) =>
       row.kind === "github" && (row.detail ?? "github.com").toLowerCase() === "github.com"
         ? [{ login: row.name, via: row.via }]
         : [],

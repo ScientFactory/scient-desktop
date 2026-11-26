@@ -998,6 +998,22 @@ const AccountKeyConsumer = Schema.Struct({
 });
 export type AccountKeyConsumer = typeof AccountKeyConsumer.Type;
 
+export const AccountManagedElsewhereItem = Schema.Struct({
+  kind: Schema.Literals(["github", "custom-model"]),
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  detail: Schema.optional(TrimmedNonEmptyString),
+  href: Schema.Literals(["/settings/source-control", "/settings/custom-models"]),
+  /** How Source Control holds a GitHub login: the gh CLI, the app sign-in, or a token. */
+  via: Schema.optional(Schema.Literals(["gh", "app", "token"])),
+});
+export type AccountManagedElsewhereItem = typeof AccountManagedElsewhereItem.Type;
+
+export const AccountsExternalIdentitiesResult = Schema.Struct({
+  identities: Schema.Array(AccountManagedElsewhereItem),
+});
+export type AccountsExternalIdentitiesResult = typeof AccountsExternalIdentitiesResult.Type;
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
@@ -1017,19 +1033,7 @@ export const AccountsSnapshot = Schema.Struct({
   keyConsumers: Schema.optional(Schema.Array(AccountKeyConsumer)),
   unavailableCustomModelKeyIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   keyConsumersIncomplete: Schema.optional(Schema.Boolean),
-  managedElsewhere: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        kind: Schema.Literals(["github", "custom-model"]),
-        id: TrimmedNonEmptyString,
-        name: TrimmedNonEmptyString,
-        detail: Schema.optional(TrimmedNonEmptyString),
-        href: Schema.Literals(["/settings/source-control", "/settings/custom-models"]),
-        /** How Source Control holds a GitHub login: the gh CLI, the app sign-in, or a token. */
-        via: Schema.optional(Schema.Literals(["gh", "app", "token"])),
-      }),
-    ),
-  ),
+  managedElsewhere: Schema.optional(Schema.Array(AccountManagedElsewhereItem)),
   /** What this server can do that an older one can't, so a newer client offers only that. */
   /** What this server's Accounts speaks; absent on a server older than `ACCOUNTS_PROTOCOL`. */
   accountsProtocol: Schema.optional(Schema.Int),

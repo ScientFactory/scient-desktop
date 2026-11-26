@@ -171,6 +171,12 @@ export const makeAccountsRpcHandlers = ({
         }),
         attributes,
       ),
+    [WS_METHODS.accountsExternalIdentities]: () =>
+      observeRpcEffect(
+        WS_METHODS.accountsExternalIdentities,
+        accounts.externalIdentities.pipe(Effect.map((identities) => ({ identities }))),
+        attributes,
+      ),
     [WS_METHODS.accountsSubscribeChanges]: () =>
       observeRpcStream(
         WS_METHODS.accountsSubscribeChanges,

@@ -127,6 +127,10 @@ export interface AccountsServiceShape {
   ) => Effect.Effect<CliPasswordStoreResult, AccountsError>;
   readonly migrateCustomModelKeys?: Effect.Effect<void>;
   readonly snapshot: Effect.Effect<AccountsSnapshot, AccountsError>;
+  readonly externalIdentities: Effect.Effect<
+    NonNullable<AccountsSnapshot["managedElsewhere"]>,
+    AccountsError
+  >;
   readonly changes: Stream.Stream<AccountsSnapshot>;
   readonly save: (input: AccountSaveInput) => Effect.Effect<AccountSaveResult, AccountsError>;
   readonly remove: (accountId: AccountId) => Effect.Effect<void, AccountsError>;

@@ -829,8 +829,15 @@ function OpenCommandPaletteDialog(props: {
       desktopLocalBootstraps.find((bootstrap) => bootstrap.httpBaseUrl === displayUrl)?.id ?? null
     );
   })();
+  // SCIENT-FORK: only probe source-control CLIs when an Add/New Project flow that uses them is open.
+  const needsSourceControlDiscovery =
+    props.open &&
+    (addProjectEnvironmentId !== null ||
+      newProjectFlow !== null ||
+      currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP ||
+      props.openIntent?.kind === "add-project");
   const sourceControlDiscovery = useEnvironmentQuery(
-    browseEnvironmentId === null
+    browseEnvironmentId === null || !needsSourceControlDiscovery
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: browseEnvironmentId,

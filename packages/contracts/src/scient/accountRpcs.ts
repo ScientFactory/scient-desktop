@@ -73,6 +73,7 @@ import {
   AccountsCheckInput,
   AccountsError,
   AccountsSetAgentAccessInput,
+  AccountsExternalIdentitiesResult,
   AccountsSnapshot,
   AccountsTestInput,
   AccountStoresStatus,
@@ -93,6 +94,7 @@ import { ThreadId } from "../baseSchemas.ts";
 export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsPasswordStore: "accounts.passwordStore",
   accountsSnapshot: "accounts.snapshot",
+  accountsExternalIdentities: "accounts.externalIdentities",
   accountsSubscribeChanges: "accounts.subscribeChanges",
   accountsSave: "accounts.save",
   accountsRemove: "accounts.remove",
@@ -176,6 +178,15 @@ export const WsAccountsSnapshotRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accounts
   success: AccountsSnapshot,
   error: AccountsRpcError,
 });
+
+export const WsAccountsExternalIdentitiesRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsExternalIdentities,
+  {
+    payload: Empty,
+    success: AccountsExternalIdentitiesResult,
+    error: AccountsRpcError,
+  },
+);
 
 export const WsAccountsSubscribeChangesRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsSubscribeChanges,
