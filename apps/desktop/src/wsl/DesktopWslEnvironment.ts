@@ -1195,6 +1195,10 @@ const wslServiceRegistered = Effect.scoped(
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
+  options?: {
+    readonly isPackaged?: boolean;
+    readonly resourcesPath?: string;
+  },
 ): Effect.fn.Return<
   boolean,
   never,
@@ -1206,6 +1210,16 @@ export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable"
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
+  // SCIENT-FORK:START — slim Windows packages omit the WSL runtime archive and Linux natives.
+  // Check package capability before probing wsl.exe or the Windows registry.
+  if (options?.isPackaged === true) {
+    if (!options.resourcesPath) return false;
+    const archivePath = path.join(options.resourcesPath, "wsl-runtime.tar.gz");
+    if (!(yield* fileSystem.exists(archivePath).pipe(Effect.orElseSucceed(() => false)))) {
+      return false;
+    }
+  }
+  // SCIENT-FORK:END
   const wslExePath = path.join(windir, "System32", "wsl.exe");
   if (!(yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false)))) {
     return false;
@@ -1321,7 +1335,10 @@ export const layer = Layer.effect(
       effect.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
     // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
-    const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
+    const wslAvailable = yield* makeIsAvailable(environment.platform, windir, {
+      isPackaged: environment.isPackaged,
+      resourcesPath: environment.resourcesPath,
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Path.Path, environment.path),

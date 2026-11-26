@@ -62,7 +62,11 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
-import { analyzeWindowsPayloadInventory, windowsNativeIgnoreGlobs } from "./lib/windows-payload.ts";
+import {
+  analyzeWindowsPayloadInventory,
+  unexpectedWindowsServerAsarEntries,
+  windowsNativeIgnoreGlobs,
+} from "./lib/windows-payload.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import {
   buildConversationPreview,
@@ -230,8 +234,8 @@ interface BuildCliInput {
   readonly wslPrebuild: Option.Option<string>;
   readonly syncTexRuntime: Option.Option<string>;
   readonly wslSyncTexRuntime: Option.Option<string>;
-  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
-  readonly omitWslRuntimeArchive?: Option.Option<boolean>;
+  // SCIENT-FORK: the WSL runtime (archive and Linux sidecar dependencies) can be left out of the Windows installer.
+  readonly omitWslRuntime?: Option.Option<boolean>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -1065,8 +1069,8 @@ interface ResolvedBuildOptions {
   readonly wslPrebuild: string | undefined;
   readonly syncTexRuntime: string | undefined;
   readonly wslSyncTexRuntime: string | undefined;
-  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
-  readonly omitWslRuntimeArchive: boolean;
+  // SCIENT-FORK: the WSL runtime (archive and Linux sidecar dependencies) can be left out of the Windows installer.
+  readonly omitWslRuntime: boolean;
 }
 
 interface StagePackageJson {
@@ -1329,10 +1333,13 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/*.map",
 ] as const;
 
-export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {
+export function resolveWindowsServerAsarIgnoreGlobs(
+  arch: typeof BuildArch.Type,
+  linuxServerBackend = true,
+) {
   return [
     ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-    ...windowsNativeIgnoreGlobs(arch === "universal" ? "x64" : arch, true),
+    ...windowsNativeIgnoreGlobs(arch === "universal" ? "x64" : arch, linuxServerBackend),
   ];
 }
 
@@ -1399,10 +1406,10 @@ export const findForbiddenWslRuntimeArchiveMember = (members: ReadonlyArray<stri
 export const bundlesWslRuntime = (input: {
   readonly arch: typeof BuildArch.Type;
   readonly prebuildPath: string | undefined;
-  // SCIENT-FORK: an installer without the archive still starts WSL from the mounted server tree.
-  readonly omitArchive?: boolean;
+  // SCIENT-FORK: slim Windows packages omit the WSL runtime and Linux backend dependencies altogether.
+  readonly omitRuntime?: boolean;
 }): boolean =>
-  input.omitArchive !== true &&
+  input.omitRuntime !== true &&
   input.prebuildPath !== undefined &&
   resolveWslPrebuildArch(input.arch) !== undefined;
 
@@ -1958,9 +1965,11 @@ export function createStageWorkspaceConfig(input: {
   // workspace's reviewed exclusions; without them a dependency newer than the age cutoff fails.
   readonly minimumReleaseAgeExclude?: ReadonlyArray<string>;
   // SCIENT-FORK:END
-  // Windows primary and WSL share this sidecar, so stage both Windows and Linux natives.
+  // Windows primary and WSL share this sidecar when linuxServerBackend is enabled.
   // ASAR packing/extraction cannot preserve pnpm links; node_modules must be physical and hoisted.
   readonly linuxServerBackend?: boolean;
+  // SCIENT-FORK: decouple physical hoisting for ASAR from staging Linux architectures.
+  readonly hoisted?: boolean;
 }): StageWorkspaceConfig {
   const {
     platform,
@@ -1970,6 +1979,7 @@ export function createStageWorkspaceConfig(input: {
     overrides,
     minimumReleaseAgeExclude,
     linuxServerBackend,
+    hoisted,
   } = input;
   const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
   const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
@@ -1999,7 +2009,7 @@ export function createStageWorkspaceConfig(input: {
       ? { patchedDependencies }
       : {}),
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
-    ...(linuxServerBackend ? { nodeLinker: "hoisted" as const } : {}),
+    ...(hoisted || linuxServerBackend ? { nodeLinker: "hoisted" as const } : {}),
     packageExtensions: STAGE_PACKAGE_EXTENSIONS,
     // SCIENT-FORK
     ...(minimumReleaseAgeExclude && minimumReleaseAgeExclude.length > 0
@@ -2046,10 +2056,8 @@ const BuildEnvConfig = Config.all({
   outputDir: Config.String("T3CODE_DESKTOP_OUTPUT_DIR").pipe(Config.option),
   skipBuild: Config.Boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.Boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
-  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
-  omitWslRuntimeArchive: Config.Boolean("SCIENT_DESKTOP_OMIT_WSL_RUNTIME_ARCHIVE").pipe(
-    Config.withDefault(false),
-  ),
+  // SCIENT-FORK: the WSL runtime (archive and Linux sidecar dependencies) can be left out of the Windows installer.
+  omitWslRuntime: Config.Boolean("SCIENT_DESKTOP_OMIT_WSL_RUNTIME").pipe(Config.withDefault(false)),
   signed: Config.Boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
   verbose: Config.Boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.Boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
@@ -2136,10 +2144,10 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
-  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
-  const omitWslRuntimeArchive = resolveBooleanFlag(
-    input.omitWslRuntimeArchive ?? Option.none(),
-    env.omitWslRuntimeArchive,
+  // SCIENT-FORK: the WSL runtime (archive and Linux sidecar dependencies) can be left out of the Windows installer.
+  const omitWslRuntime = resolveBooleanFlag(
+    input.omitWslRuntime ?? Option.none(),
+    env.omitWslRuntime,
   );
   const signed = resolveBooleanFlag(input.signed, env.signed);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
@@ -2178,7 +2186,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     wslPrebuild,
     syncTexRuntime,
     wslSyncTexRuntime,
-    omitWslRuntimeArchive,
+    omitWslRuntime,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -3612,9 +3620,12 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   readonly sourceDir: string;
   readonly asarPath: string;
   readonly arch: typeof BuildArch.Type;
+  // SCIENT-FORK: slim Windows packages omit Linux natives from server.asar.
+  readonly linuxServerBackend?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const linuxServerBackend = input.linuxServerBackend ?? true;
   // Unpack/sign only Windows PE addons; packages also carry foreign prebuilds that Authenticode cannot sign.
   const unpackGlobs: string[] = [...WINDOWS_SERVER_ASAR_UNPACK_GLOBS];
   for (const entry of yield* fs.readDirectory(input.sourceDir, { recursive: true })) {
@@ -3642,7 +3653,7 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
         // glob 13 (@electron/asar 4) resolves ignores against cwd; anchor them at the source.
         globOptions: {
           cwd: input.sourceDir,
-          ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch),
+          ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch, linuxServerBackend),
         },
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
@@ -3663,14 +3674,17 @@ export const stageAndPackWindowsServerAsar = Effect.fn("stageAndPackWindowsServe
     readonly asarPath: string;
     readonly arch: typeof BuildArch.Type;
     readonly cursorSdkResourcesPath: string;
+    // SCIENT-FORK: slim Windows packages omit Linux Cursor helpers and Linux natives.
+    readonly linuxServerBackend?: boolean;
   }) {
     const path = yield* Path.Path;
+    const linuxServerBackend = input.linuxServerBackend ?? true;
     yield* stageCursorSdkPlatformPackages(
       path.join(input.sourceDir, "node_modules"),
       input.cursorSdkResourcesPath,
-      { platform: "win", arch: input.arch, linuxServerBackend: true },
+      { platform: "win", arch: input.arch, linuxServerBackend },
     );
-    yield* packWindowsServerAsar(input);
+    yield* packWindowsServerAsar({ ...input, linuxServerBackend });
   },
 );
 
@@ -3691,8 +3705,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly minimumReleaseAgeExclude: ReadonlyArray<string>;
   readonly wslPrebuildPath: string | undefined;
   readonly wslSyncTexRuntimePath: string | undefined;
-  // SCIENT-FORK: the WSL runtime archive can be left out of the installer.
-  readonly omitWslRuntimeArchive: boolean;
+  // SCIENT-FORK: the WSL runtime (archive and Linux sidecar dependencies) can be left out of the Windows installer.
+  readonly omitWslRuntime: boolean;
   readonly asarPath: string;
   readonly cursorSdkResourcesPath: string;
   readonly wslRuntimeArchivePath: string;
@@ -3703,23 +3717,26 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   const path = yield* Path.Path;
 
   const serverStageDir = path.join(input.stageRoot, "server");
+  const linuxServerBackend = !input.omitWslRuntime;
   yield* fs.makeDirectory(path.join(serverStageDir, "apps/server"), { recursive: true });
   yield* fs.copy(input.serverDistDir, path.join(serverStageDir, "apps/server/dist"));
   yield* fs.remove(path.join(serverStageDir, "apps/server/dist/file-exchange"), {
     recursive: true,
     force: true,
   });
-  if (input.wslSyncTexRuntimePath === undefined) {
-    return yield* new MissingDesktopBuildInputError({
-      artifact: "wsl-synctex-runtime",
-      artifactPath: "<not configured>",
-      buildCommand: "--wsl-synctex-runtime <linux-x64 runtime directory>",
-    });
+  if (linuxServerBackend) {
+    if (input.wslSyncTexRuntimePath === undefined) {
+      return yield* new MissingDesktopBuildInputError({
+        artifact: "wsl-synctex-runtime",
+        artifactPath: "<not configured>",
+        buildCommand: "--wsl-synctex-runtime <linux-x64 runtime directory>",
+      });
+    }
+    yield* fs.copy(
+      input.wslSyncTexRuntimePath,
+      path.join(serverStageDir, "apps/server/dist/synctex-runtime/linux-x64"),
+    );
   }
-  yield* fs.copy(
-    input.wslSyncTexRuntimePath,
-    path.join(serverStageDir, "apps/server/dist/synctex-runtime/linux-x64"),
-  );
 
   // SCIENT-FORK: required peers ship as roots, at their locked versions.
   const sidecarDependencies = yield* withLockedRequiredPeers({
@@ -3728,22 +3745,25 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     packageExtensions: STAGE_PACKAGE_EXTENSIONS,
     dependencies: {
       ...input.runtimeExternalDependencies,
-      // The sidecar serves two processes: the Windows primary loads win32
-      // natives, and the WSL backend loads the matching Linux natives (fff via
-      // ffi-rs) from the extracted copy of this same tree.
+      // The sidecar serves two processes when WSL is bundled: the Windows primary loads win32
+      // natives, and the WSL backend loads the matching Linux natives (fff via ffi-rs).
       ...resolveFffNativeDependencies("win", input.arch, input.fffNodeVersion),
-      ...resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion),
+      ...(linuxServerBackend
+        ? resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion)
+        : {}),
       // SCIENT-FORK:START
       ...resolveParcelWatcherNativeDependencies(
         "win",
         input.arch,
         input.runtimeExternalDependencies["@parcel/watcher"],
       ),
-      ...resolveParcelWatcherNativeDependencies(
-        "linux",
-        input.arch,
-        input.runtimeExternalDependencies["@parcel/watcher"],
-      ),
+      ...(linuxServerBackend
+        ? resolveParcelWatcherNativeDependencies(
+            "linux",
+            input.arch,
+            input.runtimeExternalDependencies["@parcel/watcher"],
+          )
+        : {}),
       // SCIENT-FORK:END
     },
   });
@@ -3770,7 +3790,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     patchedDependencies: sidecarPatchedDependencies,
     overrides: input.overrides,
     minimumReleaseAgeExclude: input.minimumReleaseAgeExclude,
-    linuxServerBackend: true,
+    hoisted: true,
+    linuxServerBackend,
   });
   const sidecarWorkspaceConfigString = yield* encodeStageWorkspaceConfig(sidecarWorkspaceConfig);
   yield* fs.writeFileString(
@@ -3799,20 +3820,19 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   });
 
   // SCIENT-FORK:START
-  yield* stageWslNodePtyPrebuild({
-    stageAppDir: serverStageDir,
-    arch: input.arch,
-    prebuildPath: input.wslPrebuildPath,
-  });
+  if (linuxServerBackend) {
+    yield* stageWslNodePtyPrebuild({
+      stageAppDir: serverStageDir,
+      arch: input.arch,
+      prebuildPath: input.wslPrebuildPath,
+    });
+  }
   // SCIENT-FORK:END
-  // Skip the archive entirely rather than shipping one the install script must
-  // extract and reject on every launch. The desktop app treats a missing
-  // archive as "no WSL-local runtime" and goes straight to the mounted tree.
   if (
     bundlesWslRuntime({
       arch: input.arch,
       prebuildPath: input.wslPrebuildPath,
-      omitArchive: input.omitWslRuntimeArchive,
+      omitRuntime: input.omitWslRuntime,
     })
   ) {
     yield* stageWslRuntimeArchive({
@@ -3829,6 +3849,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     asarPath: input.asarPath,
     cursorSdkResourcesPath: input.cursorSdkResourcesPath,
     arch: input.arch,
+    linuxServerBackend,
   });
   const packedStat = yield* fs.stat(input.asarPath);
   yield* Effect.log(
@@ -4107,12 +4128,16 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
   readonly expectWslRuntime?: boolean;
+  // SCIENT-FORK: slim Windows packages omit Linux sidecar natives, Linux Cursor helpers, and the WSL archive.
+  readonly linuxServerBackend?: boolean;
   readonly fileLimit?: number;
   readonly previewFiles?: readonly string[];
   readonly verbose?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const linuxServerBackend = input.linuxServerBackend ?? true;
+  const normalizedArch = input.targetArch === "universal" ? "x64" : input.targetArch;
   const coreFileLimit = input.fileLimit ?? WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
   const isFile = (filePath: string) =>
     fs.stat(filePath).pipe(
@@ -4153,14 +4178,27 @@ export const validateWindowsPackagedPayload = Effect.fn(
     try: () => {
       // @electron/asar requires host separators even for archive entry names.
       statFile(asarPath, path.join("apps", "server", "dist", "bin.mjs"));
-      statFile(
-        asarPath,
-        path.join("apps", "server", "dist", "synctex-runtime", "linux-x64", "synctex"),
+      if (linuxServerBackend) {
+        statFile(
+          asarPath,
+          path.join("apps", "server", "dist", "synctex-runtime", "linux-x64", "synctex"),
+        );
+        statFile(
+          asarPath,
+          path.join("apps", "server", "dist", "synctex-runtime", "linux-x64", "provenance.json"),
+        );
+      }
+      const asarEntries = listPackage(asarPath, { isPack: false });
+      const unexpectedAsarEntries = unexpectedWindowsServerAsarEntries(
+        asarEntries,
+        normalizedArch,
+        linuxServerBackend,
       );
-      statFile(
-        asarPath,
-        path.join("apps", "server", "dist", "synctex-runtime", "linux-x64", "provenance.json"),
-      );
+      if (unexpectedAsarEntries.length > 0) {
+        throw new Error(
+          `server.asar contains unexpected foreign entries: ${unexpectedAsarEntries.slice(0, 10).join(", ")}`,
+        );
+      }
       return [...collectUnpackedAsarFiles(getRawHeader(asarPath).header)].sort();
     },
     catch: (cause) =>
@@ -4251,6 +4289,17 @@ export const validateWindowsPackagedPayload = Effect.fn(
       ],
     });
   }
+  if (!linuxServerBackend && (hasWslArchive || hasWslArchiveHash)) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "wsl-runtime-invalid",
+      packagedAppDir,
+      unexpectedFiles: [
+        ...(hasWslArchive ? [WSL_RUNTIME_ARCHIVE_NAME] : []),
+        ...(hasWslArchiveHash ? [WSL_RUNTIME_ARCHIVE_HASH_NAME] : []),
+      ],
+      cause: new Error("slim Windows package must not contain the WSL runtime archive or hash"),
+    });
+  }
   if (hasWslArchive !== hasWslArchiveHash) {
     return yield* new WindowsPackagedPayloadValidationError({
       reason: "wsl-runtime-missing",
@@ -4336,7 +4385,8 @@ export const validateWindowsPackagedPayload = Effect.fn(
   const payloadFiles = yield* listPayloadFiles(packagedAppDir);
   const inventory = analyzeWindowsPayloadInventory({
     files: payloadFiles,
-    arch: input.targetArch === "universal" ? "x64" : input.targetArch,
+    arch: normalizedArch,
+    linuxBackend: linuxServerBackend,
     ...(input.previewFiles ? { previewFiles: input.previewFiles } : {}),
   });
   yield* Effect.log(`[desktop-artifact] Windows payload inventory: ${inventory.breakdown}.`);
@@ -4458,7 +4508,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       bundlesWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
-        omitArchive: options.omitWslRuntimeArchive,
+        omitRuntime: options.omitWslRuntime,
       }),
     });
   }
@@ -4906,7 +4956,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
-        omitArchive: options.omitWslRuntimeArchive,
+        omitRuntime: options.omitWslRuntime,
       }),
       options.arch,
       nativePreviewPath,
@@ -4980,7 +5030,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       minimumReleaseAgeExclude: workspaceMinimumReleaseAgeExclude,
       wslPrebuildPath: options.wslPrebuild,
       wslSyncTexRuntimePath: options.wslSyncTexRuntime,
-      omitWslRuntimeArchive: options.omitWslRuntimeArchive,
+      omitWslRuntime: options.omitWslRuntime,
       asarPath: windowsServerAsarPath,
       cursorSdkResourcesPath,
       wslRuntimeArchivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
@@ -5166,8 +5216,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       expectWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
-        omitArchive: options.omitWslRuntimeArchive,
+        omitRuntime: options.omitWslRuntime,
       }),
+      linuxServerBackend: !options.omitWslRuntime,
       verbose: options.verbose,
     });
     if (
@@ -5371,10 +5422,10 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
-  // SCIENT-FORK:START — the WSL runtime archive can be left out of the installer.
-  omitWslRuntimeArchive: Flag.Boolean("omit-wsl-runtime-archive").pipe(
+  // SCIENT-FORK:START — the WSL runtime (archive and Linux sidecar dependencies) can be left out of the Windows installer.
+  omitWslRuntime: Flag.Boolean("omit-wsl-runtime").pipe(
     Flag.withDescription(
-      "Leave the WSL runtime archive out of the Windows installer; WSL starts from the mounted server tree (env: SCIENT_DESKTOP_OMIT_WSL_RUNTIME_ARCHIVE).",
+      "Leave the WSL runtime archive and Linux backend dependencies out of the Windows installer (env: SCIENT_DESKTOP_OMIT_WSL_RUNTIME).",
     ),
     Flag.optional,
   ),

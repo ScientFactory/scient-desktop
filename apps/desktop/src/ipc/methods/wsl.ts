@@ -1,11 +1,8 @@
 import { DesktopWslStateSchema, type DesktopWslState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// SCIENT-FORK: a build without the WSL runtime archive offers no WSL backend.
-import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
@@ -19,25 +16,12 @@ const readWslState: Effect.Effect<
   | DesktopAppSettings.DesktopAppSettings
   | DesktopWslEnvironment.DesktopWslEnvironment
   | DesktopWslBackend.DesktopWslBackend
-  | DesktopEnvironment.DesktopEnvironment
 > = Effect.gen(function* () {
   const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const settings = yield* appSettings.get;
-  // SCIENT-FORK:START — an installed app runs WSL only from its runtime archive. Releases leave
-  // the archive out while no one uses WSL, so the option is hidden rather than failing to start.
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
-  const runtimeShipped =
-    environment.isPackaged !== true ||
-    Option.isNone(fileSystem) ||
-    (yield* fileSystem.value
-      .exists(environment.path.join(environment.resourcesPath, "wsl-runtime.tar.gz"))
-      .pipe(Effect.orElseSucceed(() => false)));
-  const available =
-    runtimeShipped && settings.localEnvironmentEnabled && (yield* wslEnvironment.isAvailable);
-  // SCIENT-FORK:END
+  const available = settings.localEnvironmentEnabled && (yield* wslEnvironment.isAvailable);
   // Listing distros on non-WSL hosts spawns wsl.exe only to time out.
   const distros = available ? yield* wslEnvironment.listDistros : [];
   const preflightError = yield* wslBackend.lastPreflightError;
@@ -66,8 +50,13 @@ export const setWslBackendEnabled = makeIpcMethod({
   result: DesktopWslStateSchema,
   handler: Effect.fn("desktop.ipc.wsl.setEnabled")(function* (enabled) {
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
     const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    // SCIENT-FORK: when WSL is unavailable in this build or host, preserve saved preferences and avoid relaunching.
+    if (!(yield* wslEnvironment.isAvailable)) {
+      return yield* readWslState;
+    }
     const previousSettings = yield* appSettings.get;
     const updateSettings = enabled
       ? appSettings.setWslBackendEnabled(true)
@@ -94,8 +83,12 @@ export const setWslDistro = makeIpcMethod({
   result: DesktopWslStateSchema,
   handler: Effect.fn("desktop.ipc.wsl.setDistro")(function* (distro) {
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
     const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    if (!(yield* wslEnvironment.isAvailable)) {
+      return yield* readWslState;
+    }
     const change = yield* appSettings.setWslDistro(distro);
     const settings = yield* appSettings.get;
     // WSL-only primary backends capture their distro at startup; relaunch to change it.
@@ -116,7 +109,11 @@ export const setWslOnly = makeIpcMethod({
   handler: Effect.fn("desktop.ipc.wsl.setOnly")(function* (enabled) {
     // The pool captures its primary at initialization; disabled WSL can stage mode changes until enable.
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    if (!(yield* wslEnvironment.isAvailable)) {
+      return yield* readWslState;
+    }
     const change = yield* appSettings.setWslOnly(enabled);
     const state = yield* readWslState;
     if (state.enabled && change.changed) {

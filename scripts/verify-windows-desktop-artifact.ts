@@ -27,7 +27,7 @@ const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-art
     Flag.withDescription("The artifact's build version."),
   ),
   verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
-  // SCIENT-FORK: releases leave the WSL runtime archive out unless the build bundled it.
+  // SCIENT-FORK: slim Windows releases omit the WSL runtime and Linux sidecar dependencies unless bundled.
   expectWslRuntime: Flag.Boolean("expect-wsl-runtime").pipe(Flag.withDefault(false)),
 }).pipe(
   Command.withDescription("Verify a Windows desktop artifact's packaged natives load."),
@@ -42,6 +42,7 @@ const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-art
         appExecutableName: `${resolveDesktopProductName(buildVersion)}.exe`,
         targetArch: arch,
         expectWslRuntime,
+        linuxServerBackend: expectWslRuntime,
         verbose,
       });
       if (hostPlatform !== "win32" || hostArch !== arch)

@@ -24,8 +24,9 @@ export function windowsTranscribeFiles(arch: "x64" | "arm64") {
   ];
 }
 
-export function windowsCursorFiles(arch: "x64" | "arm64") {
-  return ["win32", "linux"].flatMap((platform) => {
+export function windowsCursorFiles(arch: "x64" | "arm64", linuxBackend = true) {
+  const platforms = linuxBackend ? (["win32", "linux"] as const) : (["win32"] as const);
+  return platforms.flatMap((platform) => {
     const prefix = `sdk-${platform}-${arch}/`;
     const executableSuffix = platform === "win32" ? ".exe" : "";
     return [
@@ -70,39 +71,74 @@ export function windowsNativeIgnoreGlobs(arch: "x64" | "arm64", linuxBackend: bo
   return roots.flatMap((root) => [root, `${root}/**`]);
 }
 
-export function unexpectedWindowsNativeFiles(files: readonly string[], arch: "x64" | "arm64") {
+export function unexpectedWindowsNativeFiles(
+  files: readonly string[],
+  arch: "x64" | "arm64",
+  linuxBackend = true,
+) {
   return files.filter((file) => {
     // Both the native filenames and package/prebuild directory names encode
-    // the target. Linux is valid only in the server/WSL and Cursor resources.
+    // the target. Linux is valid only in the server/WSL and Cursor resources when WSL is bundled.
     const targets = file.matchAll(
       /(?:^|[/.-])(darwin|linux|win32|android|freebsd)-(x64|arm64|ia32|arm|riscv64|ppc64|s390x)(?=[/.-]|$)/g,
     );
     for (const target of targets) {
       const [, os, cpu] = target;
       if (cpu !== arch || (os !== "win32" && os !== "linux")) return true;
-      if (
-        os === "linux" &&
-        !file.startsWith("resources/server.asar.unpacked/") &&
-        !file.startsWith("resources/node_modules/@cursor/sdk-linux-")
-      )
-        return true;
+      if (os === "linux") {
+        if (!linuxBackend) return true;
+        if (
+          !file.startsWith("resources/server.asar.unpacked/") &&
+          !file.startsWith("resources/node_modules/@cursor/sdk-linux-")
+        )
+          return true;
+      }
     }
     const conpty = /\/win10-(x64|arm64)(?:\/|$)/.exec(file);
     return conpty !== null && conpty[1] !== arch;
   });
 }
 
+// SCIENT-FORK:START — verify server.asar entries directly so foreign Linux packages cannot hide inside ASAR.
+export function unexpectedWindowsServerAsarEntries(
+  entries: readonly string[],
+  arch: "x64" | "arm64",
+  linuxBackend: boolean,
+) {
+  return entries.filter((entry) => {
+    const normalized = entry.replaceAll("\\", "/").replace(/^\/+/, "");
+    if (!linuxBackend && normalized.startsWith("apps/server/dist/synctex-runtime/linux-")) {
+      return true;
+    }
+    if (!normalized.startsWith("node_modules/")) return false;
+    const targets = normalized.matchAll(
+      /(?:^|[/.-])(darwin|linux|win32|android|freebsd)-(x64|arm64|ia32|arm|riscv64|ppc64|s390x)(?=[/.-]|$)/g,
+    );
+    for (const target of targets) {
+      const [, os, cpu] = target;
+      if (cpu !== arch) return true;
+      if (os === "win32") continue;
+      if (os === "linux" && linuxBackend) continue;
+      return true;
+    }
+    return false;
+  });
+}
+// SCIENT-FORK:END
+
 /** Validate known components before subtracting them from the core budget. */
 export function analyzeWindowsPayloadInventory(input: {
   readonly files: readonly string[];
   readonly arch: "x64" | "arm64";
   readonly previewFiles?: readonly string[];
+  readonly linuxBackend?: boolean;
 }) {
+  const linuxBackend = input.linuxBackend ?? true;
   const components = [
     {
       name: "cursor",
       root: "resources/node_modules/@cursor/",
-      files: windowsCursorFiles(input.arch),
+      files: windowsCursorFiles(input.arch, linuxBackend),
     },
     { name: "preview", root: "resources/conversation-preview/", files: input.previewFiles ?? [] },
     {
@@ -112,7 +148,11 @@ export function analyzeWindowsPayloadInventory(input: {
     },
   ];
   const missingFiles: string[] = [];
-  const unexpectedFiles: string[] = unexpectedWindowsNativeFiles(input.files, input.arch);
+  const unexpectedFiles: string[] = unexpectedWindowsNativeFiles(
+    input.files,
+    input.arch,
+    linuxBackend,
+  );
   const counts: Record<string, number> = {};
   let allowance = 0;
   const present = new Set(input.files);
