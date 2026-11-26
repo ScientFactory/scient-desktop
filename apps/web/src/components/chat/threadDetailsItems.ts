@@ -27,9 +27,9 @@ export const THREAD_DETAILS_ITEMS = [
     defaultVisible: true,
   },
   { id: "sideChats", label: msg("Side chats"), defaultVisible: true },
-  { id: "usage", label: msg("Usage limits"), defaultVisible: false },
-  // Was "context" while it defaulted to off; the new id turns it on once for everyone.
-  { id: "contextWindow", label: msg("Context window"), defaultVisible: true },
+  // Was "usage" while it defaulted to off; the new id turns it on once for everyone.
+  { id: "usageLimits", label: msg("Usage limits"), defaultVisible: true },
+  { id: "context", label: msg("Context window"), defaultVisible: false },
 ] as const;
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];
@@ -41,9 +41,9 @@ type ThreadDetailsItemSettings = Pick<
   "threadDetailsItems" | "threadDetailsUsageEnabled"
 >;
 
-// People who turned on the retired Labs toggle keep Usage until they change it here.
+// People who turned on the retired Labs toggle keep Context window until they change it here.
 function defaultVisible(item: ThreadDetailsItem, settings: ThreadDetailsItemSettings) {
-  return item.id === "usage" ? settings.threadDetailsUsageEnabled : item.defaultVisible;
+  return item.id === "context" ? settings.threadDetailsUsageEnabled : item.defaultVisible;
 }
 
 export function resolveThreadDetailsVisibility(
@@ -79,7 +79,7 @@ export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibi
   return THREAD_DETAILS_ITEMS.every((item) => visibility[item.id] === item.defaultVisible);
 }
 
-/** Also clears the retired Labs flag, so Usage returns to off. */
+/** Also clears the retired Labs flag, so Context window returns to off. */
 export const RESET_THREAD_DETAILS_ITEMS = {
   threadDetailsItems: {},
   threadDetailsUsageEnabled: false,

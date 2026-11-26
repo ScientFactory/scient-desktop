@@ -23,7 +23,7 @@ import {
 } from "./threadDetailsItems";
 
 const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
-const contextWindow = THREAD_DETAILS_ITEMS.find((item) => item.id === "contextWindow")!;
+const usageLimits = THREAD_DETAILS_ITEMS.find((item) => item.id === "usageLimits")!;
 
 /** A desktop window whose snapshot is `current` while another window has already saved `saved`. */
 function desktopWindow(current: ClientSettings, saved: ClientSettings) {
@@ -45,31 +45,31 @@ function desktopWindow(current: ClientSettings, saved: ClientSettings) {
   };
 }
 
-describe("Context window in thread details", () => {
+describe("Usage limits in thread details", () => {
   it.each([
     { legacy: false, items: {}, visible: true },
-    // Choices saved under the retired "context" id no longer hide it, so it turns on once for everyone.
-    { legacy: false, items: { context: false }, visible: true },
-    { legacy: true, items: { context: false }, visible: true },
-    { legacy: false, items: { context: false, contextWindow: false }, visible: false },
+    // Choices saved under the retired "usage" id no longer hide it, so it turns on once for everyone.
+    { legacy: false, items: { usage: false }, visible: true },
+    { legacy: true, items: { usage: false }, visible: true },
+    { legacy: false, items: { usage: false, usageLimits: false }, visible: false },
   ])("is shown unless turned off under its current id: %o", (row) => {
     const visibility = resolveThreadDetailsVisibility({
       threadDetailsItems: row.items,
       threadDetailsUsageEnabled: row.legacy,
     });
-    expect(visibility.contextWindow).toBe(row.visible);
+    expect(visibility.usageLimits).toBe(row.visible);
   });
 
   it("stays off when another window hides a different item before hearing about it", async () => {
     using _window = desktopWindow(DEFAULT_CLIENT_SETTINGS, {
       ...DEFAULT_CLIENT_SETTINGS,
-      threadDetailsItems: { contextWindow: false },
+      threadDetailsItems: { usageLimits: false },
     });
 
     await saveThreadDetailsItem(servers, false);
 
     expect(persistence.setClientSettings.mock.lastCall?.[0].threadDetailsItems).toEqual({
-      contextWindow: false,
+      usageLimits: false,
       servers: false,
     });
   });
@@ -77,14 +77,14 @@ describe("Context window in thread details", () => {
   it("drops the saved opt-out when turned back on, leaving retired ids alone", async () => {
     const off = {
       ...DEFAULT_CLIENT_SETTINGS,
-      threadDetailsItems: { context: false, contextWindow: false },
+      threadDetailsItems: { usage: false, usageLimits: false },
     };
     using _window = desktopWindow(off, off);
 
-    await saveThreadDetailsItem(contextWindow, true);
+    await saveThreadDetailsItem(usageLimits, true);
 
     expect(persistence.setClientSettings.mock.lastCall?.[0].threadDetailsItems).toEqual({
-      context: false,
+      usage: false,
     });
   });
 });

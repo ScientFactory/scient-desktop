@@ -327,9 +327,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+              {visible.usageLimits ? <ThreadDetailsUsage {...props.usage} /> : null}
 
-              {visible.contextWindow && props.usage.contextWindow ? (
+              {visible.context && props.usage.contextWindow ? (
                 <ThreadDetailsContext usage={props.usage.contextWindow} />
               ) : null}
 
