@@ -98,7 +98,7 @@ async function recordRows(environmentId: EnvironmentId, profileId: string, from:
   const read = await runAtomCommand(
     appAtomRegistry,
     accountsState.readSnapshot,
-    { environmentId, input: {} },
+    { environmentId, input: { omitExternalIdentities: true } },
     { reportFailure: false },
   ).catch(() => null);
   if (read?._tag !== "Success" || (read.value.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL) return;

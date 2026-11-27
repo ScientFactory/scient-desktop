@@ -315,6 +315,7 @@ interface ActiveOpenCodeTurn {
   providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
+  unsentRootPromptId: string | null;
   admissionMessageId: string | null;
   readonly priorWakePromptIds: Set<string>;
   priorWakeSettled: Deferred.Deferred<void> | null;
@@ -1378,6 +1379,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           turn: ActiveOpenCodeTurn,
           status: OrchestrationV2ProviderTurn["status"],
           completedAt: DateTime.Utc | null,
+          promptDropped = false,
         ) => {
           const providerTurn: OrchestrationV2ProviderTurn = {
             ...turn.providerTurn,
@@ -1387,6 +1389,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 : providerRef(turn.nativeUserMessageId, "weak"),
             status,
             completedAt,
+            ...(promptDropped ? { promptDropped: true } : {}),
             ...(completedAt === null
               ? {}
               : {
@@ -1437,6 +1440,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             !turn.isRoot ||
             state.activeTurn !== turn ||
             turn.finalized ||
+            turn.interrupted ||
             turn.providerTurn.acceptedAt !== undefined
           )
             return;
@@ -2447,7 +2451,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   ),
                 ).pipe(Effect.exit);
               }
-              yield* emitProviderTurn(state, turn, status, completedAt);
+              // OpenCode can save a submitted prompt after acknowledging Stop.
+              const promptDropped = status === "interrupted" && turn.unsentRootPromptId !== null;
+              yield* emitProviderTurn(state, turn, status, completedAt, promptDropped);
               const threadDisposition = terminal?.threadDisposition ?? "reusable";
               yield* updateProviderThread(state, {
                 status: turn.isRoot ? "active" : threadDisposition === "broken" ? "error" : "idle",
@@ -2517,6 +2523,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       runOrdinal: turn.runOrdinal,
                       status,
                       failure: null,
+                      ...(promptDropped ? { promptDropped: true as const } : {}),
                       threadDisposition,
                     },
               );
@@ -2663,6 +2670,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             providerTurn,
             nextItemOrdinal: 1,
             nativeUserMessageId: message.id,
+            unsentRootPromptId: null,
             admissionMessageId: null,
             priorWakePromptIds: new Set(),
             priorWakeSettled: null,
@@ -3782,6 +3790,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           abortController: AbortController,
           messageText: string,
         ) {
+          // Keep skipped dispatch distinct from SDK success without changing the response
+          // that the protocol logger receives.
+          let sent = false;
+          const sendIfLive =
+            <A>(send: (signal: AbortSignal) => Promise<A>) =>
+            async (signal: AbortSignal) => {
+              const requestSignal = AbortSignal.any([signal, abortController.signal]);
+              if (requestSignal.aborted || !turnIsLive(state, turn)) return;
+              if (turn.unsentRootPromptId === inputPayload.messageID) {
+                turn.unsentRootPromptId = null;
+              }
+              sent = true;
+              return send(requestSignal);
+            };
           const { variant, ...payloadWithoutVariant } = inputPayload;
           const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
             client,
@@ -3796,7 +3818,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           };
           const match = messageText.trim().match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
           const command = match
-            ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
+            ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client, abortController.signal).pipe(
                 Effect.timeout("10 seconds"),
                 Effect.orElseSucceed(() => []),
               )).find((entry) => entry.name === match[1])
@@ -3804,12 +3826,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (!command) {
             turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
             yield* emitProviderTurn(state, turn, "running", null);
-            return yield* sdkCall("session.promptAsync", payload, (signal) =>
-              client.session.promptAsync(payload, {
-                signal: AbortSignal.any([signal, abortController.signal]),
-              }),
+            return yield* sdkCall(
+              "session.promptAsync",
+              payload,
+              sendIfLive((signal) => client.session.promptAsync(payload, { signal })),
             ).pipe(
-              Effect.tap(() => markTurnAccepted(state, turn)),
+              Effect.tap(() => (sent ? markTurnAccepted(state, turn) : Effect.void)),
               Effect.asVoid,
             );
           }
@@ -3834,12 +3856,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           };
           turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
           yield* emitProviderTurn(state, turn, "running", null);
-          const request = yield* sdkCall("session.command", commandPayload, (signal) =>
-            client.session.command(commandPayload, {
-              signal: AbortSignal.any([signal, abortController.signal]),
-            }),
+          const request = yield* sdkCall(
+            "session.command",
+            commandPayload,
+            sendIfLive((signal) => client.session.command(commandPayload, { signal })),
           ).pipe(
-            Effect.tap(() => markTurnAccepted(state, turn)),
+            Effect.tap(() => (sent ? markTurnAccepted(state, turn) : Effect.void)),
             Effect.asVoid,
             // OpenCode answers only when generation ends; once admitted, the event stream owns the outcome.
             Effect.tapError((cause) =>
@@ -3949,6 +3971,22 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              // OpenCode 1.x runs a session, and publishes its events, in the directory it lives
+              // in, so a session left behind by a worktree handoff must follow this client.
+              if (nativeSession.directory !== cwd) {
+                const paths = yield* sdkCall("path.get", {}, () => client.path.get());
+                const directory = unwrapData("path.get", paths).directory;
+                if (nativeSession.directory !== directory) {
+                  const body = { sessionID: sessionId, destination: { directory } };
+                  // SDK 1.15 has no binding for this route (later ones: experimental.controlPlane.moveSession).
+                  yield* sdkCall("session.move", body, () =>
+                    client["client"].post({
+                      url: "/experimental/control-plane/move-session",
+                      body,
+                    }),
+                  );
+                }
+              }
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
@@ -4066,6 +4104,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 providerTurn,
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
+                unsentRootPromptId: isCompaction ? null : admissionMessageId,
                 admissionMessageId,
                 priorWakePromptIds: new Set(),
                 priorWakeSettled: null,

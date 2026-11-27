@@ -916,7 +916,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ProviderRegistry.layer),
   // hydration adds default instances to `providerInstances` on boot.
   Layer.provideMerge(
-    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
+    ProviderInstanceRegistryHydration.layer.pipe(
+      Layer.provide(SqlitePersistence.layerConfig),
+      Layer.provide(layerNativeTelemetry),
+    ),
   ),
   // One gate and MCP status registry for the server, below hydration so adapters share them.
   Layer.provideMerge(Layer.merge(ProviderInstallationGate.layer, ThreadMcpStatusRegistry.layer)),

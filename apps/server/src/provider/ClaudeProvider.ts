@@ -907,13 +907,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
+  const reportedModels = claudeReportedModels(
+    modelCatalog,
+    claudeSettings.customModels,
+    capabilities?.models,
+  );
   const models = capClaudeCatalogEffort(
     modelCatalog,
     claudeProviderModels(
-      [
-        ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-        ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
-      ],
+      [...resolveClaudeModelsForVersion(modelCatalog, parsedVersion), ...reportedModels],
       claudeSettings.customModels,
     ),
     capabilities?.effortCapSources ?? [],

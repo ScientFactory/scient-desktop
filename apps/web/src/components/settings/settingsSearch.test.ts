@@ -71,12 +71,27 @@ describe("searchSettings", () => {
     }
   });
 
-  it("finds Scientific Computing by any language it lists", () => {
-    for (const language of ["python", "octave", "wolfram", "haskell", "spss"]) {
-      expect(searchSettings(language).map((item) => item.to)).toContain(
-        "/settings/scientific-computing",
-      );
-    }
+  it("ranks a setting by its displayed title in the active language", () => {
+    const items: ReadonlyArray<SettingsSearchItem> = [
+      { id: "dictation", title: "Dictation", to: "/settings/general", searchTerms: ["language"] },
+      {
+        id: "speech-language",
+        title: "Speech language",
+        to: "/settings/general",
+        searchTerms: ["dictation"],
+      },
+      { id: "language", title: "Language", to: "/settings/general" },
+    ];
+    const german: Record<string, string> = {
+      "Speech language": "Diktiersprache",
+      language: "Sprache",
+      Language: "Sprache",
+    };
+    const ids = (query: string) =>
+      searchSettings(query, items, (message) => german[message] ?? message).map((item) => item.id);
+
+    expect(ids("Sprache")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("Language")).toEqual(["language", "speech-language", "dictation"]);
   });
 
   it("shows the Secrets page in nav and search only when an environment enables secret providers", () => {

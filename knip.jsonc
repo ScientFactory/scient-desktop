@@ -47,7 +47,6 @@
         "sign-macos.ts",
         "publication-after-sign.ts",
         "prepare-server-compile-cache.cjs",
-        "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
         // release-smoke.ts runs it by path to check the branded nightly release name.
         "resolve-nightly-release.ts",

@@ -21,6 +21,7 @@ import * as FiberHandle from "effect/FiberHandle";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
@@ -180,7 +181,9 @@ function nativeCommands(
   });
 }
 
-function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupError): boolean {
+function isMissingInstallation(
+  error: EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility,
+): boolean {
   if (error._tag === "AcpSpawnError") {
     return (
       isCommandMissingCause(error.cause) ||
@@ -199,12 +202,17 @@ interface AntigravityProviderState {
   readonly authRevision: number;
 }
 
+export class AntigravityProbeIncompatibility extends Schema.TaggedError<AntigravityProbeIncompatibility>()(
+  "AntigravityProbeIncompatibility",
+  { version: Schema.String, detail: Schema.String },
+) {}
+
 interface AntigravityProviderOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
-    EffectAcpSchema.InitializeResponse,
-    EffectAcpErrors.AcpError | ProviderSetupError
+    EffectAcpSchema.InitializeResponse & { readonly invalidatedVersion?: string },
+    EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   /** Provider-native global skills visible outside a particular workspace. */
@@ -390,14 +398,16 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         }).pipe(Effect.as(before.draft.skills));
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
-    const version = initialized?.agentInfo?.version;
     const failure = Result.isFailure(result) ? result.failure : undefined;
+    const incompatible = failure?._tag === "AntigravityProbeIncompatibility" ? failure : undefined;
+    const version = incompatible?.version ?? initialized?.agentInfo?.version;
     const missingInstallation = failure !== undefined && isMissingInstallation(failure);
+    const detail = failure?._tag === "ProviderSetupError" ? failure.detail : incompatible?.detail;
     const errorMessage =
       initialized !== undefined
         ? undefined
-        : failure?._tag === "ProviderSetupError"
-          ? failure.detail.trim() || "Antigravity could not complete its local health check."
+        : detail !== undefined
+          ? detail.trim() || "Antigravity could not complete its local health check."
           : missingInstallation
             ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
@@ -409,6 +419,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const applyCheck = (state: AntigravityProviderState) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
+      const previousVersion =
+        initialized?.invalidatedVersion === draft.version ? null : draft.version;
       const authenticated = draft.auth.status === "authenticated";
       const message =
         errorMessage ??
@@ -423,7 +435,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...draft,
           installed: !missingInstallation,
           // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-          version: version === "unknown" ? draft.version : version || draft.version,
+          version: version === "unknown" ? previousVersion : version || previousVersion,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
           usageLimits: missingInstallation ? undefined : draft.usageLimits,

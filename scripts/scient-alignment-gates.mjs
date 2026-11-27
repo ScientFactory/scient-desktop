@@ -93,6 +93,23 @@ export const baselinePath = (
 /** A baseline older than this, or from a commit outside the candidate's history, is not used. */
 const BASELINE_MAX_AGE_DAYS = 7;
 
+/**
+ * macOS's standard temp root is `/var/folders/...`, reached through the `/var` symlink to
+ * `/private/var`. Only that system alias is resolved: a caller's own symlink keeps its
+ * spelling, since a longer resolved path can overflow the macOS socket path limit.
+ */
+export const commandEnvFor = (platform, tmp = NodeOS.tmpdir()) => {
+  if (platform !== "darwin") return {};
+  const lexical = tmp.replace(/\/+$/u, "");
+  if (!lexical.startsWith("/var/folders/")) return {};
+  try {
+    const real = NodeFS.realpathSync.native(lexical);
+    return real === `/private${lexical}` ? { TMPDIR: real } : {};
+  } catch {
+    return {};
+  }
+};
+
 const gitRef = (args, cwd) => {
   const result = runTool(["git", ...args], {
     cwd,
@@ -181,7 +198,7 @@ const RUN_OUTCOME_REPORTER = NodeURL.fileURLToPath(
   new URL("./vitest-run-outcome-reporter.mjs", import.meta.url),
 );
 
-const runLogged = (argv, { root, home, log, env }) => {
+const runLogged = (argv, { root, home, log, env = {} }) => {
   const fd = NodeFS.openSync(log, "a");
   try {
     return runTool(argv, { cwd: root, home, env, stdio: ["ignore", fd, fd] });
@@ -232,13 +249,13 @@ const CANCELLED = new Set([137, 143]);
  * server runs alone with parallel files; up to RERUN_LIMIT failed files rerun alone
  * as a diagnostic, and the gate still fails.
  */
-function runTests({ root, home, out, log, workers, baseline, recording }) {
+function runTests({ root, home, out, log, workers, baseline, recording, commandEnv }) {
   const packagesLog = log;
   const started = performance.now();
   const cacheRoot = NodePath.join(out, "aggregate-task-cache");
   const aggregate = runLogged(
     ["pnpm", "exec", "vp", "run", "--filter", `!${SERVER.name}`, "test"],
-    { root, home, log: packagesLog, env: { VITE_CACHE_PATH: cacheRoot } },
+    { root, home, log: packagesLog, env: { ...commandEnv, VITE_CACHE_PATH: cacheRoot } },
   );
   const packagesFailed = [];
   const packagesRerun = [];
@@ -246,6 +263,7 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
     const outcomes = readAggregateOutcomes(cacheRoot);
     const listed = runTool(["pnpm", "-r", "ls", "--depth", "-1", "--json"], {
       cwd: root,
+      env: commandEnv,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -271,6 +289,7 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
         root,
         home,
         log: packagesLog,
+        env: commandEnv,
       });
       if (result.status !== 0 || result.error) packagesFailed.push(entry.name);
     }
@@ -306,7 +325,7 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
         root,
         home,
         log: serverLog,
-        ...(outcomePath ? { env: { SCIENT_VITEST_RUN_OUTCOME: outcomePath } } : {}),
+        env: { ...commandEnv, ...(outcomePath ? { SCIENT_VITEST_RUN_OUTCOME: outcomePath } : {}) },
       },
     );
   const report = NodePath.join(out, "test-server.json");
@@ -596,6 +615,7 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   const commonDir = NodePath.resolve(root, capture(["git", "rev-parse", "--git-common-dir"], root));
   const cores = NodeOS.availableParallelism();
   const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-alignment-gates-"));
+  const commandEnv = commandEnvFor(platform);
   const record = {
     head: capture(["git", "rev-parse", "HEAD"], root),
     tree: capture(["git", "rev-parse", "HEAD^{tree}"], root),
@@ -658,6 +678,7 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
       save,
       baseline: baseline?.unusable ? null : baseline,
       workers,
+      commandEnv,
     });
   } finally {
     release();
@@ -701,7 +722,10 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   return failed.length ? 1 : 0;
 }
 
-function runGates(selected, { args, platform, root, out, record, save, baseline, workers }) {
+function runGates(
+  selected,
+  { args, platform, root, out, record, save, baseline, workers, commandEnv },
+) {
   for (const gate of selected) {
     if (gate.windows && platform === "win32" && !args.tests) {
       record.gates.push({ id: gate.id, status: "not-run", reason: gate.windows });
@@ -710,7 +734,7 @@ function runGates(selected, { args, platform, root, out, record, save, baseline,
     }
     const log = NodePath.join(out, `${gate.id}.log`);
     const fd = NodeFS.openSync(log, "w");
-    const home = makeCheckHome();
+    const home = makeCheckHome(commandEnv.TMPDIR);
     const start = performance.now();
     let result;
     let homeFiles;
@@ -724,8 +748,9 @@ function runGates(selected, { args, platform, root, out, record, save, baseline,
             workers,
             baseline,
             recording: args.recordBaseline,
+            commandEnv,
           })
-        : runTool(gate.argv, { cwd: root, home, stdio: ["ignore", fd, fd] });
+        : runTool(gate.argv, { cwd: root, home, env: commandEnv, stdio: ["ignore", fd, fd] });
       homeFiles = countFiles(home);
     } finally {
       NodeFS.closeSync(fd);

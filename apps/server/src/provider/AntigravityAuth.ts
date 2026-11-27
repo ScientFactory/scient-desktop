@@ -62,6 +62,7 @@ const LOGIN_CODE_FIELD = "code";
 const isSetupError = Schema.is(ProviderSetupError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
+const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
 
 interface AuthSnapshot {
   readonly ownerSessionId: string | null;
@@ -178,6 +179,10 @@ function safeAuthFailure(
       (error.value.detail === UNREACHABLE_MESSAGE || error.value.detail === NOT_RESPONDING_MESSAGE)
     ) {
       return error.value.detail;
+    }
+    // The driver wraps a refused runtime's update instruction in a transport error.
+    if (isAcpTransportError(error.value) && isSetupError(error.value.cause)) {
+      return error.value.cause.detail;
     }
     if (isAcpProcessExitedError(error.value)) {
       const { code, signal } = error.value;

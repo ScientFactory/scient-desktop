@@ -139,6 +139,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,
   // SCIENT-FORK:START — Scient Accounts: declare read and settings-write permissions.
   [WS_METHODS.accountsSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsExternalIdentities]: AuthOrchestrationReadScope,
   [WS_METHODS.accountsSubscribeChanges]: AuthOrchestrationReadScope,
   [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
   [WS_METHODS.accountsRemove]: AuthSettingsWriteScope,

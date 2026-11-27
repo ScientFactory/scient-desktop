@@ -39,8 +39,8 @@ export function checkEnvironment(env, home) {
 }
 
 /** A fresh state root, so a check cannot fall back to a live profile. */
-export const makeCheckHome = () =>
-  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-check-home-"));
+export const makeCheckHome = (root = NodeOS.tmpdir()) =>
+  NodeFS.mkdtempSync(NodePath.join(root, "scient-check-home-"));
 
 /** Run a repository tool with the check environment. Windows reaches `pnpm.cmd` through its shell. */
 export function runTool(argv, { home, env = {}, ...options } = {}) {
