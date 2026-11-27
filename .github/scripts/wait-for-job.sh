@@ -15,11 +15,15 @@ uploaded=false
 jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"
 artifacts="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$artifact"
 # A failed API request is retried a few times; one that keeps failing fails the wait, rather
-# than reading as a job that uploaded nothing.
+# than reading as a job that uploaded nothing. Only a successful attempt's output is passed on:
+# `gh api` can print a failed request's error body to stdout.
 api() {
-  local attempt
+  local attempt out
   for attempt in 1 2 3 4 5; do
-    gh api "$@" && return 0
+    if out=$(gh api "$@"); then
+      printf '%s\n' "$out"
+      return 0
+    fi
     echo "GitHub API request failed (attempt $attempt of 5)." >&2
     [ "$attempt" -lt 5 ] && sleep $((attempt * 5))
   done

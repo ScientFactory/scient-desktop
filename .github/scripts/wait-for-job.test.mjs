@@ -24,7 +24,8 @@ const artifacts = (...createdAt) => ({
 });
 
 // A fake `gh` applies the script's own --jq filter to the next queued response for that
-// endpoint (the last one repeats); a queued `apiError` fails that request; `sleep` returns at once.
+// endpoint (the last one repeats); a queued `apiError` fails that request after printing an
+// error body to stdout, as `gh api` does; `sleep` returns at once.
 function waitForJob({ jobs, artifactLists, args = [] }) {
   const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-wait-for-job-"));
   try {
@@ -43,7 +44,7 @@ queue="${bin}/artifacts"
 case "$2" in */jobs*) queue="${bin}/jobs" ;; esac
 line="$(head -n 1 "$queue")"
 if [ "$(wc -l < "$queue")" -gt 1 ]; then tail -n +2 "$queue" > "$queue.next" && mv "$queue.next" "$queue"; fi
-if [ "$line" = '"apiError"' ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+if [ "$line" = '"apiError"' ]; then echo '{"message": "Bad Gateway"}'; echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
 printf '%s\\n' "$line" | jq -r "$4"
 `,
       { mode: 0o755 },
