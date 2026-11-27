@@ -904,9 +904,14 @@ export function RecordingsPage({
                   </EmptyDescription>
                 )}
                 {unfilteredRows.length === 0 ? (
-                  <Button disabled={!canAdd || adding} onClick={() => picker.current?.click()}>
-                    {gt("Add recording")}
-                  </Button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button disabled={!canAdd || adding} onClick={() => picker.current?.click()}>
+                      {gt("Add recording")}
+                    </Button>
+                    <Button variant="outline" onClick={() => setFinding(true)}>
+                      {gt("From your projects")}
+                    </Button>
+                  </div>
                 ) : (
                   <Button
                     variant="outline"

@@ -923,7 +923,13 @@ const make = Effect.gen(function* () {
       try: async (waitSignal) => {
         if (!NodePath.isAbsolute(input.project))
           throw invalid("Expected an absolute project path.");
-        const project = await NodeFSP.realpath(input.project);
+        const project = await NodeFSP.realpath(input.project).catch((error: unknown) => {
+          // A project whose folder is gone has no recordings to list.
+          if (missing(error) && (input.action === "list" || input.action === "media-list"))
+            return undefined;
+          throw error;
+        });
+        if (project === undefined) return input.action === "list" ? [] : { media: [] };
         if (opts?.scoped && NodePath.relative(input.project, project) !== "")
           throw invalid("The registered project path has changed.");
         const root = NodePath.join(project, "Transcripts");
