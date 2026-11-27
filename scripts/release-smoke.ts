@@ -8,6 +8,9 @@ import * as NodeURL from "node:url";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { createScientReleaseHandoff } from "./create-scient-release-handoff.ts";
+// SCIENT-FORK:START — assembly verifies each blockmap describes its payload.
+import { createFixtureBlockmap } from "./lib/update-blockmap.ts";
+// SCIENT-FORK:END
 import { verifyScientReleaseAssets } from "./verify-scient-release-assets.ts";
 
 const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -287,15 +290,17 @@ function verifyCompleteReleaseFixture(root: string): void {
   writeVerifiedManifest(assets, "latest-linux.yml", version, [
     { name: `Scient-${version}-x86_64.AppImage`, value: "linux", blockMapSize: 5 },
   ]);
-  for (const name of [
-    `Scient-${version}-arm64.dmg.blockmap`,
-    `Scient-${version}-arm64.zip.blockmap`,
-    `Scient-${version}-x64.dmg.blockmap`,
-    `Scient-${version}-x64.zip.blockmap`,
-    `Scient-${version}-x64.exe.blockmap`,
-  ]) {
-    NodeFS.writeFileSync(NodePath.join(assets, name), "blockmap");
+  // SCIENT-FORK:START — assembly verifies each blockmap describes its payload.
+  for (const [name, value] of [
+    [`Scient-${version}-arm64.dmg`, "arm-dmg"],
+    [`Scient-${version}-arm64.zip`, "arm-zip"],
+    [`Scient-${version}-x64.dmg`, "x64-dmg"],
+    [`Scient-${version}-x64.zip`, "x64-zip"],
+    [`Scient-${version}-x64.exe`, "windows"],
+  ] as const) {
+    NodeFS.writeFileSync(NodePath.join(assets, `${name}.blockmap`), createFixtureBlockmap(value));
   }
+  // SCIENT-FORK:END
   NodeFS.writeFileSync(NodePath.join(assets, `scient-server-${version}.tgz`), "server");
 
   const result = verifyScientReleaseAssets([

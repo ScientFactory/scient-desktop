@@ -11,12 +11,15 @@ import {
   scientServerAssetName,
 } from "@t3tools/shared/scientRelease";
 
+import { assertBlockmapDescribesPayload } from "./lib/update-blockmap.ts";
 import { parseUpdateManifest } from "./lib/update-manifest.ts";
 
 interface ManifestDefinition {
   readonly name: string;
   readonly label: string;
   readonly requiredPayloads: ReadonlyArray<string>;
+  /** Payloads electron-updater downloads differentially, so their `.blockmap` must ship. */
+  readonly requiredBlockmaps: ReadonlyArray<string>;
 }
 
 function requiredValue(args: ReadonlyArray<string>, flag: string): string {
@@ -76,20 +79,25 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
         `Scient-${version}-x64.dmg`,
         `Scient-${version}-x64.zip`,
       ],
+      requiredBlockmaps: [`Scient-${version}-arm64.zip`, `Scient-${version}-x64.zip`],
     },
     {
       name: `${manifestChannel}.yml`,
       label: "Windows",
       requiredPayloads: [`Scient-${version}-x64.exe`],
+      requiredBlockmaps: [`Scient-${version}-x64.exe`],
     },
     {
       name: `${manifestChannel}-linux.yml`,
       label: "Linux",
       requiredPayloads: [`Scient-${version}-x86_64.AppImage`],
+      // The AppImage carries its blockmap inside the file (manifest `blockMapSize`).
+      requiredBlockmaps: [],
     },
   ];
 
   const allowed = new Set<string>();
+  const payloads = new Set<string>();
   for (const definition of definitions) {
     const manifestPath = NodePath.join(assetsDir, definition.name);
     assertRegularNonemptyFile(manifestPath, `${definition.label} update manifest`);
@@ -112,6 +120,7 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
       }
       urls.add(file.url);
       allowed.add(file.url);
+      payloads.add(file.url);
       const payloadPath = NodePath.join(assetsDir, file.url);
       const stat = assertRegularNonemptyFile(payloadPath, `${definition.label} update payload`);
       if (stat.size !== file.size || digest(payloadPath, "sha512", "base64") !== file.sha512) {
@@ -126,6 +135,12 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
           `${definition.label} update manifest does not reference required ${required}.`,
         );
       }
+    }
+    for (const required of definition.requiredBlockmaps) {
+      assertRegularNonemptyFile(
+        NodePath.join(assetsDir, `${required}.blockmap`),
+        `${definition.label} update blockmap`,
+      );
     }
   }
 
@@ -146,10 +161,12 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
   for (const name of actual) {
     if (!name.endsWith(".blockmap")) continue;
     const payloadName = name.slice(0, -".blockmap".length);
-    if (!allowed.has(payloadName)) {
+    if (!payloads.has(payloadName)) {
       throw new Error(`Release assembly contains unattested blockmap: ${name}.`);
     }
-    assertRegularNonemptyFile(NodePath.join(assetsDir, name), "update blockmap");
+    const blockmapPath = NodePath.join(assetsDir, name);
+    assertRegularNonemptyFile(blockmapPath, "update blockmap");
+    assertBlockmapDescribesPayload(blockmapPath, NodePath.join(assetsDir, payloadName));
     allowed.add(name);
   }
   const unexpected = actual.filter((name) => !allowed.has(name));
