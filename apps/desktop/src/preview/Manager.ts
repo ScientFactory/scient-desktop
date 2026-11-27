@@ -1,5 +1,8 @@
 // SCIENT-FORK:START — Scient Accounts: remember the identity of browser sessions.
-import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
+import {
+  accountsSessionIdentity,
+  rememberAccountsSession,
+} from "../scient/accounts/sessionIdentity.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
 import { PreviewHostWindows } from "../scient/multiWindow/previewHostWindows.ts";
@@ -20,6 +23,10 @@ import {
   DesktopPreviewAnnotationVoiceEventSchema,
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  // SCIENT-FORK:START — tab hover-card thumbnail bounds and the Incognito profile.
+  INCOGNITO_BROWSER_PROFILE_ID,
+  TAB_THUMBNAIL_DATA_URL_MAX_LENGTH,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -142,6 +149,10 @@ export interface PreviewTabState {
   capturing: boolean;
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
+  // SCIENT-FORK:START — bumps on every navigation (including same-address
+  // reloads) so a thumbnail capture spanning a document change is rejected.
+  navigationGeneration: number;
+  // SCIENT-FORK:END
   updatedAt: string;
 }
 
@@ -1306,11 +1317,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           safeHttpOrigin(current.favicon.pageUrl) !==
             safeHttpOrigin(navStatus.kind === "Idle" ? wc.getURL() : navStatus.url);
         const { favicon: _favicon, ...currentWithoutFavicon } = current;
+        // SCIENT-FORK:START — a confirmed navigation or an address change
+        // (in-page navigation included) starts a new document generation.
+        const navigated =
+          confirmedNavigation ||
+          (navStatus.kind === "Idle" ? null : navStatus.url) !==
+            (current.navStatus.kind === "Idle" ? null : current.navStatus.url);
+        // SCIENT-FORK:END
         const state: PreviewTabState = {
           ...(clearFavicon ? currentWithoutFavicon : current),
           navStatus,
           canGoBack,
           canGoForward,
+          // SCIENT-FORK:START — see navigationGeneration above.
+          navigationGeneration: current.navigationGeneration + (navigated ? 1 : 0),
+          // SCIENT-FORK:END
           // Guest zoom inherits app zoom; mirroring it would overwrite the tab's own setting.
           updatedAt,
         };
@@ -1924,6 +1945,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           audible: false,
           controller: "none",
           capturing: false,
+          // SCIENT-FORK:START — see navigationGeneration on PreviewTabState.
+          navigationGeneration: 0,
+          // SCIENT-FORK:END
           updatedAt,
         };
         return [
@@ -2326,6 +2350,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         capturing: current?.capturing ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
+        // SCIENT-FORK:START — carry the document generation (see PreviewTabState).
+        navigationGeneration: current?.navigationGeneration ?? 0,
+        // SCIENT-FORK:END
         updatedAt,
       };
       return [
@@ -2909,6 +2936,71 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       createdAt,
     };
   });
+
+  // SCIENT-FORK:START — a small in-memory thumbnail for the browser-tab hover
+  // card; no artifact is written. The desktop, not the renderer, decides: an
+  // ephemeral (Incognito) guest is never captured, and the guest must still
+  // be at the expected address before and after capture.
+  const captureTabThumbnail = Effect.fn("PreviewManager.captureTabThumbnail")(function* (
+    tabId: string,
+    expectedUrl: string,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    if (wc.session == null || wc.session.storagePath == null) return null;
+    if (accountsSessionIdentity(wc.session)?.profileId === INCOGNITO_BROWSER_PROFILE_ID) {
+      return null;
+    }
+    // The renderer's address and the guest's can differ only in spelling
+    // (a missing root slash, host case); compare parsed addresses.
+    const atExpectedPage = (): boolean => {
+      const actual = wc.getURL();
+      try {
+        return new URL(actual).href === new URL(expectedUrl).href;
+      } catch {
+        return actual === expectedUrl;
+      }
+    };
+    if (!atExpectedPage()) return null;
+    const generation = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navigationGeneration;
+    const image = yield* captureStillImage(
+      { operation: "captureTabThumbnail.capturePage", tabId, webContentsId: wc.id },
+      tabId,
+      wc,
+    );
+    // A navigation during capture (even away and back, or a same-address
+    // reload) means these pixels may not be the expected document.
+    if ((yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navigationGeneration !== generation) {
+      return null;
+    }
+    return yield* Effect.try({
+      try: (): string | null => {
+        if (wc.isDestroyed() || !atExpectedPage()) return null;
+        const size = image.getSize();
+        if (size.width <= 0 || size.height <= 0) return null;
+        // The card shows the picture near 300 CSS px wide; capture at double
+        // width so it stays sharp on Retina displays, stepping down only if
+        // the encoded result would exceed the transport bound.
+        for (const [width, quality] of [
+          [640, 82],
+          [640, 60],
+          [480, 60],
+        ] as const) {
+          const thumbnail = size.width > width ? image.resize({ width, quality: "best" }) : image;
+          const dataUrl = `data:image/jpeg;base64,${thumbnail.toJPEG(quality).toString("base64")}`;
+          if (dataUrl.length <= TAB_THUMBNAIL_DATA_URL_MAX_LENGTH) return dataUrl;
+        }
+        return null;
+      },
+      catch: (cause) =>
+        new PreviewOperationError({
+          operation: "captureTabThumbnail.encode",
+          tabId,
+          webContentsId: wc.id,
+          cause,
+        }),
+    });
+  });
+  // SCIENT-FORK:END
 
   const exportPdf = Effect.fn("PreviewManager.exportPdf")(function* (tabId: string) {
     return yield* browserPdfExportSemaphore.withPermit(
@@ -3960,6 +4052,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // SCIENT-FORK:END
     cancelPickElement,
     captureScreenshot,
+    // SCIENT-FORK:START — tab hover-card thumbnail.
+    captureTabThumbnail,
+    // SCIENT-FORK:END
     exportPdf,
     renderHtmlPdf,
     closeTab,
@@ -4246,6 +4341,12 @@ export class PreviewManager extends Context.Service<
     readonly captureScreenshot: (
       tabId: string,
     ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
+    // SCIENT-FORK:START — tab hover-card thumbnail; null when the guest has no pixels.
+    readonly captureTabThumbnail: (
+      tabId: string,
+      expectedUrl: string,
+    ) => Effect.Effect<string | null, PreviewManagerError>;
+    // SCIENT-FORK:END
     readonly exportPdf: (
       tabId: string,
     ) => Effect.Effect<DesktopPreviewPdfExportArtifact, PreviewManagerError>;
@@ -4410,6 +4511,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     updateAnnotationVoice: operations.updateAnnotationVoice,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
+    // SCIENT-FORK:START — tab hover-card thumbnail.
+    captureTabThumbnail: operations.captureTabThumbnail,
+    // SCIENT-FORK:END
     exportPdf: operations.exportPdf,
     renderHtmlPdf: operations.renderHtmlPdf,
     revealArtifact: operations.revealArtifact,

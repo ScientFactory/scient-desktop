@@ -28,6 +28,10 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
+// SCIENT-FORK:START — a closed browser tab forgets its hover-card thumbnail.
+import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+import { tabThumbnailCache } from "~/scient/browser/browserTabThumbnail";
+// SCIENT-FORK:END
 
 /**
  * Closing releases preview and terminal sessions, and deletes a side chat that never ran.
@@ -56,6 +60,16 @@ export function useRightPanelSurfaceClose(input: {
   );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
+    // SCIENT-FORK:START — every close route removes surfaces through here, so
+    // this is where a browser tab's in-memory thumbnail is forgotten. The
+    // cache is keyed by the environment/thread/epoch-scoped runtime id, the
+    // same identity the hover card captures and looks up by.
+    if (surface.kind === "preview" && surface.resourceId) {
+      tabThumbnailCache.invalidate(
+        previewRuntimeTabId(ref, previewState.serverEpoch, surface.resourceId),
+      );
+    }
+    // SCIENT-FORK:END
     // Without preview access, server state remains until an authorized close or restart.
     if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
       void closePreviewSession({
