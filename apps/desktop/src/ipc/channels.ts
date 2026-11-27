@@ -153,8 +153,10 @@ export const VOICE_HAD_LEGACY_SELECTION_CHANNEL = "desktop:voice-had-legacy-sele
 export const VOICE_HAS_LEGACY_MODELS_CHANNEL = "desktop:voice-has-legacy-models";
 export const VOICE_REMOVE_LEGACY_MODELS_CHANNEL = "desktop:voice-remove-legacy-models";
 
-// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
+// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources),
+// and a tab thumbnail for the hover card.
 export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";
+export const PREVIEW_TAB_THUMBNAIL_CHANNEL = "scient:preview:tab-thumbnail";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";

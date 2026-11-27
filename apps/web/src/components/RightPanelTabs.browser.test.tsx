@@ -1,6 +1,6 @@
 import "~/index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -159,7 +159,10 @@ const BROWSER_SURFACE: RightPanelSurface = {
 };
 const DIFF_SURFACE: RightPanelSurface = { id: "diff", kind: "diff" };
 
-function panel(activeSurface: RightPanelSurface) {
+function panel(
+  activeSurface: RightPanelSurface,
+  previewSessions: RightPanelTabsProps["previewSessions"] = {},
+) {
   const noop = () => {};
   const props: RightPanelTabsProps = {
     mode: "inline",
@@ -176,7 +179,7 @@ function panel(activeSurface: RightPanelSurface) {
     environmentId: EnvironmentId.make("environment-local"),
     activeSurfaceId: activeSurface.id,
     pendingSurfaceIds: new Set(),
-    previewSessions: {},
+    previewSessions,
     desktopByTabId: {},
     terminalLabelsById: new Map(),
     onActivate: noop,
@@ -373,3 +376,30 @@ describe("add surface launcher", () => {
     expect(page.getByRole("menu").query()).toBeNull();
   });
 });
+
+// SCIENT-FORK:START — activating a browser tab must not replace its title button.
+describe("browser tab hover card", () => {
+  it("keeps keyboard focus on the title button when the tab becomes active", async () => {
+    const sessions: Record<string, PreviewSessionSnapshot> = {
+      "tab-1": {
+        threadId: ThreadId.make("thread-1"),
+        tabId: "tab-1",
+        navStatus: { _tag: "Success", url: "https://example.com/", title: "Example page" },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-11-27T00:00:00.000Z",
+      },
+    };
+    await using screen = await render(panel(DIFF_SURFACE, sessions));
+    const button = [...screen.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === "Example page",
+    );
+    expect(button).toBeDefined();
+    button!.focus();
+    expect(document.activeElement).toBe(button);
+
+    await screen.rerender(panel(BROWSER_SURFACE, sessions));
+    expect(document.activeElement).toBe(button);
+  });
+});
+// SCIENT-FORK:END

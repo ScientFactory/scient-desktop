@@ -25,6 +25,9 @@ import {
   DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
+  // SCIENT-FORK:START — tab hover-card thumbnail.
+  DesktopPreviewTabThumbnailInputSchema,
+  // SCIENT-FORK:END
   DesktopPreviewTunnelAccessResolutionInputSchema,
   DesktopPortForwardInputSchema,
   DesktopPortForwardSchema,
@@ -523,6 +526,19 @@ export const captureScreenshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// SCIENT-FORK:START — tab hover-card thumbnail. Any failure is simply "no
+// thumbnail": the card falls back to title and site, so nothing to surface.
+export const captureTabThumbnail = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_TAB_THUMBNAIL_CHANNEL,
+  payload: DesktopPreviewTabThumbnailInputSchema,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.preview.captureTabThumbnail")(function* ({ tabId, url }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.captureTabThumbnail(tabId, url).pipe(Effect.orElseSucceed(() => null));
+  }),
+});
+// SCIENT-FORK:END
+
 const exportPdf = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
@@ -609,6 +625,9 @@ export const methods = [
   pickElement,
   cancelPickElement,
   captureScreenshot,
+  // SCIENT-FORK:START — tab hover-card thumbnail.
+  captureTabThumbnail,
+  // SCIENT-FORK:END
   exportPdf,
   renderHtmlPdf,
   revealArtifact,

@@ -2284,6 +2284,92 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // SCIENT-FORK:START — tab hover-card thumbnails are guarded in the desktop.
+  effectIt.effect(
+    "captures a tab thumbnail only for a persistent guest at the expected address",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const { capturePage, wc } = yield* setupStill(manager);
+          const url = "https://example.com";
+          Object.assign(wc, { getURL: () => url, session: { storagePath: "/tmp/profile" } });
+          const picture = yield* manager.captureTabThumbnail("tab_still", "https://example.com");
+          expect(picture).toBe(
+            `data:image/jpeg;base64,${Buffer.from("fresh-png").toString("base64")}`,
+          );
+          const callsAfterCapture = capturePage.mock.calls.length;
+          expect(callsAfterCapture).toBeGreaterThan(0);
+
+          expect(
+            yield* manager.captureTabThumbnail("tab_still", "https://other.example/"),
+          ).toBeNull();
+          Object.assign(wc, { session: { storagePath: null } });
+          expect(yield* manager.captureTabThumbnail("tab_still", "https://example.com")).toBeNull();
+          expect(capturePage).toHaveBeenCalledTimes(callsAfterCapture);
+        }),
+      ),
+  );
+
+  effectIt.effect("discards a tab thumbnail when the guest navigates during capture", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const { capturePage, wc } = yield* setupStill(manager);
+        let url = "https://example.com";
+        Object.assign(wc, { getURL: () => url, session: { storagePath: "/tmp/profile" } });
+        capturePage.mockImplementation(async () => {
+          url = "https://example.com/left";
+          return makeStillImage();
+        });
+        expect(yield* manager.captureTabThumbnail("tab_still", "https://example.com")).toBeNull();
+      }),
+    ),
+  );
+  effectIt.effect(
+    "discards a tab thumbnail when the guest reloads the same address during capture",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const states: PreviewManager.PreviewTabState[] = [];
+          let generationAtCapture = 0;
+          let bumped = Promise.withResolvers<void>();
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              states.push(state);
+              if (state.navigationGeneration > generationAtCapture) bumped.resolve();
+            }),
+          );
+          const listeners = new Map<string, Array<() => void>>();
+          const capturePage = vi.fn(async () => {
+            generationAtCapture = states.at(-1)?.navigationGeneration ?? 0;
+            bumped = Promise.withResolvers<void>();
+            for (const listener of listeners.get("did-navigate") ?? []) listener();
+            // Return pixels only once the forked navigation sync has
+            // published the bumped generation, so the capture provably
+            // spans the document change.
+            await bumped.promise;
+            return makeStillImage();
+          });
+          const wc = makeTestStillImageWebContents(capturePage);
+          Object.assign(wc, {
+            on: vi.fn((event: string, listener: () => void) => {
+              const registered = listeners.get(event) ?? [];
+              registered.push(listener);
+              listeners.set(event, registered);
+            }),
+            session: { storagePath: "/tmp/profile" },
+          });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_still");
+          yield* manager.registerWebview("tab_still", wc.id);
+          yield* manager.setColorScheme("tab_still", "system");
+          expect(listeners.has("did-navigate")).toBe(true);
+          expect(yield* manager.captureTabThumbnail("tab_still", "https://example.com")).toBeNull();
+          expect(states.at(-1)?.navigationGeneration).toBeGreaterThan(0);
+        }),
+      ),
+  );
+  // SCIENT-FORK:END
+
   effectIt.effect(
     "waits for paint before capturing and restores rendering after overlapping requests",
     () =>

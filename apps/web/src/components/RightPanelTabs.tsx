@@ -27,6 +27,9 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START — Incognito browser tabs show no hover-card thumbnail.
+import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -121,6 +124,7 @@ import { canDuplicatePanelSurface } from "~/scient/rightPanel/panelTabCommands";
 import { PanelFilesToggle } from "~/scient/rightPanel/PanelFilesColumn";
 import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
 import { useTabDragOut } from "~/scient/multiWindow/tabDragOut";
+import { BrowserTabHoverCard } from "~/scient/browser/BrowserTabHoverCard";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelViewProperties } from "~/scient/analytics/viewCategories";
@@ -883,7 +887,11 @@ function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url:
     <FaviconImage
       sources={[capturedUrl, publicProviderUrl]}
       fallback={<Globe className="size-3 shrink-0" />}
-      className="size-3 shrink-0 rounded-sm object-contain"
+      // SCIENT-FORK:START — favicons at full 16px in their own shape: no radius
+      // clipping or added background, so square and transparent marks stay as
+      // the site drew them and read at a glance like other browsers' tabs.
+      className="size-4 shrink-0 object-contain"
+      // SCIENT-FORK:END
     />
   );
 }
@@ -908,6 +916,17 @@ function previewFaviconOf(
   const capturedUrl = favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
   return { url, capturedUrl };
 }
+
+// SCIENT-FORK:START — only the built-in Incognito profile is ephemeral; its
+// tabs get a text-only hover card and are never captured.
+function previewIsIncognitoOf(
+  surface: RightPanelSurface,
+  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
+): boolean {
+  if (surface.kind !== "preview" || !surface.resourceId) return false;
+  return sessions[surface.resourceId]?.profileId === INCOGNITO_BROWSER_PROFILE_ID;
+}
+// SCIENT-FORK:END
 
 function SurfaceIcon({
   surface,
@@ -1206,6 +1225,11 @@ function RightPanelTab(
     audioRuntimeTabId: string | null;
     previewUrl: string | null;
     previewCapturedUrl: string | null;
+    // SCIENT-FORK:START — browser-tab hover card.
+    previewThumbnailTabId: string | null;
+    previewIncognito: boolean;
+    previewNavEpoch: string | null;
+    // SCIENT-FORK:END
     theme: "light" | "dark";
     environmentId: EnvironmentId | null;
     pullRequestStatusSeed: PullRequestTabStatusSeed | undefined;
@@ -1243,6 +1267,72 @@ function RightPanelTab(
         ? sideChatShell.title
         : formatSubagentDisplayTitle(sideChatShell.title);
   const sideChatState = sideChatTabState(sideChatShell);
+  // SCIENT-FORK:START — the tab's title button, shared by the tooltip and the
+  // browser-tab hover card below.
+  const titleButton = (
+    <button
+      type="button"
+      onDoubleClick={() => {
+        if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
+      }}
+      className="cursor-pointer flex min-w-0 flex-1 items-center"
+      aria-label={
+        props.attention
+          ? gt("{title}: changes need attention", { title })
+          : sideChatState === null
+            ? undefined
+            : gt("{title}, {state}", {
+                title,
+                state: messages(SIDE_CHAT_STATE_LABELS[sideChatState]),
+              })
+      }
+      onClick={() => onActivate(surface)}
+    >
+      <span className="min-w-0 flex-1 truncate text-start" dir="auto">
+        {title}
+      </span>
+      {props.attention ? (
+        <TriangleAlert
+          className="ml-1 size-3 shrink-0 text-warning dark:text-warning"
+          aria-hidden
+        />
+      ) : null}
+    </button>
+  );
+  // A browser tab explains itself with a hover card (title, site, and — while
+  // inactive — a page picture). The card stays mounted across activation so
+  // the title button keeps keyboard focus; other tabs keep the title tooltip.
+  const titleControl =
+    surface.kind === "preview" && props.previewUrl !== null ? (
+      <BrowserTabHoverCard
+        trigger={titleButton}
+        title={title}
+        url={props.previewUrl}
+        runtimeTabId={props.previewThumbnailTabId}
+        incognito={props.previewIncognito}
+        active={props.active}
+        navEpoch={props.previewNavEpoch}
+      />
+    ) : (
+      <SharedTooltipTrigger
+        render={titleButton}
+        className="text-start"
+        label={
+          <span dir="auto">
+            {surface.kind === "device" ? (
+              <DeviceTabTooltip
+                surface={surface}
+                environmentId={props.environmentId}
+                title={title}
+              />
+            ) : (
+              title
+            )}
+          </span>
+        }
+      />
+    );
+  // SCIENT-FORK:END
   const content = (
     <>
       <PanelTabCloseButton label={gt("Close {title}", { title })} onClick={() => onClose(surface)}>
@@ -1321,56 +1411,7 @@ function RightPanelTab(
           }}
         />
       ) : (
-        <SharedTooltipTrigger
-          render={
-            <button
-              type="button"
-              onDoubleClick={() => {
-                if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
-              }}
-              className="cursor-pointer flex min-w-0 flex-1 items-center"
-              aria-label={
-                props.attention
-                  ? gt("{title}: changes need attention", { title })
-                  : sideChatState === null
-                    ? undefined
-                    : gt("{title}, {state}", {
-                        title,
-                        state: messages(SIDE_CHAT_STATE_LABELS[sideChatState]),
-                      })
-              }
-              onClick={() => onActivate(surface)}
-            >
-              {/* SCIENT-FORK:START — preserve automatic direction and persistence attention */}
-              <span className="min-w-0 flex-1 truncate text-start" dir="auto">
-                {title}
-              </span>
-              {props.attention ? (
-                <TriangleAlert
-                  className="ml-1 size-3 shrink-0 text-warning dark:text-warning"
-                  aria-hidden
-                />
-              ) : null}
-              {/* SCIENT-FORK:END */}
-            </button>
-          }
-          // SCIENT-FORK:START — preserve automatic direction
-          className="text-start"
-          label={
-            <span dir="auto">
-              {surface.kind === "device" ? (
-                <DeviceTabTooltip
-                  surface={surface}
-                  environmentId={props.environmentId}
-                  title={title}
-                />
-              ) : (
-                title
-              )}
-            </span>
-          }
-          // SCIENT-FORK:END
-        />
+        titleControl
       )}
     </>
   );
@@ -1933,6 +1974,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     }
                     previewUrl={favicon.url}
                     previewCapturedUrl={favicon.capturedUrl}
+                    // SCIENT-FORK:START — browser-tab hover card.
+                    previewThumbnailTabId={
+                      previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
+                    }
+                    previewIncognito={previewIsIncognitoOf(surface, props.previewSessions)}
+                    previewNavEpoch={
+                      surface.kind === "preview" && surface.resourceId
+                        ? (props.previewSessions[surface.resourceId]?.updatedAt ?? null)
+                        : null
+                    }
+                    // SCIENT-FORK:END
                     theme={resolvedTheme}
                     environmentId={props.environmentId}
                     pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
