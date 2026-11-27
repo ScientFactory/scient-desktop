@@ -4,7 +4,16 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { test } from "vitest";
-import { payload, qualifyTiming, timingEvents, verifyHandoff } from "./qualify-desktop-update.mjs";
+import {
+  browserProcessId,
+  devToolsActivePort,
+  devToolsEndpoint,
+  largestWindow,
+  payload,
+  qualifyTiming,
+  timingEvents,
+  verifyHandoff,
+} from "./qualify-desktop-update.mjs";
 
 const sourceSha = "a".repeat(40);
 const identity = { attemptId: "attempt-1", fromVersion: "0.0.1", targetVersion: "0.0.2" };
@@ -165,4 +174,59 @@ test("selects the Linux x86_64 payload for an x64 host and rejects changed archi
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("drives the app through Chromium's DevTools endpoint, not the disabled Node inspector", () => {
+  const browserPath = "/devtools/browser/6d5c0d36-2f1e-4bb4-8f5e-3c3f0b9c1a77";
+  const endpoint = devToolsEndpoint(
+    [
+      "Debugger listening on ws://127.0.0.1:9229/0f6c2c2a-5a77-4d4f-9a3e-2e1f2a3b4c5d",
+      `DevTools listening on ws://127.0.0.1:53021${browserPath}\r`,
+      "[main] backend starting",
+    ].join("\n"),
+  );
+  NodeAssert.deepEqual(endpoint, {
+    url: `ws://127.0.0.1:53021${browserPath}`,
+    port: 53021,
+    path: browserPath,
+  });
+  NodeAssert.equal(devToolsEndpoint("Debugger listening on ws://127.0.0.1:9229/abc\n"), undefined);
+  NodeAssert.equal(
+    devToolsEndpoint(`DevTools listening on ws://0.0.0.0:53021${browserPath}`),
+    undefined,
+  );
+  NodeAssert.deepEqual(devToolsActivePort(`53021\r\n${browserPath}`), {
+    port: 53021,
+    path: browserPath,
+  });
+  NodeAssert.equal(devToolsActivePort("53021\n"), undefined, "a half-written file is not ready");
+});
+
+test("takes the main process from DevTools' one browser process", () => {
+  const helpers = [
+    { type: "renderer", id: 12 },
+    { type: "GPU", id: 13 },
+  ];
+  NodeAssert.equal(browserProcessId([...helpers, { type: "browser", id: 11 }]), 11);
+  NodeAssert.throws(() => browserProcessId(helpers), /exactly one browser/);
+  NodeAssert.throws(
+    () =>
+      browserProcessId([
+        { type: "browser", id: 11 },
+        { type: "browser", id: 14 },
+      ]),
+    /exactly one browser/,
+  );
+});
+
+test("captures the relaunched app's largest shown window and fails when it shows none", () => {
+  NodeAssert.equal(
+    largestWindow([
+      { id: "tooltip", width: 300, height: 40 },
+      { id: "main", width: 1280, height: 800 },
+      { id: "hidden", width: 0, height: 0 },
+    ]).id,
+    "main",
+  );
+  NodeAssert.throws(() => largestWindow([{ id: "hidden", width: 0, height: 0 }]), /no window/);
 });
