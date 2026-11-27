@@ -35,8 +35,8 @@ api() {
 # ID up itself (`None of the provided artifact IDs were found`) or through the REST API (`Not
 # Found`). So an upload is named only once the REST download endpoint has served it twice, five
 # seconds apart. One it still refuses two minutes after the first refusal, or after 30 polls, fails
-# the wait; each check is cut at 10 s. That keeps a refused upload to under three minutes per wait,
-# well inside every caller's step and job limits.
+# the wait; each check is cut at 10 s. When the listing calls answer promptly, that keeps a refused
+# upload to under three minutes per wait, well inside every caller's step and job limits.
 serves() {
   local code
   code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \

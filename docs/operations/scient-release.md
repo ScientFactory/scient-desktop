@@ -53,7 +53,8 @@ the stable scheduler and production gate.
   once the REST download endpoint has served it twice, five seconds apart, and
   every download after a wait passes the job's token so it reads that same API.
   A failed API request during a wait is retried a few times before it fails the
-  wait; an upload the endpoint still refuses after 30 polls also fails it.
+  wait. An upload the endpoint still refuses two minutes after its first refusal,
+  or after 30 polls, also fails it; each check is cut at 10 seconds.
   Assembly still requires every job to succeed.
 - The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
   default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
