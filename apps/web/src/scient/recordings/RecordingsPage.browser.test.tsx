@@ -539,9 +539,12 @@ it("starts with the recommended installed engine and preserves the server correc
   await expect.element(page.getByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
   await capture("transcribe");
   await page.getByRole("button", { name: "More engines" }).click();
-  await expect.element(page.getByRole("radio", { name: "Parakeet v3" })).toBeVisible();
-  await expect.element(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Parakeet v3/ })).toBeVisible();
+  await expect.element(page.getByRole("link", { name: "Sign in to ChatGPT" })).toBeVisible();
   await capture("transcribe-options");
+  // Choosing from the list selects that engine and closes the list.
+  await page.getByRole("button", { name: /Parakeet v3/ }).click();
+  await expect.element(page.getByRole("radio", { name: "Parakeet v3" })).toBeChecked();
   // Words open beside the link and the dialog stays.
   await page.getByRole("button", { name: "Edit Words" }).click();
   await expect.element(page.getByText("Words of class")).toBeVisible();
@@ -553,14 +556,16 @@ it("starts with the recommended installed engine and preserves the server correc
   await expect
     .element(page.getByText(/0\.27 per audio hour.*0\.41 for this recording/).first())
     .toBeVisible();
-  await expect
-    .element(page.getByText("Cost unknown for this provider", { exact: false }).first())
-    .toBeVisible();
-  await expect.element(page.getByText("Uses your speech.example.test:8443 key")).toBeVisible();
-  await expect.element(page.getByText("Uses your Legacy endpoint key")).toBeVisible();
-  await expect.element(page.getByText("Retiring Feb 2027", { exact: true })).toBeVisible();
   await expect.element(page.getByText(/Time estimate unavailable/)).not.toBeInTheDocument();
   await capture("transcribe-cloud");
+  await page.getByRole("button", { name: "More engines" }).click();
+  await expect
+    .element(page.getByRole("button", { name: /speech\.example\.test:8443 key · Cost unknown/ }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: /Legacy endpoint key.*Retiring Feb 2027/ }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "More engines" }).click();
   await page.getByRole("radio", { name: /ivrit.ai/ }).click();
   await page.getByRole("button", { name: "Transcribe", exact: true }).click();
   expect(fixtures.command).toHaveBeenCalledWith("start", "/class", {

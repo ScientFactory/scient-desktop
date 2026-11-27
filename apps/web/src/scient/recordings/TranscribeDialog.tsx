@@ -15,6 +15,7 @@ import { recordingTime } from "./recordingPresentation";
 import { Switch } from "../../components/ui/switch";
 import { useGT, useLocale } from "gt-react";
 import { lazy, Suspense, useId, useRef, useState } from "react";
+import { ChevronRightIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -83,6 +84,7 @@ export function TranscribeDialog({
   };
   const [language, setLanguage] = useState("auto");
   const [engineId, setEngineId] = useState("");
+  const [moreEngines, setMoreEngines] = useState(false);
   const [correction, setCorrection] = useState<"off" | "quick" | "thorough">("quick");
   const [wordsEnabled, setWordsEnabled] = useState(true);
   const [correctionModel, setCorrectionModel] = useState<ModelSelection>();
@@ -641,64 +643,95 @@ export function TranscribeDialog({
                         {/* Engines sit two to a line; each card needs little width. */}
                         <div className="grid gap-2 sm:grid-cols-2">{visible.map(card)}</div>
                         {inventory.data && (
-                          <div className="rounded-lg border px-3 py-1.5">
-                            <Collapsible>
-                              <CollapsibleTrigger className="text-sm font-medium">
+                          <div>
+                            <Popover open={moreEngines} onOpenChange={setMoreEngines}>
+                              <PopoverTrigger
+                                render={<Button type="button" size="sm" variant="ghost" />}
+                              >
                                 {gt("More engines")}
-                              </CollapsibleTrigger>
-                              <CollapsiblePanel>
-                                <div className="space-y-2 pt-2">
-                                  {hidden.length > 0 && (
-                                    <div className="grid gap-2 sm:grid-cols-2">
-                                      {hidden.map(card)}
-                                    </div>
-                                  )}
-                                  {inventory.data && !inventory.data.chatgpt.signedIn && (
-                                    <div className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
-                                      <span>{gt("ChatGPT")}</span>
+                                <ChevronRightIcon
+                                  aria-hidden
+                                  className="-me-1 size-3.5 opacity-60"
+                                />
+                              </PopoverTrigger>
+                              <PopoverPopup width="lg" align="start">
+                                <div className="flex max-h-96 flex-col gap-1 overflow-y-auto text-sm">
+                                  {hidden.map((option) => (
+                                    <button
+                                      key={option.id}
+                                      type="button"
+                                      className="flex flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-start hover:bg-accent"
+                                      onClick={() => {
+                                        setEngineId(option.id);
+                                        if (option.engine !== "local" && subtitleMode === "both")
+                                          setSubtitleMode("transcribe");
+                                        setMoreEngines(false);
+                                      }}
+                                    >
+                                      <span className="font-medium">{option.title}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        {[
+                                          option.destination,
+                                          option.engine === "local" && option.size !== undefined
+                                            ? formatBytes(option.size)
+                                            : undefined,
+                                          option.engine === "local" &&
+                                          option.speed != null &&
+                                          duration
+                                            ? gt("About {time}", {
+                                                time: recordingTime((option.speed * duration) / 30),
+                                              })
+                                            : undefined,
+                                          option.engine === "cloud"
+                                            ? audioCost(option.audioHourUsd)
+                                            : undefined,
+                                          option.engine === "cloud" && option.retiresInFebruary
+                                            ? gt("Retiring Feb 2027")
+                                            : undefined,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" · ")}
+                                      </span>
+                                    </button>
+                                  ))}
+                                  {inventory.data.local
+                                    .filter(({ installed }) => !installed)
+                                    .map((model) => (
+                                      <div
+                                        key={model.id}
+                                        className="flex items-center justify-between gap-2 px-2 py-1.5"
+                                      >
+                                        <span className="text-muted-foreground">
+                                          {model.name}
+                                          {model.size !== undefined &&
+                                            ` · ${formatBytes(model.size)}`}
+                                        </span>
+                                        <Button
+                                          size="xs"
+                                          variant="outline"
+                                          type="button"
+                                          disabled={!!download}
+                                          onClick={() => void downloadModel(model.id)}
+                                        >
+                                          {download === model.id
+                                            ? gt("Downloading…")
+                                            : gt("Download")}
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 border-t px-2 pt-2">
+                                    {!inventory.data.chatgpt.signedIn && (
                                       <Link to="/settings/providers" className="text-primary">
-                                        {gt("Sign in")}
+                                        {gt("Sign in to ChatGPT")}
                                       </Link>
-                                    </div>
-                                  )}
-                                  <Link
-                                    to="/settings/accounts"
-                                    className="block text-sm text-primary"
-                                  >
-                                    {gt("Add an account for a cloud engine")}
-                                  </Link>
-                                  {inventory.data?.local.some(({ installed }) => !installed) && (
-                                    <ul className="mt-2 space-y-1 text-muted-foreground">
-                                      {inventory.data.local
-                                        .filter(({ installed }) => !installed)
-                                        .map((model) => (
-                                          <li
-                                            key={model.id}
-                                            className="flex items-center justify-between gap-2"
-                                          >
-                                            <span>
-                                              {model.name}
-                                              {model.size !== undefined &&
-                                                ` · ${formatBytes(model.size)}`}
-                                            </span>
-                                            <Button
-                                              size="xs"
-                                              variant="outline"
-                                              type="button"
-                                              disabled={!!download}
-                                              onClick={() => void downloadModel(model.id)}
-                                            >
-                                              {download === model.id
-                                                ? gt("Downloading…")
-                                                : gt("Download")}
-                                            </Button>
-                                          </li>
-                                        ))}
-                                    </ul>
-                                  )}
+                                    )}
+                                    <Link to="/settings/accounts" className="text-primary">
+                                      {gt("Add a cloud account")}
+                                    </Link>
+                                  </div>
                                 </div>
-                              </CollapsiblePanel>
-                            </Collapsible>
+                              </PopoverPopup>
+                            </Popover>
                           </div>
                         )}
                       </>
