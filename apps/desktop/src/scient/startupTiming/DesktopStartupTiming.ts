@@ -63,8 +63,13 @@ export class DesktopStartupTiming extends Context.Service<
     readonly backendReady: Effect.Effect<void>;
     /** The first main window was shown. */
     readonly windowShown: Effect.Effect<void>;
-    /** The renderer reports a connected, hydrated local workspace; only the first report counts. */
-    readonly workspaceReady: (input: { readonly projectRestored: boolean }) => Effect.Effect<void>;
+    /**
+     * The renderer reports a connected, hydrated local workspace; only the first report counts.
+     * Takes the ready time when run; the returned effect journals it.
+     */
+    readonly workspaceReady: (input: {
+      readonly projectRestored: boolean;
+    }) => Effect.Effect<Effect.Effect<void>>;
   }
 >()("@t3tools/desktop/scient/startupTiming/DesktopStartupTiming") {}
 
@@ -80,7 +85,7 @@ export const makeStartupTiming = (input: {
 }): DesktopStartupTiming["Service"] => {
   let backendReadyMs: number | undefined;
   let windowShownMs: number | undefined;
-  let recorded = false;
+  let reported = false;
   return DesktopStartupTiming.of({
     backendReady: Effect.map(input.sinceProcessStart, (elapsed) => {
       backendReadyMs ??= elapsed;
@@ -91,10 +96,10 @@ export const makeStartupTiming = (input: {
     workspaceReady: Effect.fn("DesktopStartupTiming.workspaceReady")(function* ({
       projectRestored,
     }) {
-      if (recorded) return;
-      recorded = true;
+      if (reported) return Effect.void;
+      reported = true;
       const uiReadyMs = yield* input.sinceProcessStart;
-      yield* input.record({
+      return input.record({
         launchKind: input.launchKind,
         platform: analyticsPlatform(input.platform),
         architecture:

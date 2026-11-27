@@ -51,14 +51,17 @@ export const reportReady = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.restartReadiness.reportReady")(function* (ack, event) {
     if (!(yield* isAppFrame(event))) return false;
     const { attemptId, launchId, projectRestored } = ack;
+    const startup = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
     const timing = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
-    // The restart takes its time first: startup timing then writes its journal.
+    // Both take their ready time before either logs or writes, so neither counts the other's I/O.
+    const recordStartup = Option.isSome(startup)
+      ? yield* startup.value.workspaceReady({ projectRestored })
+      : Effect.void;
     const restartCompleted =
       attemptId !== undefined && launchId !== undefined && Option.isSome(timing)
         ? yield* timing.value.workspaceReady({ attemptId, launchId, projectRestored })
         : false;
-    const startup = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
-    if (Option.isSome(startup)) yield* startup.value.workspaceReady({ projectRestored });
+    yield* recordStartup;
     return restartCompleted;
   }),
 });

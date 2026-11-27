@@ -972,8 +972,10 @@ operating system scans or reads from a cold disk can take a minute, so the slow 
 steps. The event is sent with its time floored to the hour (`exportedOccurredAtMs` in the contract):
 it shares a session with `app.session.started`, whose exact time would otherwise give a
 millisecond interval. A launch that never reaches readiness (quit or crashed first, a remote-only
-primary, or a first screen such as Settings) records nothing; count launches with
-`app.session.started`, not with this event.
+primary, or a first screen such as Settings) records nothing, so this event does not count
+launches. Neither does `app.session.started`: it marks each backend analytics session
+(`ScientAnalytics.ts`), so a desktop process that exits before its backend starts analytics adds
+none, and a backend restart within one launch adds another.
 
 ## Privacy invariants
 

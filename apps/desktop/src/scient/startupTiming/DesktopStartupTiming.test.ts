@@ -78,9 +78,11 @@ describe("makeStartupTiming", () => {
       yield* timing.backendReady;
       yield* timing.windowShown;
       now = 16_200;
-      yield* timing.workspaceReady({ projectRestored: true });
+      const record = yield* timing.workspaceReady({ projectRestored: true });
       now = 45_000;
-      yield* timing.workspaceReady({ projectRestored: false });
+      yield* yield* timing.workspaceReady({ projectRestored: false });
+      assert.deepEqual(recorded, []);
+      yield* record;
 
       assert.deepEqual(recorded, [
         {
@@ -106,7 +108,7 @@ describe("makeStartupTiming", () => {
         sinceProcessStart: Effect.succeed(1_500),
         record: (properties) => Effect.sync(() => recorded.push(properties)),
       });
-      yield* timing.workspaceReady({ projectRestored: false });
+      yield* yield* timing.workspaceReady({ projectRestored: false });
       assert.deepEqual(recorded, [
         {
           launchKind: "later",
@@ -162,8 +164,8 @@ function launch(home: string, appVersion: string, analytics: "true" | "false") {
       appVersion,
     );
     yield* timing.windowShown;
-    yield* timing.workspaceReady({ projectRestored: false });
-    yield* timing.workspaceReady({ projectRestored: false });
+    yield* yield* timing.workspaceReady({ projectRestored: false });
+    yield* yield* timing.workspaceReady({ projectRestored: false });
     const facts = yield* (yield* DesktopUpdateFacts.DesktopUpdateFacts).pending;
     // The next launch starts from what this one leaves; delivery is the journal's own concern.
     yield* (yield* DesktopUpdateFacts.DesktopUpdateFacts).acknowledge(facts.map((f) => f.id));
