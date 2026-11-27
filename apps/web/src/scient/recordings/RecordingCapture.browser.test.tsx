@@ -107,6 +107,16 @@ it("records only after explicit start, handles permission denial, and keeps a gl
     );
     await screen.getByRole("button", { name: "Record", exact: true }).click();
     expect(mocks.microphone).not.toHaveBeenCalled();
+    await expect.element(page.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    if (import.meta.env.VITE_SCIENT_RECORDINGS_SCREENSHOTS) {
+      await page.viewport(900, 560);
+      for (const animation of document.getAnimations()) {
+        if (animation.effect?.getTiming().iterations !== Infinity) animation.finish();
+      }
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_RECORDINGS_SCREENSHOTS}/record-start.png`,
+      });
+    }
     await page.getByRole("button", { name: "Start recording" }).click();
     await expect.element(page.getByText(/Microphone access was denied/)).toBeVisible();
     await page.getByRole("button", { name: "Start recording" }).click();

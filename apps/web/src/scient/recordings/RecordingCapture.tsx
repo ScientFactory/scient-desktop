@@ -85,6 +85,23 @@ async function holdAwake() {
   }
 }
 
+const LAST_PROJECT_KEY = "scient:recording-project";
+/** The project the last recording went to, so the next one starts there. */
+const lastProject = () => {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+const rememberProject = (id: string) => {
+  try {
+    localStorage.setItem(LAST_PROJECT_KEY, id);
+  } catch {
+    // Remembering is a convenience; recording works without it.
+  }
+};
+
 export function RecordingCapture() {
   const gt = useGT();
   const router = useRouter();
@@ -125,7 +142,7 @@ export function RecordingCapture() {
   const ending = useRef(false);
   const [endingTalk, setEndingTalk] = useState(false);
   const target =
-    projects.find((project) => project.id === (destination || projectId)) ??
+    projects.find((project) => project.id === (destination || projectId || lastProject())) ??
     (projects.length === 1 ? projects[0] : undefined);
   const chatGptAgent = environmentId ? lessonTalkAgent(providers.get(environmentId)) : null;
 
@@ -264,6 +281,7 @@ export function RecordingCapture() {
 
   const start = async () => {
     if (!target || status !== "idle") return;
+    rememberProject(target.id);
     setStatus("starting");
     setError(undefined);
     setTalkError(undefined);
@@ -510,14 +528,14 @@ export function RecordingCapture() {
           setOpen(next);
         }}
       >
-        <DialogPopup>
-          <DialogHeader>
-            <DialogTitle>{gt("Record a lesson")}</DialogTitle>
+        <DialogPopup className="max-w-sm">
+          <DialogHeader size="compact">
+            <DialogTitle size="compact">{gt("Record a lesson")}</DialogTitle>
             {active && <DialogDescription>{activeProject}</DialogDescription>}
           </DialogHeader>
-          <DialogPanel>
+          <DialogPanel padding="compact">
             {active ? (
-              <div className="space-y-3">
+              <div className="space-y-3 pb-3">
                 <div className="flex items-center gap-3 pt-3">
                   <span className="text-sm tabular-nums">{recordingTime(readings.seconds)}</span>
                   <meter
@@ -568,7 +586,7 @@ export function RecordingCapture() {
                 ) : null}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 pb-3">
                 <div className="flex items-center justify-between gap-2 text-sm">
                   {gt("Project")}
                   <RecordingSelect
@@ -611,7 +629,7 @@ export function RecordingCapture() {
               </p>
             )}
           </DialogPanel>
-          <DialogFooter>
+          <DialogFooter variant="bare" padding="compact">
             {status === "talking" ? (
               <Button disabled={endingTalk} onClick={() => void endTalk()}>
                 {resumeAfterTalk ? gt("End and resume") : gt("End")}
@@ -636,8 +654,13 @@ export function RecordingCapture() {
                 </Button>
               </>
             ) : (
-              <Button disabled={!target || status === "starting"} onClick={() => void start()}>
-                <MicIcon /> {gt("Start recording")}
+              <Button
+                variant="outline"
+                disabled={!target || status === "starting"}
+                onClick={() => void start()}
+              >
+                <span aria-hidden className="size-2.5 rounded-full bg-destructive" />
+                {gt("Start recording")}
               </Button>
             )}
           </DialogFooter>
