@@ -781,9 +781,14 @@ export async function launchInstalled({ executable, env, userData, platform, log
     // The native relaunch passes no switches, so it can find the same profile only by default.
     await poll(
       () => {
-        const written = NodeFS.existsSync(activePort)
-          ? devToolsActivePort(NodeFS.readFileSync(activePort, "utf8"))
-          : undefined;
+        let text;
+        try {
+          text = NodeFS.readFileSync(activePort, "utf8");
+        } catch (error) {
+          // Absent, or still held open by Chromium while it writes it (EBUSY on Windows).
+          if (!["ENOENT", "EBUSY", "EPERM"].includes(error.code)) throw error;
+        }
+        const written = text === undefined ? undefined : devToolsActivePort(text);
         return written?.port === endpoint.port && written.path === endpoint.path;
       },
       `The app did not use the synthetic Electron user data at ${userData}`,
