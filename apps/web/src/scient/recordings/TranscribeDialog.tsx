@@ -5,14 +5,16 @@ import type { ModelSelection } from "@t3tools/contracts";
 import { CorrectionModelPicker } from "./CorrectionModelPicker";
 import { downloadEnvironmentSpeechModel } from "@t3tools/client-runtime/voice-input";
 import { readPreparedConnection } from "../../state/session";
-import { readPrimaryEnvironmentId } from "../../state/environments";
+import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../../state/environments";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { Link } from "@tanstack/react-router";
+import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { useProjects } from "../../state/entities";
 import { formatBytes } from "../../lib/formatBytes";
 import { recordingTime } from "./recordingPresentation";
 import { Switch } from "../../components/ui/switch";
 import { useGT, useLocale } from "gt-react";
-import { useId, useRef, useState } from "react";
+import { lazy, Suspense, useId, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -39,6 +41,13 @@ const retiringOpenAiModels = new Set([
   "gpt-4o-mini-transcribe-2025-12-15",
   "gpt-4o-transcribe-diarize",
 ]);
+
+// Loaded on first use: the editor brings settings code the dialog otherwise never needs.
+const ProjectWordsEditor = lazy(() =>
+  import("../transcription/WordsPanel").then((module) => ({
+    default: module.ProjectWordsEditor,
+  })),
+);
 
 export function TranscribeDialog({
   project,
@@ -225,7 +234,11 @@ export function TranscribeDialog({
         signal,
       ),
   );
-  const vocabulary = useRecordingRead(project, (signal) =>
+  const environmentId = usePrimaryEnvironmentId();
+  const projectId = useProjects().find(({ workspaceRoot }) => workspaceRoot === project)?.id;
+  // Words are edited in place; closing the editor counts them again.
+  const [wordsRevision, setWordsRevision] = useState(0);
+  const vocabulary = useRecordingRead(`${project}:${wordsRevision}`, (signal) =>
     Promise.all([
       transcriptionCommand("words-list", project, { level: "global" }, signal),
       transcriptionCommand("words-list", project, { level: "project" }, signal),
@@ -625,7 +638,8 @@ export function TranscribeDialog({
                     };
                     return (
                       <>
-                        {visible.map(card)}
+                        {/* Engines sit two to a line; each card needs little width. */}
+                        <div className="grid gap-2 sm:grid-cols-2">{visible.map(card)}</div>
                         {inventory.data && (
                           <div className="rounded-lg border px-3 py-1.5">
                             <Collapsible>
@@ -634,7 +648,11 @@ export function TranscribeDialog({
                               </CollapsibleTrigger>
                               <CollapsiblePanel>
                                 <div className="space-y-2 pt-2">
-                                  {hidden.map(card)}
+                                  {hidden.length > 0 && (
+                                    <div className="grid gap-2 sm:grid-cols-2">
+                                      {hidden.map(card)}
+                                    </div>
+                                  )}
                                   {inventory.data && !inventory.data.chatgpt.signedIn && (
                                     <div className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
                                       <span>{gt("ChatGPT")}</span>
@@ -758,9 +776,33 @@ export function TranscribeDialog({
                       : vocabulary.isError
                         ? gt("Could not load Words")
                         : gt("Loading Words…")}{" "}
-                    <Link to="/settings/transcription" className="text-foreground underline">
-                      {gt("Edit Words")}
-                    </Link>
+                    {environmentId && projectId ? (
+                      <Popover
+                        onOpenChange={(open) => {
+                          if (!open) setWordsRevision((current) => current + 1);
+                        }}
+                      >
+                        <PopoverTrigger
+                          render={<button type="button" className="text-foreground underline" />}
+                        >
+                          {gt("Edit Words")}
+                        </PopoverTrigger>
+                        <PopoverPopup width="md" align="start">
+                          <div className="space-y-3">
+                            <Suspense fallback={null}>
+                              <ProjectWordsEditor
+                                environmentId={environmentId}
+                                projectId={projectId}
+                              />
+                            </Suspense>
+                          </div>
+                        </PopoverPopup>
+                      </Popover>
+                    ) : (
+                      <Link to="/settings/transcription" className="text-foreground underline">
+                        {gt("Edit Words")}
+                      </Link>
+                    )}
                   </p>
                 </div>
                 <Switch

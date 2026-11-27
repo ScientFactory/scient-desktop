@@ -102,6 +102,9 @@ vi.mock("./CorrectionModelPicker", () => ({
 }));
 vi.mock("./copyRecording", () => ({ copyRecording: {} }));
 vi.mock("./serverPlatform", () => ({ useRecycleBin: () => false }));
+vi.mock("../transcription/WordsPanel", () => ({
+  ProjectWordsEditor: ({ projectId }: { projectId: string }) => <p>Words of {projectId}</p>,
+}));
 vi.mock("../../state/entities", () => ({
   readThreadShell: fixtures.readThread,
   useProjects: () => fixtures.projects,
@@ -539,6 +542,12 @@ it("starts with the recommended installed engine and preserves the server correc
   await expect.element(page.getByRole("radio", { name: "Parakeet v3" })).toBeVisible();
   await expect.element(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await capture("transcribe-options");
+  // Words open beside the link and the dialog stays.
+  await page.getByRole("button", { name: "Edit Words" }).click();
+  await expect.element(page.getByText("Words of class")).toBeVisible();
+  await expect.element(page.getByRole("radio", { name: /ivrit.ai/ })).toBeVisible();
+  await capture("transcribe-words");
+  await page.getByRole("button", { name: "Edit Words" }).click();
 
   await page.getByRole("radio", { name: /gpt-transcribe/ }).click();
   await expect

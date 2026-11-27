@@ -1,7 +1,8 @@
-import { pickModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import type { EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { ProviderModelPicker } from "../../components/chat/ProviderModelPicker";
+import { TraitsPicker } from "../../components/chat/TraitsPicker";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getTextGenerationModelOptionsByInstance } from "../../modelSelection";
 import { useEnvironmentProviders, usePrimaryEnvironmentId } from "../../state/environments";
@@ -41,33 +42,49 @@ function EnvironmentCorrectionModelPicker({
     selections: [selected],
   });
   const pickerLabel = label ?? gt("Correction model");
+  const instanceEntry = targets.entries.find((entry) => entry.instanceId === selected.instanceId);
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
       <span>{pickerLabel}</span>
-      <ProviderModelPicker
-        environmentId={environmentId}
-        activeInstanceId={selected.instanceId}
-        model={selected.model}
-        lockedProvider={null}
-        instanceEntries={
-          providerOnly
-            ? targets.entries.filter((entry) =>
-                providers.some(({ instanceId }) => entry.instanceId === instanceId),
-              )
-            : targets.entries
-        }
-        modelOptionsByInstance={getTextGenerationModelOptionsByInstance(
-          settings,
-          targets.providers,
-          selected.instanceId,
-          selected.model,
+      <span className="flex items-center gap-1">
+        <ProviderModelPicker
+          environmentId={environmentId}
+          activeInstanceId={selected.instanceId}
+          model={selected.model}
+          lockedProvider={null}
+          instanceEntries={
+            providerOnly
+              ? targets.entries.filter((entry) =>
+                  providers.some(({ instanceId }) => entry.instanceId === instanceId),
+                )
+              : targets.entries
+          }
+          modelOptionsByInstance={getTextGenerationModelOptionsByInstance(
+            settings,
+            targets.providers,
+            selected.instanceId,
+            selected.model,
+          )}
+          {...(label && !selection ? { triggerLabel: label } : {})}
+          triggerAriaLabel={pickerLabel}
+          onInstanceModelChange={(instanceId, model) =>
+            onChange(pickModelSelection(selected, instanceId, model))
+          }
+        />
+        {/* Reasoning effort and speed, where the model offers them. */}
+        {instanceEntry && (
+          <TraitsPicker
+            provider={instanceEntry.driverKind}
+            models={instanceEntry.models}
+            model={selected.model}
+            modelOptions={selected.options ?? []}
+            allowPromptInjectedEffort={false}
+            onModelOptionsChange={(options) =>
+              onChange(createModelSelection(selected.instanceId, selected.model, options))
+            }
+          />
         )}
-        {...(label && !selection ? { triggerLabel: label } : {})}
-        triggerAriaLabel={pickerLabel}
-        onInstanceModelChange={(instanceId, model) =>
-          onChange(pickModelSelection(selected, instanceId, model))
-        }
-      />
+      </span>
     </div>
   );
 }
