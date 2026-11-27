@@ -1305,9 +1305,25 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-          # SCIENT-FORK:START — keep the write-scoped token out of .git/config, away from installs.
-          persist-credentials: false
-          # SCIENT-FORK:END
+      # SCIENT-FORK:START — the job's token may write Actions; dependency installs get none of it.
+      # checkout keeps the token in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. `persist-credentials: false` fails here: its cleanup runs `git submodule foreach`,
+      # which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
+            exit 1
+          fi
+      # SCIENT-FORK:END
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json

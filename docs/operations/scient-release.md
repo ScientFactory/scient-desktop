@@ -307,8 +307,8 @@ succeed. Its dispatch is cut at 60 seconds and the step at 2 minutes, both endin
 as failures; a job that reaches its own `timeout-minutes` is cancelled instead,
 which would make the run conclude `cancelled`, so assembly's bound includes those
 2 minutes. The step is why assembly's token may write Actions (to dispatch
-workflows); its checkout does not persist that token, so dependency installs
-cannot read it from the Git configuration. When packaging or assembly fails, the
+workflows); assembly drops the token its checkout keeps for Git before installing
+dependencies, so their scripts cannot read it. When packaging or assembly fails, the
 release fails and the timing does not start. Read the timing summary before
 approving a Stable candidate; whether a regression blocks it is the release
 owner's decision.
