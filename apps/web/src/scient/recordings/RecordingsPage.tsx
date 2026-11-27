@@ -253,7 +253,7 @@ export function RecordingsPage({
                       command: { kind: "ensure", source: managed.source },
                     })
                   ).session;
-                if (!session) throw new Error("Session unavailable.");
+                if (!session) fail("Session unavailable.");
                 await transcriptionCommand("session", managed.workspaceRoot, {
                   command: { kind: "trash", id: session.id, version: session.version },
                 });

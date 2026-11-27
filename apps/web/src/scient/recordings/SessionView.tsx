@@ -11,7 +11,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { andFinally } from "../../lib/compilerSafe";
+import { andFinally, fail } from "../../lib/compilerSafe";
 import { randomUUID } from "../../lib/utils";
 import {
   linkRecordingThread,
@@ -167,7 +167,7 @@ export function SessionView({
           const { snapshot } = await transcriptionCommand("session", project.workspaceRoot, {
             command: { kind: "snapshot", id: current.id, version: current.version },
           });
-          if (!snapshot) throw new Error("Session snapshot unavailable.");
+          if (!snapshot) fail("Session snapshot unavailable.");
           const drafts = useComposerDraftStore.getState();
           const target = drafts.getDraftIdByRef(threadRef) ?? threadRef;
           const citationPath = `/recordings?project=${encodeURIComponent(project.id)}&context=${snapshot.contextRevision}`;

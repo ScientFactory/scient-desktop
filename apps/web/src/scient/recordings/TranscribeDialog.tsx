@@ -36,7 +36,7 @@ import { Badge } from "../../components/ui/badge";
 import { languageLabel } from "../../lib/languageLabel";
 import { RecordingSelect } from "./RecordingSelect";
 import { useRecordingRead } from "./useRecordingRead";
-import { andFinally } from "../../lib/compilerSafe";
+import { andFinally, fail } from "../../lib/compilerSafe";
 
 const retiringOpenAiModels = new Set([
   "whisper-1",
@@ -292,7 +292,7 @@ export function TranscribeDialog({
           try {
             const environmentId = readPrimaryEnvironmentId();
             const prepared = environmentId && readPreparedConnection(environmentId);
-            if (!prepared) throw new Error("No connection");
+            if (!prepared) fail("No connection");
             await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, id));
             setInventoryRefresh((refresh) => refresh + 1);
           } catch {
