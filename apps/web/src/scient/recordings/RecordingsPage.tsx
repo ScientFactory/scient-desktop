@@ -28,6 +28,7 @@ import {
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type RecordingSession,
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -173,6 +174,10 @@ export function RecordingsPage({
   const [jobActionPending, setJobActionPending] = useState(false);
   const [jobActionError, setJobActionError] = useState(false);
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
+  const [combining, setCombining] = useState(false);
+  const [sessionError, setSessionError] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
   // Audio and video already in the projects are browsed apart from the recordings.
   const [finding, setFinding] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -234,7 +239,32 @@ export function RecordingsPage({
         destructive: true,
         separatorBefore: true,
         disabled: busy,
-        run: () =>
+        run: () => {
+          const project = projects.find(
+            ({ workspaceRoot }) => workspaceRoot === managed.workspaceRoot,
+          );
+          if (project && sessionProjects.has(project.id)) {
+            void (async () => {
+              try {
+                const session =
+                  sessionsBySource.get(key) ??
+                  (
+                    await transcriptionCommand("session", managed.workspaceRoot, {
+                      command: { kind: "ensure", source: managed.source },
+                    })
+                  ).session;
+                if (!session) throw new Error("Session unavailable.");
+                await transcriptionCommand("session", managed.workspaceRoot, {
+                  command: { kind: "trash", id: session.id, version: session.version },
+                });
+                setSelection(new Set());
+              } catch {
+                setSessionError(true);
+              }
+              refreshList();
+            })();
+            return;
+          }
           void trashRecording(managed, {
             done: gt(
               "{os, select, windows {Moved {name} to the Recycle Bin} other {Moved {name} to the Trash}}",
@@ -245,7 +275,8 @@ export function RecordingsPage({
             if (!trashed) return;
             setSelection(new Set());
             refreshList();
-          }),
+          });
+        },
       },
     ];
   };
@@ -385,7 +416,7 @@ export function RecordingsPage({
     async (signal) =>
       Promise.allSettled(
         projects.map(async (project) => {
-          const [revisions, files] = await Promise.all([
+          const [revisions, files, sessions] = await Promise.all([
             transcriptionCommand(
               "list",
               project.workspaceRoot,
@@ -393,8 +424,16 @@ export function RecordingsPage({
               signal,
             ),
             transcriptionCommand("media-list", project.workspaceRoot, {}, signal),
+            transcriptionCommand(
+              "session",
+              project.workspaceRoot,
+              { command: { kind: "list" } },
+              signal,
+            )
+              .then((result) => result.sessions)
+              .catch(() => undefined),
           ]);
-          return { revisions, media: files.media };
+          return { revisions, media: files.media, sessions };
         }),
       ),
     3000,
@@ -404,6 +443,11 @@ export function RecordingsPage({
   const durations = new Map<string, number>();
   const queuedRecordings = new Set<string>();
   const titles = new Map<string, string>();
+  const sessionsBySource = new Map<string, RecordingSession>();
+  const activeSessions: { project: Project; session: RecordingSession }[] = [];
+  const trash: { project: Project; session: RecordingSession }[] = [];
+  const archive: { project: Project; session: RecordingSession }[] = [];
+  const sessionProjects = new Set<string>();
   const added: {
     key: string;
     project: Project;
@@ -417,7 +461,18 @@ export function RecordingsPage({
   projects.forEach((project, index) => {
     const result = list.data?.[index];
     if (result?.status !== "fulfilled") return;
-    const { revisions, media } = result.value;
+    const { revisions, media, sessions } = result.value;
+    if (sessions) sessionProjects.add(project.id);
+    for (const session of sessions ?? []) {
+      if (session.archived) {
+        if (session.parts.length > 1) archive.push({ project, session });
+        continue;
+      }
+      if (session.trashed) trash.push({ project, session });
+      else activeSessions.push({ project, session });
+      for (const part of session.parts)
+        sessionsBySource.set(`${project.id}/${part.source}`, session);
+    }
     const transcribed = new Set(revisions.map(({ job }) => job.source));
     for (const file of media) {
       const key = `${project.id}/${file.source}`;
@@ -438,6 +493,7 @@ export function RecordingsPage({
     recording: Recording & { source: string },
     match?: { version: string; time: number; query: string },
     replace = false,
+    explicit?: RecordingSession,
   ) => {
     if (opening.current) return;
     opening.current = true;
@@ -448,6 +504,7 @@ export function RecordingsPage({
       revisions: [latest],
     } = recording;
     const panel = useRightPanelStore.getState();
+    let session = explicit ?? sessionsBySource.get(`${project.id}/${source}`);
     const open = (threadRef: ReturnType<typeof scopeThreadRef>) => {
       panel.openScient(
         threadRef,
@@ -455,7 +512,8 @@ export function RecordingsPage({
           project.id,
           source,
           match,
-          recordingTitle(source, titles.get(`${project.id}/${source}`)),
+          session?.title ?? recordingTitle(source, titles.get(`${project.id}/${source}`)),
+          match ? undefined : session?.id,
         ),
       );
       panel.requestMaximize(threadRef);
@@ -464,6 +522,13 @@ export function RecordingsPage({
     await andFinally(
       async () => {
         try {
+          if (!session && !match && sessionProjects.has(project.id)) {
+            const result = await transcriptionCommand("session", project.workspaceRoot, {
+              command: { kind: "ensure", source },
+            });
+            session = result.session;
+            refreshList();
+          }
           const recordingIds = new Set(
             recording.revisions.map(({ job }) => job.recording ?? job.id),
           );
@@ -575,7 +640,45 @@ export function RecordingsPage({
       status: file.queued ? "queued" : "untranscribed",
     })),
   ];
-  const rows = unfilteredRows
+  const sessionRows = unfilteredRows.flatMap((row) => {
+    const session = sessionsBySource.get(row.key);
+    if (session?.trashed || (session && session.parts[0]?.source !== row.source)) return [];
+    return [
+      {
+        ...row,
+        ...(session
+          ? {
+              title: session.title,
+              duration: session.parts.reduce((sum, part) => sum + part.duration, 0) || row.duration,
+            }
+          : {}),
+        session,
+      },
+    ];
+  });
+  const listed = new Set(sessionRows.map(({ key }) => key));
+  for (const { project, session } of activeSessions) {
+    const first = session.parts[0];
+    if (!first) continue;
+    const key = `${project.id}/${first.source}`;
+    if (listed.has(key)) continue;
+    sessionRows.push({
+      key,
+      project,
+      source: first.source,
+      title: session.title,
+      size: 0,
+      created: session.created,
+      duration: session.parts.reduce((sum, part) => sum + part.duration, 0),
+      recording: undefined,
+      snippet: undefined,
+      matchedRevision: undefined,
+      status: "untranscribed",
+      queued: false,
+      session,
+    });
+  }
+  const rows = sessionRows
     .filter(
       (row) =>
         (!projectFilter || projectFilter === row.project.id) &&
@@ -642,7 +745,70 @@ export function RecordingsPage({
     };
   };
   const selectedFiles = added.filter((file) => !file.queued && selection.has(file.key));
-  const batchProject = selectedFiles[0]?.project;
+  const selectedRows = sessionRows.filter(({ key }) => selection.has(key));
+  const batchProject = selectedRows[0]?.project;
+  const canCombine =
+    selectedRows.length >= 2 &&
+    selectedRows.length <= 20 &&
+    selectedRows.every(
+      ({ project, duration, queued, recording }) =>
+        project.id === batchProject?.id &&
+        sessionProjects.has(project.id) &&
+        !queued &&
+        Boolean(duration) &&
+        !recording?.revisions[0]?.job.transcriptOnly,
+    );
+  const toggleSelection = (key: string, checked: boolean) =>
+    setSelection((current) => {
+      const next = new Set(current);
+      if (checked && next.size < 20) next.add(key);
+      else if (!checked) next.delete(key);
+      return next;
+    });
+  const combine = async () => {
+    if (!canCombine || !batchProject || combining) return;
+    setCombining(true);
+    setSessionError(false);
+    await andFinally(
+      async () => {
+        try {
+          const { session } = await transcriptionCommand("session", batchProject.workspaceRoot, {
+            command: {
+              kind: "combine",
+              selection: selectedRows.map(({ source, session }) =>
+                session ? { id: session.id, version: session.version } : { source },
+              ),
+            },
+          });
+          const first = session?.parts[0];
+          setSelection(new Set());
+          refreshList();
+          if (session && first)
+            await openRecording(
+              { project: batchProject, source: first.source, revisions: [] },
+              undefined,
+              false,
+              session,
+            );
+        } catch {
+          setSessionError(true);
+          refreshList();
+        }
+      },
+      () => setCombining(false),
+    );
+  };
+  const restore = async (project: Project, session: RecordingSession) => {
+    setSessionError(false);
+    try {
+      await transcriptionCommand("session", project.workspaceRoot, {
+        command: { kind: "restore", id: session.id, version: session.version },
+      });
+    } catch {
+      setSessionError(true);
+    }
+    refreshList();
+  };
   return (
     <WorkspacePageContainer
       width="readable"
@@ -687,10 +853,30 @@ export function RecordingsPage({
         <>
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-lg font-medium">
-              {gt("Recordings")}{" "}
+              {gt("Sessions")}{" "}
               <span className="text-sm tabular-nums text-muted-foreground">{rows.length}</span>
             </h1>
             <div className="flex items-center gap-1.5">
+              {archive.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={showArchive}
+                  onClick={() => setShowArchive((value) => !value)}
+                >
+                  {gt("Archive")}
+                </Button>
+              )}
+              {trash.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={showTrash}
+                  onClick={() => setShowTrash((value) => !value)}
+                >
+                  {gt("Trash")}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -897,6 +1083,58 @@ export function RecordingsPage({
               onClose={() => setInfo(undefined)}
             />
           )}
+          {sessionError && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {gt("Could not update the selected sessions. Check their files and try again.")}
+            </p>
+          )}
+          {showArchive && archive.length > 0 && (
+            <section className="rounded-lg border p-2" aria-label={gt("Archived sessions")}>
+              {archive.map(({ project, session }) => (
+                <div
+                  key={`${project.id}:${session.id}`}
+                  className="flex items-center gap-2 px-2 py-1 text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const source = session.parts[0]?.source;
+                      if (source)
+                        void openRecording(
+                          { project, source, revisions: [] },
+                          undefined,
+                          false,
+                          session,
+                        );
+                    }}
+                  >
+                    {gt("Open")}
+                  </Button>
+                </div>
+              ))}
+            </section>
+          )}
+          {showTrash && trash.length > 0 && (
+            <section className="rounded-lg border p-2" aria-label={gt("Trashed sessions")}>
+              {trash.map(({ project, session }) => (
+                <div
+                  key={`${project.id}:${session.id}`}
+                  className="flex items-center gap-2 px-2 py-1 text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void restore(project, session)}
+                  >
+                    {gt("Restore")}
+                  </Button>
+                </div>
+              ))}
+            </section>
+          )}
           {!available && (
             <p role="status" className="text-sm text-muted-foreground">
               {gt("Recordings are unavailable in this session")}
@@ -965,6 +1203,51 @@ export function RecordingsPage({
                 snippet,
                 matchedRevision,
               } = item;
+              if (item.session && item.session.parts.length > 1) {
+                return (
+                  <div className="flex min-h-14 items-center gap-3 rounded-lg px-2 hover:bg-accent/60">
+                    <Checkbox
+                      aria-label={gt("Select {recording}", { recording: title })}
+                      checked={selection.has(key)}
+                      onCheckedChange={(checked) => toggleSelection(key, checked === true)}
+                    />
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 py-2 text-start"
+                      onClick={() =>
+                        void openRecording({
+                          project,
+                          source,
+                          revisions: recording?.revisions ?? [],
+                        })
+                      }
+                    >
+                      <span className="block truncate text-sm font-medium">{title}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {gt("{count} parts", { count: item.session.parts.length })} ·{" "}
+                        {project.title}
+                      </span>
+                    </button>
+                    {duration ? (
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {recordingTime(duration)}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              }
+              const renameSession =
+                item.session !== undefined
+                  ? (title: string) =>
+                      transcriptionCommand("session", project.workspaceRoot, {
+                        command: {
+                          kind: "edit",
+                          id: item.session!.id,
+                          version: item.session!.version,
+                          title,
+                        },
+                      })
+                  : undefined;
               const MediaIcon = /\.(mp4|webm|mov|m4v|ogv|mkv)$/i.test(source)
                 ? ClapperboardIcon
                 : AudioLinesIcon;
@@ -1039,7 +1322,11 @@ export function RecordingsPage({
                     {renaming === key ? (
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium">
-                          <RecordingNameInput recording={managed} onDone={renamed} />
+                          <RecordingNameInput
+                            recording={managed}
+                            onDone={renamed}
+                            {...(renameSession ? { onRename: renameSession } : {})}
+                          />
                         </p>
                       </div>
                     ) : (
@@ -1151,7 +1438,11 @@ export function RecordingsPage({
                   <span className="min-w-0 flex-1 space-y-1">
                     <span className="block text-sm font-medium">
                       {renaming === key ? (
-                        <RecordingNameInput recording={managed} onDone={renamed} />
+                        <RecordingNameInput
+                          recording={managed}
+                          onDone={renamed}
+                          {...(renameSession ? { onRename: renameSession } : {})}
+                        />
                       ) : (
                         <MiddleTruncate value={title} />
                       )}
@@ -1197,6 +1488,14 @@ export function RecordingsPage({
                   }}
                   onContextMenu={(event) => void showRecordingMenu(event, actions)}
                 >
+                  {sessionProjects.has(project.id) && (
+                    <Checkbox
+                      aria-label={gt("Select {recording}", { recording: title })}
+                      checked={selection.has(key)}
+                      disabled={working || (!selection.has(key) && selection.size >= 20)}
+                      onCheckedChange={(checked) => toggleSelection(key, checked === true)}
+                    />
+                  )}
                   {renaming === key ? (
                     <div className={opener}>{content}</div>
                   ) : (
@@ -1291,26 +1590,38 @@ export function RecordingsPage({
           />
           {batchProject && (
             <SelectionBar
-              count={selectedFiles.length}
+              count={selectedRows.length}
               clearLabel={gt("Clear selection")}
               onClear={() => setSelection(new Set())}
             >
-              <Button
-                size="sm"
-                aria-label={gt("Transcribe selected")}
-                onClick={() =>
-                  transcribeAll(
-                    [...new Set(selectedFiles.map(({ project }) => project))].map((project) => ({
-                      project,
-                      sources: selectedFiles
-                        .filter((file) => file.project.id === project.id)
-                        .map(({ source }) => source),
-                    })),
-                  )
-                }
-              >
-                {gt("Transcribe")}
-              </Button>
+              {canCombine && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={combining}
+                  onClick={() => void combine()}
+                >
+                  {gt("Combine")}
+                </Button>
+              )}
+              {selectedFiles.length > 0 && (
+                <Button
+                  size="sm"
+                  aria-label={gt("Transcribe selected")}
+                  onClick={() =>
+                    transcribeAll(
+                      [...new Set(selectedFiles.map(({ project }) => project))].map((project) => ({
+                        project,
+                        sources: selectedFiles
+                          .filter((file) => file.project.id === project.id)
+                          .map(({ source }) => source),
+                      })),
+                    )
+                  }
+                >
+                  {gt("Transcribe")}
+                </Button>
+              )}
             </SelectionBar>
           )}
         </>

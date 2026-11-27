@@ -228,7 +228,7 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
         />
         <RailItem
           icon={<AudioLinesIcon />}
-          label={gt("Recordings")}
+          label={gt("Sessions")}
           onClick={go("/recordings")}
           active={page === "recordings"}
         />

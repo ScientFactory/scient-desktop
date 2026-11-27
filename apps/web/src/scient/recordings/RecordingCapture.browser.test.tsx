@@ -189,7 +189,7 @@ it("shows live captions, pauses the lesson while you talk, and opens the lesson 
   );
   try {
     await screen.getByRole("button", { name: "Record", exact: true }).click();
-    await expect.element(page.getByRole("heading", { name: "Record a lesson" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Record a session" })).toBeVisible();
     await page.getByRole("button", { name: "Start recording" }).click();
     await expect.element(page.getByText(/Entropy always increases\./)).toBeVisible();
     await page.getByRole("button", { name: "Talk", exact: true }).click();
@@ -217,11 +217,12 @@ it("shows live captions, pauses the lesson while you talk, and opens the lesson 
     );
     expect(mocks.command).toHaveBeenCalledWith("capture-finish", "/class", {
       id: expect.any(String),
-      lesson: { language: "en" },
+      lesson: { language: "en", sessionType: "lecture" },
     });
     expect(mocks.command).toHaveBeenCalledWith("capture-start", "/class", {
       id: expect.any(String),
       language: expect.any(String),
+      sessionType: "lecture",
     });
   } finally {
     vi.unstubAllGlobals();

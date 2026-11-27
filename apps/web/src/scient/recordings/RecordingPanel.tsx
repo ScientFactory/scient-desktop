@@ -8,6 +8,7 @@ import { useProjects } from "../../state/entities";
 import type { ScientRightPanelSurface } from "../rightPanel/surfaces";
 import { RecordingFileView } from "./RecordingFileView";
 import { RecordingView } from "./RecordingView";
+import { SessionView } from "./SessionView";
 import { useRecordingTitle } from "./recordingTitle";
 import { useRecordingRead } from "./useRecordingRead";
 
@@ -28,18 +29,30 @@ export default function RecordingPanel({
     (item) => item.id === surface.projectId && item.environmentId === threadRef.environmentId,
   );
   const [refresh, setRefresh] = useState(0);
+  const [openPart, setOpenPart] = useState<string>();
+  const source = openPart ?? surface.source;
   const list = useRecordingRead(
-    project ? surface.id : "",
+    project ? JSON.stringify([surface.id, source]) : "",
     async (signal) => {
-      const [revisions, files] = await Promise.all([
+      const [revisions, files, sessions] = await Promise.all([
         transcriptionCommand("list", project!.workspaceRoot, { includeCreated: true }, signal),
         transcriptionCommand("media-list", project!.workspaceRoot, {}, signal).catch(() => ({
           media: [],
         })),
+        surface.sessionId
+          ? transcriptionCommand(
+              "session",
+              project!.workspaceRoot,
+              { command: { kind: "list" } },
+              signal,
+            )
+          : undefined,
       ]);
-      const file = files.media.find((item) => item.source === surface.source);
+      const file = files.media.find((item) => item.source === source);
       return {
-        revisions: revisions.filter(({ job }) => job.source === surface.source),
+        session: sessions?.sessions.find(({ id, trashed }) => id === surface.sessionId && !trashed),
+        allRevisions: revisions,
+        revisions: revisions.filter(({ job }) => job.source === source),
         file,
         title: file?.title,
         duration: file?.duration,
@@ -49,18 +62,39 @@ export default function RecordingPanel({
     refresh,
   );
   const recordingTitle = useRecordingTitle();
-  const tabTitle = list.data ? recordingTitle(surface.source, list.data.title) : undefined;
+  const tabTitle = list.data
+    ? (list.data.session?.title ?? recordingTitle(surface.source, list.data.title))
+    : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a tab opened before a rename shows the recording's current name.
   useEffect(() => {
     if (tabTitle && tabTitle !== surface.title)
       useRightPanelStore.getState().openScient(threadRef, { ...surface, title: tabTitle });
   }, [tabTitle, surface, threadRef]);
   const back = () => {
+    if (openPart) {
+      setOpenPart(undefined);
+      return;
+    }
     // The recording opened maximized over its thread; going back leaves that thread as it was.
     useRightPanelStore.getState().setMaximized(threadRef, false);
     onClose();
     void router.navigate({ to: "/recordings", search: { fromThread: threadRef.threadId } });
   };
+  if (project && list.data?.session && !openPart) {
+    return (
+      <SessionView
+        key={list.data.session.id}
+        project={project}
+        session={list.data.session}
+        revisions={list.data.allRevisions}
+        threadRef={threadRef}
+        onRevealComposer={onRevealComposer}
+        onBack={back}
+        onChange={() => setRefresh((value) => value + 1)}
+        onOpenPart={setOpenPart}
+      />
+    );
+  }
   if (project && list.data?.revisions.length) {
     return (
       <RecordingView
@@ -81,7 +115,7 @@ export default function RecordingPanel({
     return (
       <RecordingFileView
         project={project}
-        source={surface.source}
+        source={source}
         title={file.title}
         duration={file.duration}
         created={file.created}

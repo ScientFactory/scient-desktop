@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 // SCIENT-FORK:START — Scient's inline-colour code (scient/**). Kept first so the
 // stylesheets they bring keep their place in the cascade.
 import { resolveInlineCssColor } from "~/scient/markdown/inlineCssColor";
@@ -1481,6 +1482,37 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return <AssistantCitationChip citation={citation} sentMessage />;
     }
     // SCIENT-FORK:END
+    if (href?.startsWith("/recordings?")) {
+      const params = new URLSearchParams(href.slice("/recordings?".length));
+      const project = params.get("project");
+      const context = params.get("context");
+      const part = params.get("part");
+      const rawTime = params.get("time");
+      const time = rawTime !== null ? Number(rawTime) : undefined;
+      const identifier = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+      if (
+        project &&
+        context &&
+        identifier.test(context) &&
+        (part === null || identifier.test(part)) &&
+        (time === undefined || (Number.isFinite(time) && time >= 0))
+      ) {
+        return (
+          <Link
+            to="/recordings"
+            search={{
+              project,
+              context,
+              ...(part ? { part } : {}),
+              ...(time !== undefined ? { time } : {}),
+            }}
+            className="text-primary underline underline-offset-2"
+          >
+            {hastPlainTextDeep(node) || gt("Open session evidence")}
+          </Link>
+        );
+      }
+    }
     const before = node?.position?.start.offset;
     const after = node?.position?.end.offset;
     const leading = before !== undefined && CITATION_LEADS_BLOCK.test(text.slice(0, before));

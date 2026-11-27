@@ -1124,3 +1124,96 @@ it("blocks transcription and explains setup when the server has no FFmpeg", asyn
   await expect.element(screen.getByRole("button", { name: "Transcribe" })).toBeDisabled();
   await capture("transcribe-ffmpeg-required");
 });
+
+it("combines selected recordings and seeks to the second part in the same panel", async () => {
+  const sources = [fixtures.job.source, "/class/Part two.mp4"];
+  const firstId = "00000000-0000-4000-8000-000000000001";
+  const secondId = "00000000-0000-4000-8000-000000000002";
+  const sessionId = "00000000-0000-4000-8000-000000000003";
+  const jobs = sources.map((source, index) => ({
+    ...fixtures.job,
+    source,
+    id: index === 0 ? fixtures.job.id : "2026-11-22-part-two-12345678",
+  }));
+  const parts = jobs.map(({ source, id }, index) => ({
+    id: index === 0 ? firstId : secondId,
+    recordingId: index === 0 ? firstId : secondId,
+    source,
+    duration: 30,
+    revision: id,
+  }));
+  const combined = {
+    id: sessionId,
+    title: "Quantum lecture",
+    type: "lecture",
+    version: 1,
+    timelineRevision: 1,
+    created: 1,
+    parts,
+    material: [],
+    markers: [],
+  };
+  let sessions: (typeof combined)[] = [];
+  fixtures.command.mockImplementation(
+    async (
+      action: string,
+      _project: string,
+      input: {
+        command?: { kind: string };
+        id?: string;
+      },
+    ) => {
+      if (action === "session") {
+        if (input.command?.kind === "combine") {
+          sessions = [combined];
+          return { sessions, session: combined };
+        }
+        return { sessions };
+      }
+      if (action === "list")
+        return jobs.map((job) => ({
+          job,
+          state: { stage: "completed", completed: 1 },
+          duration: 30,
+        }));
+      if (action === "media-list") return { media: [] };
+      if (action === "revision")
+        return {
+          segments: [
+            {
+              id: "cue",
+              start: 2,
+              end: 4,
+              text:
+                input.id === jobs[0]!.id ? "Let x be the variable." : "The substitution gives −2.",
+            },
+          ],
+        };
+      return {};
+    },
+  );
+
+  await page.viewport(1120, 900);
+  await using screen = await render(
+    <main className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
+      <PanelHarness />
+    </main>,
+  );
+  await expect.element(screen.getByRole("heading", { name: /^Sessions/ })).toBeVisible();
+  const first = screen.getByRole("checkbox", { name: "Select Lecture 4" });
+  await expect.element(first).toBeVisible();
+  await capture("sessions-list");
+  await first.click();
+  await screen.getByRole("checkbox", { name: "Select Part two" }).click();
+  await screen.getByRole("button", { name: "Combine", exact: true }).click();
+  await expect.element(screen.getByRole("heading", { name: "Quantum lecture" })).toBeVisible();
+  await expect.element(screen.getByText("The substitution gives −2.")).toBeVisible();
+  await screen.getByRole("button", { name: "Part 2", exact: true }).click();
+  await expect.element(screen.getByRole("slider", { name: "Session timeline" })).toHaveValue("30");
+  await capture("session-timeline");
+  await screen.getByRole("button", { name: "Material", exact: true }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Project-relative file path" }))
+    .toBeVisible();
+  await capture("session-material");
+});

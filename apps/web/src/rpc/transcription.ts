@@ -1,5 +1,8 @@
 import type {
   ModelSelection,
+  RecordingSessionCommand,
+  RecordingSessionResult,
+  RecordingSessionType,
   ProviderInstanceId,
   ThreadId,
   TranscriptionWord,
@@ -74,6 +77,7 @@ type RecordingSource = {
   title?: string;
 };
 type Commands = {
+  session: { command: RecordingSessionCommand; response: RecordingSessionResult };
   inventory: {
     language: string;
     details?: boolean;
@@ -193,9 +197,11 @@ type Commands = {
   };
   "capture-recover": { response: object };
   "capture-touch": { id: string; response: object };
+  "capture-mark": { id: string; time: number; response: object };
   "capture-start": {
     id: string;
     language?: string;
+    sessionType?: RecordingSessionType;
     response: {
       language: string;
       /** The engine live captions use: the recording default for the language. */
@@ -217,7 +223,7 @@ type Commands = {
   "capture-talk": { id: string; sdpOffer: string; response: { sdpAnswer: string } };
   "capture-finish": {
     id: string;
-    lesson?: { language: string };
+    lesson?: { language: string; sessionType?: RecordingSessionType };
     response: { source?: string; transcription?: "started" | "queued" | "unavailable" };
   };
   "media-register": {
@@ -297,7 +303,30 @@ export type LessonCaptionEngine =
   | { kind: "cloud"; engineId: string }
   | { kind: "chatgpt"; instanceId: ProviderInstanceId };
 
-export type RecordingNoteRecipe = "summary" | "study-notes" | "action-items" | "lesson";
+export type RecordingNoteRecipe =
+  | "summary"
+  | "study-notes"
+  | "action-items"
+  | "lesson"
+  | "meeting"
+  | "interview";
+
+export function listSessionNotes(project: string, id: string, signal: AbortSignal) {
+  return postTranscription(
+    "/api/transcription/notes",
+    { action: "session-list", project, id },
+    signal,
+  ) as Promise<RecordingNote[]>;
+}
+
+export function makeSessionNotes(project: string, id: string, version: number) {
+  return postTranscription("/api/transcription/notes", {
+    action: "session-make",
+    project,
+    id,
+    version,
+  }) as Promise<{ threadId: string } | { needsModel: true }>;
+}
 
 /** A thread for spoken questions during a lesson, which knows where its live captions are. */
 export function startLessonTalkThread(project: string, capture: string) {

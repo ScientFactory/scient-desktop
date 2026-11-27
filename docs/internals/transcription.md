@@ -54,6 +54,22 @@ batch requests live in process memory. `pause` stops the active job with its
 checkpoints intact. An explicit resume fails if its original settings,
 vocabulary or source have changed. An explicit rerun gets a fresh revision.
 
+### Sessions
+
+The `session` action uses the same job endpoint. Each added recording starts as a
+single session, materialized on first use. The media record carries the recording
+ID and, after materialization, a content hash for verified relocation. A
+relocated file uses a separate media path, so earlier transcript jobs keep
+their source identity.
+
+`Transcripts/sessions/index.json` stores versioned session membership. A single
+atomic write publishes Combine, Split, or a reorder. The file-move journal in
+that index lets Trash and Restore recover after an interruption. Session Trash
+uses a project-local bundle so it can restore IDs and paths on every host.
+Audio, linked source documents, and transcript revisions are never concatenated.
+A chat or notes run gets a separate context manifest and copies of its selected
+transcript versions. Citation URLs address the context, recording ID, and source time.
+
 ### Lessons
 
 A microphone capture can be a lesson. `capture-start` takes the capture `id`

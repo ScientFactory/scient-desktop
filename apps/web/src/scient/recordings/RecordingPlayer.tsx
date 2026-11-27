@@ -40,9 +40,11 @@ export function RecordingPlayer({
   onReady,
   src,
   video,
-  time,
+  time: mediaTime,
+  timeline,
   onTime,
   onStale,
+  onEnded,
   frontier,
   theater,
   onTheater,
@@ -54,9 +56,11 @@ export function RecordingPlayer({
   src: string;
   video: boolean;
   time: number;
+  timeline?: { time: number; duration: number; onSeek: (seconds: number) => void } | undefined;
   onTime: (time: number) => void;
   /** The loaded link stopped working (it expires); the owner fetches a fresh one. */
   onStale: (wasPlaying: boolean) => void;
+  onEnded?: () => void;
   theater: boolean;
   onTheater: () => void;
   caption: string;
@@ -135,7 +139,8 @@ export function RecordingPlayer({
   };
   const [playing, setPlaying] = useState(false);
   const [mediaDuration, setDuration] = useState(0);
-  const duration = mediaDuration || knownDuration || 0;
+  const duration = timeline?.duration ?? (mediaDuration || knownDuration || 0);
+  const time = timeline?.time ?? mediaTime;
   const [rate, setRate] = useState("1");
   const [error, setError] = useState(false);
   const loaded = useRef(false);
@@ -175,10 +180,17 @@ export function RecordingPlayer({
       setPlaying(false);
     },
     onError: fail,
+    onEnded,
   };
   const seek = (seconds: number) => {
-    if (!media.current || !duration) return;
-    media.current.currentTime = Math.max(0, Math.min(duration, seconds));
+    if (!duration) return;
+    const target = Math.max(0, Math.min(duration, seconds));
+    if (timeline) {
+      timeline.onSeek(target);
+      return;
+    }
+    if (!media.current) return;
+    media.current.currentTime = target;
     onTime(media.current.currentTime);
   };
   const toggle = async () => {
@@ -314,7 +326,7 @@ export function RecordingPlayer({
           value={Math.min(time, duration)}
           disabled={!duration}
           onChange={(event) => seek(event.currentTarget.valueAsNumber)}
-          aria-label={gt("Playback position")}
+          aria-label={timeline ? gt("Session timeline") : gt("Playback position")}
           aria-valuetext={gt("{position} of {duration}", {
             position: recordingTime(time),
             duration: recordingTime(duration),
