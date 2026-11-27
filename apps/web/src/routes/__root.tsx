@@ -1,5 +1,4 @@
 import { ScientAnswerBadgeCoordinator } from "../scient/answerAttention/ScientAnswerBadgeCoordinator";
-import { ComputeQuitGuardReport } from "../scient/compute/ComputeQuitGuardReport";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -263,7 +262,6 @@ function RootRouteBranch() {
       <SshPasswordPromptDialog />
       <SnapShotCoordinator />
       <ScientAnswerBadgeCoordinator />
-      <ComputeQuitGuardReport />
       <ReopenClosedViewShortcut />
       <ConfirmDialogHost />
       <WorktreeLayoutApprovalDialogHost />

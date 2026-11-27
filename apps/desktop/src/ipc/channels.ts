@@ -1,6 +1,10 @@
 // SCIENT-FORK:START — the sandboxed preload can't import the keep-awake module.
 export const KEEP_AWAKE_CHANNEL = "scient:keep-awake";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keeps running in the background (scient/backgroundRunning).
+export const GET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL = "scient:background-running:get";
+export const SET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL = "scient:background-running:set";
+// SCIENT-FORK:END
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const TO_LOCAL_BACKEND_PATH_CHANNEL = "desktop:to-local-backend-path";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
@@ -160,9 +164,6 @@ export const PREVIEW_TAB_THUMBNAIL_CHANNEL = "scient:preview:tab-thumbnail";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
-// SCIENT-FORK:END
-// SCIENT-FORK:START — what quitting would stop (scient/quitGuard).
-export const SET_RUNNING_WORK_CHANNEL = "scient:quit-guard:set-running-work";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 export const TAKE_OPENED_CONVERSATION_FILES_CHANNEL = "scient:conversation-import:take-opened";

@@ -22,8 +22,11 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+// SCIENT-FORK:START — Scient keeps running in the background.
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — quitting stops running work, so it asks first.
-import { confirmQuitStopsRunningWork } from "../scient/quitGuard/ipc.ts";
+import { confirmQuitStopsRunningWork } from "../scient/quitGuard/quitGuard.ts";
 // SCIENT-FORK:END
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLifecycleRelaunchError>()(
@@ -48,10 +51,12 @@ export type DesktopLifecycleRuntimeServices =
 
 type DesktopLifecycleRegistrationServices =
   | DesktopLifecycleRuntimeServices
-  | ElectronWindow.ElectronWindow;
+  | ElectronWindow.ElectronWindow
+  // SCIENT-FORK: Scient keeps running in the background.
+  | DesktopAppSettings.DesktopAppSettings;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopAppSettings | DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -108,7 +113,8 @@ const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdo
 );
 
 interface QuitState {
-  phase: "running" | "waiting" | "allowed";
+  // SCIENT-FORK: "asking" while Quit checks for running work and asks the person.
+  phase: "running" | "asking" | "waiting" | "allowed";
   waitingSinceNanos: bigint;
 }
 
@@ -166,8 +172,52 @@ function handleBeforeQuit(
     void runEffect(exitIfShutdownStalled(quit, "before-quit"));
     return;
   }
-  // SCIENT-FORK:START — quitting stops running work, so it asks first.
-  if (!confirmQuitStopsRunningWork()) return;
+  // SCIENT-FORK:START — quitting stops running work, so it asks first; a quit already under way does not.
+  if (quit.phase === "asking") return;
+  quit.phase = "asking";
+  void runEffect(
+    Effect.gen(function* () {
+      const state = yield* DesktopState.DesktopState;
+      if (yield* Ref.get(state.quitting)) return true;
+      return yield* Effect.promise(confirmQuitStopsRunningWork);
+    }),
+  ).then(
+    (proceed) => {
+      if (proceed) {
+        shutDownForQuit(runEffect, quit);
+        return;
+      }
+      quit.phase = "running";
+      void runEffect(reopenAfterCancelledQuit);
+    },
+    () => {
+      quit.phase = "running";
+    },
+  );
+}
+
+// With no window, no tray and no Dock icon, a cancelled Quit would leave Scient running unreachable.
+// While the primary backend is not ready, activation opens nothing yet, so the connecting splash
+// shows at once and the main window follows when the backend is ready, as at a normal start.
+const reopenAfterCancelledQuit = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const state = yield* DesktopState.DesktopState;
+  if (environment.platform === "darwin" || (yield* Ref.get(state.background))) return;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  if (Option.isSome(yield* electronWindow.currentMainOrFirst)) return;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.activate;
+  if (Option.isNone(yield* electronWindow.currentMainOrFirst)) {
+    yield* desktopWindow.showConnectingSplash;
+  }
+}).pipe(Effect.ignoreCause({ log: true }), Effect.withSpan("desktop.lifecycle.quitCancelled"));
+
+function shutDownForQuit(
+  runEffect: <A, E>(
+    effect: Effect.Effect<A, E, DesktopLifecycleRegistrationServices>,
+  ) => Promise<A>,
+  quit: QuitState,
+): void {
   // SCIENT-FORK:END
   void runEffect(
     Effect.gen(function* () {
@@ -304,7 +354,15 @@ export const make = DesktopLifecycle.of({
         Effect.gen(function* () {
           const app = yield* ElectronApp.ElectronApp;
           const state = yield* DesktopState.DesktopState;
-          if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
+          if (yield* Ref.get(state.quitting)) return;
+          // SCIENT-FORK:START — Scient keeps running in the background with no window.
+          const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+          if ((yield* appSettings.get).keepRunningInBackground) {
+            yield* Ref.set(state.background, true);
+            return;
+          }
+          // SCIENT-FORK:END
+          if (environment.platform !== "darwin") {
             yield* app.quit;
           }
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),

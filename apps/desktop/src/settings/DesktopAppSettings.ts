@@ -60,6 +60,9 @@ export interface DesktopSettings {
   // WSL-only primary mode avoids a second Windows backend; default false preserves parallel setups.
   // Requires restart because the pool chooses its primary spec at layer initialization.
   readonly wslOnly: boolean;
+  // SCIENT-FORK:START — per machine; agents have no path to change it.
+  readonly keepRunningInBackground: boolean;
+  // SCIENT-FORK:END
 }
 
 export interface DesktopSettingsChange {
@@ -103,6 +106,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslDistro: null,
   voiceSelectedModelId: null,
   wslOnly: false,
+  // SCIENT-FORK: on by default.
+  keepRunningInBackground: true,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -134,6 +139,8 @@ const DesktopSettingsDocument = Schema.Struct({
   wslDistro: optionalReadableKey(Schema.NullOr(Schema.String)),
   voiceSelectedModelId: optionalReadableKey(Schema.NullOr(Schema.String)),
   wslOnly: optionalReadableKey(Schema.Boolean),
+  // SCIENT-FORK: Scient background running.
+  keepRunningInBackground: optionalReadableKey(Schema.Boolean),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -214,6 +221,11 @@ export class DesktopAppSettings extends Context.Service<
       DesktopSettingsChange,
       DesktopSettingsWriteError
     >;
+    // SCIENT-FORK:START — Scient background running.
+    readonly setKeepRunningInBackground: (
+      enabled: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    // SCIENT-FORK:END
     readonly applyWslWindowsFallbackInMemory: Effect.Effect<DesktopSettingsChange>;
   }
 >()("@t3tools/desktop/settings/DesktopAppSettings") {}
@@ -285,6 +297,8 @@ function normalizeDesktopSettingsDocument(
     voiceSelectedModelId: normalizeVoiceSelectedModelId(parsed.voiceSelectedModelId),
     // SCIENT-FORK:END
     wslOnly: parsed.wslOnly === true,
+    // SCIENT-FORK: Scient background running.
+    keepRunningInBackground: parsed.keepRunningInBackground !== false,
   };
 }
 
@@ -344,6 +358,11 @@ function toDesktopSettingsDocument(
     document.wslOnly = settings.wslOnly;
   }
 
+  // SCIENT-FORK:START — Scient background running.
+  if (settings.keepRunningInBackground !== defaults.keepRunningInBackground) {
+    document.keepRunningInBackground = settings.keepRunningInBackground;
+  }
+  // SCIENT-FORK:END
   return document;
 }
 
@@ -444,6 +463,14 @@ function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean)
     ? settings
     : { ...settings, localEnvironmentEnabled: enabled };
 }
+
+// SCIENT-FORK:START — Scient background running.
+function setKeepRunningInBackground(settings: DesktopSettings, enabled: boolean): DesktopSettings {
+  return settings.keepRunningInBackground === enabled
+    ? settings
+    : { ...settings, keepRunningInBackground: enabled };
+}
+// SCIENT-FORK:END
 
 function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
   return setWslOnly(setWslBackendEnabled(settings, false), false);
@@ -702,6 +729,14 @@ export const make = Effect.gen(function* () {
         return yield* persist((settings) => setLocalEnvironmentEnabled(settings, enabled));
       },
     ),
+    // SCIENT-FORK:START — Scient background running.
+    setKeepRunningInBackground: Effect.fn("desktop.settings.setKeepRunningInBackground")(
+      function* (enabled) {
+        yield* Effect.annotateCurrentSpan({ enabled });
+        return yield* persist((settings) => setKeepRunningInBackground(settings, enabled));
+      },
+    ),
+    // SCIENT-FORK:END
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
     ),
@@ -777,6 +812,13 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
             return update((settings) => setLocalEnvironmentEnabled(settings, enabled));
           },
         ),
+        // SCIENT-FORK:START — Scient background running.
+        setKeepRunningInBackground: Effect.fn("DesktopAppSettings.setKeepRunningInBackground")(
+          function (enabled) {
+            return update((settings) => setKeepRunningInBackground(settings, enabled));
+          },
+        ),
+        // SCIENT-FORK:END
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });

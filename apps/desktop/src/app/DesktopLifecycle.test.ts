@@ -18,6 +18,15 @@ import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+// SCIENT-FORK:START — Scient background running.
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import { vi } from "vite-plus/test";
+
+const quitGuard = vi.hoisted(() => ({ proceed: true }));
+vi.mock("../scient/quitGuard/quitGuard.ts", () => ({
+  confirmQuitStopsRunningWork: () => Promise.resolve(quitGuard.proceed),
+}));
+// SCIENT-FORK:END
 
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
@@ -70,14 +79,22 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 });
 
-function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
+function layerElectronWindow(
+  destroyAll: Effect.Effect<void> = Effect.void,
+  // SCIENT-FORK:START — a cancelled Quit reads whether a window is open.
+  currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>> = Effect.die(
+    "unexpected current window read",
+  ),
+  // SCIENT-FORK:END
+) {
   return Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected window creation"),
     main: Effect.die("unexpected main window read"),
     // SCIENT-FORK:START — several app windows share one desktop process.
     appWindows: Effect.die("unexpected app window read"),
     // SCIENT-FORK:END
-    currentMainOrFirst: Effect.die("unexpected current window read"),
+    // SCIENT-FORK: a cancelled Quit reads whether a window is open.
+    currentMainOrFirst,
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
@@ -93,6 +110,8 @@ function layerDesktopWindow(
   input: {
     readonly activate?: Effect.Effect<void>;
     readonly flushMainWindowBounds?: Effect.Effect<void>;
+    // SCIENT-FORK: a cancelled Quit shows the connecting splash while the backend is down.
+    readonly showConnectingSplash?: Effect.Effect<void>;
   } = {},
 ) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -101,7 +120,7 @@ function layerDesktopWindow(
     revealOrCreateMain: Effect.die("unexpected window creation"),
     activate: input.activate ?? Effect.void,
     createMainIfBackendReady: Effect.void,
-    showConnectingSplash: Effect.void,
+    showConnectingSplash: input.showConnectingSplash ?? Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
@@ -143,6 +162,8 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        // SCIENT-FORK: Scient background running.
+        Layer.provideMerge(DesktopAppSettings.layerTest()),
       );
 
       return Effect.scoped(
@@ -215,6 +236,8 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(layerDesktopShutdown),
         Layer.provideMerge(DesktopState.layer),
+        // SCIENT-FORK: Scient background running.
+        Layer.provideMerge(DesktopAppSettings.layerTest()),
       );
 
       yield* Effect.scoped(
@@ -259,6 +282,8 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        // SCIENT-FORK: Scient background running.
+        Layer.provideMerge(DesktopAppSettings.layerTest()),
       );
 
       const options = yield* Effect.gen(function* () {
@@ -302,6 +327,8 @@ describe("DesktopLifecycle", () => {
         // Nothing marks this shutdown complete, so it stays pending.
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        // SCIENT-FORK: Scient background running.
+        Layer.provideMerge(DesktopAppSettings.layerTest()),
       );
 
       yield* Effect.scoped(
@@ -354,6 +381,8 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        // SCIENT-FORK: Scient background running.
+        Layer.provideMerge(DesktopAppSettings.layerTest()),
       );
 
       yield* Effect.scoped(
@@ -370,4 +399,144 @@ describe("DesktopLifecycle", () => {
       ).pipe(Effect.provide(layer));
     }),
   );
+
+  // SCIENT-FORK:START — Scient keeps running in the background.
+  const closeLastWindow = Effect.fn("test.closeLastWindow")(function* (
+    platform: NodeJS.Platform,
+    keepRunningInBackground: boolean,
+  ) {
+    const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+    const quitRequested = yield* Deferred.make<void>();
+    const layer = DesktopLifecycle.layer.pipe(
+      Layer.provideMerge(
+        layerElectronApp(
+          appListeners,
+          Deferred.succeed(quitRequested, undefined).pipe(Effect.asVoid),
+        ),
+      ),
+      Layer.provideMerge(layerElectronTheme),
+      Layer.provideMerge(layerElectronWindow()),
+      Layer.provideMerge(layerDesktopWindow()),
+      Layer.provideMerge(
+        Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          platform,
+          isDevelopment: false,
+          appImagePath: Option.none(),
+        } as DesktopEnvironment.DesktopEnvironment["Service"]),
+      ),
+      Layer.provideMerge(DesktopShutdown.layer),
+      Layer.provideMerge(DesktopState.layer),
+      Layer.provideMerge(
+        DesktopAppSettings.layerTest({
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          keepRunningInBackground,
+        }),
+      ),
+    );
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+        const state = yield* DesktopState.DesktopState;
+        appListeners.get("window-all-closed")?.();
+        if (!keepRunningInBackground && platform !== "darwin") yield* Deferred.await(quitRequested);
+        else yield* Effect.yieldNow;
+        return {
+          background: yield* Ref.get(state.background),
+          quit: yield* Deferred.isDone(quitRequested),
+        };
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
+    "keeps running hidden after the last window closes on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* closeLastWindow(platform, true), { background: true, quit: false });
+      }),
+  );
+
+  it.effect.each(["win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
+    "quits after the last window closes on %s with background running off",
+    (platform) =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* closeLastWindow(platform, false), {
+          background: false,
+          quit: true,
+        });
+      }),
+  );
+
+  it.effect.each([
+    { platform: "win32", background: false, primaryReady: true, shows: "main" },
+    { platform: "win32", background: false, primaryReady: false, shows: "splash" },
+    { platform: "linux", background: false, primaryReady: false, shows: "splash" },
+    { platform: "win32", background: true, primaryReady: false, shows: "nothing" },
+    { platform: "darwin", background: false, primaryReady: false, shows: "nothing" },
+  ] satisfies ReadonlyArray<{
+    platform: NodeJS.Platform;
+    background: boolean;
+    primaryReady: boolean;
+    shows: "main" | "splash" | "nothing";
+  }>)(
+    "a Quit cancelled with no window open shows one at once only where nothing else would: %o",
+    ({ platform, background, primaryReady, shows }) =>
+      Effect.gen(function* () {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        const shown = yield* Deferred.make<"main" | "splash">();
+        const window = {} as Electron.BrowserWindow;
+        let open = Option.none<Electron.BrowserWindow>();
+        const showWindow = (kind: "main" | "splash") =>
+          Effect.sync(() => {
+            open = Option.some(window);
+          }).pipe(Effect.andThen(Deferred.succeed(shown, kind)), Effect.asVoid);
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(layerElectronApp(appListeners)),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(
+            layerElectronWindow(
+              Effect.void,
+              Effect.sync(() => open),
+            ),
+          ),
+          Layer.provideMerge(
+            layerDesktopWindow({
+              // Activation opens the main window only once the primary backend is ready.
+              activate: primaryReady ? showWindow("main") : Effect.void,
+              showConnectingSplash: showWindow("splash"),
+            }),
+          ),
+          Layer.provideMerge(
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              platform,
+              appImagePath: Option.none(),
+              isDevelopment: false,
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+          Layer.provideMerge(DesktopAppSettings.layerTest()),
+        );
+        quitGuard.proceed = false;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+            yield* Ref.set((yield* DesktopState.DesktopState).background, background);
+            appListeners.get("before-quit")?.({ preventDefault: () => {} } as Electron.Event);
+            if (shows === "nothing") {
+              const settled = Promise.withResolvers<void>();
+              setImmediate(settled.resolve);
+              yield* Effect.promise(() => settled.promise);
+              assert.isFalse(yield* Deferred.isDone(shown));
+            } else {
+              assert.equal(yield* Deferred.await(shown), shows);
+            }
+          }),
+        ).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.sync(() => (quitGuard.proceed = true))),
+        );
+      }),
+  );
+  // SCIENT-FORK:END
 });

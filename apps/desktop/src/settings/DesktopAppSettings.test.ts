@@ -165,6 +165,18 @@ describe("DesktopSettings", () => {
       ),
   );
   // SCIENT-FORK:START scient-desktop-settings
+  it.effect("keeps Scient running in the background by default and persists turning it off", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        assert.isTrue((yield* settings.load).keepRunningInBackground);
+        assert.isTrue((yield* settings.setKeepRunningInBackground(false)).changed);
+        assert.isFalse((yield* settings.load).keepRunningInBackground);
+        yield* settings.setKeepRunningInBackground(true);
+        assert.isTrue((yield* settings.load).keepRunningInBackground);
+      }),
+    ),
+  );
   it("keeps packaged Scient builds on the stable update channel", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
@@ -184,6 +196,7 @@ describe("DesktopSettings", () => {
         wslOnly: false,
         wslDistro: null,
         voiceSelectedModelId: null,
+        keepRunningInBackground: true,
       } satisfies DesktopAppSettings.DesktopSettings,
     );
   });
@@ -325,6 +338,7 @@ describe("DesktopSettings", () => {
           wslOnly: false,
           wslDistro: null,
           voiceSelectedModelId: null,
+          keepRunningInBackground: true,
         } satisfies DesktopAppSettings.DesktopSettings);
 
         const exposure = yield* settings.setServerExposureMode("local-only");
@@ -441,6 +455,7 @@ describe("DesktopSettings", () => {
           wslDistro: null,
           // SCIENT-FORK:START scient-desktop-settings
           voiceSelectedModelId: null,
+          keepRunningInBackground: true,
           // SCIENT-FORK:END scient-desktop-settings
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -697,6 +712,7 @@ describe("DesktopSettings", () => {
             wslOnly: false,
             wslDistro: null,
             voiceSelectedModelId: null,
+            keepRunningInBackground: true,
           } satisfies DesktopAppSettings.DesktopSettings);
 
           const persisted = yield* decodeDesktopSettingsPatch(
@@ -739,6 +755,7 @@ describe("DesktopSettings", () => {
           wslOnly: false,
           wslDistro: null,
           voiceSelectedModelId: null,
+          keepRunningInBackground: true,
         } satisfies DesktopAppSettings.DesktopSettings);
 
         assert.deepEqual(
@@ -784,6 +801,7 @@ describe("DesktopSettings", () => {
           wslDistro: null,
           // SCIENT-FORK:START scient-desktop-settings
           voiceSelectedModelId: null,
+          keepRunningInBackground: true,
         } satisfies DesktopAppSettings.DesktopSettings);
 
         assert.deepEqual(
@@ -931,6 +949,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          keepRunningInBackground: true,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -985,6 +1004,7 @@ describe("DesktopSettings", () => {
           wslOnly: false,
           wslDistro: null,
           voiceSelectedModelId: null,
+          keepRunningInBackground: true,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),

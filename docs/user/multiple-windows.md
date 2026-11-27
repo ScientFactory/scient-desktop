@@ -61,6 +61,24 @@ a new window, from its menu or by dragging it out, moves the page to the new
 window, and the window you came from shows that message. The page reloads when
 it moves, so scroll position and typed form input are not kept.
 
+## Close the last window
+
+With **Settings → General → Keep Scient running in the background** on, the
+default, closing the last window leaves Scient running with no window, so
+agents and sign-ins keep working. Open Scient again, or click its Dock icon on
+macOS, to bring a window back. On Windows and Linux, Scient's tray icon has
+**Open Scient** and **Quit completely**; on macOS, **Quit Scient** (`Cmd+Q`)
+quits completely. Quitting stops the server and everything it runs. Quit asks
+first while Compute runs or analysis runs are still going or waiting, or when it
+cannot check. It does not count agent turns, which Quit stops too.
+
+Scient does not start by itself when you log in. After a restart, it runs
+again once you open it.
+
+Turn the switch off to quit when the last window closes on Windows and Linux.
+If Quit then asks and you keep Scient running, the window opens again. With the
+switch off on macOS, Scient stays in the Dock with no window, as before.
+
 ## Limits
 
 - When you quit and reopen Scient, one window opens, where you last moved or

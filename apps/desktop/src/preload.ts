@@ -174,10 +174,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   // SCIENT-FORK:START — keep the computer awake while threads work.
   keepAwake: (choice) => ipcRenderer.invoke(IpcChannels.KEEP_AWAKE_CHANNEL, choice),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient keeps running in the background.
+  getKeepRunningInBackground: () =>
+    ipcRenderer.sendSync(IpcChannels.GET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL) !== false,
+  setKeepRunningInBackground: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.SET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL, enabled),
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — the unread-answer app badge.
   setUnreadAnswerBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_BADGE_CHANNEL, badge),
-  setRunningWork: (count) => ipcRenderer.invoke(IpcChannels.SET_RUNNING_WORK_CHANNEL, count),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   takeOpenedConversationFiles: () =>

@@ -74,6 +74,9 @@ export interface ScientDesktopBridge {
   }) => Promise<boolean>;
   /** Scient: reads the keep-awake state, after applying a thread's choice when one is given. */
   keepAwake?: (choice?: KeepAwakeChoice) => Promise<KeepAwakeState>;
+  /** Scient: this machine's "Keep Scient running in the background" switch. */
+  getKeepRunningInBackground?: () => boolean;
+  setKeepRunningInBackground?: (enabled: boolean) => Promise<void>;
   /**
    * Scient: shows the threads with an unread answer on the app icon; zero clears it. `image` is
    * the Windows taskbar overlay. Resolves whether the platform accepted it.
@@ -82,8 +85,6 @@ export interface ScientDesktopBridge {
     readonly count: number;
     readonly image: string | null;
   }) => Promise<boolean>;
-  /** Scient: how many runs quitting would stop, so Quit can ask first. */
-  setRunningWork?: (count: number) => Promise<void>;
   // Conversation files the OS opened with Scient.
   /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
   takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;

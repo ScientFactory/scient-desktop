@@ -2,9 +2,13 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import { AccountsError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { Context, Effect, Layer, Option, Redacted, Semaphore } from "effect";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
+
+/** "needs-person" when only a foreground read may open it. */
+export type KeychainReadWithoutPrompt = Redacted.Redacted<string> | null | "needs-person";
 
 const requireKeyring = NodeModule.createRequire(import.meta.url);
 const unavailable = () =>
@@ -16,11 +20,17 @@ export interface AccountKeychain {
   readonly read: (
     account: string,
   ) => Effect.Effect<Redacted.Redacted<string> | null, AccountsError>;
+  /** Never shows a dialog and, on macOS and Linux, never touches the keychain. */
+  readonly readWithoutPrompt: (
+    account: string,
+  ) => Effect.Effect<KeychainReadWithoutPrompt, AccountsError>;
   readonly write: (
     account: string,
     key: Redacted.Redacted<string>,
   ) => Effect.Effect<void, AccountsError>;
 }
+
+const KEYCHAIN_SERVICE = "Scient Accounts";
 
 const nativeKeychain: AccountKeychain = {
   read: Effect.fn("AccountKeychain.read")((account) =>
@@ -29,19 +39,26 @@ const nativeKeychain: AccountKeychain = {
         const { AsyncEntry } = requireKeyring(
           "@napi-rs/keyring",
         ) as typeof import("@napi-rs/keyring");
-        const key = await new AsyncEntry("Scient Accounts", account).getPassword();
+        const key = await new AsyncEntry(KEYCHAIN_SERVICE, account).getPassword();
         return key == null ? null : Redacted.make(key);
       },
       catch: unavailable,
     }),
   ),
+  readWithoutPrompt: Effect.fn("AccountKeychain.readWithoutPrompt")(function* (account) {
+    // Credential Manager never asks. A macOS keychain item whose access list no longer trusts
+    // this executable asks, and a Secret Service collection can ask to be unlocked: those open
+    // only with a window.
+    if ((yield* HostProcess.Platform) === "win32") return yield* nativeKeychain.read(account);
+    return "needs-person" as const;
+  }),
   write: Effect.fn("AccountKeychain.write")((account, key) =>
     Effect.tryPromise({
       try: async () => {
         const { AsyncEntry } = requireKeyring(
           "@napi-rs/keyring",
         ) as typeof import("@napi-rs/keyring");
-        await new AsyncEntry("Scient Accounts", account).setPassword(Redacted.value(key));
+        await new AsyncEntry(KEYCHAIN_SERVICE, account).setPassword(Redacted.value(key));
       },
       catch: unavailable,
     }),
@@ -88,6 +105,8 @@ export class AccountVault extends Context.Service<
   AccountVault,
   {
     readonly protection: Effect.Effect<"keychain" | "file", AccountsError>;
+    /** Opens a vault set up before without any dialog; false when that needs the person. */
+    readonly openWithoutPrompt: Effect.Effect<boolean, AccountsError>;
     readonly encrypt: (
       name: string,
       value: Redacted.Redacted<Uint8Array>,
@@ -170,8 +189,46 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
       return loaded;
     }),
   );
+  // Unattended work opens only a vault set up before, and never with a dialog: when reading its
+  // key would ask, nothing is read or written and the next foreground use opens it. It never
+  // waits behind another open either.
+  const openWithoutPrompt = Effect.suspend(() =>
+    loaded
+      ? Effect.succeed(true)
+      : lock
+          .withPermitsIfAvailable(1)(
+            Effect.gen(function* () {
+              if (loaded) return true;
+              const sentinel = yield* store.get(SENTINEL).pipe(Effect.mapError(unavailable));
+              if (Option.isNone(sentinel)) return false;
+              let key: Uint8Array;
+              let protection: "keychain" | "file";
+              if (sentinel.value[0] === 0) {
+                const file = yield* store.get(KEY_FILE).pipe(Effect.mapError(unavailable));
+                if (Option.isNone(file)) return yield* unavailable();
+                key = file.value;
+                protection = "file";
+              } else if (sentinel.value[0] === 1) {
+                const read = yield* keychain.readWithoutPrompt(account);
+                if (read === "needs-person") return false;
+                if (read === null) return yield* unavailable();
+                key = Buffer.from(Redacted.value(read), "base64");
+                protection = "keychain";
+              } else {
+                return yield* unavailable();
+              }
+              if (key.length !== 32) return yield* unavailable();
+              const hidden = Redacted.make(key);
+              yield* decryptBlob(hidden, SENTINEL, sentinel.value.subarray(1));
+              loaded = { key: hidden, protection };
+              return true;
+            }),
+          )
+          .pipe(Effect.map(Option.getOrElse(() => false))),
+  );
   return AccountVault.of({
     protection: load.pipe(Effect.map((value) => value.protection)),
+    openWithoutPrompt,
     encrypt: Effect.fn("AccountVault.encrypt")(function* (name, value) {
       return yield* encryptBlob((yield* load).key, name, value);
     }),

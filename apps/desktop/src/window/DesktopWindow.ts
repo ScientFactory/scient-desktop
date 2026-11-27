@@ -1224,6 +1224,8 @@ export const make = Effect.gen(function* () {
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
+    // SCIENT-FORK: an open app window ends running in the background.
+    yield* Ref.set(desktopState.background, false);
     return Option.some(window);
   });
 
@@ -1266,6 +1268,8 @@ export const make = Effect.gen(function* () {
 
   const createMainIfBackendReady = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
+    // SCIENT-FORK: running in the background opens no window on its own.
+    if (yield* Ref.get(desktopState.background)) return;
     if (yield* waitingForBackend) return;
     yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
@@ -1378,6 +1382,8 @@ export const make = Effect.gen(function* () {
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
+      // SCIENT-FORK: the person asked for a window, so background running ends.
+      yield* Ref.set(desktopState.background, false);
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* revealMain(existingWindow.value);

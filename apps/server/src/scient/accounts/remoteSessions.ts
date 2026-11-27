@@ -419,17 +419,25 @@ export const makeRemoteSessions = Effect.gen(function* () {
     return { deleted: yield* exclusive(forget(source)) };
   });
 
+  // Unattended: a sweep never opens a store that needs the keychain; that waits for the person.
+  // Skipped then, it runs once the store opens, or at the next daily sweep or binding.
   const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
+    if (!(yield* accounts.openWithoutPrompt)) return;
     yield* exclusive(sweepSenders);
   }, Effect.ignore);
 
   /**
-   * Runs for the server's life: a sweep at start and then daily, and one whenever a session that
-   * a sender last proved its key over is removed, so an idle computer drops a revoked one's copies.
+   * Runs for the server's life: a sweep at start, once the store first opens, and then daily, and
+   * one whenever a session that a sender last proved its key over is removed, so an idle computer
+   * drops a revoked one's copies.
    */
   const watch = Effect.all(
     [
       sweep().pipe(Effect.repeat(Schedule.spaced(Duration.days(1)))),
+      accounts.changes.pipe(
+        Stream.take(1),
+        Stream.runForEach(() => sweep()),
+      ),
       Option.isNone(sessions)
         ? Effect.never
         : sessions.value.streamChanges.pipe(

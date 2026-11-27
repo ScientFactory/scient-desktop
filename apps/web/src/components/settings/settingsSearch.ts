@@ -1178,6 +1178,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("confirmation desktop app exit direct hold double click press twice")],
     desktopOnly: true,
   },
+  // SCIENT-FORK:START — Scient keeps running in the background.
+  {
+    id: "keep-running-in-background",
+    title: msg("Keep Scient running in the background"),
+    to: "/settings/general",
+    searchTerms: [msg("tray hidden close last window quit keep running")],
+    desktopOnly: true,
+  },
+  // SCIENT-FORK:END
   {
     id: "text-generation-model",
     title: msg("Text generation model"),

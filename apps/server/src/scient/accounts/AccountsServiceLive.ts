@@ -101,8 +101,11 @@ import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 import { parseTotp } from "./signIn/totp.ts";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
+import type { CustomModelAccountResolver } from "../../customModels.ts";
 
 const missing = () => fail("not-found", "The account no longer exists.");
+// Unattended work waits for the store to open with the person there.
+const unopened = () => fail("unavailable", "Scient Accounts has not been opened yet.");
 /** Offline, Accounts still opens: GitHub's own answer is left out after this long. */
 const GITHUB_IDENTITY_TIMEOUT = Duration.seconds(12);
 
@@ -351,6 +354,8 @@ export const layer = Layer.effect(
       if (invalidateKeys) bindingRevision++;
       yield* PubSub.publish(events, yield* snapshotNow);
     });
+    let resolutionWaitedForOpen = false;
+    let reinstallModelKeyResolver: Effect.Effect<void> = Effect.void;
     const initialize = Effect.gen(function* () {
       if (initialized) return;
       protection = yield* vault.protection;
@@ -366,6 +371,11 @@ export const layer = Layer.effect(
       recentActivity = log.slice(-500);
       initialized = true;
       yield* publish();
+      // Custom-model keys refused while the store was closed resolve again now.
+      if (resolutionWaitedForOpen) {
+        resolutionWaitedForOpen = false;
+        yield* reinstallModelKeyResolver.pipe(Effect.forkIn(serviceScope));
+      }
     });
     const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       writes.withPermits(1)(Effect.uninterruptible(initialize.pipe(Effect.andThen(effect))));
@@ -1267,13 +1277,36 @@ export const layer = Layer.effect(
       handoffCancelled: Effect.fn("AccountsService.handoffCancelled")((handoffId) =>
         Effect.sync(() => cancelledHandoffs.has(handoffId)),
       ),
+      // Paper recovery runs at every start, before any foreground use: it must not open the
+      // store, so before that the first snapshot carries the queue.
       setPaperQueue: Effect.fn("AccountsService.setPaperQueue")((queue) =>
-        locked(
-          Effect.gen(function* () {
-            paperQueues.set(queue.root, queue);
-            yield* publish(false);
-          }),
-        ).pipe(Effect.ignore),
+        writes
+          .withPermits(1)(
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                paperQueues.set(queue.root, queue);
+                if (initialized) yield* publish(false);
+              }),
+            ),
+          )
+          .pipe(Effect.ignore),
+      ),
+      // Never waits: an open under way, or one that would read the keychain, answers false.
+      openWithoutPrompt: Effect.suspend(() =>
+        initialized
+          ? Effect.succeed(true)
+          : writes
+              .withPermitsIfAvailable(1)(
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    if (initialized) return true;
+                    if (!(yield* vault.openWithoutPrompt)) return false;
+                    yield* initialize;
+                    return true;
+                  }),
+                ),
+              )
+              .pipe(Effect.map(Option.getOrElse(() => false))),
       ),
       showHandoff: Effect.fn("AccountsService.showHandoff")(function* (handoffId) {
         const reveal = yield* locked(
@@ -2610,7 +2643,20 @@ export const layer = Layer.effect(
     });
     if (sources.modelCatalog) {
       const migrate = migrateModelKeys.pipe(Effect.ignore);
-      yield* sources.modelCatalog.installResolver(service.resolveCustomModelAccountKey, migrate);
+      // Provider probes resolve saved model keys unattended: they never open the store, and
+      // resolve again once the person's first use has opened it.
+      const resolveWhenOpen: CustomModelAccountResolver = (accountId, origin, protocol) =>
+        service.openWithoutPrompt.pipe(
+          Effect.flatMap((open) =>
+            open
+              ? service.resolveCustomModelAccountKey(accountId, origin, protocol)
+              : Effect.sync(() => {
+                  resolutionWaitedForOpen = true;
+                }).pipe(Effect.andThen(Effect.fail(unopened()))),
+          ),
+        );
+      reinstallModelKeyResolver = sources.modelCatalog.installResolver(resolveWhenOpen, migrate);
+      yield* reinstallModelKeyResolver;
     }
     return service;
   }),

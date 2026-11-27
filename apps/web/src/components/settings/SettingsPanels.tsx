@@ -42,6 +42,8 @@ import {
 import { AboutVersionTitle as CopyableVersionTitle } from "./AboutVersionTitle";
 // SCIENT-FORK:END
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
+// SCIENT-FORK: Scient keeps running in the background.
+import { BackgroundRunningSetting } from "./BackgroundRunningSetting";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -1081,6 +1083,8 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+        {/* SCIENT-FORK: Scient keeps running in the background. */}
+        <BackgroundRunningSetting />
       </SettingsSection>
 
       <SettingsSection id="display" title={gt("Display")}>

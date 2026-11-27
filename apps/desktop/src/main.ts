@@ -26,6 +26,9 @@ import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keeps running in the background.
+import * as DesktopBackgroundRunning from "./scient/backgroundRunning/DesktopBackgroundRunning.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — feedback reports to the Scient team.
 import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
 // SCIENT-FORK:END
@@ -258,6 +261,8 @@ const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — keep the computer awake while threads work.
   DesktopKeepAwake.layer,
   // SCIENT-FORK:END
+  // SCIENT-FORK: Scient keeps running in the background.
+  DesktopBackgroundRunning.layer,
   // SCIENT-FORK:START — feedback reports to the Scient team.
   DesktopFeedback.layer,
   // SCIENT-FORK:END

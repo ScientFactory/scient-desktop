@@ -20,7 +20,8 @@ import { SessionStore, type SessionCredentialChange } from "../../auth/SessionSt
 import { ServerConfig } from "../../config.ts";
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
-import { makeHarness } from "./Accounts.testkit.ts";
+import type { AccountKeychain } from "./AccountVault.ts";
+import { makeHarness, memoryStore, website } from "./Accounts.testkit.ts";
 import { AccountsService } from "./AccountsService.ts";
 import type { ProfileCookieJar } from "./profileCookieJar.ts";
 import { makeRemoteSessions } from "./remoteSessions.ts";
@@ -812,5 +813,45 @@ it.effect("agrees with the desktop's sender on revisions: link, sign out, link a
     sender.log = issueUnit(sender.log, ["github.com"], "delete", { copyOnly: true });
     expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
     expect(values()).toEqual(["signed-in-here"]);
+  }),
+);
+
+it.effect("the start sweep never opens a store that would need the person", () =>
+  Effect.gen(function* () {
+    const storage = memoryStore();
+    const items = new Map<string, Redacted.Redacted<string>>();
+    const prompts: string[] = [];
+    let needsPerson = false;
+    const keychain: AccountKeychain = {
+      read: (account) =>
+        Effect.sync(() => {
+          prompts.push(account);
+          return items.get(account) ?? null;
+        }),
+      readWithoutPrompt: (account) =>
+        Effect.succeed(needsPerson ? "needs-person" : (items.get(account) ?? null)),
+      write: (account, value) =>
+        Effect.sync(() => {
+          items.set(account, value);
+        }),
+    };
+    // A computer that has stored accounts before.
+    yield* (yield* makeHarness({ storage, keychain })).service.save(website());
+    needsPerson = true;
+    prompts.length = 0;
+    const { service } = yield* makeHarness({ storage, keychain });
+    const remote = yield* makeRemoteSessions.pipe(
+      Effect.provideService(AccountsService, service),
+      Effect.provideService(ServerBrowser, browserFixture().browser),
+      Effect.provideService(ServerConfig, { devUrl: undefined } as ServerConfig["Service"]),
+      Effect.provideService(SessionStore, {
+        streamChanges: Stream.empty,
+      } as unknown as SessionStore["Service"]),
+      Effect.provideService(AuthSessionRepository, {
+        getById: () => Effect.succeedNone,
+      } as unknown as AuthSessionRepository["Service"]),
+    );
+    yield* remote.sweep();
+    expect(prompts).toEqual([]);
   }),
 );

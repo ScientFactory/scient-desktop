@@ -4,6 +4,7 @@ import {
   ScientPdfEditError,
 } from "../scientPdfEdits.ts";
 import { KEEP_AWAKE_WORK_PATH, KeepAwakeWork } from "../scientKeepAwake.ts";
+import { COMPUTE_ACTIVE_WORK_PATH, ComputeActiveWork } from "../scientCompute.ts";
 import {
   ScientAnnotationMutationRequest,
   ScientAnnotationMutationResult,
@@ -1069,14 +1070,22 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
-  // Scient keep-awake group: which of this computer's threads need it awake.
-  class EnvironmentScientKeepAwakeHttpApi extends HttpApiGroup.make("scientKeepAwake").add(
-    HttpApiEndpoint.get("work", KEEP_AWAKE_WORK_PATH, {
-      headers: OptionalBearerHeaders,
-      success: KeepAwakeWork,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
+  // Scient keep-awake group: this computer's work that sleep or Quit would stop.
+  class EnvironmentScientKeepAwakeHttpApi extends HttpApiGroup.make("scientKeepAwake")
+    .add(
+      HttpApiEndpoint.get("work", KEEP_AWAKE_WORK_PATH, {
+        headers: OptionalBearerHeaders,
+        success: KeepAwakeWork,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.get("computeActiveWork", COMPUTE_ACTIVE_WORK_PATH, {
+        headers: OptionalBearerHeaders,
+        success: ComputeActiveWork,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
 
   // Scient Overleaf sync group: the token, connections and manual sync. Reads
   // need the read scope; anything that writes the folder, Overleaf or the token

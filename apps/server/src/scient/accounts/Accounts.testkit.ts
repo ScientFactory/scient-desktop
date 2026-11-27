@@ -31,6 +31,7 @@ const unavailable = () =>
   new AccountsError({ reason: "unavailable", message: "Synthetic source unavailable." });
 export const noKeychain: AccountKeychain = {
   read: () => Effect.fail(unavailable()),
+  readWithoutPrompt: () => Effect.fail(unavailable()),
   write: () => Effect.fail(unavailable()),
 };
 
@@ -104,6 +105,7 @@ export const memoryStore = () => {
 export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   options: {
     readonly storage?: ReturnType<typeof memoryStore>;
+    readonly keychain?: AccountKeychain;
     readonly sourceOverrides?: Partial<AccountSources["Service"]>;
     /** What Source Control discovers and the GitHub credential it holds. */
     readonly sourceControl?: {
@@ -113,7 +115,11 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   } = {},
 ) {
   const storage = options.storage ?? memoryStore();
-  const vault = yield* makeAccountVault(storage.store, "/synthetic/accounts-test", noKeychain);
+  const vault = yield* makeAccountVault(
+    storage.store,
+    "/synthetic/accounts-test",
+    options.keychain ?? noKeychain,
+  );
   const sources = AccountSources.of({
     passwordStores: makeCliPasswordStores({ env: {}, platform: "linux", commonDirectories: [] }),
     platform: "linux",
@@ -218,6 +224,7 @@ export function fakeAccounts(
         attempts.delete(id);
       }),
     setPaperQueue: () => Effect.void,
+    openWithoutPrompt: Effect.succeed(true),
     showHandoff: () => unsupported,
     cancelHandoff: (id) =>
       Effect.sync(() => {

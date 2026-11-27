@@ -355,6 +355,8 @@ function layerTest(input: {
     // SCIENT-FORK:END scient-window
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
+    // SCIENT-FORK: Scient background running.
+    setKeepRunningInBackground: () => Effect.die("unexpected background running toggle"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -900,6 +902,56 @@ describe("DesktopWindow", () => {
         }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
       }),
   );
+
+  // SCIENT-FORK:START — running in the background opens no window on its own.
+  it.effect(
+    "opens no window on a backend restart while in the background, and opens on activate",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 1);
+          fake.isDestroyed.mockReturnValue(true);
+          fake.windowListeners.get("closed")?.();
+          yield* Ref.set(state.background, true);
+          yield* windows.handleBackendNotReady;
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 1);
+          fake.isDestroyed.mockReturnValue(false);
+          yield* windows.activate;
+          assert.equal(yield* Ref.get(createCount), 2);
+          assert.isFalse(yield* Ref.get(state.background));
+        }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+      }),
+  );
+
+  it.effect("an activation while the backend is down opens the main window once it is ready", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        const state = yield* DesktopState.DesktopState;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fake.isDestroyed.mockReturnValue(true);
+        fake.windowListeners.get("closed")?.();
+        yield* Ref.set(state.background, true);
+        yield* windows.handleBackendNotReady;
+        fake.isDestroyed.mockReturnValue(false);
+        yield* windows.activate;
+        assert.equal(yield* Ref.get(createCount), 1);
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 2);
+      }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+    }),
+  );
+  // SCIENT-FORK:END
 
   it.effect.each(["renderer", "backend"] as const)(
     "reveals the painted boot shell when %s becomes ready first",
