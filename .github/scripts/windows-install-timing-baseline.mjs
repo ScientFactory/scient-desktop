@@ -1,7 +1,7 @@
-// Which installer a timing measures (`source --out <file> [--run-id <id> --artifact <name>
-// [--artifact-id <id>] | --installer-url <url>] [--version <v>]`) and which earlier timing it
-// compares with (`find --context <file> --committed <file> --dir <dir>`: file= and committed= to
-// $GITHUB_OUTPUT, the committed baseline on any lookup error).
+// `source --out <file> [--run-id <id> --artifact <name> [--artifact-id <id>] | --installer-url
+// <url>] [--version <v>]`: which installer a timing measures. `find --context <file> --committed
+// <file> --dir <dir>`: its baseline (the committed one on any lookup error). `installer --baseline
+// <file>`: where that baseline's installer comes from. Both write to $GITHUB_OUTPUT.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -100,6 +100,29 @@ export function releaseRunRejection(run, context) {
 }
 
 /**
+ * Where `record`'s own installer comes from, by the exact upload it timed when the record names
+ * one, and the SHA-256 it must have; a string says why it cannot be fetched.
+ */
+export function baselineInstaller(record) {
+  const recorded = record?.context ?? {};
+  const sha256 = record?.measurement?.installer?.sha256 ?? "";
+  if (!/^[0-9a-f]{64}$/u.test(sha256)) return "the baseline records no installer SHA-256";
+  if (recorded.installerUrl?.startsWith("https://")) return { url: recorded.installerUrl, sha256 };
+  if (/^\d+$/u.test(recorded.installerRunId ?? "") && recorded.installerArtifact) {
+    const artifactId = /^\d+$/u.test(recorded.installerArtifactId ?? "")
+      ? recorded.installerArtifactId
+      : "";
+    return {
+      runId: recorded.installerRunId,
+      artifact: recorded.installerArtifact,
+      artifactId,
+      sha256,
+    };
+  }
+  return "the baseline names no installer to download";
+}
+
+/**
  * The newest timing record that passes every check, or null. `api(path, { paginate })` returns
  * parsed JSON (an array of pages when paginating); `download(runId)` returns the run's record
  * path or null. Throws on API errors and once `deadline` (performance.now) passes.
@@ -186,6 +209,7 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
       context: { type: "string" },
       committed: { type: "string" },
       dir: { type: "string" },
+      baseline: { type: "string" },
     },
   });
   const {
@@ -242,6 +266,12 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
     });
     NodeFS.writeFileSync(values.out, `${JSON.stringify(context, null, 2)}\n`);
     log(JSON.stringify(context, null, 2));
+  } else if (positionals[0] === "installer") {
+    const source = baselineInstaller(JSON.parse(NodeFS.readFileSync(values.baseline, "utf8")));
+    if (typeof source === "string") throw new Error(`Cannot re-check: ${source}`);
+    const output = `url=${source.url ?? ""}\nrun_id=${source.runId ?? ""}\nartifact=${source.artifact ?? ""}\nartifact_id=${source.artifactId ?? ""}\nsha256=${source.sha256}\n`;
+    log(output.trim());
+    if (process.env.GITHUB_OUTPUT) NodeFS.appendFileSync(process.env.GITHUB_OUTPUT, output);
   } else if (positionals[0] === "find") {
     let file = null;
     try {
@@ -274,6 +304,6 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
     if (process.env.GITHUB_OUTPUT) NodeFS.appendFileSync(process.env.GITHUB_OUTPUT, output);
     else process.stdout.write(output);
   } else {
-    throw new Error("usage: source | find");
+    throw new Error("usage: source | find | installer");
   }
 }

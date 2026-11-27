@@ -205,11 +205,12 @@ Keep differential updates enabled and qualify the normal update path.
 Every release run also installs its exact Windows installer on a clean
 `windows-2025` runner and times it, in a separate **Windows install timing** run
 ([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml)).
-The release's job **Start Windows install timing** waits for **Package Windows x64**
-to succeed, then dispatches that run on the release's branch with the release's
-run ID, the ID of its `desktop-win-x64` artifact (the timing run downloads exactly
-that upload) and its version; the job summary links the new run. The other release
-checks verify the unpacked app; this one runs the real installer.
+The release's job **Start Windows install timing** starts once every package job
+has succeeded and dispatches that run on the release's branch with the release's
+run ID, the ID of its `desktop-win-x64` artifact as **Package Windows x64**
+reported it (the timing run downloads exactly that upload) and its version; the
+job summary links the new run. The other release checks verify the unpacked app;
+this one runs the real installer.
 
 Each of three samples installs silently into a new folder under the system drive,
 launches the installed app on a new profile, quits it by closing its window,
@@ -237,13 +238,17 @@ install folder in the background. A launch that does not quit in time is force-s
 and records a forced quit; its whole stop, verification included, is bounded at 45
 seconds, and every process query inside it is cut to what remains. No install or
 launch starts after 12 minutes of measuring, about four times a normal run; the
-samples left are recorded as not run. Each sample's cleanup always runs, even after
+samples left are recorded as not run. A launch reads that budget again right
+before starting the app, after its own checks, and its readiness checks and
+screenshot end with the budget. Each sample's cleanup always runs, even after
 a failure: within 15 seconds it force-stops the app and verifies that none of its
 processes is left, then uninstalls and removes the folder. A launch whose processes
 survive a forced stop ends the sample, since a relaunch beside them would time
 nothing real. When the cleanup cannot verify that none is left, it records the
-failure, skips the uninstall, and no later sample starts. These bounds keep the
-measurement inside its 18-minute step; a normal run takes about 4 minutes.
+failure, skips the uninstall, and no later sample starts. After the budget, at most
+about 5½ minutes remain: a check in progress, the launch's stop and the cleanup.
+This keeps the measurement inside its 18-minute step; a normal run takes about 4
+minutes.
 `measurement.json` is rewritten after every sample, so even a stopped run keeps
 what it measured; it marks itself complete only once every planned sample ran to
 its end with a verified cleanup.
@@ -279,24 +284,29 @@ for the second.
 Runner speed alone moves a whole timing past those bounds: the same v0.6.34
 installer took 7.4 and 11.3 seconds to a first ready launch on two runners. So
 before calling a regression, the run re-checks on the same runner: it downloads the
-baseline's own installer (its published URL, or the `desktop-win-x64` artifact of
-its release run), times it with the same samples after the candidate, and keeps a
-stage regressed only if the candidate is also slower than that re-timing past both
-bounds. Otherwise the stage reads "not confirmed" with the re-timed number. When
-the re-check cannot run cleanly (the artifact has expired, the bytes differ from
-the baseline's recorded SHA-256, or a re-timed stage failed), the regression stands
-and the summary says it was not re-checked. The re-check runs only after a candidate
-measurement with no failed stage, roughly doubles the run, and never fails it.
+baseline's own installer (its published URL, or the exact `desktop-win-x64` upload
+of its release run that the baseline timed, by artifact ID), checks that its SHA-256
+is the one the baseline recorded before running it, times it with the same samples
+after the candidate, and keeps a stage regressed only if the candidate is also
+slower than that re-timing past both bounds. Otherwise the stage reads "not
+confirmed" with the re-timed number. When the re-check cannot run cleanly (the
+artifact has expired, the bytes differ from the baseline's recorded SHA-256, or a
+re-timed stage failed), the regression stands and the summary says it was not
+re-checked. The re-check runs only after a candidate measurement with no failed
+stage, roughly doubles the run, and never fails it.
 
 The timing is advisory. A regression adds a warning and a marked row in the
 summary. A failed stage, such as an installer error or a launch that never became
 ready, fails the timing run. The release run never waits for it: neither its
 concurrency group, assembly nor publication depends on the timing. **Start Windows
-install timing** sets `continue-on-error` and a 60-minute bound, so a slow package,
-a failed GitHub API read or a failed dispatch marks only that job failed while the
-release run still concludes successfully; a Windows package later than that goes
-untimed. Read the timing summary before approving a Stable candidate; whether a
-regression blocks it is the release owner's decision.
+install timing** sets `continue-on-error`, so a failed dispatch marks only that job
+failed while the release run still concludes successfully. A job that reaches its
+own `timeout-minutes` is cancelled instead, and a cancelled job makes the run
+conclude `cancelled` despite `continue-on-error`. So the job waits for nothing:
+its dispatch is cut at 60 seconds and its step at 2 minutes, both ending as
+failures, well inside the job's 10 minutes. When a package job fails, the release
+fails and the timing does not start. Read the timing summary before approving a
+Stable candidate; whether a regression blocks it is the release owner's decision.
 
 The numbers describe a 4-CPU GitHub runner, whose image turns Defender real-time
 scanning off (the summary records the state). Compare them between runs, not with

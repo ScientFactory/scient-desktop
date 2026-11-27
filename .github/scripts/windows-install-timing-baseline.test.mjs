@@ -8,6 +8,7 @@ import {
   RELEASE_WORKFLOW,
   TIMING_WORKFLOW,
   artifactMismatch,
+  baselineInstaller,
   describeSource,
   findBaseline,
 } from "./windows-install-timing-baseline.mjs";
@@ -186,6 +187,30 @@ NodeTest.test("an artifact ID counts only for the named artifact of the named ru
   NodeAssert.equal(
     artifactMismatch({ ...artifact, name: "desktop-mac-x64" }, "26", "desktop-win-x64"),
     "it is desktop-mac-x64, not desktop-win-x64",
+  );
+});
+
+NodeTest.test("a re-check fetches the exact upload the baseline timed, by its SHA-256", () => {
+  const sha256 = "b".repeat(64);
+  const timed = (artifactId) => ({
+    context: describeSource({
+      run: releaseRun(26, "main"),
+      artifact: "desktop-win-x64",
+      artifactId,
+    }),
+    measurement: { installer: { sha256 } },
+  });
+  NodeAssert.deepEqual(baselineInstaller(timed("15186606051")), {
+    runId: "26",
+    artifact: "desktop-win-x64",
+    artifactId: "15186606051",
+    sha256,
+  });
+  // A record from before artifact IDs were saved can only name the artifact.
+  NodeAssert.equal(baselineInstaller(timed("")).artifactId, "");
+  NodeAssert.equal(
+    baselineInstaller({ ...timed("15186606051"), measurement: { installer: {} } }),
+    "the baseline records no installer SHA-256",
   );
 });
 

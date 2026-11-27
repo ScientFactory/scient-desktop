@@ -41,8 +41,8 @@ jobs:
   timing:
     name: Windows install and launch timing
     runs-on: windows-2025
-    # The sum of the step bounds below; a normal run takes about 4 minutes, and twice that when a
-    # regression is re-checked.
+    # Above the sum of the step bounds below (59 minutes); a normal run takes about 4 minutes, and
+    # twice that when a regression is re-checked.
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -129,44 +129,67 @@ jobs:
           node .github/scripts/windows-install-timing-report.mjs --check \
             --measurement timing/measurement.json --baseline "$BASELINE"
       # A stage slower than the baseline's record is re-checked against the baseline's own installer,
-      # timed after this one on the same runner; runner speed alone moves a whole timing.
-      - name: Download the baseline's installer
-        id: baseline_installer
+      # timed after this one on the same runner; runner speed alone moves a whole timing. It is the
+      # exact upload the baseline timed when its record names one, and runs only if its SHA-256 is
+      # the record's.
+      - name: Identify the baseline's installer
+        id: baseline_source
         if: ${{ !cancelled() && steps.check.outputs.regressed == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        shell: bash
+        env:
+          BASELINE: ${{ steps.baseline.outputs.file || '.github/windows-install-timing-baseline.json' }}
+        run: node .github/scripts/windows-install-timing-baseline.mjs installer --baseline "$BASELINE"
+      - name: Download the baseline's installer artifact
+        if: ${{ !cancelled() && steps.baseline_source.outputs.run_id != '' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.baseline_source.outputs.run_id }}
+          name: ${{ steps.baseline_source.outputs.artifact_id == '' && steps.baseline_source.outputs.artifact || '' }}
+          artifact-ids: ${{ steps.baseline_source.outputs.artifact_id }}
+          path: baseline-installer
+      - name: Download the baseline's installer
+        if: ${{ !cancelled() && steps.baseline_source.outputs.url != '' }}
         continue-on-error: true
         timeout-minutes: 5
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          BASELINE: ${{ steps.baseline.outputs.file || '.github/windows-install-timing-baseline.json' }}
+          INSTALLER_URL: ${{ steps.baseline_source.outputs.url }}
+        run: |
+          mkdir -p baseline-installer
+          curl -fsSL --retry 3 -o "baseline-installer/${INSTALLER_URL##*/}" "$INSTALLER_URL"
+      - name: Verify the baseline's installer
+        id: baseline_installer
+        if: ${{ !cancelled() && steps.baseline_source.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.baseline_source.outputs.sha256 }}
         run: |
           set -euo pipefail
-          field() { node -p "JSON.parse(require('node:fs').readFileSync(process.env.BASELINE, 'utf8')).context.$1 ?? ''"; }
-          url="$(field installerUrl)"
-          run="$(field installerRunId)"
-          artifact="$(field installerArtifact)"
-          mkdir -p baseline-installer
-          if [[ "$url" == https://* ]]; then
-            curl -fsSL --retry 3 -o "baseline-installer/${url##*/}" "$url"
-          elif [[ "$run" =~ ^[0-9]+$ && -n "$artifact" ]]; then
-            gh run download "$run" -R "$GITHUB_REPOSITORY" -n "$artifact" -D baseline-installer
-          else
-            echo "The baseline names no installer to download." >&2
+          shopt -s globstar nullglob
+          found=(baseline-installer/**/*.exe)
+          [[ ${#found[@]} -eq 1 ]] || { echo "Expected one installer .exe, found ${#found[@]}." >&2; exit 1; }
+          actual="$(sha256sum "${found[0]}" | cut -d ' ' -f 1)"
+          if [[ "$actual" != "$EXPECTED" ]]; then
+            echo "The downloaded installer's SHA-256 is $actual, not the baseline's $EXPECTED; not running it." >&2
             exit 1
           fi
+          echo "path=${found[0]}" >> "$GITHUB_OUTPUT"
       - name: Time the baseline's installer again
         if: ${{ !cancelled() && steps.baseline_installer.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 18
         shell: bash
         env:
+          INSTALLER: ${{ steps.baseline_installer.outputs.path }}
           SAMPLES: ${{ inputs.samples }}
-        run: |
-          set -euo pipefail
-          shopt -s globstar nullglob
-          found=(baseline-installer/**/*.exe)
-          [[ ${#found[@]} -eq 1 ]] || { echo "Expected one installer .exe, found ${#found[@]}." >&2; exit 1; }
-          node .github/scripts/windows-install-timing.mjs "${found[0]}" timing/baseline-rerun "$SAMPLES"
+        run: node .github/scripts/windows-install-timing.mjs "$INSTALLER" timing/baseline-rerun "$SAMPLES"
       - name: Compare and summarize
         if: ${{ !cancelled() && hashFiles('timing/measurement.json') != '' }}
         timeout-minutes: 1

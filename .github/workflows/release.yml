@@ -458,6 +458,11 @@ jobs:
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    # SCIENT-FORK:START — the Windows installer's artifact, for Start Windows install timing.
+    # Only the Windows leg sets it; a matrix job's other legs leave it empty, which does not replace it.
+    outputs:
+      win_x64_artifact_id: ${{ matrix.platform == 'win' && matrix.arch == 'x64' && steps.desktop_artifact.outputs.artifact-id || '' }}
+    # SCIENT-FORK:END
     strategy:
       fail-fast: false
       matrix:
@@ -1021,6 +1026,9 @@ jobs:
           compression-level: 1
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # SCIENT-FORK:START — the Windows leg's upload, for Start Windows install timing.
+        id: desktop_artifact
+        # SCIENT-FORK:END
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
@@ -1172,39 +1180,29 @@ jobs:
       # SCIENT-FORK:END
 
   # Times the exact Windows installer in a run of its own (windows-install-timing.yml), started
-  # once Package Windows x64 has uploaded it. Advisory: nothing needs this job, and its failure or
-  # timeout leaves the run's conclusion alone; the run never waits for the measurement.
+  # once every package has finished. Advisory: nothing needs this job, and its failure leaves the
+  # run's conclusion alone. A job timeout would cancel the job, which continue-on-error does not
+  # cover, so the dispatch's own bounds end it as a failure well before the job's.
   start_windows_install_timing:
     name: Start Windows install timing
-    needs: preflight
-    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
+    needs: [preflight, build_desktop]
+    if: ${{ !cancelled() && needs.build_desktop.result == 'success' && needs.build_desktop.outputs.win_x64_artifact_id != '' }}
     runs-on: ubuntu-24.04
     continue-on-error: true
-    # A Windows package normally uploads within 15 minutes; one later than this goes untimed.
-    timeout-minutes: 60
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        timeout-minutes: 5
-        with:
-          sparse-checkout: .github
-      - name: Wait for the Windows package
-        id: package
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/wait-for-job.sh "Package Windows x64" desktop-win-x64
       - name: Dispatch the timing run
         timeout-minutes: 2
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.preflight.outputs.version }}
-          ARTIFACT_ID: ${{ steps.package.outputs.artifact-id }}
+          ARTIFACT_ID: ${{ needs.build_desktop.outputs.win_x64_artifact_id }}
         run: |
-          if ! out="$(gh workflow run windows-install-timing.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+          if ! out="$(timeout 60 gh workflow run windows-install-timing.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
             -f run_id="$GITHUB_RUN_ID" -f artifact=desktop-win-x64 -f artifact_id="$ARTIFACT_ID" \
             -f version="$VERSION" 2>&1)"; then
             echo "Could not start the timing run: $out" >&2

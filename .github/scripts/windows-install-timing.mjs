@@ -8,6 +8,7 @@ import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as Budget from "./windows-install-timing-budget.mjs";
 import { median } from "./windows-install-timing-report.mjs";
 
 // Normal stages take about 50 s to install, 15 s to ready and 10 s to uninstall.
@@ -42,9 +43,7 @@ const elapsed = (start) => Math.round(now() - start);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (message) => console.log(`[${new Date().toISOString().slice(11, 23)}] ${message}`);
 const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
-const budgetEnd = now() + MEASUREMENT_BUDGET_MS;
-/** A stage's bound, cut to what remains of the measurement budget; 0 when nothing remains. */
-const budgeted = (ms) => Math.max(0, Math.min(ms, Math.floor(budgetEnd - now())));
+const budget = Budget.measurementBudget(now, MEASUREMENT_BUDGET_MS);
 const BUDGET_SPENT = `not run: the ${MEASUREMENT_BUDGET_MS / 60_000}-minute measurement budget ran out`;
 
 /** Runs a program to completion or kills it at `timeoutMs`; with no time left it does not start. */
@@ -65,8 +64,8 @@ function run(file, args, timeoutMs) {
   };
 }
 
-/** `ms`, cut to what remains before `deadline`. */
-const until = (deadline, ms) => Math.min(ms, Math.floor(deadline - now()));
+/** `ms`, cut to what remains before `deadline`; 0 once it has passed. */
+const until = (deadline, ms) => Budget.until(now, deadline, ms);
 
 const powershell = (script, timeoutMs = COMMAND_TIMEOUT_MS) =>
   NodeChildProcess.execFileSync("powershell.exe", ["-NoProfile", "-Command", script], {
@@ -111,14 +110,9 @@ function appProcesses(installDir, deadline = now() + COMMAND_TIMEOUT_MS) {
 
 const noAppProcesses = (installDir, deadline) => appProcesses(installDir, deadline)?.length === 0;
 
-/** True once `predicate` holds, false at `deadline`; the predicate bounds its own work. */
-async function waitUntil(predicate, deadline, intervalMs = 500) {
-  while (now() < deadline) {
-    if (await predicate()) return true;
-    await sleep(Math.max(0, until(deadline, intervalMs)));
-  }
-  return false;
-}
+/** True once `predicate(left)` holds, false at `deadline`; `left(ms)` cuts the predicate's own bounds. */
+const waitUntil = (predicate, deadline, intervalMs = 500) =>
+  Budget.waitUntil({ clock: now, sleep }, predicate, deadline, intervalMs);
 
 /** Force-stops every process from the install folder; true once none is verified left by `deadline`. */
 async function stopAll(installDir, deadline) {
@@ -147,17 +141,18 @@ function freePort() {
   });
 }
 
-async function json(url) {
+async function json(url, timeoutMs) {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     return response.ok ? await response.json() : null;
   } catch {
     return null;
   }
 }
 
-/** A DevTools session; the handshake and every call are bounded, and a closed one answers null. */
-function connect(wsUrl) {
+/** A DevTools session whose handshake and calls end within the time each is given; a closed one answers null. */
+function connect(wsUrl, timeoutMs) {
+  if (timeoutMs <= 0) return Promise.resolve(null);
   return new Promise((resolve) => {
     const pending = new Map();
     let id = 0;
@@ -172,7 +167,7 @@ function connect(wsUrl) {
     const handshake = setTimeout(() => {
       socket.close();
       resolve(null);
-    }, CDP_CONNECT_TIMEOUT_MS);
+    }, timeoutMs);
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data));
       const done = pending.get(message.id);
@@ -196,23 +191,27 @@ function connect(wsUrl) {
         get open() {
           return open;
         },
-        send: (method, params = {}) =>
+        send: (method, params, callMs) =>
           new Promise((done) => {
-            if (!open) return done(null);
+            if (!open || callMs <= 0) return done(null);
             id += 1;
             const callId = id;
             const timer = setTimeout(() => {
               pending.delete(callId);
               done(null);
-            }, CDP_CALL_TIMEOUT_MS);
+            }, callMs);
             pending.set(callId, (result) => {
               clearTimeout(timer);
               done(result);
             });
             socket.send(JSON.stringify({ id: callId, method, params }));
           }),
-        evaluate: async function (expression) {
-          const reply = await this.send("Runtime.evaluate", { expression, returnByValue: true });
+        evaluate: async function (expression, callMs) {
+          const reply = await this.send(
+            "Runtime.evaluate",
+            { expression, returnByValue: true },
+            callMs,
+          );
           return reply?.exceptionDetails ? null : (reply?.result?.value ?? null);
         },
         close: () => socket.close(),
@@ -263,8 +262,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
 }
 `;
 
-/** One PowerShell process answering `windows(pid)` within `timeoutMs`; null when it cannot. */
-function startWindowHelper(timeoutMs = COMMAND_TIMEOUT_MS) {
+/** One PowerShell process answering `windows(pid, timeoutMs)` in time, or null; it starts within 30 s. */
+function startWindowHelper() {
   const child = NodeChildProcess.spawn(
     "powershell.exe",
     [
@@ -282,7 +281,7 @@ function startWindowHelper(timeoutMs = COMMAND_TIMEOUT_MS) {
     waiting.get(key)?.(value);
     waiting.delete(key);
   };
-  const request = (line, key) =>
+  const request = (line, key, timeoutMs) =>
     new Promise((resolve) => {
       const timer = setTimeout(() => answer(key, null), timeoutMs);
       waiting.set(key, (value) => {
@@ -307,13 +306,13 @@ function startWindowHelper(timeoutMs = COMMAND_TIMEOUT_MS) {
   });
   child.stdin.on("error", () => {});
   // Compiling the helper takes a few seconds, so it starts once, before any sample.
-  const ready = request(null, "ready");
+  const ready = request(null, "ready", COMMAND_TIMEOUT_MS);
   return {
     ready,
-    async windows(pid) {
-      if (!(await ready)) return null;
+    async windows(pid, timeoutMs) {
+      if (timeoutMs <= 0 || !(await ready)) return null;
       id += 1;
-      const sizes = await request(`${id} ${pid}`, String(id));
+      const sizes = await request(`${id} ${pid}`, String(id), timeoutMs);
       if (sizes === null) return null;
       return sizes === "" ? [] : sizes.split(",").map((size) => size.split("x").map(Number));
     },
@@ -369,13 +368,15 @@ async function quit(child, installDir) {
 }
 
 async function launch({ exe, installDir, profile, name }) {
-  const readyTimeout = budgeted(READY_TIMEOUT_MS);
-  if (readyTimeout === 0)
-    return { readyMs: null, stopped: true, failure: `${name}: ${BUDGET_SPENT}` };
-  if (!noAppProcesses(installDir)) {
-    return { readyMs: null, stopped: false, failure: `${name}: app processes were still running` };
-  }
-  const port = await freePort();
+  // The budget is read again after the checks, right before the app starts.
+  const timing = await Budget.readyDeadline(budget, READY_TIMEOUT_MS, async () =>
+    noAppProcesses(installDir)
+      ? { port: await freePort() }
+      : { failure: `${name}: app processes were still running` },
+  );
+  if (timing.spent) return { readyMs: null, stopped: true, failure: `${name}: ${BUDGET_SPENT}` };
+  if (timing.failure) return { readyMs: null, stopped: false, failure: timing.failure };
+  const { port, deadline } = timing;
   const env = { ...process.env, SCIENT_NEXT_HOME: profile.home, APPDATA: profile.appData };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ELECTRON_NO_ASAR;
@@ -400,57 +401,63 @@ async function launch({ exe, installDir, profile, name }) {
     marks[key] = elapsed(start);
     log(`  ${name}: ${label} at ${seconds(marks[key])}`);
   };
-  const deadline = start + readyTimeout;
   const sessions = new Map();
   let readyPage = null;
   let windowsUnread = false;
   let windowSizes = null;
   let stop = { quitMs: null, forcedQuit: false, stopped: false };
   let failure = null;
-  try {
-    while (readyPage === null && appExit.code === null && now() < deadline) {
-      const targets = (await json(`http://127.0.0.1:${port}/json/list`)) ?? [];
-      const windows = await windowHelper.windows(child.pid);
-      windowsUnread ||= windows === null;
-      for (const target of targets) {
-        if (target.type !== "page" || target.url.startsWith("devtools")) continue;
-        mark("windowMs", "first window");
-        let session = sessions.get(target.id);
-        if (session === undefined || !session.open) {
-          session = await connect(target.webSocketDebuggerUrl);
-          if (session === null) continue;
-          sessions.set(target.id, session);
-        }
-        const value = await session.evaluate(PROBE);
-        if (!value) continue;
-        // Only the page's own window counts: the connecting splash is shown first.
-        const shown = (windows ?? []).some((size) => isPageWindow(size, value));
-        if (value.readyState === "complete") mark("pageLoadedMs", "page loaded");
-        if (shown) mark("windowShownMs", "main window shown");
-        if (value.shell) mark("appShellMs", "app shell");
-        if (value.view) mark("viewMs", "Getting started view");
-        if (value.view && shown && value.visibilityState === "visible") {
-          mark("readyMs", "ready");
-          windowSizes = {
-            shown: windows.map((size) => size.join("x")),
-            page: `${value.outerWidth}x${value.outerHeight} at ${value.devicePixelRatio}x`,
-          };
-          readyPage = session;
-          break;
-        }
+  // Every probe is cut to the readiness deadline, which never passes the measurement budget.
+  const probe = async (left) => {
+    if (appExit.code !== null) return true;
+    const targets = (await json(`http://127.0.0.1:${port}/json/list`, left(2_000))) ?? [];
+    const windows = await windowHelper.windows(child.pid, left(COMMAND_TIMEOUT_MS));
+    windowsUnread ||= windows === null;
+    for (const target of targets) {
+      if (target.type !== "page" || target.url.startsWith("devtools")) continue;
+      mark("windowMs", "first window");
+      let session = sessions.get(target.id);
+      if (session === undefined || !session.open) {
+        session = await connect(target.webSocketDebuggerUrl, left(CDP_CONNECT_TIMEOUT_MS));
+        if (session === null) continue;
+        sessions.set(target.id, session);
       }
-      if (readyPage === null) await sleep(POLL_MS);
+      const value = await session.evaluate(PROBE, left(CDP_CALL_TIMEOUT_MS));
+      if (!value) continue;
+      // Only the page's own window counts: the connecting splash is shown first.
+      const shown = (windows ?? []).some((size) => isPageWindow(size, value));
+      if (value.readyState === "complete") mark("pageLoadedMs", "page loaded");
+      if (shown) mark("windowShownMs", "main window shown");
+      if (value.shell) mark("appShellMs", "app shell");
+      if (value.view) mark("viewMs", "Getting started view");
+      if (value.view && shown && value.visibilityState === "visible") {
+        mark("readyMs", "ready");
+        windowSizes = {
+          shown: windows.map((size) => size.join("x")),
+          page: `${value.outerWidth}x${value.outerHeight} at ${value.devicePixelRatio}x`,
+        };
+        readyPage = session;
+        return true;
+      }
     }
+    return false;
+  };
+  try {
+    await waitUntil(probe, deadline, POLL_MS);
     if (readyPage === null) {
       const seen = `window ${marks.windowShownMs === undefined ? "never shown" : "shown"}, view ${marks.viewMs === undefined ? "never shown" : "shown"}${windowsUnread ? "; the app's windows could not always be read" : ""}`;
       failure =
         appExit.code !== null
           ? `${name}: the app exited (code ${appExit.code}) before it was ready (${seen})`
-          : `${name}: the app was not ready within ${seconds(readyTimeout)} (${seen})`;
+          : `${name}: the app was not ready within ${seconds(deadline - start)} (${seen})`;
     }
-    // What a person sees at readiness, or at the failure.
+    // What a person sees at readiness, or at the failure, while the budget lasts.
     const shotSession = readyPage ?? [...sessions.values()].find((session) => session.open);
-    const shot = await shotSession?.send("Page.captureScreenshot", { format: "png" });
+    const shot = await shotSession?.send(
+      "Page.captureScreenshot",
+      { format: "png" },
+      budget.left(CDP_CALL_TIMEOUT_MS),
+    );
     if (shot?.data)
       NodeFS.writeFileSync(NodePath.join(outDir, `${name}.png`), Buffer.from(shot.data, "base64"));
   } catch (error) {
@@ -510,17 +517,18 @@ async function sample(index) {
     result.failures.push(`${name}: ${message}`);
     log(`${name}: ${message}`);
   };
+  // A sample the budget leaves out installs nothing, so it has nothing to stop or remove.
+  if (budget.left(INSTALL_TIMEOUT_MS) === 0) {
+    fail(BUDGET_SPENT);
+    result.cleanupVerified = true;
+    return result;
+  }
   let profileRoot = null;
   try {
     NodeFS.rmSync(installDir, { recursive: true, force: true });
-    const installTimeout = budgeted(INSTALL_TIMEOUT_MS);
-    if (installTimeout === 0) {
-      fail(BUDGET_SPENT);
-      return result;
-    }
     log(`${name}: installing into ${installDir}`);
     const start = now();
-    const install = run(installer, ["/S", `/D=${installDir}`], installTimeout);
+    const install = run(installer, ["/S", `/D=${installDir}`], budget.left(INSTALL_TIMEOUT_MS));
     const exe = NodePath.join(installDir, "Scient.exe");
     if (!install.ok || !NodeFS.existsSync(exe)) {
       fail(`the installer failed (${install.ok ? "no Scient.exe" : install.reason})`);
