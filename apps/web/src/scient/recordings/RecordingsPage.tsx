@@ -104,6 +104,16 @@ function RecordingProgress({ state }: { state: RecordingStatus["state"] }) {
   );
 }
 
+/** A click on a row's own control (checkbox, button, menu, name field) is not a click to open it. */
+const fromControl = (event: React.MouseEvent) =>
+  event.target instanceof Element &&
+  event.target !== event.currentTarget &&
+  Boolean(
+    event.target.closest(
+      "button, a, input, label, [role=checkbox], [role=menu], [role=menuitem], [data-row-control]",
+    ),
+  );
+
 export function RecordingsPage({
   lockedProject,
   openSource,
@@ -423,28 +433,29 @@ export function RecordingsPage({
       grouped.set(key, recording);
     }
   });
+  // A recording opens before it has a transcript too; its page offers to transcribe it.
   const openRecording = async (
-    recording: Recording,
+    recording: Recording & { source: string },
     match?: { version: string; time: number; query: string },
     replace = false,
   ) => {
-    if (opening.current || !recording.revisions.length) return;
+    if (opening.current) return;
     opening.current = true;
     setOpenError(false);
     const {
       project,
+      source,
       revisions: [latest],
     } = recording;
-    if (!latest) return;
     const panel = useRightPanelStore.getState();
     const open = (threadRef: ReturnType<typeof scopeThreadRef>) => {
       panel.openScient(
         threadRef,
         scientRecordingSurface(
           project.id,
-          latest.job.source,
+          source,
           match,
-          recordingTitle(latest.job.source, titles.get(`${project.id}/${latest.job.source}`)),
+          recordingTitle(source, titles.get(`${project.id}/${source}`)),
         ),
       );
       panel.requestMaximize(threadRef);
@@ -479,9 +490,10 @@ export function RecordingsPage({
           };
           const currentThreadId = fromThread ? ThreadId.make(fromThread) : null;
           if (currentThreadId && (await openInThread(currentThreadId))) {
-            await settlePromise(() =>
-              linkRecordingThread(project.workspaceRoot, latest.job.id, currentThreadId),
-            );
+            if (latest)
+              await settlePromise(() =>
+                linkRecordingThread(project.workspaceRoot, latest.job.id, currentThreadId),
+              );
             return;
           }
           const links = (
@@ -497,7 +509,8 @@ export function RecordingsPage({
           });
           if (!target) return;
           open(scopeThreadRef(project.environmentId, target.threadId));
-          await linkRecordingThread(project.workspaceRoot, latest.job.id, target.threadId);
+          if (latest)
+            await linkRecordingThread(project.workspaceRoot, latest.job.id, target.threadId);
         } catch {
           setOpenError(true);
         }
@@ -510,7 +523,7 @@ export function RecordingsPage({
 
   const sourceRecording =
     lockedProject && openSource ? grouped.get(`${lockedProject}/${openSource}`) : undefined;
-  const openRedirect = useEffectEvent((recording: Recording) =>
+  const openRedirect = useEffectEvent((recording: Recording & { source: string }) =>
     openRecording(recording, undefined, true),
   );
   const redirectAttempted = useRef("");
@@ -520,7 +533,7 @@ export function RecordingsPage({
     const key = JSON.stringify([lockedProject, openSource]);
     if (redirectAttempted.current === key) return;
     redirectAttempted.current = key;
-    void openRedirect(sourceRecording);
+    void openRedirect({ ...sourceRecording, source: openSource });
   }, [lockedProject, openSource, sourceRecording, redirectAttempted]);
 
   const unfilteredRows = [
@@ -965,6 +978,11 @@ export function RecordingsPage({
               if (!recording) {
                 const actions: RecordingAction[] = [
                   {
+                    id: "open",
+                    label: gt("Open"),
+                    run: () => void openRecording({ project, source, revisions: [] }),
+                  },
+                  {
                     id: "transcribe",
                     label: gt("Transcribe…"),
                     disabled: queued,
@@ -986,11 +1004,18 @@ export function RecordingsPage({
                 return (
                   <div
                     data-recording={key}
-                    className="group/recording flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60"
+                    className="group/recording flex min-h-14 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
+                    onClick={(event) => {
+                      if (renaming !== key && !fromControl(event))
+                        void openRecording({ project, source, revisions: [] });
+                    }}
                     onContextMenu={(event) => void showRecordingMenu(event, actions)}
                   >
                     {/* The checkbox takes the icon's place while the row is hovered, focused or chosen. */}
-                    <span className="relative grid size-9 shrink-0 place-items-center text-muted-foreground">
+                    <span
+                      data-row-control
+                      className="relative grid size-9 shrink-0 place-items-center text-muted-foreground"
+                    >
                       <MediaIcon
                         aria-hidden
                         className="size-4 group-hover/recording:opacity-0 group-focus-within/recording:opacity-0 group-has-[[aria-checked=true]]/recording:opacity-0 pointer-coarse:opacity-0"
@@ -1011,18 +1036,28 @@ export function RecordingsPage({
                         />
                       </span>
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">
-                        {renaming === key ? (
+                    {renaming === key ? (
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">
                           <RecordingNameInput recording={managed} onDone={renamed} />
-                        ) : (
+                        </p>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 self-stretch text-start outline-none"
+                        onClick={() => void openRecording({ project, source, revisions: [] })}
+                      >
+                        <span className="block text-sm font-medium">
                           <MiddleTruncate value={title} />
+                        </span>
+                        {manyProjects && (
+                          <span className="block text-xs text-muted-foreground">
+                            {project.title}
+                          </span>
                         )}
-                      </p>
-                      {manyProjects && (
-                        <p className="text-xs text-muted-foreground">{project.title}</p>
-                      )}
-                    </div>
+                      </button>
+                    )}
                     {queued ? (
                       <Badge variant="secondary" size="sm">
                         {gt("Queued")}
@@ -1066,7 +1101,11 @@ export function RecordingsPage({
               const working =
                 queued || ["decoding", "transcribing", "writing"].includes(state.stage);
               const actions: RecordingAction[] = [
-                { id: "open", label: gt("Open"), run: () => void openRecording(recording) },
+                {
+                  id: "open",
+                  label: gt("Open"),
+                  run: () => void openRecording({ ...recording, source }),
+                },
                 ...(job.transcriptOnly
                   ? []
                   : [
@@ -1151,7 +1190,11 @@ export function RecordingsPage({
               return (
                 <div
                   data-recording={key}
-                  className="flex min-h-14 items-center gap-2 rounded-lg px-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
+                  className="flex min-h-14 cursor-pointer items-center gap-2 rounded-lg px-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
+                  onClick={(event) => {
+                    if (renaming !== key && !fromControl(event))
+                      void openRecording({ ...recording, source });
+                  }}
                   onContextMenu={(event) => void showRecordingMenu(event, actions)}
                 >
                   {renaming === key ? (
@@ -1159,7 +1202,7 @@ export function RecordingsPage({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => void openRecording(recording)}
+                      onClick={() => void openRecording({ ...recording, source })}
                       className={opener}
                     >
                       {content}
@@ -1170,11 +1213,14 @@ export function RecordingsPage({
                       size="sm"
                       variant="outline"
                       onClick={() =>
-                        void openRecording(recording, {
-                          version: matchedRevision.job.id,
-                          time: matchedRevision.matchTime!,
-                          query,
-                        })
+                        void openRecording(
+                          { ...recording, source },
+                          {
+                            version: matchedRevision.job.id,
+                            time: matchedRevision.matchTime!,
+                            query,
+                          },
+                        )
                       }
                     >
                       {gt("Open match · {time}", {
@@ -1213,7 +1259,7 @@ export function RecordingsPage({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => void openRecording(recording)}
+                      onClick={() => void openRecording({ ...recording, source })}
                     >
                       {gt("Review")}
                     </Button>

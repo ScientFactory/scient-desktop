@@ -447,6 +447,27 @@ it("opens a recording in the chat that opened its project recordings", async () 
   }
 });
 
+it("opens a recording without a transcript from anywhere on its row", async () => {
+  fixtures.command.mockImplementation(async (action: string) => {
+    if (action === "media-list")
+      return {
+        media: [
+          { source: "/class/Unstarted.m4a", size: 16384, created: 1795382400000, duration: 5412 },
+        ],
+      };
+    if (action === "list") return [];
+    return { segments: [] };
+  });
+  await using screen = await render(
+    <div className="h-screen">
+      <PanelHarness />
+    </div>,
+  );
+  await screen.getByText(/1:30:12/).click();
+  await expect.element(screen.getByRole("heading", { name: "Unstarted" })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Transcribe…" })).toBeVisible();
+});
+
 it("starts with the recommended installed engine and preserves the server correction default", async () => {
   fixtures.command.mockReset().mockImplementation(async (action: string) => {
     if (action === "inventory")

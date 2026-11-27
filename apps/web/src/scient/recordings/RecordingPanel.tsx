@@ -6,6 +6,7 @@ import { transcriptionCommand } from "../../rpc/transcription";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useProjects } from "../../state/entities";
 import type { ScientRightPanelSurface } from "../rightPanel/surfaces";
+import { RecordingFileView } from "./RecordingFileView";
 import { RecordingView } from "./RecordingView";
 import { useRecordingTitle } from "./recordingTitle";
 import { useRecordingRead } from "./useRecordingRead";
@@ -39,6 +40,7 @@ export default function RecordingPanel({
       const file = files.media.find((item) => item.source === surface.source);
       return {
         revisions: revisions.filter(({ job }) => job.source === surface.source),
+        file,
         title: file?.title,
         duration: file?.duration,
       };
@@ -53,6 +55,12 @@ export default function RecordingPanel({
     if (tabTitle && tabTitle !== surface.title)
       useRightPanelStore.getState().openScient(threadRef, { ...surface, title: tabTitle });
   }, [tabTitle, surface, threadRef]);
+  const back = () => {
+    // The recording opened maximized over its thread; going back leaves that thread as it was.
+    useRightPanelStore.getState().setMaximized(threadRef, false);
+    onClose();
+    void router.navigate({ to: "/recordings", search: { fromThread: threadRef.threadId } });
+  };
   if (project && list.data?.revisions.length) {
     return (
       <RecordingView
@@ -63,13 +71,22 @@ export default function RecordingPanel({
         match={surface.match}
         threadRef={threadRef}
         onRevealComposer={onRevealComposer}
-        onBack={() => {
-          // The recording opened maximized over its thread; going back leaves that thread as it was.
-          useRightPanelStore.getState().setMaximized(threadRef, false);
-          onClose();
-          void router.navigate({ to: "/recordings", search: { fromThread: threadRef.threadId } });
-        }}
+        onBack={back}
         onChange={() => setRefresh((value) => value + 1)}
+      />
+    );
+  }
+  if (project && list.data?.file) {
+    const { file } = list.data;
+    return (
+      <RecordingFileView
+        project={project}
+        source={surface.source}
+        title={file.title}
+        duration={file.duration}
+        created={file.created}
+        onBack={back}
+        onStart={() => setRefresh((value) => value + 1)}
       />
     );
   }
