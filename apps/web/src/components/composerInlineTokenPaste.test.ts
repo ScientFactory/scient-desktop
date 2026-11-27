@@ -4,18 +4,18 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, readPastedComposerClipboard } from "./composerInlineTokenPaste";
 
 const thread = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
 };
-const clipboard = (data: Record<string, string>) => ({
-  getData: (type: string) => data[type] ?? "",
-});
+const clipboard = (data: Record<string, string>) =>
+  readPastedComposerClipboard({ getData: (type) => data[type] ?? "" });
 const chip = (title: string) =>
   `[${title}](t3-context://v1/thread/${threadContextRecord(thread, title).contextId})`;
 
@@ -48,10 +48,14 @@ describe("importPastedComposerText", () => {
       importAll([]),
     );
     expect(text).toBe(chip("Login"));
+    const withBrackets = clipboard({
+      "text/plain": String.raw`[Fix \[login\]](${DEFAULT_HOSTED_APP_URL}/threads/env-1/thread-1)`,
+    });
+    expect(importPastedComposerText(withBrackets, importAll([]))).toBe(chip("Fix login"));
   });
 
   it("keeps the link when the composer cannot take the thread", () => {
-    const pasted = "https://app.t3.codes/threads/env-1/thread-1";
+    const pasted = `${DEFAULT_HOSTED_APP_URL}/threads/env-1/thread-1`;
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );

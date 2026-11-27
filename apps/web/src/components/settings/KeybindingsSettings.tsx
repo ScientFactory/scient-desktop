@@ -132,7 +132,6 @@ type KeybindingSection = "general" | KeyboardScope;
 // SCIENT-FORK: format names in the shortcut sections stay English.
 const MARKDOWN_SECTION_NAME = "Markdown";
 const PDF_SECTION_NAME = "PDF";
-
 function KeybindingsSearchInput({
   query,
   onChange,

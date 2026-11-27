@@ -5,6 +5,7 @@ import { page } from "vite-plus/test/browser";
 import { useSyncExternalStore } from "react";
 
 import { act, render } from "../../test/render";
+import { useProjectCloneToastHolds } from "../state/projectClones";
 import {
   AddProjectToMachineDialogHost,
   openAddProjectToMachine,
@@ -183,4 +184,5 @@ it("waits for the file choices and does not let an old clone dismiss a new reque
   await act(() => finish());
   await expect.element(page.getByRole("button", { name: "Clone to Machine B" })).toBeEnabled();
   expect(mocks.newThread).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(useProjectCloneToastHolds.getState().size).toBe(0));
 });

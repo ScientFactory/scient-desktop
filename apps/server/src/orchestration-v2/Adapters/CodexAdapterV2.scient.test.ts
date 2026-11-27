@@ -883,10 +883,16 @@ describe("CodexAdapterV2 post-settle continuation (GuidanceCompaction)", () => {
           assert.equal(packet.collaborationMode.settings.model, "gpt-5.4");
           assert.equal(packet.collaborationMode.settings.reasoning_effort, "high");
           const contextKeys = Object.keys(packet.additionalContext);
-          assert.deepEqual(contextKeys.slice(-2), ["t3_code_runtime", "scient_awareness"]);
-          assert.isNotEmpty(contextKeys.slice(0, -2));
+          const runtimeIndex = contextKeys.indexOf("t3_code_runtime");
+          const awarenessKeys = contextKeys.filter((key) => key.startsWith("scient_awareness"));
+          // Awareness spans several entries once it passes Codex's per-entry cap.
+          assert.isNotEmpty(awarenessKeys);
+          assert.deepEqual(contextKeys.slice(runtimeIndex), ["t3_code_runtime", ...awarenessKeys]);
+          assert.isNotEmpty(contextKeys.slice(0, runtimeIndex));
           assert.isTrue(
-            contextKeys.slice(0, -2).every((key) => key.startsWith("t3_code_orchestration_")),
+            contextKeys
+              .slice(0, runtimeIndex)
+              .every((key) => key.startsWith("t3_code_orchestration_")),
           );
           const orchestration = Object.entries(packet.additionalContext)
             .filter(([key]) => key.startsWith("t3_code_orchestration_"))
@@ -895,7 +901,9 @@ describe("CodexAdapterV2 post-settle continuation (GuidanceCompaction)", () => {
             .join("\n\n");
           assert.equal(orchestration, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
           assert.include(orchestration, "delegate_task");
-          const awareness = packet.additionalContext.scient_awareness?.value ?? "";
+          const awareness = awarenessKeys
+            .map((key) => packet.additionalContext[key]?.value ?? "")
+            .join("\n\n");
           for (const required of [
             "preview_status",
             "preview_open",

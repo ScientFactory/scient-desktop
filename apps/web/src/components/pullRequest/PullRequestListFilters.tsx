@@ -4,6 +4,7 @@ import type {
   ProjectId,
   PullRequestFilterOptionsInput,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
@@ -56,8 +57,10 @@ import {
   pullRequestAuthorChoices,
   pullRequestFilterOptionNotice,
   selectedPullRequestAuthor,
+  selectedPullRequestLabels,
   pullRequestLabelChoices,
   pullRequestLabelColor,
+  rememberPullRequestLabels,
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
@@ -369,7 +372,9 @@ function PullRequestAuthorChoices({
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {option.mergedCount} {option.mergedCount === 1 ? "merge" : "merges"} loaded
+                  {gt("{count, plural, one {{count} merge loaded} other {{count} merges loaded}}", {
+                    count: option.mergedCount,
+                  })}
                 </span>
               ) : null}
             </span>
@@ -435,19 +440,20 @@ function PullRequestLabelChoices({
   const messages = useMessages();
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "labels", query);
+  const [seen, setSeen] = useState<ReadonlyArray<PullRequestLabel>>([]);
+  const remembered = rememberPullRequestLabels(seen, hosted.labels);
+  if (remembered !== seen) setSeen(remembered);
   const names = (value ?? []).flatMap((group) => group);
   const selected = new Set(names.map((name) => name.toLowerCase()));
   const limitReached = (value?.length ?? 0) >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
   const choices = pullRequestLabelChoices(options, hosted.labels, query);
   const visible = [
     // Two groups may offer the same name as an alternative; it is one choice here.
-    ...names
-      .filter(
-        (name, index) =>
-          names.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index &&
-          !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()),
-      )
-      .map((name) => ({ name, color: null, count: 0 })),
+    ...selectedPullRequestLabels(options, remembered, names).filter(
+      (label, index, all) =>
+        all.findIndex((other) => other.name.toLowerCase() === label.name.toLowerCase()) === index &&
+        !choices.some((option) => option.name.toLowerCase() === label.name.toLowerCase()),
+    ),
     ...choices,
   ];
   const notice = pullRequestFilterOptionNotice(

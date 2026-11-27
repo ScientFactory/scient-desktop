@@ -2506,6 +2506,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     ) {
       const turn = state.active;
       if (turn === undefined) return;
+      const promptDropped = terminal.status === "interrupted" && turn.unsent;
       state.active = undefined;
       for (const inboxID of turn.steers) state.strandedSteers.add(inboxID);
       for (const entry of pending.values()) {
@@ -2572,6 +2573,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         ...turn.providerTurn,
         status: terminal.status,
         completedAt,
+        ...(promptDropped ? { promptDropped: true } : {}),
         turnTokenUsage: turnTokenUsage(turn, terminal.status),
         ...(lastStep === undefined
           ? {}
@@ -2625,6 +2627,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         providerTurnId: turn.providerTurn.id,
         runOrdinal: turn.input.runOrdinal,
         threadDisposition,
+        ...(promptDropped ? { promptDropped: true as const } : {}),
         ...retainedRequestsOf(turn),
       };
       yield* emit(
@@ -5125,13 +5128,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             policy,
             threadInput.threadId,
           );
-          const title = threadInput.title?.trim() || undefined;
-          // A session created with a title is never titled by OpenCode's own model.
+          // A session created with a title is never titled by OpenCode's own model, so leave it unset.
           const created = yield* client.session.create({
             location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
             model,
             permissions,
-            ...(title === undefined ? {} : { title }),
           });
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
@@ -5159,7 +5160,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               id: created.id,
               model: created.model,
               agent: created.agent,
-              title: title ?? created.title,
+              title: created.title,
               permissions,
             },
             directory,
@@ -5311,10 +5312,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               }
               // Refresh stale mode rules; running subagent updates are best effort because they outlive this turn.
               yield* writeRules(state, turnInput.runtimePolicy);
-              yield* writeTitle(state, turnInput.appThread.title).pipe(
-                Effect.timeout(REQUEST_REPLY_TIMEOUT),
-                Effect.ignore({ log: true }),
-              );
+              // A root thread's seed or generated title is left to OpenCode, which titles the session itself.
+              if (
+                turnInput.appThread.titleRenamed === true ||
+                turnInput.appThread.lineage.parentThreadId !== null
+              ) {
+                yield* writeTitle(state, turnInput.appThread.title).pipe(
+                  Effect.timeout(REQUEST_REPLY_TIMEOUT),
+                  Effect.ignore({ log: true }),
+                );
+              }
               for (const call of runningCalls(state)) {
                 if (call.child === undefined) continue;
                 yield* writeRules(call.child, turnInput.runtimePolicy).pipe(

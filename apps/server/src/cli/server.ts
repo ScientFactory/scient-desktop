@@ -17,7 +17,8 @@ import { resolveCliCommand } from "./invocation.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
-const runServerCommand = Effect.fn("server.runServerCommand")(function* (
+// Untraced: a span that lasts the whole process would parent everything the server does.
+const runServerCommand = Effect.fnUntraced(function* (
   flags: CliServerFlags,
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
@@ -47,9 +48,7 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   return yield* stopOnLauncherLoss(run);
 });
 
-export const runDefaultServerCommand = Effect.fn("server.runDefaultServerCommand")(function* (
-  flags: CliServerFlags,
-) {
+export const runDefaultServerCommand = Effect.fnUntraced(function* (flags: CliServerFlags) {
   if (Option.isSome(flags.cwd)) {
     const cwd = flags.cwd.value.trim();
     const fs = yield* FileSystem.FileSystem;

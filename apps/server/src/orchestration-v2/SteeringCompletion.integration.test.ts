@@ -1,5 +1,5 @@
-import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
 import * as TestClock from "effect/testing/TestClock";
 import {
   ChatAttachmentId,
@@ -35,6 +35,9 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as FileSystem from "effect/FileSystem";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -536,6 +539,24 @@ const composerSelection = {
 };
 
 const supervised = { runtimeMode: "approval-required", interactionMode: "default" } as const;
+
+// Real git in the fixture repository, so the checkpoint refs are inspected as Git sees them.
+const gitOutput = (cwd: string, args: ReadonlyArray<string>) =>
+  ChildProcessSpawner.ChildProcessSpawner.use((spawner) =>
+    spawner.string(ChildProcess.make("git", [...args], { cwd })),
+  ).pipe(Effect.provide(NodeServices.layer));
+
+// `--verify` prints a commit only when the ref resolves to one.
+const commitOf = (cwd: string, ref: string) =>
+  gitOutput(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]).pipe(
+    Effect.map((commit) => commit.trim()),
+  );
+
+const writeWorkspaceFile = (cwd: string, file: string, contents: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(`${cwd}/${file}`, contents);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function* (
   name: string,
@@ -3037,6 +3058,117 @@ it.effect("steers a promoted queued message with the selection it was queued wit
   }),
 );
 
+// SCIENT-FORK:START — a manual edit between turns belongs in the next run's starting snapshot.
+it.effect.each([
+  { label: "steered into the last turn", steered: true },
+  { label: "removed from the queue", steered: false },
+])("a turn after a queued message $label baselines the workspace as it is then", ({ steered }) =>
+  Effect.gen(function* () {
+    const { cwd, events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      `baseline-after-queued-${steered}`,
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const send = (
+        name: string,
+        dispatchMode: { readonly type: "queue_after_active" | "start_immediately" },
+      ) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(name),
+          threadId,
+          messageId: MessageId.make(`message:${name}`),
+          text: name,
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      // Completes the run's provider turn and waits for the run to complete.
+      // The fake adapter names its provider turn after the attempt it was started for.
+      const finishRun = (started: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+        Effect.gen(function* () {
+          const completed = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === started.runId &&
+                event.payload.status === "completed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* Queue.offer(events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: started.providerThread.id,
+            providerTurnId: ProviderTurnId.make(`provider-turn:${started.attemptId}`),
+            runOrdinal: started.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* Fiber.join(completed);
+          yield* worker.drain();
+        });
+      yield* send("queued", { type: "queue_after_active" });
+      const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "queued",
+      )!;
+      yield* orchestrator.dispatch(
+        steered
+          ? {
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make("promote"),
+              threadId,
+              queuedRunId: queuedRun.id,
+              targetRunId: started[0]!.runId,
+            }
+          : {
+              type: "queued-run.cancel",
+              commandId: CommandId.make("remove"),
+              threadId,
+              runId: queuedRun.id,
+            },
+      );
+      yield* worker.drain();
+      yield* finishRun(started[0]!);
+
+      const sourceEnd = (yield* orchestrator.getThreadProjection(threadId)).checkpoints.find(
+        (checkpoint) => checkpoint.runId === started[0]!.runId,
+      )!;
+      assert.strictEqual(sourceEnd.status, "ready");
+      // A manual edit to a tracked file: no agent run and no HEAD change.
+      yield* writeWorkspaceFile(cwd, "README.md", "Edited outside the agent.\n");
+      yield* send("next", { type: "start_immediately" });
+      yield* worker.drain();
+      yield* finishRun(started[1]!);
+
+      const nextEnd = (yield* orchestrator.getThreadProjection(threadId)).checkpoints.find(
+        (checkpoint) => checkpoint.runId === started[1]!.runId,
+      )!;
+      assert.strictEqual(nextEnd.status, "ready");
+      // The checkpoint ref's directory names the scope; the queued run's ordinal is the next baseline.
+      const baselineRef = `${nextEnd.ref.slice(0, nextEnd.ref.lastIndexOf("/"))}/${queuedRun.ordinal}`;
+      const baseline = yield* commitOf(cwd, baselineRef);
+      const source = yield* commitOf(cwd, sourceEnd.ref);
+      const end = yield* commitOf(cwd, nextEnd.ref);
+      assert.notStrictEqual(baseline, source);
+      assert.strictEqual(
+        yield* gitOutput(cwd, ["show", `${baseline}:README.md`]),
+        "Edited outside the agent.\n",
+      );
+      assert.notInclude(yield* gitOutput(cwd, ["show", `${source}:README.md`]), "Edited");
+      assert.notInclude(yield* gitOutput(cwd, ["diff", "--name-only", baseline, end]), "README.md");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+// SCIENT-FORK:END
+
 it.effect("steers a promoted scheduled delivery with the thread's current selection", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -4557,5 +4689,64 @@ it.effect("a side chat that opens with /goal gets its context on the next questi
       assert.include(question, "- User: first");
       assert.isTrue(question?.endsWith("What is the main thread doing?"));
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("an agent's auto send steers past its own explicitly queued message", () =>
+  Effect.gen(function* () {
+    const name = "agent-auto-after-explicit-queue";
+    const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(name);
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const manager = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = yield* startFirstTurn;
+      const send = (text: string, mode: "auto" | "queue") =>
+        manager.sendToThread({
+          projectId: ProjectId.make(`project:${name}`),
+          threadId,
+          commandId: CommandId.make(text),
+          messageId: MessageId.make(text),
+          text,
+          attachments: [],
+          mode,
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("thread:sender"),
+        });
+      const later = yield* send("later", "queue");
+      const now = yield* send("now", "auto");
+      yield* worker.drain();
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        {
+          later: later.delivery,
+          now: now.delivery,
+          targetsRunningTurn: now.run.id === started[0]?.runId,
+          adapterReceived: steered.map((text) => text.split("\n").at(-1)),
+          queuedRunIds: projection.runs
+            .filter((run) => run.status === "queued")
+            .map((run) => run.id),
+        },
+        {
+          later: "queued",
+          now: "steered",
+          targetsRunningTurn: true,
+          adapterReceived: ["now"],
+          queuedRunIds: [later.run.id],
+        },
+      );
+    }).pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layer),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        ),
+      ),
+    );
   }),
 );

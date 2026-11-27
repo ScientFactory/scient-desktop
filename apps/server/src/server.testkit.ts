@@ -1566,6 +1566,7 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(ThreadCommandExecutor.layer),
         Layer.provide(VcsProcess.layer),
         Layer.provideMerge(McpProviderSessions.layer),
+        Layer.provideMerge(ProjectionStoreV2.layer),
         Layer.provideMerge(
           options?.layers?.providerLatestVersions === undefined
             ? ProviderLatestVersions.layer

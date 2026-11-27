@@ -731,6 +731,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`ca1680bec6923c9488d8533570e5320b1ef1dba7` is recorded in
+[the 2026-11-27 6d21ad2b25 receipt](docs/internals/t3-upstream-sync-20261127-6d21ad2b25.md),
+Scient PR #1158. Literal merge `baa8265691b3153a4d7310dd898c6ac47999299c` has owned base
+`95a98b8d6e7519aa91543c855cbdf3aaf07a447a` and the frozen official target as parents, retaining
+the 303 official commits after `6d21ad2b25`. The alignment brings Markdown preview and clipboard
+fixes, OpenCode stop and Antigravity health fixes, and mobile font choices. Scient keeps its
+desktop draft compatibility, fresh turn checkpoints, and release controls. Release remains
+separate.
+
+The previous committed alignment through
 `6d21ad2b25075b8246120aba5d478ba946a44fa8` is recorded in
 [the 2026-11-26 31d95f850b receipt](docs/internals/t3-upstream-sync-20261126-31d95f850b.md),
 Scient PR #1131. Literal merge `8a0c77466e9c7e93d4dc9061cd351efe3e2b2e33` has owned base
@@ -739,7 +749,7 @@ the 251 official commits after `31d95f850b`. T3's deleted-thread purge keeps wha
 and saved handoffs still read; T3's migrations 117-119 are Scient's 121-123; push-hook approval
 recognises Scient's own MCP servers. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `31d95f850bd8f1dfb68676500606d44b923e4883` is recorded in
 [the 2026-11-25 4c2e2b3734 receipt](docs/internals/t3-upstream-sync-20261125-4c2e2b3734.md),
 Scient PR #1119. Literal merge `882e727c7fb9b6c362ea7481ba22edd0dc0a5c69` has owned base
