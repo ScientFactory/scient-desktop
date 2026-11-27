@@ -121,6 +121,26 @@ gesture failure reproduced with the same assertion on the owned base and has
 a separate test-only follow-up. Hosted tests on the runtime candidate passed
 these lanes. The local aggregate result remains recorded as a failure.
 
+## Owned-main catch-up
+
+Scient main advanced to `dff32eef8742c996aa39f0f3e32b6ad6cdf984b2`
+with browser-tab hover thumbnails (#1167). The catch-up merge
+`2cc418ebfe66d377647808733de7b6c61a5a9afe` preserves the original upstream
+merge and cursor. Of 24 paths from main, only the right-panel tab component
+conflicted. Its stable hover-card trigger also handles Shift-click range
+selection and exposes the selected state. Shift-double-click on a device tab
+still leaves its title alone.
+
+An independent review checked the composed tab against both parents and
+confirmed that the thumbnail capture and privacy checks match main. The
+candidate passed eight focused browser tests, 31 web unit tests, 161 desktop
+tests, catalog validation, official ancestry and all nine seam checks.
+The isolated macOS app showed a decoded thumbnail for an inactive synthetic
+browser tab. Shift-click selected both tabs without switching the active tab,
+and Enter switched tabs with the title button still mounted. The focused
+browser test covers focus retention at the trigger. The live workspace focus
+controller sometimes restored its remembered control after activation.
+
 ## Delivery
 
 This is an alignment of source and history through the normal merge queue.
