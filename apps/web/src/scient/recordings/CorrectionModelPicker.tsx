@@ -15,6 +15,22 @@ type Props = {
   onChange: (selection: ModelSelection) => void;
 };
 
+// Correcting a transcript needs only reasoning and speed, not an agent or a context window.
+const chatOnlyOptions = new Set(["agent", "contextWindow"]);
+type PickerModel = Parameters<typeof TraitsPicker>[0]["models"][number];
+const correctionTraits = (model: PickerModel): PickerModel =>
+  model.capabilities?.optionDescriptors
+    ? {
+        ...model,
+        capabilities: {
+          ...model.capabilities,
+          optionDescriptors: model.capabilities.optionDescriptors.filter(
+            ({ id }) => !chatOnlyOptions.has(id),
+          ),
+        },
+      }
+    : model;
+
 export function CorrectionModelPicker(props: Props) {
   const environmentId = usePrimaryEnvironmentId();
   return environmentId ? (
@@ -75,7 +91,7 @@ function EnvironmentCorrectionModelPicker({
         {instanceEntry && (
           <TraitsPicker
             provider={instanceEntry.driverKind}
-            models={instanceEntry.models}
+            models={instanceEntry.models.map(correctionTraits)}
             model={selected.model}
             modelOptions={selected.options ?? []}
             allowPromptInjectedEffort={false}

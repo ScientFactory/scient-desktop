@@ -2,7 +2,7 @@ import { EnvironmentId, ProjectId, type WordsCommand } from "@t3tools/contracts"
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
-import { WordsScopes } from "./WordsEditor";
+import { WordsEditor, WordsScopes } from "./WordsEditor";
 import { WordsSettingsSection } from "./WordsPanel";
 import "../../index.css";
 
@@ -99,4 +99,24 @@ it("offers Recording Words only in a recording context", async () => {
   );
   await userEvent.click(screen.getByRole("button", { name: "Recording" }));
   await expect.element(screen.getByText("Recording words")).toBeVisible();
+});
+
+it("lays words side by side at their own width and scrolls a long list", async () => {
+  const words = Array.from({ length: 40 }, (_, index) => ({
+    term: index % 3 ? `term${index}` : `a longer phrase ${index}`,
+    language: "und",
+    source: "user" as const,
+  }));
+  await page.viewport(420, 600);
+  await using screen = await render(
+    <div className="w-[360px] rounded-xl border bg-popover p-4">
+      <WordsEditor label="word list" words={words} onSave={() => {}} onRemove={() => {}} />
+    </div>,
+  );
+  const list = screen.getByRole("list", { name: "word list entries" }).element();
+  const [first, second] = [...list.children].map((item) => item.getBoundingClientRect());
+  expect(second!.top).toBe(first!.top);
+  expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+  const directory = import.meta.env.VITE_SCIENT_RECORDINGS_SCREENSHOTS;
+  if (directory) await page.screenshot({ path: `${directory}/words-chips.png` });
 });

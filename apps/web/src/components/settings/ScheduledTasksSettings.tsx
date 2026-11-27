@@ -1996,6 +1996,9 @@ function ScheduledTaskEditorForm({
               />
               {!draft.threadId && activeSelection && activeEntry ? (
                 <TraitsPicker
+                  // SCIENT-FORK:START — this model starts chats, where Cyber Access applies.
+                  forChat
+                  // SCIENT-FORK:END
                   provider={activeEntry.driverKind}
                   models={activeEntry.models}
                   model={activeModel}

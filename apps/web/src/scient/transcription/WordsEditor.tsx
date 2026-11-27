@@ -119,7 +119,8 @@ export function WordsEditor(props: {
       {words.length > 0 ? (
         <ul
           aria-label={`${label} entries`}
-          className="mt-2.5 flex flex-col gap-1.5 @min-[32rem]/settings-row:flex-row @min-[32rem]/settings-row:flex-wrap"
+          // Each word is as wide as it needs; a long list wraps and scrolls inside its card.
+          className="mt-2.5 flex max-h-60 flex-wrap content-start gap-1.5 overflow-y-auto"
         >
           {words.map((word) => {
             const { term, preferred, language, variants = [] } = word;
