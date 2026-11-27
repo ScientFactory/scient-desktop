@@ -3,7 +3,10 @@ import { Radio, RadioGroup } from "../../components/ui/radio-group";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import type { ModelSelection } from "@t3tools/contracts";
 import { CorrectionModelPicker } from "./CorrectionModelPicker";
-import { downloadEnvironmentSpeechModel } from "@t3tools/client-runtime/voice-input";
+import {
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
+} from "@t3tools/client-runtime/voice-input";
 import { readPreparedConnection } from "../../state/session";
 import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../../state/environments";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
@@ -15,7 +18,7 @@ import { recordingTime } from "./recordingPresentation";
 import { Switch } from "../../components/ui/switch";
 import { useGT, useLocale } from "gt-react";
 import { lazy, Suspense, useId, useRef, useState } from "react";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -91,7 +94,9 @@ export function TranscribeDialog({
   const [subtitleOverride, setSubtitleMode] = useState<"transcribe" | "subtitles" | "both">();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [download, setDownload] = useState<string>();
+  // Models wait their turn: the computer downloads one at a time. The first is downloading.
+  const [downloads, setDownloads] = useState<readonly string[]>([]);
+  const downloadQueue = useRef(Promise.resolve());
   const [downloadError, setDownloadError] = useState(false);
   const [inventoryRefresh, setInventoryRefresh] = useState(0);
   const sample = useRecordingRead(batchSources ? "" : source, (signal) =>
@@ -109,7 +114,7 @@ export function TranscribeDialog({
         { language: effectiveLanguage, details: true },
         signal,
       ),
-    download ? 1500 : undefined,
+    downloads.length ? 1500 : undefined,
     inventoryRefresh,
   );
   const discovery = useRecordingRead(batchSources ? "" : source, (signal) =>
@@ -277,29 +282,44 @@ export function TranscribeDialog({
       : engine?.engine === "cloud"
         ? audioCost(engine.audioHourUsd)
         : undefined;
-  const downloadModel = async (id: string) => {
-    const environmentId = readPrimaryEnvironmentId();
-    const prepared = environmentId && readPreparedConnection(environmentId);
+  const downloadModel = (id: string) => {
+    if (downloads.includes(id)) return;
     setDownloadError(false);
-    if (!prepared) {
-      setDownloadError(true);
-      return;
-    }
-    setDownload(id);
-    await andFinally(
-      async () => {
-        try {
-          await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, id));
-          setInventoryRefresh((refresh) => refresh + 1);
-        } catch {
-          setDownloadError(true);
-        }
-      },
-      () => {
-        setDownload(undefined);
-      },
+    setDownloads((current) => [...current, id]);
+    downloadQueue.current = downloadQueue.current.then(() =>
+      andFinally(
+        async () => {
+          try {
+            const environmentId = readPrimaryEnvironmentId();
+            const prepared = environmentId && readPreparedConnection(environmentId);
+            if (!prepared) throw new Error("No connection");
+            await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, id));
+            setInventoryRefresh((refresh) => refresh + 1);
+          } catch {
+            setDownloadError(true);
+          }
+        },
+        () => setDownloads((current) => current.filter((item) => item !== id)),
+      ),
     );
   };
+  const downloading = downloads[0];
+  const downloadProgress = useRecordingRead(
+    downloading ?? "",
+    async (signal) => {
+      const environmentId = readPrimaryEnvironmentId();
+      const prepared = environmentId && readPreparedConnection(environmentId);
+      if (!prepared) return undefined;
+      const { models } = await runEnvironmentSpeech(getEnvironmentSpeechModels(prepared), {
+        signal,
+      });
+      const model = models.find(({ id }) => id === downloading);
+      return model?.downloaded !== undefined && model.size
+        ? Math.min(99, Math.floor((model.downloaded / model.size) * 100))
+        : undefined;
+    },
+    1000,
+  );
   const start = async () => {
     if (!canStart || pending || checking || (needsEstimate && !estimate.data?.estimateId)) return;
     setPending(true);
@@ -697,27 +717,39 @@ export function TranscribeDialog({
                                   {inventory.data.local
                                     .filter(({ installed }) => !installed)
                                     .map((model) => (
-                                      <div
+                                      <button
                                         key={model.id}
-                                        className="flex items-center justify-between gap-2 px-2 py-1.5"
+                                        type="button"
+                                        aria-label={gt("Download {model}", { model: model.name })}
+                                        aria-busy={downloads.includes(model.id)}
+                                        className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-start hover:bg-accent"
+                                        onClick={() => downloadModel(model.id)}
                                       >
-                                        <span className="text-muted-foreground">
+                                        <span>
                                           {model.name}
-                                          {model.size !== undefined &&
-                                            ` · ${formatBytes(model.size)}`}
+                                          {model.size !== undefined && (
+                                            <span className="text-muted-foreground">
+                                              {` · ${formatBytes(model.size)}`}
+                                            </span>
+                                          )}
                                         </span>
-                                        <Button
-                                          size="xs"
-                                          variant="outline"
-                                          type="button"
-                                          disabled={!!download}
-                                          onClick={() => void downloadModel(model.id)}
-                                        >
-                                          {download === model.id
-                                            ? gt("Downloading…")
-                                            : gt("Download")}
-                                        </Button>
-                                      </div>
+                                        <span className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+                                          {downloading === model.id ? (
+                                            <>
+                                              {downloadProgress.data !== undefined &&
+                                                `${downloadProgress.data}%`}
+                                              <LoaderCircleIcon
+                                                aria-hidden
+                                                className="size-4 animate-spin"
+                                              />
+                                            </>
+                                          ) : downloads.includes(model.id) ? (
+                                            gt("Waiting")
+                                          ) : (
+                                            <DownloadIcon aria-hidden className="size-4" />
+                                          )}
+                                        </span>
+                                      </button>
                                     ))}
                                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 border-t px-2 pt-2">
                                     {!inventory.data.chatgpt.signedIn && (

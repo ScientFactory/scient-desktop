@@ -9,6 +9,7 @@ import { scientRecordingSurface } from "../rightPanel/surfaces";
 import RecordingPanel from "./RecordingPanel";
 import { RecordingsPage } from "./RecordingsPage";
 import { TranscribeDialog } from "./TranscribeDialog";
+import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 
 const fixtures = vi.hoisted(() => {
   const job = {
@@ -18,6 +19,7 @@ const fixtures = vi.hoisted(() => {
     settings: { engine: "local", model: "local", language: "he" },
   };
   return {
+    prepared: null as object | null,
     job,
     projects: [
       { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
@@ -81,7 +83,10 @@ vi.mock("../../hooks/useSettings", () => ({
     select({ contentDirection: "auto" }),
 }));
 vi.mock("../../speech/runEnvironmentSpeech", () => ({ runEnvironmentSpeech: vi.fn() }));
-vi.mock("@t3tools/client-runtime/voice-input", () => ({ downloadEnvironmentSpeechModel: vi.fn() }));
+vi.mock("@t3tools/client-runtime/voice-input", () => ({
+  downloadEnvironmentSpeechModel: vi.fn((_prepared: unknown, id: string) => ({ download: id })),
+  getEnvironmentSpeechModels: vi.fn(() => ({ list: true })),
+}));
 vi.mock("./CorrectionModelPicker", () => ({
   CorrectionModelPicker: ({
     selection,
@@ -116,7 +121,7 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
-  readPreparedConnection: () => null,
+  readPreparedConnection: () => fixtures.prepared,
 }));
 vi.mock("../../state/assets", () => ({ assetEnvironment: {} }));
 vi.mock("../../state/use-atom-query-runner", () => ({
@@ -466,6 +471,79 @@ it("opens a recording without a transcript from anywhere on its row", async () =
   await screen.getByText(/1:30:12/).click();
   await expect.element(screen.getByRole("heading", { name: "Unstarted" })).toBeVisible();
   await expect.element(screen.getByRole("button", { name: "Transcribe…" })).toBeVisible();
+});
+
+it("downloads several models one after another without blocking the list", async () => {
+  fixtures.command.mockReset().mockImplementation(async (action: string) => {
+    if (action === "inventory")
+      return {
+        local: [
+          {
+            id: "local",
+            name: "Whisper turbo",
+            installed: true,
+            size: 1600000000,
+            secondsPer30s: { accelerated: 1 },
+          },
+          {
+            id: "medium",
+            name: "Whisper medium",
+            installed: false,
+            size: 1000,
+            secondsPer30s: { accelerated: 1 },
+          },
+          {
+            id: "small",
+            name: "Whisper small",
+            installed: false,
+            size: 500,
+            secondsPer30s: { accelerated: 1 },
+          },
+        ],
+        chatgpt: { enabled: false, signedIn: true },
+        cloud: [],
+        recommendations: {},
+      };
+    if (action === "sample-language") return { detectedLanguage: "en" };
+    if (action === "discover-subtitles") return { duration: 60, tracks: [], sidecars: [] };
+    if (action === "words-list") return [];
+    return {};
+  });
+  const started: string[] = [];
+  const finish = new Map<string, () => void>();
+  fixtures.prepared = {};
+  vi.mocked(runEnvironmentSpeech).mockImplementation(async (effect: unknown) => {
+    const request = effect as { download?: string; list?: true };
+    if (request.list) return { models: [{ id: started.at(-1), size: 1000, downloaded: 420 }] };
+    started.push(request.download!);
+    return new Promise<void>((resolve) => finish.set(request.download!, resolve));
+  });
+  try {
+    await using _screen = await render(
+      <TranscribeDialog
+        project="/class"
+        source={fixtures.job.source}
+        title="Talk.mp4"
+        onClose={() => {}}
+        onStart={() => {}}
+      />,
+    );
+    await page.getByRole("button", { name: "More engines" }).click();
+    await page.getByRole("button", { name: "Download Whisper medium" }).click();
+    await page.getByRole("button", { name: "Download Whisper small" }).click();
+    const row = (name: string) =>
+      page.getByRole("button", { name: `Download ${name}` }).element().textContent;
+    await expect.poll(() => row("Whisper medium")).toMatch(/42%/);
+    await expect.poll(() => row("Whisper small")).toMatch(/Waiting/);
+    await capture("model-downloads");
+    expect(started).toEqual(["medium"]);
+    finish.get("medium")!();
+    await expect.poll(() => started).toEqual(["medium", "small"]);
+    finish.get("small")!();
+  } finally {
+    fixtures.prepared = null;
+    vi.mocked(runEnvironmentSpeech).mockReset();
+  }
 });
 
 it("starts with the recommended installed engine and preserves the server correction default", async () => {
