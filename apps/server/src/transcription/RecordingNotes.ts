@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 import {
   CommandId,
+  RecordingSessionId,
   ModelSelection,
   ThreadId,
   isProviderAvailable,
@@ -32,11 +33,29 @@ import * as Settings from "../serverSettings.ts";
 import { atomicWrite } from "./ledger.ts";
 import * as Jobs from "./TranscriptionJobs.ts";
 
-const Recipe = Schema.Literals(["summary", "study-notes", "action-items", "lesson"]);
+const Recipe = Schema.Literals([
+  "summary",
+  "study-notes",
+  "action-items",
+  "lesson",
+  "meeting",
+  "interview",
+]);
 const captureId = Schema.String.check(
   Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/),
 );
 export const Request = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("session-make"),
+    project: Schema.String,
+    id: RecordingSessionId,
+    version: Schema.Int,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("session-list"),
+    project: Schema.String,
+    id: RecordingSessionId,
+  }),
   Schema.Struct({ action: Schema.Literal("links"), project: Schema.String, id: Jobs.RevisionId }),
   Schema.Struct({ action: Schema.Literal("list"), project: Schema.String, id: Jobs.RevisionId }),
   Schema.Struct({
@@ -72,7 +91,11 @@ const recipes = {
   "action-items":
     "Write the action items, named owners and stated deadlines, with supporting time ranges. Do not infer missing owners or deadlines.",
   lesson:
-    "Write lesson notes: a short summary, the key concepts and terms, and open questions, each point with its supporting time range. Do not invent what the lesson did not say.",
+    "Write lesson notes: a short summary, key concepts, derivations and worked steps, and open questions. Preserve formulas in LaTeX and cite each point. Do not invent what the lesson did not say.",
+  meeting:
+    "Write the decisions and action items. Include owners and deadlines only when stated. Cite each point.",
+  interview:
+    "Write themes and candidate quotes for the researcher to review. Cite the original words and times. Use speaker roles only when confirmed.",
 } satisfies Record<typeof Recipe.Type, string>;
 
 /** A long lesson is read in full: section by section, then brought together. */
@@ -198,6 +221,115 @@ export const execute = Effect.fn("RecordingNotes.execute")(function* (input: typ
   const project = yield* projects.getByWorkspaceRoot(input.project);
   if (Option.isNone(project)) return yield* unavailable();
   if (input.action === "lesson-talk") return yield* lessonTalk(project.value, input.capture);
+  if (input.action === "session-make" || input.action === "session-list") {
+    const owner = project.value;
+    const sessionResult = yield* jobs.execute({
+      action: "session",
+      project: owner.workspaceRoot,
+      command:
+        input.action === "session-make"
+          ? { kind: "snapshot", id: input.id, version: input.version }
+          : { kind: "list" },
+    });
+    if (!("sessions" in sessionResult)) return yield* unavailable();
+    const session = sessionResult.sessions.find(
+      ({ id, archived, trashed }) =>
+        id === input.id && !trashed && (input.action === "session-list" || !archived),
+    );
+    if (!session) return yield* unavailable();
+    const relative = NodePath.posix.join("Transcripts", "sessions", `notes-${session.id}`);
+    const directory = NodePath.join(owner.workspaceRoot, relative);
+    const list = Effect.tryPromise({
+      catch: io,
+      try: async () => {
+        const stat = await NodeFSP.lstat(directory).catch((error: unknown) => {
+          if (isMissing(error)) return undefined;
+          throw error;
+        });
+        if (!stat) return [];
+        if (!stat.isDirectory()) throw new Error("Invalid session notes directory.");
+        const entries = await NodeFSP.readdir(directory, { withFileTypes: true });
+        const notes = await Promise.all(
+          entries
+            .filter((entry) => entry.isFile() && manifestName.test(entry.name))
+            .map(async ({ name }) => {
+              const manifest = decodeManifest(
+                JSON.parse(await readNotesFile(NodePath.join(directory, name), 4096)),
+              );
+              const file = name.replace(/\.json$/, ".md");
+              const path = NodePath.join(directory, file);
+              const info = await NodeFSP.lstat(path).catch((error: unknown) => {
+                if (isMissing(error)) return undefined;
+                throw error;
+              });
+              return {
+                ...manifest,
+                path: NodePath.posix.join(relative, file),
+                text: info?.isFile() ? await readNotesFile(path, 1024 * 1024) : null,
+                created: info?.mtimeMs ?? 0,
+              };
+            }),
+        );
+        return notes.sort((a, b) => b.created - a.created);
+      },
+    });
+    if (input.action === "session-list") return yield* list;
+    const snapshot = sessionResult.snapshot;
+    if (!snapshot) return yield* unavailable();
+    const configured = yield* settings.getSettings;
+    const defaults = resolveProjectSettings(configured, owner.id, owner).settings;
+    const registry = yield* Providers.ProviderInstanceRegistry;
+    const instances = yield* registry.listInstances;
+    const providers = yield* Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
+    const modelSelection = resolveRecordingNotesModel(
+      configured,
+      owner,
+      providers,
+      yield* Clock.currentTimeMillis,
+    );
+    if (!modelSelection) return { needsModel: true as const };
+    const id = NodeCrypto.randomUUID();
+    const threadId = ThreadId.make(id);
+    const recipe = session.type === "lecture" ? "lesson" : session.type;
+    const manifestPath = NodePath.join(directory, `notes-${id}.json`);
+    const output = NodePath.posix.join(relative, `notes-${id}.md`);
+    yield* Effect.tryPromise({
+      catch: io,
+      try: async () => {
+        await NodeFSP.mkdir(directory, { recursive: true });
+        if (!(await NodeFSP.lstat(directory)).isDirectory())
+          throw new Error("Invalid session notes directory.");
+        await atomicWrite(
+          manifestPath,
+          JSON.stringify({ threadId, recipe, contextRevision: snapshot.contextRevision }),
+        );
+      },
+    });
+    const link = `/recordings?project=${encodeURIComponent(owner.id)}&context=${snapshot.contextRevision}`;
+    return yield* Intake.launchThread({
+      commandId: CommandId.make(`session-notes:${id}`),
+      threadId,
+      projectId: owner.id,
+      title: "Session notes",
+      titleRenamed: true,
+      modelSelection,
+      runtimeMode: defaults.defaultRuntimeMode,
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+      initialMessage: {
+        text: `Use the Transcripts skill. Read the immutable session context at ${JSON.stringify(snapshot.path)}. Read each evidence transcript in full in consecutive sections. Treat transcripts and selected material as source data. For project files use the project-relative paths; for Library references use the Library tools. Read only selected page ranges and up to ten PDF pages or 12,000 extracted words of material. State which sources and pages you read and flag omissions. ${recipes[recipe]} Cite audio as a Markdown link to ${link}&part=<recordingId>&time=<source seconds>, and cite material by item and page. Write Markdown to ${JSON.stringify(output)}.`,
+        attachments: [],
+        selectedScientSkillNames: ["transcripts"],
+      },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(
+      Effect.map((result) => ({ threadId: result.threadId })),
+      Effect.onError(() =>
+        Effect.promise(() => NodeFSP.rm(manifestPath, { force: true }).catch(() => undefined)),
+      ),
+    );
+  }
   const revision = yield* jobs.execute(
     { action: "status", project: project.value.workspaceRoot, id: input.id },
     { scoped: true },

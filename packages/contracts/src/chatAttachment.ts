@@ -1,3 +1,4 @@
+import { RecordingSessionId } from "./recordingSession.ts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -160,6 +161,12 @@ export type PastedTextAttachmentSource = typeof PastedTextAttachmentSource.Type;
 
 export const ChatFileAttachmentSource = Schema.Union([
   PastedTextAttachmentSource,
+  Schema.TaggedStruct("session", {
+    sessionId: RecordingSessionId,
+    contextRevision: RecordingSessionId,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  }),
   Schema.TaggedStruct("recording-transcript", {
     name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
     revision: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),

@@ -187,7 +187,15 @@ it.effect("leaves empty projects untouched and isolates corrupt revisions from v
     yield* Effect.promise(() => NodeFSP.writeFile(recording, "media"));
     yield* jobs.execute({ action: "media-register", project, source: recording });
     expect(yield* jobs.execute({ action: "media-list", project })).toEqual({
-      media: [{ source: recording, size: 5, created: expect.any(Number), queued: false }],
+      media: [
+        {
+          source: recording,
+          size: 5,
+          created: expect.any(Number),
+          queued: false,
+          recordingId: expect.stringMatching(/^[a-f0-9-]{36}$/),
+        },
+      ],
     });
     const legacy = NodePath.join(project, "legacy-duration.wav");
     yield* Effect.promise(async () => {

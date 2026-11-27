@@ -4,6 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import {
   NonNegativeInt,
+  RecordingSessionCommand,
+  RecordingSessionId,
+  RecordingSessionType,
+  type RecordingSessionResult,
   LEGACY_WORDS_TRANSITION_ENABLED,
   ProviderInstanceId,
   ModelSelection,
@@ -79,6 +83,11 @@ import { scoreSpeech } from "./windows.ts";
 import { relistenPass } from "./relisten.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as ChatGpt from "./chatgpt.ts";
+import {
+  InvalidSessionOperation,
+  makeRecordingSessions,
+  recordingContentHash,
+} from "./RecordingSessions.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
@@ -95,6 +104,8 @@ import {
 } from "./subtitleMedia.ts";
 import {
   finishCapture,
+  updateCaptureSession,
+  type CaptureSessionInfo,
   isCaptureFinished,
   readCaptions,
   recoverCaptures,
@@ -185,6 +196,11 @@ const captureIndex = Schema.Int.check(
 export const Request = Schema.Union([
   StartRequest,
   Schema.Struct({
+    action: Schema.Literal("session"),
+    project: path,
+    command: RecordingSessionCommand,
+  }),
+  Schema.Struct({
     action: Schema.Literals(["status", "cancel", "pause"]),
     project: path,
     id: RevisionId,
@@ -221,6 +237,13 @@ export const Request = Schema.Union([
     project: path,
     id: captureId,
     language: Schema.optionalKey(lessonLanguage),
+    sessionType: Schema.optionalKey(RecordingSessionType),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("capture-mark"),
+    project: path,
+    id: captureId,
+    time: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   Schema.Struct({
     action: Schema.Literal("capture-caption"),
@@ -243,7 +266,12 @@ export const Request = Schema.Union([
     project: path,
     id: captureId,
     /** Recorded as a lesson: transcribe it with the recording default, then make its notes. */
-    lesson: Schema.optionalKey(Schema.Struct({ language: lessonLanguage })),
+    lesson: Schema.optionalKey(
+      Schema.Struct({
+        language: lessonLanguage,
+        sessionType: Schema.optionalKey(RecordingSessionType),
+      }),
+    ),
   }),
   Schema.Struct({
     action: Schema.Literal("media-register"),
@@ -322,6 +350,10 @@ type ScopedStart = Omit<StartInput, "action" | "project" | "engine" | "model" | 
 type Request = typeof Request.Type;
 type SubtitleProvenance = Awaited<ReturnType<typeof prepareSubtitles>>["provenance"];
 const RecordingSource = Schema.Struct({
+  recordingId: Schema.optionalKey(RecordingSessionId),
+  sessionType: Schema.optionalKey(RecordingSessionType),
+  captureMarkers: Schema.optionalKey(Schema.Array(Schema.Finite)),
+  contentHash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
   source: path,
   size: Schema.Number,
   created: Schema.Number,
@@ -391,6 +423,7 @@ type JobOptions = {
   threadId?: ThreadId;
   /** A lesson's transcription: its notes follow when it completes. */
   lesson?: boolean;
+  sessionType?: RecordingSessionType;
 };
 
 export type SettledTranscription = {
@@ -399,7 +432,7 @@ export type SettledTranscription = {
   id: string;
   stage: "completed" | "failed" | "canceled";
   /** A lesson's job, with its project folder, so its notes can be made. */
-  lesson?: { project: string };
+  lesson?: { project: string; type?: RecordingSessionType };
 };
 
 export class TranscriptionJobs extends Context.Service<
@@ -411,6 +444,7 @@ export class TranscriptionJobs extends Context.Service<
     ) => Effect.Effect<
       | Status
       | Status[]
+      | RecordingSessionResult
       | { media: RecordingSource[] }
       | {
           captured: true;
@@ -472,6 +506,7 @@ const inside = (root: string, source: string) => {
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 const isTranscriptionError = Schema.is(TranscriptionError);
+const isInvalidSessionOperation = Schema.is(InvalidSessionOperation);
 const isSubtitleInputError = Schema.is(SubtitleInputError);
 const isMediaToolUnavailable = Schema.is(MediaToolUnavailable);
 const failureResponse = (cause: unknown) =>
@@ -609,6 +644,8 @@ const make = Effect.gen(function* () {
     yield* Effect.context<Effect.Services<ReturnType<typeof acquireTranscriptionHold>>>();
   const run = Effect.runPromiseWith(holdContext);
   const captureGate = Semaphore.makeUnsafe(1);
+  const sessionGate = Semaphore.makeUnsafe(1);
+  const recordingSessions = makeRecordingSessions();
   const durationGate = Semaphore.makeUnsafe(4);
   const durationCache = new Map<
     string,
@@ -891,6 +928,8 @@ const make = Effect.gen(function* () {
       Option.isSome(yield* Effect.serviceOption(McpInvocationContext)) ||
       Option.isSome(yield* Effect.serviceOption(AgentInvocationContext));
     if (input.action === "inventory") return yield* engines(input.project, input);
+    if (agent && input.action === "session")
+      return yield* invalid("Manage sessions from the Sessions page.");
     if (agent && input.action === "import-transcript")
       return yield* invalid("Import a transcript from the Recordings page.");
     if (agent && input.action.startsWith("capture-"))
@@ -925,11 +964,19 @@ const make = Effect.gen(function* () {
           throw invalid("Expected an absolute project path.");
         const project = await NodeFSP.realpath(input.project).catch((error: unknown) => {
           // A project whose folder is gone has no recordings to list.
-          if (missing(error) && (input.action === "list" || input.action === "media-list"))
+          if (
+            missing(error) &&
+            (input.action === "list" ||
+              input.action === "media-list" ||
+              (input.action === "session" && input.command.kind === "list"))
+          )
             return undefined;
           throw error;
         });
-        if (project === undefined) return input.action === "list" ? [] : { media: [] };
+        if (project === undefined) {
+          if (input.action === "session") return { sessions: [] };
+          return input.action === "list" ? [] : { media: [] };
+        }
         if (opts?.scoped && NodePath.relative(input.project, project) !== "")
           throw invalid("The registered project path has changed.");
         const root = NodePath.join(project, "Transcripts");
@@ -1013,7 +1060,7 @@ const make = Effect.gen(function* () {
               throw error;
             },
           );
-        const registerMedia = async (path: string) => {
+        const registerMedia = async (path: string, capture?: CaptureSessionInfo) => {
           if (!NodePath.isAbsolute(path)) throw invalid("Expected an absolute media path.");
           const source = await NodeFSP.realpath(path);
           if (!inside(project, source)) throw invalid("The recording must live in the project.");
@@ -1040,11 +1087,27 @@ const make = Effect.gen(function* () {
             ))
           )
             throw invalid("The recording is no longer in the project.");
-          const title = (await readMediaRecord(source))?.title;
-          const record = { ...media, ...(title ? { title } : {}) };
-          await NodeFSP.mkdir(root, { recursive: true });
-          await atomicWrite(mediaRecordPath(source), JSON.stringify(record));
-          return record;
+          return await run(
+            sessionGate.withPermit(
+              Effect.tryPromise({
+                try: async () => {
+                  const previous = await readMediaRecord(source);
+                  const record = {
+                    ...previous,
+                    ...media,
+                    recordingId: previous?.recordingId ?? NodeCrypto.randomUUID(),
+                    ...(capture
+                      ? { sessionType: capture.type, captureMarkers: capture.markers }
+                      : {}),
+                  };
+                  await NodeFSP.mkdir(root, { recursive: true });
+                  await atomicWrite(mediaRecordPath(source), JSON.stringify(record));
+                  return record;
+                },
+                catch: failureResponse,
+              }),
+            ),
+          );
         };
         if (input.action === "media-register") {
           // A file outside the project registers nothing, so the caller can copy it in instead.
@@ -1076,6 +1139,26 @@ const make = Effect.gen(function* () {
               NodePath.resolve(input.source),
             );
             if (!inside(project, source)) throw invalid("The recording must live in the project.");
+            const membership = await recordingSessions(
+              {
+                project,
+                root,
+                recording: () => Promise.reject(invalid("Unexpected recording lookup.")),
+                revision: () => Promise.reject(invalid("Unexpected revision lookup.")),
+                trashFiles: () => Promise.reject(invalid("Unexpected trash operation.")),
+              },
+              { kind: "list" },
+            );
+            if (
+              membership.sessions.some(
+                (session) =>
+                  !session.archived &&
+                  session.parts.some(
+                    (part) => part.source === source || part.mediaSource === source,
+                  ),
+              )
+            )
+              throw invalid("Move the session to Trash from the Sessions page.");
             // A job whose recording is not known yet, or a review being saved, may be using it.
             if (
               queuedSources.has(source) ||
@@ -1120,6 +1203,17 @@ const make = Effect.gen(function* () {
           await run(
             captureGate.withPermit(Effect.promise(() => touchCapture(root, input.id, nowMs))),
           );
+          if (input.sessionType) {
+            const type = input.sessionType;
+            await run(
+              captureGate.withPermit(
+                Effect.tryPromise({
+                  try: () => updateCaptureSession(root, input.id, { type }),
+                  catch: failureResponse,
+                }),
+              ),
+            );
+          }
           const language = input.language ?? "auto";
           const engine = await run(
             resolveDefaultEngine(project, { language }, false).pipe(Effect.option),
@@ -1175,6 +1269,7 @@ const make = Effect.gen(function* () {
           input.action === "capture-chunk" ||
           input.action === "capture-touch" ||
           input.action === "capture-caption" ||
+          input.action === "capture-mark" ||
           input.action === "capture-finish"
         ) {
           if (input.action !== "capture-finish" && isCaptureFinished(input.id))
@@ -1188,6 +1283,10 @@ const make = Effect.gen(function* () {
                 }
                 if (input.action === "capture-touch") {
                   await touchCapture(root, input.id, nowMs);
+                  return { captured: true as const };
+                }
+                if (input.action === "capture-mark") {
+                  await updateCaptureSession(root, input.id, { mark: input.time });
                   return { captured: true as const };
                 }
                 if (input.action === "capture-caption") {
@@ -1207,9 +1306,12 @@ const make = Effect.gen(function* () {
           if (input.action !== "capture-finish" || !input.lesson || !("source" in result))
             return result;
           const transcription = await run(
-            startLesson(project, result.source, input.lesson.language).pipe(
-              Effect.orElseSucceed(() => "unavailable" as const),
-            ),
+            startLesson(
+              project,
+              result.source,
+              input.lesson.language,
+              input.lesson.sessionType,
+            ).pipe(Effect.orElseSucceed(() => "unavailable" as const)),
           );
           return { ...result, transcription };
         }
@@ -1298,6 +1400,162 @@ const make = Effect.gen(function* () {
                 : saved,
           };
         };
+
+        if (input.action === "session") {
+          const command = input.command;
+          if (!rootStat && command.kind === "list") return { sessions: [] };
+          if (command.kind !== "list" && !(await projectId()))
+            throw invalid("Select a registered project.");
+          const checkedSource = async (source: string) => {
+            if (!NodePath.isAbsolute(source) || !inside(project, NodePath.normalize(source)))
+              throw invalid("The recording must live in the project.");
+            return source;
+          };
+          const revisionFile = async (source: string, id: string) => {
+            await checkedSource(source);
+            if (!revision.test(id)) throw invalid("Select a valid transcript revision.");
+            const info = await status(id);
+            if (info.job.source !== source || info.state.stage !== "completed")
+              throw invalid("Select a completed transcript for this recording.");
+            const file = NodePath.join(root, id, "transcript.json");
+            if (!(await NodeFSP.lstat(file)).isFile())
+              throw invalid("This transcript is unavailable.");
+            return file;
+          };
+          const runSessions = () =>
+            recordingSessions(
+              {
+                project,
+                root,
+                trashFiles: async (parts, id) => {
+                  const sources = parts.map(({ source }) => source);
+                  if (
+                    active?.root === root ||
+                    pendingReviews.size ||
+                    sources.some((source) => queuedSources.has(source))
+                  )
+                    throw invalid("Wait for transcription and review work to finish.");
+                  const files = new Set<string>();
+                  const notes = NodePath.join(root, "sessions", `notes-${id}`);
+                  const notesStat = await NodeFSP.lstat(notes).catch((error: unknown) => {
+                    if (!missing(error)) throw error;
+                  });
+                  if (notesStat && !notesStat.isDirectory())
+                    throw invalid("Invalid session notes directory.");
+                  if (notesStat) files.add(notes);
+                  for (const { source, mediaSource, transcriptOnly } of parts) {
+                    await checkedSource(source);
+                    const media = mediaSource ?? source;
+                    await checkedSource(media);
+                    for (const file of [
+                      ...(transcriptOnly ? [] : [media]),
+                      mediaRecordPath(source),
+                    ]) {
+                      const resolved = await NodeFSP.realpath(file).catch((error: unknown) => {
+                        if (!missing(error)) throw error;
+                      });
+                      if (resolved === undefined) continue;
+                      if (resolved !== file || !(await NodeFSP.lstat(file)).isFile())
+                        throw invalid(
+                          "The recording or its metadata is no longer at its original path.",
+                        );
+                      files.add(file);
+                    }
+                  }
+                  for (const entry of await NodeFSP.readdir(root, { withFileTypes: true })) {
+                    if (!entry.isDirectory() || !revision.test(entry.name)) continue;
+                    const directory = NodePath.join(root, entry.name);
+                    const job = await readJson<Job>(directory, "job.json");
+                    if (sources.includes(job.source)) files.add(directory);
+                  }
+                  return [...files];
+                },
+                revision: revisionFile,
+                recording: async (requested) => {
+                  await checkedSource(requested);
+                  const resolved = await NodeFSP.realpath(requested).catch((error: unknown) => {
+                    if (!missing(error)) throw error;
+                    return undefined;
+                  });
+                  const source = await checkedSource(resolved ?? requested);
+                  const media = await readMediaRecord(source);
+                  const revisions = (
+                    await Promise.all(
+                      (
+                        await NodeFSP.readdir(root, { withFileTypes: true }).catch(
+                          (error: unknown) => {
+                            if (missing(error)) return [];
+                            throw error;
+                          },
+                        )
+                      )
+                        .filter((entry) => entry.isDirectory() && revision.test(entry.name))
+                        .map(async (entry) => {
+                          try {
+                            const info = await status(entry.name);
+                            return info.job.source === source ? info : undefined;
+                          } catch {
+                            return undefined;
+                          }
+                        }),
+                    )
+                  ).filter((entry) => entry !== undefined);
+                  if (media && !resolved) throw invalid("Locate the missing recording first.");
+                  const latest = revisions
+                    .filter(({ state }) => state.stage === "completed")
+                    .sort((left, right) => right.job.id.localeCompare(left.job.id))[0];
+                  if (!media && !latest)
+                    throw invalid("Add this recording before using it in a session.");
+                  const recordingId = media?.recordingId ?? NodeCrypto.randomUUID();
+                  const contentHash =
+                    media?.contentHash ??
+                    (resolved && !latest?.job.transcriptOnly
+                      ? await recordingContentHash(resolved)
+                      : undefined);
+                  if (media && (!media.recordingId || media.contentHash !== contentHash))
+                    await atomicWrite(
+                      mediaRecordPath(source),
+                      JSON.stringify({ ...media, recordingId, contentHash }),
+                    );
+                  const duration =
+                    media?.duration ??
+                    (resolved && !latest?.job.transcriptOnly
+                      ? await durationFor(project, source)
+                      : undefined);
+                  return {
+                    source,
+                    recordingId,
+                    title: (media?.title ?? NodePath.basename(source)).slice(0, 200),
+                    created: media?.created ?? nowMs,
+                    duration: duration ?? 0,
+                    ...(contentHash ? { contentHash } : {}),
+                    ...(latest?.job.transcriptOnly ? { transcriptOnly: true } : {}),
+                    ...(latest ? { revision: latest.job.id } : {}),
+                    ...(media?.sessionType ? { type: media.sessionType } : {}),
+                    ...(media?.captureMarkers ? { markers: media.captureMarkers } : {}),
+                  };
+                },
+              },
+              command,
+            );
+          const movingFiles = command.kind === "trash" || command.kind === "restore";
+          if (movingFiles) trashing += 1;
+          try {
+            return await run(
+              sessionGate.withPermit(
+                Effect.tryPromise({
+                  try: runSessions,
+                  catch: (error) =>
+                    isInvalidSessionOperation(error)
+                      ? invalid(error.message)
+                      : failureResponse(error),
+                }),
+              ),
+            );
+          } finally {
+            if (movingFiles) trashing -= 1;
+          }
+        }
 
         const wait = async (running: Active | undefined, id: string) => {
           if (running?.root === root && running.id === id && running.done && opts?.waitSeconds) {
@@ -2335,6 +2593,7 @@ const make = Effect.gen(function* () {
                 correction,
                 ...(previous ? { previousRevision: previous.job.id } : {}),
                 ...(opts?.lesson ? { lesson: true as const } : {}),
+                ...(opts?.sessionType ? { sessionType: opts.sessionType } : {}),
               };
           const update = (state: State) => {
             current.status = { ...current.status, job, state };
@@ -2538,7 +2797,12 @@ const make = Effect.gen(function* () {
                 ) {
                   const threadId =
                     userSettings.recordingDefaults?.notify !== false ? opts?.threadId : undefined;
-                  const lesson = job.lesson ? { project: input.project } : undefined;
+                  const lesson = job.lesson
+                    ? {
+                        project: input.project,
+                        ...(job.sessionType ? { type: job.sessionType } : {}),
+                      }
+                    : undefined;
                   if (threadId || lesson)
                     await run(
                       PubSub.publish(settled, {
@@ -2734,6 +2998,7 @@ const make = Effect.gen(function* () {
     project: string,
     source: string,
     language: string,
+    sessionType?: RecordingSessionType,
   ): Effect.fn.Return<"started" | "queued", TranscriptionError> {
     const resolved = yield* resolveDefaultEngine(project, { language }, false);
     const request = {
@@ -2748,7 +3013,10 @@ const make = Effect.gen(function* () {
       // Thorough asks for a cost estimate first, so nobody is there to approve it: use Quick.
       mode: resolved.defaults?.correction === "off" ? ("off" as const) : ("quick" as const),
     };
-    const attempt = execute(request, { lesson: true }).pipe(Effect.result);
+    const attempt = execute(request, {
+      lesson: true,
+      ...(sessionType ? { sessionType } : {}),
+    }).pipe(Effect.result);
     const first = yield* attempt;
     if (first._tag === "Success") return "started" as const;
     if (first.failure.code !== "busy") return yield* first.failure;
