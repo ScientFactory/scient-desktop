@@ -944,14 +944,6 @@ export async function recordWindow(
     for (let index = 0; index < count; index++) encoder.stdin.write(frame.data);
     frames += count;
   };
-  await page.screencast.start({
-    size: { width: 1280, height: 800 },
-    onFrame: (frame) => {
-      if (last)
-        write(last, Math.max(1, Math.round(((frame.timestamp - last.timestamp) * fps) / 1000)));
-      last = frame;
-    },
-  });
   const finishEncoding = async () => {
     if (last) write(last, fps);
     encoder.stdin.end();
@@ -964,7 +956,21 @@ export async function recordWindow(
     );
     NodeAssert.equal(status, 0, `Recording the window failed: ${errors}`);
   };
-  return async () => {
+  try {
+    await page.screencast.start({
+      size: { width: 1280, height: 800 },
+      onFrame: (frame) => {
+        if (last)
+          write(last, Math.max(1, Math.round(((frame.timestamp - last.timestamp) * fps) / 1000)));
+        last = frame;
+      },
+    });
+  } catch (error) {
+    // No caller holds a stop handle yet, so the encoder must not outlive this failure.
+    await finishEncoding().catch(() => {});
+    throw error;
+  }
+  const stop = async () => {
     try {
       // After a native restart the page is gone and stopping fails; only a hang is an error here.
       await deadline(
@@ -979,6 +985,9 @@ export async function recordWindow(
     await finishEncoding();
     return frames;
   };
+  // Stopping runs once: cleanup calling it again gets the same result without waiting again.
+  let stopped;
+  return () => (stopped ??= stop());
 }
 
 export function largestWindow(windows) {

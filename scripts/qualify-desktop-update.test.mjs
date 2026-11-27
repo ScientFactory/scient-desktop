@@ -515,7 +515,10 @@ setInterval(() => {}, 1000);
     };
     try {
       const stop = await recordWindow(page, video, { encoder, timeout: 1_000 });
-      await NodeAssert.rejects(stop(), /screencast hung/);
+      const stopping = stop();
+      // Cleanup stops the recording again: it gets the same stop, not a second wait.
+      NodeAssert.equal(stop(), stopping, "Stopping must run once");
+      await NodeAssert.rejects(stopping, /screencast hung/);
       NodeAssert.ok(NodeFS.existsSync(`${video}.eof`), "The encoder's input must be closed");
       const pid = Number(NodeFS.readFileSync(`${video}.pid`, "utf8"));
       NodeAssert.equal(alive(pid), false, "An encoder that outlives its deadline is killed");
@@ -528,3 +531,53 @@ setInterval(() => {}, 1000);
     }
   },
 );
+
+test.runIf(posixHost)("finishes the video encoder when the screencast cannot start", async () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-qualify-video-test-"));
+  // An encoder that notes the end of its input but never exits by itself.
+  const encoder = NodePath.join(root, "encoder.mjs");
+  NodeFS.writeFileSync(
+    encoder,
+    `#!/usr/bin/env node
+import * as NodeFS from "node:fs";
+const output = process.argv.at(-1);
+NodeFS.writeFileSync(output + ".pid", String(process.pid));
+process.stdin.on("end", () => NodeFS.writeFileSync(output + ".eof", ""));
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`,
+  );
+  NodeFS.chmodSync(encoder, 0o755);
+  const video = NodePath.join(root, "restart.webm");
+  const page = {
+    screencast: {
+      // The page goes away once the encoder has started.
+      start: () =>
+        new Promise((_resolve, reject) => {
+          const fail = () => {
+            if (!NodeFS.existsSync(`${video}.pid`)) return;
+            watcher.close();
+            reject(new Error("Target page, context or browser has been closed"));
+          };
+          const watcher = NodeFS.watch(root, fail);
+          fail();
+        }),
+      stop: async () => {},
+    },
+  };
+  try {
+    await NodeAssert.rejects(
+      recordWindow(page, video, { encoder, timeout: 1_000 }),
+      /has been closed/,
+    );
+    NodeAssert.ok(NodeFS.existsSync(`${video}.eof`), "The encoder's input must be closed");
+    const pid = Number(NodeFS.readFileSync(`${video}.pid`, "utf8"));
+    NodeAssert.equal(alive(pid), false, "An encoder left without a recording is killed");
+  } finally {
+    if (NodeFS.existsSync(`${video}.pid`)) {
+      const pid = Number(NodeFS.readFileSync(`${video}.pid`, "utf8"));
+      if (alive(pid)) process.kill(pid, "SIGKILL");
+    }
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
