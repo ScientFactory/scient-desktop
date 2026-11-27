@@ -60,7 +60,7 @@ Scient works with the platforms your team already uses:
 
 - **GitHub** – Pull requests, repository creation, and clone integration
 - **GitLab** – Merge requests, repository publishing, and hosted clones
-- **Forgejo and Gitea** – Pull requests, publishing, and clones through `fj` or `tea`
+- **Forgejo and Gitea** – Pull requests, publishing, and clones through `fj` or `gt`
 - **Bitbucket** – Pull request workflows (via API token authentication)
 - **Azure DevOps** – Pull request support for Microsoft-hosted repositories
 - **Cursor Origin** – Clones and publishing through the `origin` CLI
@@ -220,15 +220,15 @@ custom server name as GitHub once it has a credential for that host.
 ### For Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or
-[Gitea CLI (`tea`)](https://gitea.com/gitea/tea) 0.16 or later in the environment
+[Gitea CLI (`gt`)](https://docs.gitea.com/cli/) 2.0 or later in the environment
 where the project runs. Sign in with
-`fj --host https://your-server auth add-token` or `tea login add`, then rescan
-**Settings → Source Control & Issues**.
+`fj --host https://your-server auth add-token` or `gt auth login --host https://your-server`, then
+rescan **Settings → Source Control & Issues**. If you used `tea`, sign in again with `gt`.
 
-Scient prefers a matching `fj` login and falls back to `tea` when `fj` is unavailable
+Scient prefers a matching `fj` login and falls back to `gt` when `fj` is unavailable
 or has no login for that server. Once an account is selected, failed actions stay on that
 account. Settings shows the detected CLI. Forgejo and Gitea share one integration entry.
-Servers hosted under a URL subpath, such as `https://example.com/forgejo`, use `tea` because
+Servers hosted under a URL subpath, such as `https://example.com/forgejo`, use `gt` because
 fj does not preserve the subpath when checking its account. Use a full repository URL when several
 servers are configured. Git clone and push still require Git credentials or an SSH key.
 
@@ -386,7 +386,7 @@ instructions to commits and pull requests.
 - [GitHub CLI](https://cli.github.com/)
 - [GitLab CLI](https://gitlab.com/gitlab-org/cli)
 - [Forgejo CLI](https://codeberg.org/forgejo-contrib/forgejo-cli)
-- [Gitea CLI](https://gitea.com/gitea/tea)
+- [Gitea CLI](https://docs.gitea.com/cli/)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)
 
 A merge or review applies to the commits you opened the pull request on. When someone pushes

@@ -7,15 +7,15 @@ import {
   type ProjectListDirectoryInput,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
+import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
+import { RightPanelSheet } from "~/components/RightPanelSheet";
 import { dismissContextMenu, showContextMenuFallback } from "~/contextMenuFallback";
+import { isMacPlatform } from "~/lib/utils";
 import { act, render } from "../../../test/render";
 
-import { RightPanelSheet } from "~/components/RightPanelSheet";
-import { isMacPlatform } from "~/lib/utils";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { refreshProjectFiles } from "./projectFilesQueryState";
@@ -546,6 +546,8 @@ describe("Files panel search", () => {
     await userEvent.click(action);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
 
+    // Hover can take focus when the keyboard menu reopens under the pointer.
+    await commands.resetPointer();
     const row = findRow();
     await userEvent.keyboard("{Tab}");
     row.focus();

@@ -238,7 +238,10 @@ export default function FileBrowserPanel({
             // Copy mention sits under Copy when Files manages entries.
             ...(manageItems.copiesMention
               ? []
-              : [{ id: "copy-mention", label: gt("Copy mention") }]),
+              : [
+                  { id: "copy-path", label: gt("Copy path") },
+                  { id: "copy-mention", label: gt("Copy mention") },
+                ]),
             ...manageItems.create,
             ...folderActions.menuItems(item.path),
             ...manageItems.edit,
@@ -268,13 +271,14 @@ export default function FileBrowserPanel({
           return;
         }
         // SCIENT-FORK:END
-        if (clicked === "copy-mention") {
+        if (clicked === "copy-path" || clicked === "copy-mention") {
+          const copyingPath = clicked === "copy-path";
           try {
-            await writeTextToClipboard(mention);
+            await writeTextToClipboard(copyingPath ? joinHostPath(cwd, relativePath) : mention);
           } catch (error) {
             toastManager.add({
               type: "error",
-              title: gt("Failed to copy mention"),
+              title: copyingPath ? gt("Failed to copy path") : gt("Failed to copy mention"),
               description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             });
           }

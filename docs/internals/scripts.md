@@ -51,7 +51,7 @@ authenticated.
   precedence.
 - From the **main checkout**, dev commands implicitly use `~/.scient-next/scient-next-dev`, keeping development state
   separate from `~/.scient-next/userdata`. An explicit `--home-dir <path>` stores development state under
-  `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared
+  `<path>/scient-next-dev`. The base directory remains available for caches, worktrees, and other shared
   data.
 - First start warms the web dependency cache when needed. Database seeding is **off by default**.
   Only after explicit authorization to copy that profile, `--seed` (or `T3CODE_DEV_SEED=1`)

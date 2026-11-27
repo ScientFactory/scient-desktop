@@ -68,10 +68,10 @@ const ForgejoUserSearch = Schema.Struct({
 
 const UNAVAILABLE_REQUIREMENT = {
   missing:
-    "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+    "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`gt` 2.0 or later) from https://gitea.com/gitea/cli to browse Forgejo pull requests.",
   // SCIENT-FORK:START — product name in user-visible copy.
   unauthenticated:
-    "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the Scient environment. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+    "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the Scient environment. If fj is missing or unconfigured for that server, use `gt auth login`. A configured fj account must be repaired with fj.",
   // SCIENT-FORK:END
 };
 
@@ -123,7 +123,7 @@ export const make = Effect.gen(function* () {
             detail: error.detail,
             cause: error,
             reason:
-              error.reason === "missing-cli"
+              error.reason === "missing-cli" || error.reason === "wrong-cli"
                 ? "missing-tool"
                 : error.reason === "authentication"
                   ? "unauthenticated"

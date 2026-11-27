@@ -48,12 +48,25 @@ const SkillFrontmatter = Schema.Struct({
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 // SCIENT-FORK:START — discover documented plugin skill components without their other authority.
-const PluginManifest = Schema.fromJsonString(
-  Schema.Struct({
-    name: Schema.String,
-  }),
+// agy reads only the first manifest present, and skips the plugin when that one does not parse.
+const PLUGIN_MANIFEST_PATHS = [
+  [".antigravity-plugin", "plugin.json"],
+  [".gemini-plugin", "plugin.json"],
+  ["plugin.json"],
+] as const;
+// agy ignores `skills` in an Agent Plugins manifest while its enable-agent-plugins-spec flag is on.
+const AGENT_PLUGINS_SCHEMA_PREFIX = "https://agent-plugins.org/schemas/";
+const decodePluginManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      name: Schema.String,
+      $schema: Schema.optional(Schema.Unknown),
+      skills: Schema.optional(
+        Schema.NullOr(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+      ),
+    }),
+  ),
 );
-const decodePluginManifest = Schema.decodeUnknownOption(PluginManifest);
 const SkillConfigEntry = Schema.Struct({
   path: Schema.String,
   include_only: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
@@ -373,6 +386,41 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     }
   });
 
+  /** The manifest agy reads, with the skill folders it adds; undefined when agy skips the plugin. */
+  const readPluginManifest = Effect.fn("readAntigravityPluginManifest")(function* (
+    pluginDirectory: string,
+  ): Effect.fn.Return<
+    { readonly name: string; readonly skillPaths: ReadonlyArray<string> } | undefined,
+    AntigravitySkillsProbeError,
+    FileSystem.FileSystem
+  > {
+    for (const segments of PLUGIN_MANIFEST_PATHS) {
+      const manifestPath = path.join(pluginDirectory, ...segments);
+      const info = yield* readIfPresent(fileSystem.stat(manifestPath), manifestPath);
+      if (info?.type !== "File") continue;
+      if (info.size > BigInt(Math.min(MAX_SKILL_BYTES, budget.remainingBytes))) {
+        return yield* new AntigravitySkillsProbeError({
+          reason: "scan-budget-exhausted",
+          path: manifestPath,
+        });
+      }
+      const raw = yield* readIfPresent(fileSystem.readFileString(manifestPath), manifestPath);
+      if (raw === undefined) return undefined;
+      budget.remainingBytes -= Buffer.byteLength(raw, "utf8");
+      const manifest = decodePluginManifest(raw.replace(/^\uFEFF/, ""));
+      if (Option.isNone(manifest)) return undefined;
+      const { name, $schema, skills } = manifest.value;
+      const skillPaths =
+        typeof $schema === "string" && $schema.startsWith(AGENT_PLUGINS_SCHEMA_PREFIX)
+          ? []
+          : (typeof skills === "string" ? [skills] : (skills ?? [])).map((entry) =>
+              path.resolve(pluginDirectory, entry),
+            );
+      return { name, skillPaths };
+    }
+    return undefined;
+  });
+
   const scanPluginDirectory = Effect.fn("scanAntigravityPluginDirectory")(function* (
     directory: string,
     disabled: ReadonlySet<string> = new Set(),
@@ -395,13 +443,9 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       // A stray file such as .DS_Store is not a plugin; reading beneath it would fail the scan.
       const entryInfo = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
       if (entryInfo?.type !== "Directory") continue;
-      const manifestPath = path.join(pluginDirectory, "plugin.json");
-      // A JSON manifest has no `---` markers, so the frontmatter reader reads all of it.
-      const manifestContents = yield* readSkillFrontmatter(manifestPath, budget);
-      if (manifestContents === undefined) continue;
-      const manifest = decodePluginManifest(manifestContents);
-      if (Option.isNone(manifest)) continue;
-      const pluginName = manifest.value.name.trim();
+      const manifest = yield* readPluginManifest(pluginDirectory);
+      if (manifest === undefined) continue;
+      const pluginName = manifest.name.trim();
       if (!pluginName || disabled.has(pluginName)) continue;
       yield* scanDirectory(
         path.join(pluginDirectory, "skills"),
@@ -410,6 +454,9 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
         EMPTY_SKILL_FILTER,
         pluginName,
       );
+      for (const skillPath of manifest.skillPaths) {
+        yield* scanDirectory(skillPath, "plugin", "manifest", EMPTY_SKILL_FILTER, pluginName);
+      }
     }
   });
 

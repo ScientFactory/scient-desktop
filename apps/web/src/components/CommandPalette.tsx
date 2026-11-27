@@ -829,8 +829,15 @@ function OpenCommandPaletteDialog(props: {
       desktopLocalBootstraps.find((bootstrap) => bootstrap.httpBaseUrl === displayUrl)?.id ?? null
     );
   })();
+  // SCIENT-FORK: only probe source-control CLIs when an Add/New Project flow that uses them is open.
+  const needsSourceControlDiscovery =
+    props.open &&
+    (addProjectEnvironmentId !== null ||
+      newProjectFlow !== null ||
+      currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP ||
+      props.openIntent?.kind === "add-project");
   const sourceControlDiscovery = useEnvironmentQuery(
-    browseEnvironmentId === null
+    browseEnvironmentId === null || !needsSourceControlDiscovery
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: browseEnvironmentId,
@@ -1147,8 +1154,10 @@ function OpenCommandPaletteDialog(props: {
     // SCIENT-FORK:END
   });
 
-  function popView(): void {
+  const popView = useStableCallback((): void => {
     browseNavigation.invalidate();
+    cloneLookupGeneration.current += 1;
+    setIsRemoteProjectLookingUp(false);
     // SCIENT-FORK:START
     resetAddProjectBrowseScope();
     // SCIENT-FORK:END
@@ -1164,7 +1173,7 @@ function OpenCommandPaletteDialog(props: {
     clearHighlightedItem();
     setIsNewProjectFolderDraft(false);
     // SCIENT-FORK:END
-  }
+  });
 
   function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
@@ -1276,6 +1285,9 @@ function OpenCommandPaletteDialog(props: {
   const buildAddProjectSourceGroups = (
     environmentId: EnvironmentId,
     readinessBySource: AddProjectRemoteSourceReadiness,
+    // SCIENT-FORK:START — avoid flashing Setup Required while on-demand source-control discovery is still pending.
+    discoveryPending = false,
+    // SCIENT-FORK:END
   ): CommandPaletteView["groups"] => {
     const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
       {
@@ -1324,8 +1336,14 @@ function OpenCommandPaletteDialog(props: {
             });
       const readiness = readinessBySource(source);
       const disabledHint = readiness.hint;
-
-      const titleTrailingContent = readiness.ready ? undefined : (
+      // SCIENT-FORK:START — show a neutral pending indicator instead of Setup Required before cold discovery finishes.
+      const isCheckingSource = source !== "url" && discoveryPending && !readiness.ready;
+      const titleTrailingContent = readiness.ready ? undefined : isCheckingSource ? (
+        <span className="ml-auto text-muted-foreground text-xs">
+          <T>Checking…</T>
+        </span>
+      ) : (
+        // SCIENT-FORK:END
         <span className="ml-auto">
           <SharedTooltipTrigger
             render={
@@ -1420,6 +1438,11 @@ function OpenCommandPaletteDialog(props: {
           browseEnvironmentId === environmentId ? sourceControlDiscovery.data : null,
           messages,
         ),
+        // SCIENT-FORK:START
+        browseEnvironmentId === environmentId &&
+          sourceControlDiscovery.isPending &&
+          sourceControlDiscovery.data === null,
+        // SCIENT-FORK:END
       ),
     });
   };
@@ -1526,6 +1549,11 @@ function OpenCommandPaletteDialog(props: {
               : null,
             messages,
           ),
+          // SCIENT-FORK:START
+          browseEnvironmentId === addProjectEntry.environmentId &&
+            sourceControlDiscovery.isPending &&
+            sourceControlDiscovery.data === null,
+          // SCIENT-FORK:END
         );
     }
   };
@@ -2105,6 +2133,11 @@ function OpenCommandPaletteDialog(props: {
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
           buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data, messages),
+          // SCIENT-FORK:START
+          browseEnvironmentId === addProjectEnvironmentId &&
+            sourceControlDiscovery.isPending &&
+            sourceControlDiscovery.data === null,
+          // SCIENT-FORK:END
         )
       : currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP
         ? addProjectEntryGroups()

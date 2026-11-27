@@ -403,6 +403,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerSkillsSetEnabled]: "providerSkills",
   // SCIENT-FORK:START — Scient Accounts: instrument sensitive account RPCs without payloads.
   [WS_METHODS.accountsSnapshot]: "accounts",
+  [WS_METHODS.accountsExternalIdentities]: "accounts",
   [WS_METHODS.accountsSubscribeChanges]: "subscribe",
   [WS_METHODS.accountsSave]: "accounts",
   [WS_METHODS.accountsRemove]: "accounts",

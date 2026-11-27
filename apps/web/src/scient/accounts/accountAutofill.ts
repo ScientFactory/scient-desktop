@@ -67,7 +67,7 @@ export function watchAccountAutofill(
     const read = await runAtomCommand(
       registry,
       accountsState.readSnapshot,
-      { environmentId, input: {} },
+      { environmentId, input: { omitExternalIdentities: true } },
       { reportFailure: false },
     );
     return read._tag === "Success" ? read.value : undefined;

@@ -99,7 +99,12 @@ describe("scan cache round trip", () => {
       mtimeMs: 300,
       provider: "grok",
       records: [
-        record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
+        record({
+          provider: "grok",
+          model: "grok-4.5-build",
+          modelCalls: 8,
+          dedupeKey: "s:p:grok-4.5-build",
+        }),
         record({ provider: "grok", model: "<synthetic>", dedupeKey: "s:p:<synthetic>" }),
       ],
       tailRecords: [record({ provider: "grok", model: "<synthetic>", dedupeKey: null })],
@@ -211,10 +216,12 @@ describe("scan cache round trip", () => {
       if (version < encoded.version) {
         for (const [file, entry] of expected) {
           // v5/v6 writers had neither turn provenance nor the v13 1-hour cache-write column.
+          // Writers before v18 had no Grok modelCalls column.
           const withoutProvenance = (record: UsageRecord) => {
             const compatible = { ...record };
             delete compatible.unresolvedServiceTierTurnId;
             delete compatible.cacheCreation1hTokens;
+            if (version < 18) delete compatible.modelCalls;
             return compatible;
           };
           // Every older Claude entry re-parses so advisor usage is counted.

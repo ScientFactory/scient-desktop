@@ -161,6 +161,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      /** The version the agent reports in `initialize`; the directory name is the probed version. */
+      readonly agentVersion?: string;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -173,6 +175,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       executablePath,
       [
         "#!/bin/sh",
+        ...(options.agentVersion === undefined
+          ? []
+          : [`export T3_ACP_AGENT_VERSION=${shellQuote(options.agentVersion)}`]),
         ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
@@ -214,6 +219,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     beforeSpawn: Effect.void,
     afterSpawn: Effect.void,
     beforeRelease: Effect.void,
+    /** Versions the test policy rates `broken`; the bundled manifest has none to refuse. */
+    brokenVersions: new Set<string>(),
   };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
@@ -250,11 +257,19 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       resolve: () => resolveSelected(),
       compatibility: (version) =>
         Effect.succeed(
-          ModelManifest.providerCompatibility(
-            ModelManifest.BUNDLED_MODEL_MANIFEST,
-            ProviderDriverKind.make("antigravity"),
-            version,
-          ),
+          controls.brokenVersions.has(version)
+            ? {
+                status: "broken",
+                message:
+                  "This provider version is known to be incompatible with this Scient release.",
+                recommendedVersion: "1.5.1",
+                recommendedRange: ">=1.5.1 <2",
+              }
+            : ModelManifest.providerCompatibility(
+                ModelManifest.BUNDLED_MODEL_MANIFEST,
+                ProviderDriverKind.make("antigravity"),
+                version,
+              ),
         ),
       acquire: (binaryPath, environment) =>
         Effect.gen(function* () {
@@ -901,6 +916,57 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         yield* openNative(h, "after-timeout");
       }).pipe(Effect.scoped),
   );
+
+  it.effect.skipIf(windowsHost)(
+    "reports an incompatible managed runtime during a health check",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const installed = yield* h.makeExecutable("1.5.0", { agentVersion: "1.5.0" });
+        h.controls.selected = installed;
+        h.controls.brokenVersions.add("1.5.0");
+        const rejected = yield* h.refresh().pipe(Effect.flip);
+        expect(rejected.detail).toContain("Update it in Antigravity setup");
+
+        expect(yield* h.instance.snapshot.refresh).toMatchObject({
+          status: "error",
+          version: "1.5.0",
+          message: rejected.detail,
+        });
+      }),
+  );
+
+  // SCIENT-FORK:START — both supported ACP capability policies use the acquired version.
+  it.effect.skipIf(windowsHost)("identifies the executable version to the runtime it starts", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const modern = yield* h.makeExecutable("1.5.1", { agentVersion: "1.5.1" });
+      h.controls.selected = modern;
+      yield* openNative(h, "modern-runtime");
+      const initialize = (yield* h.readRequests).find((request) => request.method === "initialize");
+      expect(initialize?.params).toMatchObject({
+        clientInfo: { name: "scient", title: "Scient" },
+        clientCapabilities: { fs: { readTextFile: true } },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)("keeps the qualified 1.4.5 runtime on its native file reads", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const qualified = yield* h.makeExecutable("1.4.5", { agentVersion: "1.4.5" });
+      h.controls.selected = qualified;
+      yield* openNative(h, "qualified-runtime");
+      const initialize = (yield* h.readRequests).find((request) => request.method === "initialize");
+      expect(initialize?.params).toMatchObject({
+        clientInfo: { name: "zed" },
+        clientCapabilities: { fs: { readTextFile: false } },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  // SCIENT-FORK:END
 
   it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",

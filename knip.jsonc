@@ -49,7 +49,6 @@
         "prepare-server-compile-cache.cjs",
         // Release workflows run it on the Windows host to generate and check server bytecode.
         "native-server-compile-cache.mjs",
-        "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
         // release-smoke.ts runs it by path to check the branded nightly release name.
         "resolve-nightly-release.ts",

@@ -107,7 +107,7 @@ export function watchKeepSignedIn(
     const snapshot = await runAtomCommand(
       registry,
       accountsState.readSnapshot,
-      { environmentId, input: {} },
+      { environmentId, input: { omitExternalIdentities: true } },
       { reportFailure: false },
     );
     if (snapshot._tag !== "Success") return;

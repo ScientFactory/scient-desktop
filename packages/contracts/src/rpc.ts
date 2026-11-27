@@ -225,11 +225,11 @@ import {
   IssueCreateResult,
   IssueDetail,
   IssueLinkedThreadsResult,
+  IssueDetailInput,
   IssueListInput,
   IssueListResult,
   IssueOperationError,
   IssueReactionInput,
-  IssueRef,
   IssueScopeRef,
   IssueSetStateInput,
   IssueTemplateList,
@@ -632,6 +632,7 @@ import {
   WsAccountsSaveRpc,
   WsAccountsSetAgentAccessRpc,
   WsAccountsSetControlsRpc,
+  WsAccountsExternalIdentitiesRpc,
   WsAccountsSnapshotRpc,
   WsAccountsSubscribeChangesRpc,
   WsAccountsTestRpc,
@@ -1828,7 +1829,7 @@ const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
 });
 
 const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
-  payload: IssueRef,
+  payload: IssueDetailInput,
   success: IssueDetail,
   error: IssueRpcError,
 });
@@ -3390,6 +3391,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsSaveRpc,
   WsAccountsSetAgentAccessRpc,
   WsAccountsSetControlsRpc,
+  WsAccountsExternalIdentitiesRpc,
   WsAccountsSnapshotRpc,
   WsAccountsSubscribeChangesRpc,
   WsAccountsTestRpc,

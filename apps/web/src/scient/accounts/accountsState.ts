@@ -14,9 +14,46 @@ const changes = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime
   label: "accounts:changes",
   tag: WS_METHODS.accountsSubscribeChanges,
 });
-const snapshot = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+const snapshotFamily = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "accounts:snapshot",
   tag: WS_METHODS.accountsSnapshot,
+  staleTimeMs: 30_000,
+  idleTtlMs: 60_000,
+  refreshTrigger: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
+    changes({ environmentId, input: {} }),
+});
+/** Updated clients read external GitHub logins via accounts.externalIdentities, so snapshots omit them. */
+const snapshot = ({
+  environmentId,
+  input,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly input: Parameters<typeof snapshotFamily>[0]["input"];
+}) =>
+  snapshotFamily({
+    environmentId,
+    input: { ...input, omitExternalIdentities: true },
+  });
+const websiteSnapshotFamily = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "accounts:website-snapshot",
+  tag: WS_METHODS.accountsSnapshot,
+  staleTimeMs: 0,
+  idleTtlMs: 0,
+});
+const websiteSnapshot = ({
+  environmentId,
+  input,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly input: Parameters<typeof websiteSnapshotFamily>[0]["input"];
+}) =>
+  websiteSnapshotFamily({
+    environmentId,
+    input: { ...input, omitExternalIdentities: true },
+  });
+const externalIdentities = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "accounts:externalIdentities",
+  tag: WS_METHODS.accountsExternalIdentities,
   staleTimeMs: 30_000,
   idleTtlMs: 60_000,
   refreshTrigger: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
@@ -42,6 +79,7 @@ const savedAccounts = Atom.family((_environmentId: EnvironmentId) =>
 
 export const accountsState = {
   snapshot,
+  externalIdentities,
   passwordStore: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:passwordStore",
     tag: WS_METHODS.accountsPasswordStore,
@@ -52,12 +90,7 @@ export const accountsState = {
     label: "accounts:read-snapshot",
     tag: WS_METHODS.accountsSnapshot,
   }),
-  websiteSnapshot: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
-    label: "accounts:website-snapshot",
-    tag: WS_METHODS.accountsSnapshot,
-    staleTimeMs: 0,
-    idleTtlMs: 0,
-  }),
+  websiteSnapshot,
   savedAccounts,
   save: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:save",

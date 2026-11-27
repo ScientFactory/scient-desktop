@@ -14,6 +14,7 @@ import * as ServerConfig from "../config.ts";
 // SCIENT-FORK:START — Scient Extensions: platform-specific directory sync support.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 // SCIENT-FORK:END
+import { routineSpan } from "@t3tools/shared/observability";
 
 const secretStoreErrorContext = {
   resource: Schema.String,
@@ -232,7 +233,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-      Effect.withSpan("ServerSecretStore.get"),
+      Effect.withSpan("ServerSecretStore.get", { attributes: routineSpan }),
     );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) =>
