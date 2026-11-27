@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { workspaceReadiness } from "./workspaceReadiness";
+import { reportDesktopWorkspaceReady, workspaceReadiness } from "./workspaceReadiness";
 
 const ready = {
   initialized: true,
@@ -19,5 +19,41 @@ describe("desktop workspace readiness", () => {
     expect(workspaceReadiness({ ...ready, localEnvironment: false })).toBe(false);
     expect(workspaceReadiness({ ...ready, connected: false })).toBe(false);
     expect(workspaceReadiness({ ...ready, liveSnapshot: false })).toBe(false);
+  });
+
+  it("leaves an update restart's token to the restored workspace when Getting Started shows first", async () => {
+    const token = { attemptId: "attempt-1", launchId: "launch-1" };
+    let tokenRequests = 0;
+    const reports: unknown[] = [];
+    const bridge = {
+      getRestartReadinessToken: async () => {
+        tokenRequests += 1;
+        return token;
+      },
+      reportWorkspaceReady: async (input: object) => {
+        reports.push(input);
+        return true;
+      },
+    };
+    const startup = { reported: false };
+    const report = (startupOnly: boolean, projectRestored: boolean) =>
+      reportDesktopWorkspaceReady({
+        bridge,
+        startupOnly,
+        projectRestored,
+        startup,
+        isCurrent: () => true,
+      });
+
+    await report(true, false);
+    expect(tokenRequests).toBe(0);
+    expect(reports).toEqual([{ projectRestored: false }]);
+
+    // A second Getting Started report is not another startup.
+    await report(true, false);
+    expect(reports).toHaveLength(1);
+
+    await report(false, true);
+    expect(reports).toEqual([{ projectRestored: false }, { ...token, projectRestored: true }]);
   });
 });

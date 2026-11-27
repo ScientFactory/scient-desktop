@@ -4,6 +4,7 @@ import * as NodeWorkerThreads from "node:worker_threads";
 
 import {
   type AnalyticsPriority,
+  exportedOccurredAtMs,
   type NormalizationContext,
   normalizeInheritedEvent,
 } from "./contract.ts";
@@ -269,7 +270,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       id: randomUUID(),
       name: normalized.name,
       session_id: sessionId,
-      occurred_at: now().toISOString(),
+      occurred_at: new Date(exportedOccurredAtMs(normalized.name, now().valueOf())).toISOString(),
       privacy_level: normalized.privacyLevel,
       // The gateway still reads a consent level; analytics is always on at the full level.
       consent_level: "diagnostic",
@@ -304,7 +305,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       id: event.id,
       name: normalized.name,
       session_id: sessionId,
-      occurred_at: new Date(occurredAt).toISOString(),
+      occurred_at: new Date(exportedOccurredAtMs(normalized.name, occurredAt)).toISOString(),
       privacy_level: normalized.privacyLevel,
       // Same constant `record` sends: the gateway still reads a consent level.
       consent_level: "diagnostic",

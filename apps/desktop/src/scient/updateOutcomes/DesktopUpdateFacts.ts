@@ -1,6 +1,7 @@
 /**
  * DesktopUpdateFacts - persisted update facts, kept until one backend's analytics outbox holds
- * them: installs run with every backend stopped, and apply outcomes precede any backend.
+ * them: installs run with every backend stopped, and apply outcomes precede any backend. Each
+ * launch's startup timing travels the same way, under the same analytics gate.
  * @module DesktopUpdateFacts
  */
 import {
