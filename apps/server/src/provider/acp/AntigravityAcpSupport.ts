@@ -235,8 +235,8 @@ const isAntigravityT3McpTool = (
   tool: string,
   toolArgs: Record<string, unknown> | undefined,
 ): boolean => {
-  if (T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH) return true;
-  if (tool !== TOOL_CALL) return false;
+  // SCIENT-FORK: tool_call has a display label, but its target decides admission.
+  if (tool !== TOOL_CALL) return T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH;
   const target = typeof toolArgs?.name === "string" ? toolArgs.name.trim() : "";
   return (
     target.length > 0 &&

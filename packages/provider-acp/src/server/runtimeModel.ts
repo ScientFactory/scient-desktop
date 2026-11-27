@@ -1329,7 +1329,12 @@ export function extractMcpToolCallIdentity(
     }
     const match = qualifiedMatch ?? T3_MCP_BARE_TITLE_CALL.exec(name);
     const candidateTool = match?.groups?.tool;
-    if (candidateTool !== undefined && T3_MCP_TOOL_NAMES.has(candidateTool)) {
+    if (
+      candidateTool !== undefined &&
+      // SCIENT-FORK: a bare proxy title does not identify Scient's server.
+      candidateTool !== T3_MCP_TOOL_CALL_PROXY &&
+      T3_MCP_TOOL_NAMES.has(candidateTool)
+    ) {
       return { server: "t3-code", tool: candidateTool };
     }
   }

@@ -51,6 +51,7 @@ import {
   scientTools,
   scientToolVariants,
 } from "./ScientOperationCatalog.ts";
+import { scientAgentCopy, scientAgentToolCopy } from "../provider/ScientAgentCopy.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
@@ -2213,8 +2214,11 @@ const layerToolExposure = Layer.effect(
       () =>
         server.tools.map(({ tool, annotations }) => ({
           name: tool.name,
-          description: tool.description ?? "",
-          inputSchema: tool.inputSchema,
+          // SCIENT-FORK: use the ordinary tool list's copy, including selected schemas.
+          description: scientAgentCopy(tool.description ?? ""),
+          get inputSchema() {
+            return scientAgentToolCopy(tool.inputSchema);
+          },
           isEnabled: () => isToolRegistrationEnabled(annotations),
         })),
       () => server.notifications["notifications/tools/list_changed"]({}),
@@ -2343,7 +2347,7 @@ const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* (
                       content: [
                         {
                           type: "text",
-                          text: `${error.message}\nExpected inputSchema: ${encodeJsonText(entry.tool.inputSchema)}`,
+                          text: `${error.message}\nExpected inputSchema: ${encodeJsonText(scientAgentToolCopy(entry.tool.inputSchema))}`,
                         },
                       ],
                     }),

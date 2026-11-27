@@ -2746,10 +2746,14 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           { ...scopeFor("previewOnly"), capabilities: new Set(["preview"] as const) },
         ],
       ]);
+      const threadCopy =
+        "Read a thread in this project, or one the user attached as context, by id.";
       const tool = (name: string, description: string) =>
         Tool.make(name, {
           description,
-          parameters: Schema.Struct({ url: Schema.optional(Schema.String) }),
+          parameters: Schema.Struct({
+            url: Schema.optional(Schema.String.annotate({ description: "Read any thread by id." })),
+          }),
           success: Schema.Struct({ ok: Schema.Boolean }),
           failure: OrchestratorMcpFailure,
           failureMode: "return",
@@ -2778,7 +2782,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       });
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
-        tool("preview_open", "Opens a browser preview."),
+        tool("preview_open", "Opens a browser preview. Read any thread by id."),
         tool("schedule_task", "Schedules a task."),
         oversizedTool,
         smallBudgetTool,
@@ -2955,7 +2959,9 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       // Dynamic deferred mode (Copilot): omits inputSchema and adds matches to tools/list.
       expect(
         (yield* deferring.call("tool_search", { query: "browser" })).result?.structuredContent,
-      ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
+      ).toEqual({
+        tools: [{ name: "preview_open", description: `Opens a browser preview. ${threadCopy}` }],
+      });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
 
       // Proxy deferred mode (Antigravity): returns inputSchema, skips disabled tools and list_changed, keeps fixed list.
@@ -2966,8 +2972,11 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tools: [
           {
             name: "preview_open",
-            description: "Opens a browser preview.",
-            inputSchema: expect.objectContaining({ type: "object" }),
+            description: `Opens a browser preview. ${threadCopy}`,
+            inputSchema: expect.objectContaining({
+              type: "object",
+              properties: { url: expect.objectContaining({ description: threadCopy }) },
+            }),
           },
         ],
       });
@@ -3048,6 +3057,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       });
       expect(badArgs.result?.isError).toBe(true);
       expect(badArgs.result?.content?.[0]?.text).toContain("Expected inputSchema:");
+      expect(badArgs.result?.content?.[0]?.text).toContain(threadCopy);
       expect(yield* other.listed).toEqual([
         "delegate_task",
         "device_close",
