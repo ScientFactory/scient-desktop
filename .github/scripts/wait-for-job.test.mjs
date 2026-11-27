@@ -13,12 +13,19 @@ const job = (status, conclusion = null, startedAt = started) => ({
   jobs: [{ name: "Package macOS x64", status, conclusion, started_at: startedAt }],
 });
 const noJob = { jobs: [] };
+// Each artifact's ID is its position in the list, from 1.
 const artifacts = (...createdAt) => ({
-  artifacts: createdAt.map((created_at) => ({ name, expired: false, created_at })),
+  artifacts: createdAt.map((created_at, index) => ({
+    id: index + 1,
+    name,
+    expired: false,
+    created_at,
+  })),
 });
 
 // A fake `gh` applies the script's own --jq filter to the next queued response for that
-// endpoint (the last one repeats); `sleep` returns at once.
+// endpoint (the last one repeats); a queued `apiError` fails that request after printing an
+// error body to stdout, as `gh api` does; `sleep` returns at once.
 function waitForJob({ jobs, artifactLists, args = [] }) {
   const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-wait-for-job-"));
   try {
@@ -35,22 +42,32 @@ function waitForJob({ jobs, artifactLists, args = [] }) {
 set -euo pipefail
 queue="${bin}/artifacts"
 case "$2" in */jobs*) queue="${bin}/jobs" ;; esac
-head -n 1 "$queue" | jq -r "$4"
+line="$(head -n 1 "$queue")"
 if [ "$(wc -l < "$queue")" -gt 1 ]; then tail -n +2 "$queue" > "$queue.next" && mv "$queue.next" "$queue"; fi
+if [ "$line" = '"apiError"' ]; then echo '{"message": "Bad Gateway"}'; echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+printf '%s\\n' "$line" | jq -r "$4"
 `,
       { mode: 0o755 },
     );
     NodeFS.writeFileSync(NodePath.join(bin, "sleep"), "#!/usr/bin/env bash\n", { mode: 0o755 });
-    return NodeChildProcess.spawnSync("bash", [script, "Package macOS x64", name, ...args], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${bin}${NodePath.delimiter}${process.env.PATH}`,
-        GITHUB_REPOSITORY: "ScientFactory/scient-desktop",
-        GITHUB_RUN_ID: "1",
-        GITHUB_RUN_ATTEMPT: "2",
+    const output = NodePath.join(bin, "output");
+    NodeFS.writeFileSync(output, "");
+    const result = NodeChildProcess.spawnSync(
+      "bash",
+      [script, "Package macOS x64", name, ...args],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}${NodePath.delimiter}${process.env.PATH}`,
+          GITHUB_REPOSITORY: "ScientFactory/scient-desktop",
+          GITHUB_RUN_ID: "1",
+          GITHUB_RUN_ATTEMPT: "2",
+          GITHUB_OUTPUT: output,
+        },
       },
-    });
+    );
+    return { ...result, output: NodeFS.readFileSync(output, "utf8") };
   } finally {
     NodeFS.rmSync(bin, { recursive: true, force: true });
   }
@@ -96,6 +113,7 @@ NodeTest.test("--uploaded ignores an earlier attempt's copy while this attempt r
     args: ["--uploaded"],
   });
   NodeAssert.equal(result.status, 0);
+  NodeAssert.equal(result.output, "artifact-id=2\n");
   const failedRebuild = waitForJob({
     jobs: [job("in_progress"), job("completed", "failure")],
     artifactLists: [artifacts(earlier)],
@@ -104,24 +122,44 @@ NodeTest.test("--uploaded ignores an earlier attempt's copy while this attempt r
   NodeAssert.equal(failedRebuild.status, 1);
 });
 
-NodeTest.test("--uploaded fails when the job succeeds without uploading in this attempt", () => {
-  const succeeded = waitForJob({
-    jobs: [job("in_progress"), job("completed", "success")],
-    artifactLists: [artifacts("2026-11-10T19:10:00Z")],
-    args: ["--uploaded"],
-  });
-  NodeAssert.equal(succeeded.status, 1);
-  NodeAssert.match(succeeded.stderr, /succeeded without uploading resource-monitor-darwin-x64/u);
+NodeTest.test("fails when the job succeeds without uploading in this attempt", () => {
+  for (const args of [[], ["--uploaded"]]) {
+    const succeeded = waitForJob({
+      jobs: [job("in_progress"), job("completed", "success")],
+      artifactLists: [artifacts("2026-11-10T19:10:00Z")],
+      args,
+    });
+    NodeAssert.equal(succeeded.status, 1);
+    NodeAssert.match(succeeded.stderr, /succeeded without uploading resource-monitor-darwin-x64/u);
+    NodeAssert.equal(succeeded.output, "");
+  }
 });
 
-NodeTest.test("accepts the artifact of a job a partial rerun reused", () => {
-  for (const args of [[], ["--uploaded"]])
-    NodeAssert.equal(
-      waitForJob({
-        jobs: [noJob],
-        artifactLists: [artifacts("2026-11-10T19:10:00Z")],
-        args,
-      }).status,
-      0,
-    );
+NodeTest.test("names the newest upload of a job a partial rerun reused", () => {
+  for (const args of [[], ["--uploaded"]]) {
+    const reused = waitForJob({
+      jobs: [noJob],
+      artifactLists: [artifacts("2026-11-10T19:10:00Z", "2026-11-10T19:20:00Z")],
+      args,
+    });
+    NodeAssert.equal(reused.status, 0);
+    NodeAssert.equal(reused.output, "artifact-id=2\n");
+  }
+});
+
+NodeTest.test("retries a failed API request, and fails the wait if it keeps failing", () => {
+  const uploadedAt = "2026-11-10T19:40:00Z";
+  const retried = waitForJob({
+    jobs: ["apiError", job("completed", "success")],
+    artifactLists: ["apiError", artifacts(uploadedAt)],
+  });
+  NodeAssert.equal(retried.status, 0);
+  NodeAssert.equal(retried.output, "artifact-id=1\n");
+  const down = waitForJob({
+    jobs: [job("completed", "success")],
+    artifactLists: ["apiError"],
+  });
+  NodeAssert.equal(down.status, 1);
+  NodeAssert.match(down.stderr, /Could not list resource-monitor-darwin-x64 uploads/u);
+  NodeAssert.doesNotMatch(down.stderr, /succeeded without uploading/u);
 });

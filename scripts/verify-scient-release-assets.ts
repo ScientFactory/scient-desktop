@@ -35,8 +35,8 @@ function assertRegularNonemptyFile(path: string, label: string): NodeFS.Stats {
   return stat;
 }
 
-function sha512(path: string): string {
-  const hash = NodeCrypto.createHash("sha512");
+function digest(path: string, algorithm: "sha256" | "sha512", encoding: "hex" | "base64"): string {
+  const hash = NodeCrypto.createHash(algorithm);
   const file = NodeFS.openSync(path, "r");
   const buffer = Buffer.allocUnsafe(1024 * 1024);
   try {
@@ -48,7 +48,7 @@ function sha512(path: string): string {
   } finally {
     NodeFS.closeSync(file);
   }
-  return hash.digest("base64");
+  return hash.digest(encoding);
 }
 
 export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
@@ -58,6 +58,8 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
   const assetsDir = NodePath.resolve(requiredValue(args, "--assets-dir"));
   const version = requiredValue(args, "--version").replace(/^v/u, "");
   const channel = args.includes("--channel") ? requiredValue(args, "--channel") : "stable";
+  // What the native Windows verifier checked; a rebuilt package must not replace it unchecked.
+  const windowsInstallerSha256 = requiredValue(args, "--windows-installer-sha256").toLowerCase();
   assertScientReleaseChannelVersion(version, channel);
   const manifestChannel = channel === "beta" ? "beta" : "latest";
   if (!NodeFS.statSync(assetsDir, { throwIfNoEntry: false })?.isDirectory()) {
@@ -112,7 +114,7 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
       allowed.add(file.url);
       const payloadPath = NodePath.join(assetsDir, file.url);
       const stat = assertRegularNonemptyFile(payloadPath, `${definition.label} update payload`);
-      if (stat.size !== file.size || sha512(payloadPath) !== file.sha512) {
+      if (stat.size !== file.size || digest(payloadPath, "sha512", "base64") !== file.sha512) {
         throw new Error(
           `${definition.label} update payload failed size or SHA-512 verification: ${file.url}.`,
         );
@@ -125,6 +127,15 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
         );
       }
     }
+  }
+
+  const windowsInstaller = `Scient-${version}-x64.exe`;
+  if (
+    digest(NodePath.join(assetsDir, windowsInstaller), "sha256", "hex") !== windowsInstallerSha256
+  ) {
+    throw new Error(
+      `${windowsInstaller} is not the installer the native Windows verifier checked (SHA-256 ${windowsInstallerSha256}).`,
+    );
   }
 
   const serverName = scientServerAssetName(version);

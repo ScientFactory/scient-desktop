@@ -12,6 +12,21 @@ function sha512(value: string): string {
   return NodeCrypto.createHash("sha512").update(value).digest("base64");
 }
 
+// What the native Windows verifier reports for the fixture's installer.
+const windowsInstallerSha256 = NodeCrypto.createHash("sha256").update("windows").digest("hex");
+
+function verify(root: string, version = "0.6.0", ...extra: ReadonlyArray<string>) {
+  return verifyScientReleaseAssets([
+    "--assets-dir",
+    root,
+    "--version",
+    version,
+    "--windows-installer-sha256",
+    windowsInstallerSha256,
+    ...extra,
+  ]);
+}
+
 function writeManifest(
   root: string,
   name: string,
@@ -76,7 +91,7 @@ describe("Scient release asset verification", () => {
   it("accepts one complete, manifest-attested cross-platform release set", () => {
     const root = createValidFixture();
     try {
-      const result = verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]);
+      const result = verify(root);
       assert.equal(result.version, "0.6.0");
       assert(result.assets.includes("Scient-0.6.0-arm64.dmg"));
       assert(result.assets.includes("Scient-0.6.0-x64.exe"));
@@ -89,12 +104,11 @@ describe("Scient release asset verification", () => {
     const version = "0.6.23-beta.20261010.1";
     const root = createValidFixture(version, "beta");
     try {
-      const args = ["--assets-dir", root, "--version", version];
-      assert.throws(() => verifyScientReleaseAssets(args), "Stable releases require");
-      assert.equal(verifyScientReleaseAssets([...args, "--channel", "beta"]).version, version);
+      assert.throws(() => verify(root, version), "Stable releases require");
+      assert.equal(verify(root, version, "--channel", "beta").version, version);
       NodeFS.copyFileSync(NodePath.join(root, "beta.yml"), NodePath.join(root, "latest.yml"));
       assert.throws(
-        () => verifyScientReleaseAssets([...args, "--channel", "beta"]),
+        () => verify(root, version, "--channel", "beta"),
         "unexpected or unattested files",
       );
     } finally {
@@ -106,9 +120,31 @@ describe("Scient release asset verification", () => {
     const root = createValidFixture();
     try {
       NodeFS.writeFileSync(NodePath.join(root, "Scient-0.6.0-x64.exe"), "changed");
+      assert.throws(() => verify(root), "failed size or SHA-512 verification");
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a Windows installer other than the one the native verifier checked", () => {
+    const root = createValidFixture();
+    try {
+      const checked = NodeCrypto.createHash("sha256").update("an earlier build").digest("hex");
+      assert.throws(
+        () =>
+          verifyScientReleaseAssets([
+            "--assets-dir",
+            root,
+            "--version",
+            "0.6.0",
+            "--windows-installer-sha256",
+            checked,
+          ]),
+        "not the installer the native Windows verifier checked",
+      );
       assert.throws(
         () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]),
-        "failed size or SHA-512 verification",
+        "--windows-installer-sha256 is required",
       );
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
@@ -119,14 +155,8 @@ describe("Scient release asset verification", () => {
     const root = createValidFixture();
     try {
       NodeFS.rmSync(NodePath.join(root, "Scient-0.6.0-arm64.zip"));
-      assert.throws(
-        () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]),
-        "Missing macOS update payload",
-      );
-      assert.throws(
-        () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "00.6.0"]),
-        "canonical x.y.z",
-      );
+      assert.throws(() => verify(root), "Missing macOS update payload");
+      assert.throws(() => verify(root, "00.6.0"), "canonical x.y.z");
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }
@@ -136,16 +166,10 @@ describe("Scient release asset verification", () => {
     const root = createValidFixture();
     try {
       NodeFS.writeFileSync(NodePath.join(root, "stray.blockmap"), "stray");
-      assert.throws(
-        () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]),
-        "unattested blockmap",
-      );
+      assert.throws(() => verify(root), "unattested blockmap");
       NodeFS.rmSync(NodePath.join(root, "stray.blockmap"));
       NodeFS.writeFileSync(NodePath.join(root, "builder-debug.yml"), "internal");
-      assert.throws(
-        () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]),
-        "unexpected or unattested files",
-      );
+      assert.throws(() => verify(root), "unexpected or unattested files");
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }

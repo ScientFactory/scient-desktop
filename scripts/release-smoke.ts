@@ -298,7 +298,14 @@ function verifyCompleteReleaseFixture(root: string): void {
   }
   NodeFS.writeFileSync(NodePath.join(assets, `scient-server-${version}.tgz`), "server");
 
-  const result = verifyScientReleaseAssets(["--assets-dir", assets, "--version", version]);
+  const result = verifyScientReleaseAssets([
+    "--assets-dir",
+    assets,
+    "--version",
+    version,
+    "--windows-installer-sha256",
+    NodeCrypto.createHash("sha256").update("windows").digest("hex"),
+  ]);
   if (result.assets.length !== 15) {
     throw new Error(`Expected 15 verified release assets, received ${result.assets.length}.`);
   }
