@@ -460,7 +460,8 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "preview_snapshot");
   });
 
-  it("keeps a deferred tool's hidden alias active after tool_search loads its public tool", async () => {
+  // SCIENT-FORK:START — Pi receives one canonical declaration for each Scient tool.
+  it("keeps a searched tool active under its canonical name on the next prompt", async () => {
     const bridge = await loadMcpBridge({
       modern: true,
       toolSearchAvailable: true,
@@ -468,21 +469,13 @@ describe("Pi MCP tool exposure", () => {
     });
     const event = { systemPrompt: "" };
     await bridge.handlers.get("session_start")!(event, discoveryContext);
-    assert.include(bridge.getActiveTools(), "mcp__t3_code__preview_snapshot");
-
-    // tool_search loads the deferred public tool during a run.
-    bridge.restoreActiveTools([...bridge.getActiveTools(), "mcp__t3-code__preview_snapshot"]);
+    bridge.restoreActiveTools([...bridge.getActiveTools(), "preview_snapshot"]);
     await bridge.handlers.get("before_agent_start")!(event, discoveryContext);
-
-    // Pi hides recorded declarations with the current hidden set, so dropping the alias
-    // re-declares it in the prompt head and the next request misses the prompt cache.
-    assert.include(
-      bridge.getActiveTools(),
-      "mcp__t3_code__preview_snapshot",
-      "the next run drops the alias recorded in the transcript",
-    );
-    assert.notInclude(bridge.declaredTools(), "mcp__t3_code__preview_snapshot");
+    assert.equal(bridge.getActiveTools().filter((name) => name === "preview_snapshot").length, 1);
+    assert.notInclude(bridge.getActiveTools(), "mcp__t3_code__preview_snapshot");
+    assert.notInclude(bridge.declaredTools(), "mcp__t3-code__preview_snapshot");
   });
+  // SCIENT-FORK:END
 
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",

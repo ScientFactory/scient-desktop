@@ -489,11 +489,12 @@ describe("source file scroll", () => {
   });
 
   it.each([
-    ["an editable file", "a.ts"],
-    ["a read-only host file", "/outside/a.ts"],
+    ["an editable file", "a.ts", false],
+    ["a read-only host file", "/outside/a.ts", false],
+    ["a truncated workspace file", "run.py", true],
   ])(
     "keeps each thread's offset in %s when the panel stays mounted across threads",
-    async (_, path) => {
+    async (_, path, truncated) => {
       using _settings = setup();
       const style = document.createElement("style");
       style.textContent = appCss;
@@ -501,7 +502,7 @@ describe("source file scroll", () => {
       using _style = { [Symbol.dispose]: () => style.remove() };
       await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
       const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
-      state.file = { relativePath: path, contents, byteLength: contents.length, truncated: false };
+      state.file = { relativePath: path, contents, byteLength: contents.length, truncated };
       const first = { environmentId, threadId: ThreadId.make(`mounted-first:${path}`) };
       const second = { environmentId, threadId: ThreadId.make(`mounted-second:${path}`) };
       const panel = (thread: typeof threadRef) => (

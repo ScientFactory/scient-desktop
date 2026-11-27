@@ -54,6 +54,8 @@ import {
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
+  discoverScientMcpOperationIds,
+  hostToolVisibility,
   makeScientToolListLayer,
   ScientMcpProtocol,
   ScientMcpProtocol2026,
@@ -2078,6 +2080,18 @@ export const hostMcpToolGrants = {
   issues: issueTools,
 };
 const layerScientToolList = makeScientToolListLayer(hostMcpTools, hostMcpToolGrants);
+const scientHostToolVisibility = hostToolVisibility(hostMcpTools, hostMcpToolGrants);
+const discoverableMcpTools = Effect.fn("McpHttpServer.discoverableMcpTools")(function* (
+  scope: McpInvocationContext.McpInvocationScope,
+) {
+  const ids = yield* discoverScientMcpOperationIds(scope);
+  return (name: string) => {
+    const operation = scientOperationCatalog.forTool(name);
+    return operation === undefined
+      ? scientHostToolVisibility.listed(name, scope.capabilities)
+      : ids.has(operation.id);
+  };
+});
 // SCIENT-FORK:END
 
 /**
@@ -2194,7 +2208,8 @@ const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    return McpToolExposure.make(
+    const resolver = yield* WorkspaceBindingResolver;
+    const exposure = McpToolExposure.make(
       () =>
         server.tools.map(({ tool, annotations }) => ({
           name: tool.name,
@@ -2204,6 +2219,19 @@ const layerToolExposure = Layer.effect(
         })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
+    // SCIENT-FORK:START — proxy search returns schemas, so use the same grants as MCP tools/list.
+    return {
+      ...exposure,
+      search: Effect.fnUntraced(function* (providerSessionId, query, options) {
+        const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+        if (Option.isNone(scope)) return [];
+        const allows = yield* discoverableMcpTools(scope.value).pipe(
+          Effect.provideService(WorkspaceBindingResolver, resolver),
+        );
+        return yield* exposure.search(providerSessionId, query, { ...options, allows });
+      }),
+    };
+    // SCIENT-FORK:END
   }),
 );
 
@@ -2216,6 +2244,7 @@ const isMcpInternalError = Schema.is(McpSchema.InternalError);
  */
 const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* () {
   const server = yield* McpServer.McpServer;
+  const resolver = yield* WorkspaceBindingResolver;
   const annotations = Context.make(
     McpSchema.EnabledWhen,
     McpInvocationContext.hiddenFromOutsideClients,
@@ -2240,7 +2269,7 @@ const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* (
         if (invocation?.thread === undefined) {
           return Effect.fail(
             new McpSchema.InvalidParams({
-              message: "tool_call requires an active T3 thread session.",
+              message: "tool_call requires an active Scient thread session.",
             }),
           );
         }
@@ -2281,50 +2310,55 @@ const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* (
             },
             getClient: Effect.die("Stateless MCP requests do not expose a client RPC handle."),
           });
-        return server
-          .callTool({
-            name,
-            arguments: (rawArgs as Record<string, unknown> | undefined) ?? {},
-          })
-          .pipe(
-            Effect.provideService(McpSchema.McpServerClient, client),
-            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-            Effect.catch(
-              (
-                error,
-              ): Effect.Effect<
-                McpSchema.CallToolResult,
-                McpSchema.InternalError | McpSchema.InvalidParams
-              > => {
-                if (isMcpInvalidParams(error)) {
-                  const entry = server.tools.find(
-                    (candidate) =>
-                      candidate.tool.name === name &&
-                      isToolRegistrationEnabled(candidate.annotations, client.initializePayload),
-                  );
-                  if (entry !== undefined) {
-                    return Effect.succeed(
-                      new McpSchema.CallToolResult({
-                        isError: true,
-                        content: [
-                          {
-                            type: "text",
-                            text: `${error.message}\nExpected inputSchema: ${encodeJsonText(entry.tool.inputSchema)}`,
-                          },
-                        ],
-                      }),
-                    );
-                  }
-                  return Effect.fail(error);
-                }
-                return Effect.fail(
-                  isMcpInternalError(error)
-                    ? error
-                    : new McpSchema.InternalError({ message: error.message }),
+        // SCIENT-FORK: the proxy can return argument schemas, which follow discovery grants.
+        return discoverableMcpTools(invocation).pipe(
+          Effect.provideService(WorkspaceBindingResolver, resolver),
+          Effect.flatMap((allows) =>
+            allows(name)
+              ? server.callTool({
+                  name,
+                  arguments: (rawArgs as Record<string, unknown> | undefined) ?? {},
+                })
+              : Effect.fail(new McpSchema.InvalidParams({ message: `Tool '${name}' not found` })),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.catch(
+            (
+              error,
+            ): Effect.Effect<
+              McpSchema.CallToolResult,
+              McpSchema.InternalError | McpSchema.InvalidParams
+            > => {
+              if (isMcpInvalidParams(error) && error.message !== `Tool '${name}' not found`) {
+                const entry = server.tools.find(
+                  (candidate) =>
+                    candidate.tool.name === name &&
+                    isToolRegistrationEnabled(candidate.annotations, client.initializePayload),
                 );
-              },
-            ),
-          );
+                if (entry !== undefined) {
+                  return Effect.succeed(
+                    new McpSchema.CallToolResult({
+                      isError: true,
+                      content: [
+                        {
+                          type: "text",
+                          text: `${error.message}\nExpected inputSchema: ${encodeJsonText(entry.tool.inputSchema)}`,
+                        },
+                      ],
+                    }),
+                  );
+                }
+                return Effect.fail(error);
+              }
+              return Effect.fail(
+                isMcpInternalError(error) || isMcpInvalidParams(error)
+                  ? error
+                  : new McpSchema.InternalError({ message: error.message }),
+              );
+            },
+          ),
+        );
       }),
   });
 });

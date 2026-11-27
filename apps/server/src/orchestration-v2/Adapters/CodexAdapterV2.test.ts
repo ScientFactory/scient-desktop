@@ -599,15 +599,10 @@ describe("CodexAdapterV2 process spawning", () => {
       yield* open({});
       yield* open({ T3CODE_CODEX_LAUNCH_ARGS: " --enable env-feature " });
 
+      // An unidentifiable strict-config build may reject the unload flag. Keep the user arguments.
       assert.deepEqual(spawnedArgs, [
-        [
-          "app-server",
-          "-c",
-          "thread_unload_delay_secs=0",
-          "--strict-config",
-          "-c",
-          "model_reasoning_summary=detailed",
-        ],
+        ["--version"],
+        ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed"],
         ["app-server", "-c", "thread_unload_delay_secs=0", "--enable", "env-feature"],
       ]);
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),

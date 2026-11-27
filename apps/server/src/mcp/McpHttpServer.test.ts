@@ -2741,6 +2741,10 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         ["deferringToken", scopeFor("deferringToken")],
         ["proxyToken", scopeFor("proxyToken")],
         ["otherToken", scopeFor("otherToken")],
+        [
+          "previewOnly",
+          { ...scopeFor("previewOnly"), capabilities: new Set(["preview"] as const) },
+        ],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {
@@ -3003,6 +3007,16 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           inputSchema: expect.objectContaining({ type: "object" }),
         },
       ]);
+
+      // SCIENT-FORK: deferred schemas and proxy calls honor the same capability boundary.
+      const previewOnly = yield* session("previewOnly", "deferred-proxy");
+      expect(
+        (yield* previewOnly.call("tool_search", { query: "device_screenshot" })).result
+          ?.structuredContent,
+      ).toEqual({ tools: [] });
+      expect(
+        (yield* previewOnly.call("tool_call", { name: "device_screenshot", arguments: {} })).error,
+      ).toMatchObject({ message: "Tool 'device_screenshot' not found" });
 
       // tool_call invokes optional tools, preserves image content, blocks disabled/meta tools, and returns schema on bad args.
       expect(

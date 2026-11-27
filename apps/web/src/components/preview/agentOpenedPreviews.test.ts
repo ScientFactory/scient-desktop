@@ -244,6 +244,7 @@ describe("floatBrowserSurface", () => {
 
 describe("floatPanelSurfaceOnClose", () => {
   const browser = browserMiniPlayerSource("tab_panel");
+  const floatingBrowser = { ...browser, id: "browser:tab_panel" };
   const previewState = {
     ...previewStateTesting.EMPTY_THREAD_PREVIEW_STATE,
     sessions: {
@@ -259,7 +260,13 @@ describe("floatPanelSurfaceOnClose", () => {
   } satisfies ThreadPreviewState;
 
   it.each([
-    { name: "floats a browser", source: browser, autoShow: true, before: null, after: browser },
+    {
+      name: "floats a browser",
+      source: browser,
+      autoShow: true,
+      before: null,
+      after: floatingBrowser,
+    },
     {
       name: "floats no browser with Auto-show off",
       source: browser,
@@ -272,7 +279,7 @@ describe("floatPanelSurfaceOnClose", () => {
       source: browser,
       autoShow: false,
       before: browser,
-      after: browser,
+      after: floatingBrowser,
     },
   ])("$name", ({ source, autoShow, before, after }) => {
     setup();

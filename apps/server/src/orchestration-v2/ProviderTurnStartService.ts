@@ -3025,9 +3025,11 @@ export const layer: Layer.Layer<
           const { nativeMetadata: _lostMetadata, ...running } = runningProviderThread;
           const recoveredThread: OrchestrationV2ProviderThread = {
             ...running,
-            ...(replacement.nativeMetadata === undefined
-              ? {}
-              : { nativeMetadata: replacement.nativeMetadata }),
+            // SCIENT-FORK: the replacement still belongs to this run's workspace.
+            nativeMetadata: {
+              ...replacement.nativeMetadata,
+              cwd: resolvedRuntimePolicy.cwd ?? session.providerSession.cwd,
+            },
             nativeThreadRef: replacement.nativeThreadRef,
             nativeConversationHeadRef: replacement.nativeConversationHeadRef,
             contextUsage: freshContext.handoffUsage,

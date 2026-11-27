@@ -797,7 +797,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           yield* writeTextFile(cwd, "inside.md", "inside\n");
           yield* fileSystem.symlink(outsideDir, path.join(cwd, "_files"));
 
-          const result = yield* workspaceFileSystem.readFile({
+          const result = yield* workspaceFileSystem.viewFile({
             cwd,
             relativePath: "_files/specs/design.md",
           });
@@ -807,15 +807,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             readOnly: true,
           });
 
-          const inside = yield* workspaceFileSystem.readFile({ cwd, relativePath: "inside.md" });
+          const inside = yield* workspaceFileSystem.viewFile({ cwd, relativePath: "inside.md" });
           expect(inside.readOnly).toBeUndefined();
 
-          const missing = yield* workspaceFileSystem.readFile({
+          const missing = yield* workspaceFileSystem.viewFile({
             cwd,
             relativePath: "_files/missing/t3.json",
             allowMissing: true,
           });
           expect(missing.exists).toBe(false);
+          const contained = yield* workspaceFileSystem
+            .readFile({
+              cwd,
+              relativePath: "_files/specs/design.md",
+            })
+            .pipe(Effect.flip);
+          expect(contained._tag).toBe("WorkspaceFilePathEscapeError");
         }),
     );
 

@@ -1186,11 +1186,20 @@ describe("orchestration v2 provider switching", () => {
             }
             return;
           }
+          // A session without history injection leaves pending context for the next prompt.
+          const emptyCompaction = scenario === "compact-fallback" || scenario === "compact-legacy";
           assert.equal(
             projection.runs.at(-1)?.status,
-            "completed",
+            emptyCompaction ? "failed" : "completed",
             JSON.stringify(projection.turnItems.filter((item) => item.type === "error")),
           );
+          if (emptyCompaction) {
+            assert.isTrue(
+              projection.turnItems.some(
+                (item) => item.type === "compaction" && item.title === "Nothing to compact yet",
+              ),
+            );
+          }
           if (exhaustedTarget) {
             assert.equal(yield* Ref.get(generation), 2);
             const turns = (yield* Ref.get(capturedTurns)).filter(
@@ -4618,13 +4627,37 @@ describe("orchestration v2 provider switching", () => {
             (event) =>
               event.event.type === "run.updated" &&
               event.event.runId === queued.runs[1]?.id &&
-              event.event.payload.status === (released ? "completed" : "failed"),
+              (released
+                ? event.event.payload.status === "completed"
+                : event.event.payload.status === "queued" &&
+                  event.event.payload.queueHeld === true),
           ),
           Stream.runHead,
         );
         yield* worker.drain();
+        const delivered = yield* orchestrator.getThreadProjection(queuedThreadId);
+        const queuedRun = delivered.runs[1]!;
+        // SCIENT-FORK: retain the undelivered user prompt in the held queue after a failed release.
+        if (!released) {
+          assert.isTrue(queuedRun.queueHeld);
+          assert.equal(
+            delivered.messages.find((entry) => entry.id === queuedRun.userMessageId)?.text,
+            "Alternate account turn",
+          );
+          assert.isTrue(
+            delivered.turnItems.some(
+              (item) =>
+                item.type === "error" &&
+                item.failure.message.includes(
+                  "The previous provider did not release this conversation",
+                ),
+            ),
+          );
+        }
         const effects = yield* outbox.listByCommandId(
-          CommandId.make(`command:system:start-queued:${queued.runs[1]!.id}`),
+          CommandId.make(
+            `command:system:start-queued:${queuedRun.id}:${queuedRun.activeAttemptId}`,
+          ),
         );
         const detach = effects.find((effect) => effect.request.type === "provider-session.detach");
         assert.deepEqual(
@@ -4633,7 +4666,6 @@ describe("orchestration v2 provider switching", () => {
             : undefined,
           sourceNativeRef,
         );
-        const delivered = yield* orchestrator.getThreadProjection(queuedThreadId);
         const targetNativeRef = delivered.providerThreads.find(
           (providerThread) => providerThread.id === delivered.runs[1]?.providerThreadId,
         )?.nativeThreadRef;
@@ -4662,7 +4694,7 @@ describe("orchestration v2 provider switching", () => {
         projection.runs.map((run) => [run.providerInstanceId, run.status]),
         [
           [CODEX_MODEL_SELECTION.instanceId, "completed"],
-          [alternateSelection.instanceId, released ? "completed" : "failed"],
+          [alternateSelection.instanceId, released ? "completed" : "queued"],
         ],
       );
       assert.lengthOf(projection.contextHandoffs, 0);

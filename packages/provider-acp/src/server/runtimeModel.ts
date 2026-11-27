@@ -1169,7 +1169,7 @@ function unwrapT3ToolCallProxy(
   identity: AcpMcpToolCallIdentity,
   rawInput: Record<string, unknown> | undefined,
 ): AcpMcpToolCallIdentity {
-  if (!/^t3[-_ ]?code$/i.test(identity.server) || identity.tool !== T3_MCP_TOOL_CALL_PROXY) {
+  if (!isT3McpServer(identity.server) || identity.tool !== T3_MCP_TOOL_CALL_PROXY) {
     return identity;
   }
   // Native MCP wrappers pass `{ name, arguments }` directly; `is_mcp_tool_call` nests them under `arguments`.

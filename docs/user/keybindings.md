@@ -301,11 +301,9 @@ editing a queued message or answering a question.
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
 
-`rightPanel.close` closes the active right panel tab and defaults to `mod+w`. Press it again to close
-the next tab. With the terminal focused, `mod+w` closes the terminal instead, and with nothing left
-to close it closes the desktop window as before. Browsers reserve `mod+w` for closing their own tab
-and never pass it to the page, so in a browser rebind this command (and `terminal.close`) to a
-shortcut the browser leaves alone, such as `alt+w`.
+`rightPanel.close` closes the selected range of right-panel tabs, or the active tab if none are
+selected. It defaults to `mod+w` in the desktop app. With a terminal focused, the shortcut closes
+the terminal instead.
 
 `rightPanel.new` opens a new tab in the side panel and defaults to `mod+t`. A new tab shows the
 **Tools** page, where you choose what the tab becomes. With the panel closed, the shortcut opens it
@@ -345,10 +343,6 @@ query searches the entire thread, including older messages. Thread search requir
 update an older server to enable it. Select **Retry** if a search fails. It defaults to
 `mod+f` outside terminals and previews. Press **Enter** or **Shift+Enter** to move between matches,
 and **Escape** to close find.
-
-- `mod+w` (desktop) closes the focused terminal, the selected range of right-panel tabs, or the active tab if there is no range. On web, browsers intercept `mod+w`. Rebind `rightPanel.close` and `terminal.close` to a shortcut such as `alt+w`.
-- `mod+shift+t`: Reopens the last closed panel tab (files, diffs, PRs, browsers, devices) in order. Browser tabs reopen as fresh sessions. Rebind on web if your browser intercepts it.
-- Keep `!terminalFocus` when remapping shortcuts that shouldn't intercept terminal input. `sidebar.toggle` ignores `Ctrl+B` inside terminals so `tmux` keeps its prefix (`Cmd+B` still works on macOS).
 
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
@@ -395,8 +389,8 @@ Background submission from a new thread is the exception. `mod+enter` starts tha
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
 
-In the desktop app, `mod+w` closes the focused terminal or the active right-panel
-tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`
+In the desktop app, `mod+w` closes the focused terminal, a selected range of right-panel
+tabs, or the active tab. With nothing open to close, the window stays open. In a browser, `mod+w`
 closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
 shortcut such as `alt+w`.
 

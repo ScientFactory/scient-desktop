@@ -150,7 +150,6 @@ const ModelPickerSidebarItem = memo(function ModelPickerSidebarItem(props: {
         )
       }
       disabled={isDisabled}
-      focusableWhenDisabled={!isDisabled}
       aria-pressed={props.selected}
       type="button"
       aria-label={isUnavailable || isContextDisabled ? tooltip : props.entry.displayName}

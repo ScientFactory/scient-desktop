@@ -2409,13 +2409,13 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   // A plain folder holding tracked repositories has turn diffs without being a Git repository.
   const diffAvailable =
-    // SCIENT-FORK:START — diffs need a project and a server thread.
+    // SCIENT-FORK:START — branch changes use the draft's checkout; turn diffs need a server thread.
     hasProjectWorkspace &&
-    isServerThread &&
-    // SCIENT-FORK:END
-    (isGitRepo ||
-      (activeProject?.trackedFolders?.length ?? 0) > 0 ||
-      turnDiffSummaries.some((summary) => summary.repositories !== undefined));
+    ((gitStatusCwd !== null && isGitRepo) ||
+      (isServerThread &&
+        ((activeProject?.trackedFolders?.length ?? 0) > 0 ||
+          turnDiffSummaries.some((summary) => summary.repositories !== undefined))));
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — fork baseline and new-worktree availability.
   const {
     hasForkBaseline,

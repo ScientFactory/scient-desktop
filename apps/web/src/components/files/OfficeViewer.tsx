@@ -79,6 +79,7 @@ function ExtendedOfficeViewer(props: {
   readonly sizeBytes?: number;
 }) {
   const gt = useGT();
+  const positionKey = useContext(PreviewPositionKey);
   const messages = useMessages();
   const [epub, setEpub] = useState<Extract<OfficeWorkerResult, { type: "epub" }> | null>(null);
   const [epubPage, setEpubPage] = useState<Extract<
@@ -219,7 +220,7 @@ function ExtendedOfficeViewer(props: {
   if (notebook)
     return (
       <Suspense fallback={<FileSurfaceLoading />}>
-        <NotebookPreview notebook={notebook} sizeBytes={fileSize} />
+        <NotebookPreview key={positionKey} notebook={notebook} sizeBytes={fileSize} />
       </Suspense>
     );
   if (epub)

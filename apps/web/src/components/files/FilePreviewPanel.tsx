@@ -3407,7 +3407,7 @@ function FilePreviewPanelContent({
             ) : file.data.truncated ? (
               // SCIENT-FORK:START
               <StaticTextFileSurface
-                key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                key={`${threadRef.threadId}:${relativePath}:${resolvedTheme}:${file.data.revision}`}
                 threadRef={threadRef}
                 onCite={onCiteFile}
                 citationReveal={citationRevealActive ? fileCitation : undefined}

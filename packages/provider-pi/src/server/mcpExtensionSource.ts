@@ -788,7 +788,6 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // SCIENT-FORK:START: Scient Extensions: connector tools follow the same exposure.
     if (exposureChanged) registerConnectorTools();
     // SCIENT-FORK:END
-    const active = pi.getActiveTools();
     // Completion gateways can silently drop calls to undeclared tools named
     // in history or guidance. Eagerly load bridge schemas, including after tree
     // restores, while retaining deferred exposure for Pi's allowlist rules.
@@ -803,22 +802,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const current = pi.getActiveTools();
     const missing = required.filter((name) => !current.includes(name));
     if (missing.length > 0) pi.setActiveTools([...current, ...missing]);
-    // An alias is callable only while active, and Pi records every active
-    // declaration in the transcript, hidden or not. Calls to the alias of an
-    // active public tool are renamed at message_end instead. Once tool_search
-    // loads a deferred tool, its alias is already in the transcript: dropping it
-    // re-declares it in the prompt head, so the next request misses the cache.
-    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
-    const loaded = pi.getActiveTools();
-    const aliases = catalog
-      .filter((tool) => registered.has(ALIAS_PREFIX + tool.name) &&
-        followsPublicTool(tool.name, registered, loaded) &&
-        (!loaded.includes(modelToolName(tool.name)) ||
-          (!eagerSchemas && isDeferred(tool.name) && loaded.includes(ALIAS_PREFIX + tool.name))))
-      .map((tool) => ALIAS_PREFIX + tool.name);
-    const kept = loaded.filter((name) => !name.startsWith(ALIAS_PREFIX) || aliases.includes(name));
-    const added = aliases.filter((name) => !loaded.includes(name));
-    if (added.length > 0 || kept.length !== loaded.length) pi.setActiveTools([...kept, ...added]);
+
   };
 
   // Tree navigation restores its saved loadout after session_start.
