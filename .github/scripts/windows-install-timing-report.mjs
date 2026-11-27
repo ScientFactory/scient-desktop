@@ -1,9 +1,10 @@
 // Compares a Windows install timing (windows-install-timing.mjs) with a baseline. Advisory:
 // regressions print warnings and a summary, never a failing exit code. Usage: --measurement
-// <file> --context <json> --out <file> [--baseline <file> [--committed-baseline]] [--summary <file>]
+// <file> --context <file> --out <file> [--baseline <file> [--committed-baseline]] [--summary <file>]
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
+import { SCHEMA_VERSION } from "./windows-install-timing-baseline.mjs";
 
 /** A metric regresses only past both bounds: runner noise moves short launches by seconds. */
 export const RELATIVE_TOLERANCE = 0.25;
@@ -41,7 +42,9 @@ const signed = (ms) => `${ms > 0 ? "+" : ""}${(ms / 1000).toFixed(1)} s`;
 function describeBaseline(baseline) {
   if (!baseline) return "none found";
   const { context = {} } = baseline;
-  const name = context.version ? `\`${context.version}\`` : "an earlier installer";
+  const name = context.version
+    ? `\`${context.version}\`${context.channel ? ` (${context.channel})` : ""}`
+    : "an earlier installer";
   const where = context.runUrl ? ` from [run ${context.runId}](${context.runUrl})` : "";
   return `${name}${where}${context.committed ? " (committed baseline)" : ""}`;
 }
@@ -62,7 +65,7 @@ export function renderSummary(result) {
     "## Windows install and launch timing",
     "",
     `- Installer: \`${measurement.installer.name}\` (${(measurement.installer.bytes / 1e6).toFixed(0)} MB), installs \`${measurement.installedVersion ?? "unknown"}\`; SHA-256 \`${measurement.installer.sha256.slice(0, 16)}…\``,
-    `- Source: ${context.kind}${context.version ? ` \`${context.version}\`` : ""}${context.channel ? ` (${context.channel}${context.rehearsal ? " rehearsal" : ""})` : ""}`,
+    `- Source: ${context.kind}${context.version ? ` \`${context.version}\`` : ""}${context.channel ? ` (${context.channel}${context.rehearsal ? " rehearsal" : ""})` : ""}, ${context.installer}`,
     `- Runner: ${measurement.runner.image ?? "unknown image"}, ${measurement.runner.logicalCpus} logical CPUs, Defender real-time scanning ${measurement.runner.defenderRealtime === null ? "unknown" : measurement.runner.defenderRealtime ? "on" : "off"}`,
     `- Ready means: ${measurement.readiness}`,
     `- Baseline: ${describeBaseline(baseline)}`,
@@ -96,7 +99,7 @@ export function renderSummary(result) {
 export function report({ measurement, baseline, committedBaseline = false, context }) {
   const comparison = compare(measurement.median, baseline?.measurement?.median ?? null);
   return {
-    schemaVersion: 1,
+    schemaVersion: SCHEMA_VERSION,
     context,
     measurement,
     baseline: baseline
@@ -122,7 +125,7 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   });
   if (!values.measurement || !values.context || !values.out) {
     throw new Error(
-      "usage: --measurement <file> --context <json> --out <file> [--baseline <file>] [--summary <file>]",
+      "usage: --measurement <file> --context <file> --out <file> [--baseline <file>] [--summary <file>]",
     );
   }
   const read = (file) => JSON.parse(NodeFS.readFileSync(file, "utf8"));
@@ -132,7 +135,7 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
     measurement: read(values.measurement),
     baseline,
     committedBaseline: values["committed-baseline"] === true,
-    context: JSON.parse(values.context),
+    context: read(values.context),
   });
   NodeFS.writeFileSync(values.out, `${JSON.stringify(result, null, 2)}\n`);
   const summary = renderSummary(result);

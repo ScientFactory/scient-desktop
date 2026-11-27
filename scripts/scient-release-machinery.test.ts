@@ -126,8 +126,7 @@ describe("Scient release machinery", () => {
         // Its external actions are inspected when this loop reads that workflow directly.
         if (
           action === "./.github/workflows/scient-compute-python-kernel.yml" ||
-          action === "./.github/workflows/desktop-update-qualification.yml" ||
-          action === "./.github/workflows/windows-install-timing.yml"
+          action === "./.github/workflows/desktop-update-qualification.yml"
         )
           continue;
         // This repository-local action is pinned by the release checkout itself.

@@ -1063,23 +1063,41 @@ jobs:
             throw "An unsigned Windows build must not pin publisher '$($pinned -join "', '")'"
           }
 
-  # The exact installer on a clean Windows runner: install, first and second launch times, with
-  # regressions against the previous release flagged in its summary. Advisory: assembly and
-  # publication do not wait for it, and a failed stage never fails this run.
-  windows_install_timing:
-    name: Time the real Windows installer
+  # Times the exact Windows installer in a run of its own (windows-install-timing.yml), started
+  # once Package Windows x64 has uploaded it. Advisory: this run, its concurrency group and its
+  # conclusion never wait for the measurement, and a failed dispatch only warns.
+  start_windows_install_timing:
+    name: Start Windows install timing
     needs: preflight
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
-    uses: ./.github/workflows/windows-install-timing.yml
-    with:
-      wait_for_job: Package Windows x64
-      artifact: desktop-win-x64
-      kind: release
-      version: ${{ needs.preflight.outputs.version }}
-      channel: ${{ needs.preflight.outputs.channel }}
-      source_sha: ${{ needs.preflight.outputs.source_sha }}
-      rehearsal: ${{ needs.preflight.outputs.rehearsal == 'true' }}
-      advisory: true
+    runs-on: ubuntu-24.04
+    # Like verify_windows_desktop, outlasts a queued Windows package; the dispatch takes seconds.
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: .github
+      - name: Wait for the Windows package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Package Windows x64" desktop-win-x64
+      - name: Dispatch the timing run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          if out="$(gh workflow run windows-install-timing.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f run_id="$GITHUB_RUN_ID" -f artifact=desktop-win-x64 -f version="$VERSION" 2>&1)"; then
+            echo "$out"
+            echo "Windows install timing started for \`$VERSION\`: $out" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=Windows install timing::Could not start the timing run: $out"
+          fi
 
   # Needs every target's resource monitor and SyncTeX runtime, not their installers.
   build_server_asset:

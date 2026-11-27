@@ -171,43 +171,76 @@ Keep differential updates enabled and qualify the normal update path.
 ## Windows install and launch timing
 
 Every release run also installs its exact Windows installer on a clean
-`windows-2025` runner and times it
-([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml),
-job **Time the real Windows installer**). It starts once **Package Windows x64**
-succeeds and takes the installer from that job's `desktop-win-x64` artifact. The
-other release checks verify the unpacked app; this one runs the real installer.
+`windows-2025` runner and times it, in a separate **Windows install timing** run
+([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml)).
+The release's job **Start Windows install timing** waits for **Package Windows x64**
+to succeed, then dispatches that run on the release's branch with the release's
+run ID, its `desktop-win-x64` artifact and its version; the job summary links the
+new run. The other release checks verify the unpacked app; this one runs the real
+installer.
 
 Each of three samples installs silently into a new folder under the system drive,
 launches the installed app on a new profile, quits it by closing its window,
-launches it again on that profile, and uninstalls it. The job reports the median
+launches it again on that profile, and uninstalls it. The run reports the median
 install time, the first launch and the second launch. A launch is ready when the
-renderer has mounted the app shell and its main view
-(`[data-slot="sidebar-wrapper"] main[data-slot="sidebar-inset"]`). The root route
-renders the shell only after the bundled server has answered its authentication
-gate, and the home view (onboarding, on a new profile) mounts its main element only
-once the workspace snapshot and server configuration have arrived. The harness
-reads the page through the DevTools port it opens for the launch, and records when
-the first window, the loaded page and the shell appeared, to show where the time went.
-Every stage has a bound: 10 minutes to install, 3 minutes to ready, 30 seconds to
-quit (after which the app's own processes are stopped and the sample records a
-forced quit) and 5 minutes to uninstall.
+view a new profile expects, onboarding's Getting started card
+(`[data-scient-getting-started-card]`), is visible inside the app shell's main view,
+and the app's main window is shown. The chat loading view and an empty modal
+backdrop mount the same main view without the card, so neither counts. The root
+route renders the shell only after the bundled server has answered its
+authentication gate, and onboarding renders only once the workspace snapshot and
+server configuration have arrived. The harness reads the page through the DevTools
+port it opens for the launch. The main window is created hidden and shown after
+its first paint, and until then the page reports itself visible, so the harness
+also opens the main process's inspector, as Node's `inspect -p` does, and asks
+Electron whether that window is shown. It records when the first window, the loaded
+page, the shown window, the shell and the card appeared, to show where the time went.
+
+Every stage has a bound: 5 minutes to install, 2 minutes to ready, 30 seconds to
+quit (then the app's own processes are force-stopped within 15 seconds and the
+sample records a forced quit) and 4 minutes to uninstall: 2 for the uninstaller,
+then 2 for it to remove the install folder in the background. No install or launch
+starts after 12 minutes of measuring, about four times a normal run; the samples
+left are recorded as not run. Each sample's cleanup always runs, even after a failure:
+it force-stops the app, verifies that none of its processes are left, uninstalls
+and removes the folder. A launch whose processes survive a forced stop ends the
+sample, since a relaunch beside them would time nothing real. The measurement step
+is bounded at 18 minutes and the whole run at 35; a normal run takes about 4.
+`measurement.json` is rewritten after every sample, so even a stopped run keeps
+what it measured.
 
 The job summary shows each median, every sample, the baseline and the change. The
 `windows-install-timing` artifact holds `windows-install-timing.json`, a
-screenshot at each launch's readiness and the first sample's app logs, and is
-kept 90 days. The baseline is the newest earlier non-rehearsal release run whose
-artifact has a different version and no failed stage; when none is kept, it is the
-committed [`windows-install-timing-baseline.json`](../../.github/windows-install-timing-baseline.json).
-A stage regresses when its median is more than 25% slower and also more than its
-floor slower: 5 seconds to install, 1.5 seconds for the first launch and 1 second
-for the second. The floors absorb runner noise; single launches on these runners
-vary by about 2 seconds.
+screenshot at each launch's readiness (or failure) and the app logs of the first
+sample and of any failed one, and is kept 90 days.
+
+The baseline is the newest kept timing record that passes every check:
+
+- It timed the `desktop-win-x64` artifact of a release run, whether that release
+  dispatched it or someone ran it by hand, with no failed stage and all three
+  medians.
+- That release run has completed successfully, started before the one being timed,
+  and built the same channel. The channel comes from the run's branch, which the
+  release preflight enforces: `release/stable` is Stable, `main` is Beta, and
+  `release-rehearsal/*` is a rehearsal, never a baseline.
+- A Beta compares with an earlier Beta; Stable, rehearsals and every other installer
+  compare with an earlier Stable. A record of the same version is skipped.
+
+The lookup reads every page of kept records and logs why it skipped each one. When
+none passes, or the lookup fails (it then warns), the baseline is the committed
+[`windows-install-timing-baseline.json`](../../.github/windows-install-timing-baseline.json),
+v0.6.34 measured by the same harness. A stage regresses when its median is more
+than 25% slower and also more than its floor slower: 5 seconds to install, 1.5
+seconds for the first launch and 1 second for the second. The floors absorb runner
+noise; single launches on these runners vary by about 2 seconds.
 
 The timing is advisory. A regression adds a warning and a marked row in the
 summary. A failed stage, such as an installer error or a launch that never became
-ready, fails the timing job but not the run. Assembly and publication do not wait
-for the job. Read its summary before approving a Stable candidate; whether a
-regression blocks it is the release owner's decision.
+ready, fails the timing run. The release run never waits for it: neither its
+concurrency group, its conclusion, assembly nor publication depends on the timing,
+and a failed dispatch only adds a warning. Read the timing summary before
+approving a Stable candidate; whether a regression blocks it is the release
+owner's decision.
 
 The numbers describe a 4-CPU GitHub runner, whose image turns Defender real-time
 scanning off (the summary records the state). Compare them between runs, not with
@@ -215,9 +248,8 @@ users' machines. To time any other installer, run **Windows install timing** by
 hand with the `run_id` and `artifact` of the run that built it (`desktop-win-x64`
 from a release run; from CI's Windows Packaging, `windows-packaging-slim-installer`
 for the release shape or `windows-packaging-installer` for the one with WSL) or
-with an HTTPS `installer_url`. Manual runs compare against the same baseline and
-never become one. To reset the committed baseline, replace it with the
-`windows-install-timing.json` of an accepted release run.
+with an HTTPS `installer_url`. To reset the committed baseline, replace it with the
+`windows-install-timing.json` of an accepted release's timing run.
 
 ## Production identity and data safety
 
@@ -350,7 +382,7 @@ tag or release already exists.
    deployment if any gate fails; fix the source and build a new candidate rather
    than approving or rebuilding the rejected bytes. Read the advisory
    [Windows install and launch timing](#windows-install-and-launch-timing)
-   summary of the same run.
+   summary of the timing run that this run started.
 6. Only after explicit acceptance, approve the pending `production` deployment
    in the same workflow run. Publication fails closed if macOS is unsigned or
    the repository release gate is disabled. Windows is also required to be
