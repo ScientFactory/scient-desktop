@@ -79,10 +79,7 @@ export function joinPath(base: string, next: string, separator: "/" | "\\"): str
     const cleanBase = base.replace(/[\\/]+$/, "");
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
   }
-  // SCIENT-FORK:START — preserve POSIX filename authority while joining links.
-  // POSIX backslashes are filename characters, not directory separators.
   const cleanBase = base.replace(/\/+$/, "");
-  // SCIENT-FORK:END
   return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 

@@ -121,7 +121,7 @@ const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 const isResponseContextRecord = Schema.is(ResponseContextRecord);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 9;
+export const COMPOSER_DRAFT_STORAGE_VERSION = 10;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -1863,9 +1863,11 @@ function normalizePersistedCheckoutPullRequest(value: unknown): DraftCheckoutPul
     : null;
 }
 
+// Saved drafts before v10 lack workspaceExplicit; only the migration infers it from a valid mode.
 function normalizePersistedDraftThreads(
   rawDraftThreadsByThreadId: unknown,
   rawProjectDraftThreadIdByProjectKey: unknown,
+  options: { readonly inferLegacyWorkspaceChoice: boolean },
 ): Pick<
   PersistedComposerDraftStoreState,
   "draftThreadsByThreadKey" | "logicalProjectDraftThreadKeyByLogicalProjectKey"
@@ -1975,7 +1977,11 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
-        ...(candidateDraftThread.workspaceExplicit === true ? { workspaceExplicit: true } : {}),
+        ...(candidateDraftThread.workspaceExplicit === true ||
+        (options.inferLegacyWorkspaceChoice &&
+          isLegacyWorkspaceChoice(candidateDraftThread, worktreePath))
+          ? { workspaceExplicit: true }
+          : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2340,8 +2346,11 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
 
 function migratePersistedComposerDraftStoreState(
   persistedState: unknown,
+  version: number,
 ): PersistedComposerDraftStoreState {
-  const normalized = normalizeCurrentPersistedComposerDraftStoreState(persistedState);
+  const normalized = normalizeCurrentPersistedComposerDraftStoreState(persistedState, {
+    inferLegacyWorkspaceChoice: version < 10,
+  });
   return {
     ...normalized,
     draftsByThreadKey: stripLegacyModelSeedsFromEmptyDraftSessions(
@@ -2496,8 +2505,23 @@ export function partializeComposerDraftStoreState(
   };
 }
 
+// Stored Local is pinned too: a saved draft cannot tell a picked Local from an inherited one.
+function isLegacyWorkspaceChoice(
+  candidate: Record<string, unknown>,
+  worktreePath: unknown,
+): boolean {
+  return (
+    candidate.workspaceExplicit === undefined &&
+    (candidate.envMode === "worktree" || candidate.envMode === "local") &&
+    (worktreePath === null || (typeof worktreePath === "string" && worktreePath.length > 0))
+  );
+}
+
 function normalizeCurrentPersistedComposerDraftStoreState(
   persistedState: unknown,
+  options: { readonly inferLegacyWorkspaceChoice: boolean } = {
+    inferLegacyWorkspaceChoice: false,
+  },
 ): PersistedComposerDraftStoreState {
   if (!persistedState || typeof persistedState !== "object") {
     return EMPTY_PERSISTED_DRAFT_STORE_STATE;
@@ -2511,6 +2535,7 @@ function normalizeCurrentPersistedComposerDraftStoreState(
         normalizedPersistedState.projectDraftThreadKeyByProjectKey ??
         normalizedPersistedState.projectDraftThreadIdByProjectKey ??
         normalizedPersistedState.projectDraftThreadIdByProjectId,
+      options,
     );
 
   let stickyModelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};

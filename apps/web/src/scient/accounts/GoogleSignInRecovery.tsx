@@ -71,7 +71,7 @@ export function GoogleSignInBlockedNotice(props: Props & { readonly onDismiss: (
   return (
     <div
       role="status"
-      className="absolute inset-x-3 top-3 z-20 rounded-lg border border-border bg-popover p-4 text-sm shadow-lg"
+      className="pointer-events-auto absolute inset-x-3 top-3 z-20 rounded-lg border border-border bg-popover p-4 text-sm shadow-lg"
     >
       <p className="font-medium text-foreground">
         <T>Google doesn&rsquo;t allow signing in here</T>

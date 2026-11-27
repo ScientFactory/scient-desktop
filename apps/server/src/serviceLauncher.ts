@@ -741,7 +741,10 @@ async function readStateContents(statePath: string): Promise<string | undefined>
   });
 }
 
-/** The runtime the service unit starts, else the newest complete one. */
+/**
+ * The runtime a versioned unit pins, else the only complete runtime. The stable Scient launcher
+ * pins none, and choosing among several could pick a stage-only or rejected trial bundle.
+ */
 async function installedRuntimeVersion(
   baseDir: string,
   serviceUnit: ServiceUnit | undefined,
@@ -767,17 +770,18 @@ async function installedRuntimeVersion(
   const entries = await NodeFSP.readdir(NodePath.join(baseDir, "runtime", "versions")).catch(
     () => [],
   );
-  let newest: string | undefined;
+  const complete: Array<string> = [];
   for (const version of entries) {
-    if (
-      isExactServiceVersion(version) &&
-      (newest === undefined || compareExactServiceVersions(version, newest) > 0) &&
-      (await runtimeExists(baseDir, version))
-    ) {
-      newest = version;
+    if (isExactServiceVersion(version) && (await runtimeExists(baseDir, version))) {
+      complete.push(version);
     }
   }
-  return newest;
+  if (complete.length > 1) {
+    throw new Error(
+      `Service state is missing and ${complete.length} installed runtimes were found; the launcher will not choose one.`,
+    );
+  }
+  return complete[0];
 }
 
 // Without the state file every start would fail; select the installed runtime again.

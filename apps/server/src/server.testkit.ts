@@ -761,7 +761,6 @@ export const buildAppUnderTest = (options?: {
         diffCheckpoints: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         listAuthoredPaths: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         deleteCheckpointRefs: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
-        copyCheckpointRef: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         resolveCleanHead: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         captureHeadCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
       },

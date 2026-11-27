@@ -894,8 +894,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   if (input.mode !== "dev:web") {
     const path = yield* Path.Path;
     yield* acquireDevRunnerLock(
-      // SCIENT-FORK:START — the dev server always has an explicit state root.
-      path.join(baseDir, "userdata"),
+      // SCIENT-FORK:START — the dev server resolves SCIENT_NEXT_HOME to its development state.
+      path.join(baseDir, SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName),
       // SCIENT-FORK:END
       `pid ${String(process.pid)}, ${input.mode}, server port ${String(env.T3CODE_PORT)}, web port ${String(env.PORT)}`,
     );

@@ -22,7 +22,12 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
-import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  COMPOSER_DRAFT_STORAGE_VERSION,
+  DraftId,
+  partializeComposerDraftStoreState,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { readPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
@@ -714,3 +719,64 @@ it.each(["leave the draft", "choose automatic routing", "switch to another machi
     expect(resources.projectListeners.size).toBe(0);
   },
 );
+
+// SCIENT-FORK:START — a saved draft's workspace survives a machine switch by hand.
+it.each([
+  {
+    label: "a legacy worktree",
+    version: 9,
+    envMode: "worktree",
+    destination: "local",
+    expected: "worktree",
+  },
+  {
+    label: "a legacy local",
+    version: 9,
+    envMode: "local",
+    destination: "worktree",
+    expected: "local",
+  },
+  {
+    label: "an inherited local on the current schema",
+    version: COMPOSER_DRAFT_STORAGE_VERSION,
+    envMode: "local",
+    destination: "worktree",
+    expected: "worktree",
+  },
+] as const)(
+  "switches $label draft by hand under the destination's default",
+  async ({ version, envMode, destination, expected }) => {
+    const { b, draftId, input, store } = fanoutSetup();
+    resources.projects = resources.projects.map((project) =>
+      project.environmentId === b ? { ...project, defaultThreadEnvMode: destination } : project,
+    );
+    store.setDraftThreadContext(draftId, { envMode });
+    // The saved state, round-tripped through the store's own migrate and merge as zustand runs them.
+    const persist = useComposerDraftStore.persist.getOptions();
+    const saved = JSON.parse(
+      JSON.stringify({
+        version,
+        state: partializeComposerDraftStoreState(useComposerDraftStore.getState()),
+      }),
+    ) as { version: number; state: unknown };
+    const migrated =
+      saved.version === COMPOSER_DRAFT_STORAGE_VERSION
+        ? saved.state
+        : persist.migrate!(saved.state, saved.version);
+    useComposerDraftStore.setState(persist.merge!(migrated, useComposerDraftStore.getState()));
+    expect(store.getDraftSession(draftId)?.envMode).toBe(envMode);
+    await using screen = await render(
+      <Harness
+        input={{
+          ...input,
+          automaticEnvironment: false,
+          draftThread: store.getDraftSession(draftId),
+        }}
+      />,
+    );
+    await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    await expect.element(screen.getByText(b)).toBeInTheDocument();
+    expect(store.getDraftSession(draftId)?.envMode).toBe(expected);
+  },
+);
+// SCIENT-FORK:END

@@ -746,6 +746,99 @@ process.exit(0);
     }),
   );
 
+  // SCIENT-FORK:START — Scient's stable launcher names no version, so a missing state file must not
+  // pick the highest bundle; a stage-only or rejected trial bundle can be the highest.
+  it.effect("refuses to choose among several runtimes when the state file is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-ambiguous-" });
+      const home = path.join(root, "home");
+      const unitPath = path.join(home, "Library", "LaunchAgents", "scient.plist");
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        unitPath,
+        renderBootServicePlist(unitPlan(root, "1.1.0"), { homeDir: home, environmentPath: "" }),
+      );
+      const marker = `
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
+process.exit(0);
+`;
+      const entries: Array<string> = [];
+      for (const version of ["1.0.0", "1.1.0"]) {
+        entries.push(
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            marker,
+          ),
+        );
+      }
+      const childCount = spawnedChildren.length;
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "scient.plist");
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow(
+          "Service state is missing and 2 installed runtimes were found",
+        ),
+      );
+
+      assert.equal(spawnedChildren.length, childCount);
+      assert.isFalse(yield* fs.exists(statePath));
+      for (const entryPath of entries) {
+        assert.isFalse(yield* fs.exists(path.join(path.dirname(entryPath), "started")));
+      }
+    }),
+  );
+
+  it.effect("starts the runtime a versioned unit pins when several are installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-pinned-" });
+      const home = path.join(root, "home");
+      const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        unitPath,
+        `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n<key>ProgramArguments</key>\n<array>\n<string>${root}/node</string>\n<string>${root}/runtime/versions/1.0.0/t3</string>\n<string>__service-launcher</string>\n</array>\n</dict>\n</plist>\n`,
+      );
+      const marker = `
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
+process.exit(0);
+`;
+      const pinned = yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        marker,
+      );
+      const newer = yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.1.0"),
+        marker,
+      );
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+      );
+
+      assert.isTrue(yield* fs.exists(path.join(path.dirname(pinned), "started")));
+      assert.isFalse(yield* fs.exists(path.join(path.dirname(newer), "started")));
+      assert.include(yield* fs.readFileString(statePath), '"activeVersion": "1.0.0"');
+    }),
+  );
+  // SCIENT-FORK:END
+
   it.effect("refuses non-install legacy documents without rewriting or spawning", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
