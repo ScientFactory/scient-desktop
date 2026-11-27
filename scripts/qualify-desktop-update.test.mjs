@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -15,6 +16,7 @@ import {
   linuxMainCandidates,
   payload,
   qualifyTiming,
+  recordWindow,
   requireGracefulQuit,
   timingEvents,
   verifyHandoff,
@@ -295,9 +297,89 @@ test("counts a second Linux instance from another AppImage mount as another main
   );
 });
 
-// A stand-in app: announces a DevTools endpoint, writes it into its user data, and on SIGTERM
-// exits as a quit (logging the app's own quit receipt only when FAKE_GRACEFUL is set).
-function fakeApp() {
+// A DevTools browser endpoint: it answers the process list for `pid()` and records every method
+// it receives. Unfragmented frames only, as the harness sends.
+async function devToolsStub(pid) {
+  const methods = [];
+  const sockets = new Set();
+  const server = NodeHttp.createServer();
+  server.on("upgrade", (request, socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    const accept = NodeCrypto.createHash("sha1")
+      .update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest("base64");
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+    let pending = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= 2) {
+        const opcode = pending[0] & 0x0f;
+        let length = pending[1] & 0x7f;
+        let offset = 2;
+        if (length === 126) {
+          if (pending.length < 4) return;
+          length = pending.readUInt16BE(2);
+          offset = 4;
+        }
+        if (pending.length < offset + 4 + length) return;
+        const mask = pending.subarray(offset, offset + 4);
+        const data = pending
+          .subarray(offset + 4, offset + 4 + length)
+          .map((byte, index) => byte ^ mask[index % 4]);
+        pending = pending.subarray(offset + 4 + length);
+        if (opcode === 8) return void socket.end(Buffer.from([0x88, 0]));
+        if (opcode !== 1) continue;
+        const message = JSON.parse(Buffer.from(data).toString());
+        methods.push(message.method);
+        const reply = Buffer.from(
+          JSON.stringify({
+            id: message.id,
+            result:
+              message.method === "SystemInfo.getProcessInfo"
+                ? {
+                    processInfo: [
+                      { type: "renderer", id: 1 },
+                      { type: "browser", id: pid() },
+                    ],
+                  }
+                : {},
+          }),
+        );
+        const header =
+          reply.length < 126
+            ? Buffer.from([0x81, reply.length])
+            : Buffer.from([0x81, 126, reply.length >> 8, reply.length & 0xff]);
+        socket.write(Buffer.concat([header, reply]));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    port: server.address().port,
+    methods,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// A stand-in app: announces a DevTools endpoint answering for `owner(appPid)` (by default
+// itself), writes it into its user data, and on SIGTERM exits as a quit (logging the app's own
+// quit receipt only when FAKE_GRACEFUL is set).
+async function fakeApp(owner = (appPid) => appPid) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-qualify-launch-test-"));
   const executable = NodePath.join(root, "fake-app.mjs");
   NodeFS.writeFileSync(
@@ -305,9 +387,10 @@ function fakeApp() {
     `#!/usr/bin/env node
 import * as NodeFS from "node:fs";
 const userData = process.env.FAKE_USER_DATA;
+const port = process.env.FAKE_DEVTOOLS_PORT;
 NodeFS.writeFileSync(userData + "/pid", String(process.pid));
-NodeFS.writeFileSync(userData + "/DevToolsActivePort", "53021\\n/devtools/browser/fake");
-console.error("DevTools listening on ws://127.0.0.1:53021/devtools/browser/fake");
+NodeFS.writeFileSync(userData + "/DevToolsActivePort", port + "\\n/devtools/browser/fake");
+console.error("DevTools listening on ws://127.0.0.1:" + port + "/devtools/browser/fake");
 process.on("SIGTERM", () => {
   if (process.env.FAKE_GRACEFUL === "1") console.log("before-quit received");
   process.exit(0);
@@ -316,69 +399,69 @@ setInterval(() => {}, 1000);
 `,
   );
   NodeFS.chmodSync(executable, 0o755);
-  const alive = (pid) => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
   const appPid = () => Number(NodeFS.readFileSync(NodePath.join(root, "pid"), "utf8"));
-  // Reached over CDP: close() only disconnects; Browser.close asks the app to quit.
-  const browser = ({ pid, sessions = () => true }) => {
-    const fake = {
-      sent: [],
-      disconnected: false,
-      newBrowserCDPSession: async () => {
-        if (!sessions()) throw new Error("Target closed");
-        return {
-          send: async (method) => {
-            fake.sent.push(method);
-            if (method === "SystemInfo.getProcessInfo")
-              return { processInfo: [{ type: "browser", id: pid() }] };
-            if (method === "Browser.close") process.kill(appPid(), "SIGTERM");
-          },
-          detach: async () => {},
-        };
-      },
-      contexts: () => [{ pages: () => [{ evaluate: async () => true }] }],
-      close: async () => {
-        fake.disconnected = true;
-      },
-    };
-    return fake;
-  };
+  const devtools = await devToolsStub(() => owner(appPid()));
+  // Playwright's connection: close() only disconnects; Browser.close asks the app to quit.
+  const browser = ({ sessions = () => true } = {}) => ({
+    newBrowserCDPSession: async () => {
+      if (!sessions()) throw new Error("Target closed");
+      return {
+        send: async (method) => {
+          if (method === "Browser.close") process.kill(appPid(), "SIGTERM");
+        },
+      };
+    },
+    contexts: () => [{ pages: () => [{ evaluate: async () => true }] }],
+    close: async () => {},
+  });
+  let connects = 0;
   const launch = (fake, graceful) =>
     launchInstalled({
       executable,
-      env: { ...process.env, FAKE_USER_DATA: root, FAKE_GRACEFUL: graceful ? "1" : "0" },
+      env: {
+        ...process.env,
+        FAKE_USER_DATA: root,
+        FAKE_DEVTOOLS_PORT: String(devtools.port),
+        FAKE_GRACEFUL: graceful ? "1" : "0",
+      },
       userData: root,
       platform: "darwin",
       log: NodePath.join(root, "output.log"),
-      connect: async () => fake,
+      connect: async () => {
+        connects += 1;
+        return fake;
+      },
     });
-  return { root, alive, appPid, browser, launch };
+  return {
+    appPid,
+    browser,
+    launch,
+    devtools,
+    connects: () => connects,
+    dispose: async () => {
+      await devtools.close();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
-// The stand-in app is a script started through its #! line, which Windows does not run.
+// The stand-ins are scripts started through their #! line, which Windows does not run.
 const posixHost = HostProcess.Platform.defaultValue() !== "win32";
 
 test.runIf(posixHost)(
-  "disconnects from a DevTools endpoint of a process it did not start, without stopping it",
+  "only reads the process list of a DevTools endpoint it did not start, and leaves that process",
   async () => {
-    const app = fakeApp();
     const foreign = NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    const app = await fakeApp(() => foreign.pid);
     try {
-      const fake = app.browser({ pid: () => foreign.pid });
-      await NodeAssert.rejects(app.launch(fake, true), /did not start/);
-      NodeAssert.deepEqual(fake.sent, ["SystemInfo.getProcessInfo"]);
-      NodeAssert.equal(fake.disconnected, true);
-      NodeAssert.equal(app.alive(foreign.pid), true, "The other process must keep running");
-      NodeAssert.equal(app.alive(app.appPid()), false, "The harness's own launch is stopped");
+      await NodeAssert.rejects(app.launch(app.browser(), true), /did not start/);
+      NodeAssert.deepEqual(app.devtools.methods, ["SystemInfo.getProcessInfo"]);
+      NodeAssert.equal(app.connects(), 0, "Playwright must not connect to it");
+      NodeAssert.equal(alive(foreign.pid), true, "The other process must keep running");
+      NodeAssert.equal(alive(app.appPid()), false, "The harness's own launch is stopped");
     } finally {
       foreign.kill("SIGKILL");
-      NodeFS.rmSync(app.root, { recursive: true, force: true });
+      await app.dispose();
     }
   },
 );
@@ -386,30 +469,62 @@ test.runIf(posixHost)(
 test.runIf(posixHost)(
   "quits only through the app's own quit and never falls back to killing it",
   async () => {
-    const app = fakeApp();
+    const app = await fakeApp();
     try {
-      await (await app.launch(app.browser({ pid: app.appPid }), true)).quit();
-      NodeAssert.equal(app.alive(app.appPid()), false);
+      await (await app.launch(app.browser(), true)).quit();
+      NodeAssert.equal(alive(app.appPid()), false);
 
       // The app exited, but without its quit receipt: not an ordinary quit.
-      await NodeAssert.rejects(
-        (await app.launch(app.browser({ pid: app.appPid }), false)).quit(),
-        /own quit path/,
-      );
+      await NodeAssert.rejects((await app.launch(app.browser(), false)).quit(), /own quit path/);
 
       // DevTools fails after launch: the quit fails and leaves the app to cleanup, unkilled.
       let sessions = true;
-      const launched = await app.launch(
-        app.browser({ pid: app.appPid, sessions: () => sessions }),
-        true,
-      );
+      const launched = await app.launch(app.browser({ sessions: () => sessions }), true);
       sessions = false;
       await NodeAssert.rejects(launched.quit(), /Target closed/);
-      NodeAssert.equal(app.alive(app.appPid()), true);
+      NodeAssert.equal(alive(app.appPid()), true);
       await launched.stop();
-      NodeAssert.equal(app.alive(app.appPid()), false);
+      NodeAssert.equal(alive(app.appPid()), false);
     } finally {
-      NodeFS.rmSync(app.root, { recursive: true, force: true });
+      await app.dispose();
+    }
+  },
+);
+
+test.runIf(posixHost)(
+  "finishes the video encoder even when stopping the screencast hangs",
+  async () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-qualify-video-test-"));
+    // An encoder that notes the end of its input but never exits by itself.
+    const encoder = NodePath.join(root, "encoder.mjs");
+    NodeFS.writeFileSync(
+      encoder,
+      `#!/usr/bin/env node
+import * as NodeFS from "node:fs";
+const output = process.argv.at(-1);
+NodeFS.writeFileSync(output + ".pid", String(process.pid));
+process.stdin.on("end", () => NodeFS.writeFileSync(output + ".eof", ""));
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`,
+    );
+    NodeFS.chmodSync(encoder, 0o755);
+    const video = NodePath.join(root, "restart.webm");
+    const page = {
+      screencast: { start: async () => {}, stop: () => new Promise(() => {}) },
+    };
+    try {
+      const stop = await recordWindow(page, video, { encoder, timeout: 1_000 });
+      await NodeAssert.rejects(stop(), /screencast hung/);
+      NodeAssert.ok(NodeFS.existsSync(`${video}.eof`), "The encoder's input must be closed");
+      const pid = Number(NodeFS.readFileSync(`${video}.pid`, "utf8"));
+      NodeAssert.equal(alive(pid), false, "An encoder that outlives its deadline is killed");
+    } finally {
+      if (NodeFS.existsSync(`${video}.pid`)) {
+        const pid = Number(NodeFS.readFileSync(`${video}.pid`, "utf8"));
+        if (alive(pid)) process.kill(pid, "SIGKILL");
+      }
+      NodeFS.rmSync(root, { recursive: true, force: true });
     }
   },
 );

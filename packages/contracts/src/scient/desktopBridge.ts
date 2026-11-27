@@ -33,9 +33,9 @@ export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
 /** What the restored workspace lets the user reach; booleans only, for the local restart trace. */
 interface WorkspaceInteraction {
-  /** A visible, non-inert control naming the restored project. */
+  /** The restored project's own control is visible, enabled, not inert and not covered. */
   readonly projectControlsVisible: boolean;
-  /** A visible, non-inert composer. */
+  /** The chat composer is editable, visible, not inert and not covered. */
   readonly composerUsable: boolean;
   /** The window is not locked for a restart (`document.body.inert`). */
   readonly windowUnlocked: boolean;

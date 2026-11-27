@@ -681,23 +681,35 @@ export function requireGracefulQuit(output, exit) {
   );
 }
 
-// Ownership comes first: a DevTools endpoint answering for a process this harness did not start
-// is only disconnected (closing a browser reached over CDP closes just the connection).
-export async function attachOwnedBrowser({ connect, spawnedPid, platform, parentOf }) {
-  const browser = await connect();
+// Asks a DevTools browser endpoint for its main process over a bare connection that sends only
+// this one read; connecting Playwright would already configure the browser (auto-attach paused
+// on start, downloads), so it waits until the process is known to be the harness's own.
+async function devToolsBrowserProcessId(url) {
+  const socket = new WebSocket(url);
   try {
-    const session = await browser.newBrowserCDPSession();
-    const pid = browserProcessId((await session.send("SystemInfo.getProcessInfo")).processInfo);
-    await session.detach();
-    // An AppImage runtime may start the Electron main process as its own child.
-    NodeAssert.ok(
-      pid === spawnedPid || (platform === "linux" && descendsFrom(pid, spawnedPid, parentOf)),
-      `DevTools answered for process ${pid}, which this harness did not start (${spawnedPid})`,
+    const result = await deadline(
+      new Promise((resolve, reject) => {
+        socket.addEventListener("open", () =>
+          socket.send(JSON.stringify({ id: 1, method: "SystemInfo.getProcessInfo" })),
+        );
+        socket.addEventListener("message", (event) => {
+          const reply = JSON.parse(String(event.data));
+          if (reply.id !== 1) return;
+          if (reply.error)
+            reject(new Error(`DevTools refused the process list: ${reply.error.message}`));
+          else resolve(reply.result);
+        });
+        socket.addEventListener("error", () => reject(new Error(`DevTools at ${url} failed`)));
+        socket.addEventListener("close", () =>
+          reject(new Error(`DevTools at ${url} closed before answering`)),
+        );
+      }),
+      STEP_TIMEOUT,
+      `DevTools at ${url} did not answer`,
     );
-    return { browser, pid };
-  } catch (error) {
-    await browser.close().catch(() => {});
-    throw error;
+    return browserProcessId(result.processInfo);
+  } finally {
+    socket.close();
   }
 }
 
@@ -726,10 +738,14 @@ export async function launchInstalled({ executable, env, userData, platform, log
   child.stdout.on("data", collect);
   child.stderr.on("data", collect);
   const running = () => failure === undefined && exit === undefined;
+  // Set once DevTools answered for this harness's own process; the browser only after that.
   let owned;
   // An ordinary quit, as the app menu's Quit, and only of the app this harness owns; never a kill.
   const quit = async () => {
-    NodeAssert.ok(owned && running(), "Only a running app this harness started can be quit");
+    NodeAssert.ok(
+      owned?.browser && running(),
+      "Only a running app this harness started can be quit",
+    );
     const session = await owned.browser.newBrowserCDPSession();
     // The reply may not outlive the app.
     void session.send("Browser.close").catch(() => {});
@@ -743,7 +759,7 @@ export async function launchInstalled({ executable, env, userData, platform, log
   // Cleanup after a failure; it may force the exit, so it is never a scenario's quit.
   const stop = async () => {
     const session =
-      owned && running()
+      owned?.browser && running()
         ? await owned.browser.newBrowserCDPSession().catch(() => undefined)
         : undefined;
     if (session) {
@@ -755,7 +771,7 @@ export async function launchInstalled({ executable, env, userData, platform, log
       await deadline(exited, STEP_TIMEOUT, "").catch(() => {});
     }
     if (owned && !(await waitForExit(owned.pid, 10_000))) process.kill(owned.pid, "SIGKILL");
-    await owned?.browser.close().catch(() => {});
+    await owned?.browser?.close().catch(() => {});
   };
   try {
     const endpoint = await poll(() => {
@@ -773,18 +789,19 @@ export async function launchInstalled({ executable, env, userData, platform, log
       `The app did not use the synthetic Electron user data at ${userData}`,
       30_000,
     );
-    owned = await attachOwnedBrowser({
-      connect:
-        connect ??
-        (async () =>
-          (await import("playwright-core")).chromium.connectOverCDP(endpoint.url, {
-            timeout: TIMEOUT,
-          })),
-      spawnedPid: child.pid,
-      platform,
-      parentOf: linuxParentOf,
-    });
-    console.log(`Launched ${executable}: started process ${child.pid}, main process ${owned.pid}`);
+    const pid = await devToolsBrowserProcessId(endpoint.url);
+    // An AppImage runtime may start the Electron main process as its own child.
+    NodeAssert.ok(
+      pid === child.pid || (platform === "linux" && descendsFrom(pid, child.pid, linuxParentOf)),
+      `DevTools answered for process ${pid}, which this harness did not start (${child.pid})`,
+    );
+    owned = { pid };
+    const connectBrowser =
+      connect ??
+      (async (url) =>
+        (await import("playwright-core")).chromium.connectOverCDP(url, { timeout: TIMEOUT }));
+    owned.browser = await connectBrowser(endpoint.url);
+    console.log(`Launched ${executable}: started process ${child.pid}, main process ${pid}`);
     const page = await poll(async () => {
       for (const candidate of owned.browser.contexts().flatMap((context) => context.pages()))
         if (
@@ -805,17 +822,32 @@ async function appVersion(page) {
   return (await page.evaluate(() => window.desktopBridge.getUpdateState())).currentVersion;
 }
 
+// The same reach the product's own restart receipt observes (workspaceReadiness.ts), on this
+// launch: the project's breadcrumb control and the chat composer, enabled and on top.
 async function requireRestoredWorkspace(page, projectName) {
   await poll(
     () =>
       page.evaluate((name) => {
-        const visible = (element) =>
-          element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+        const reachable = (element) => {
+          if (element.closest('[inert], [aria-disabled="true"]') || element.matches(":disabled"))
+            return false;
+          if (!element.checkVisibility({ opacityProperty: true, visibilityProperty: true }))
+            return false;
+          const box = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return hit !== null && element.contains(hit);
+        };
         return (
-          [...document.querySelectorAll("button, a, span")].some(
-            (element) => element.textContent.trim() === name && visible(element),
+          [...document.querySelectorAll("[data-workspace-project-id]")].some(
+            (element) =>
+              element.getAttribute("aria-label") === `New thread in ${name}` && reachable(element),
           ) &&
-          [...document.querySelectorAll('[contenteditable="true"]')].some(visible) &&
+          [...document.querySelectorAll('[data-testid="composer-editor"]')].some(
+            (element) =>
+              element.isContentEditable &&
+              element.getAttribute("aria-readonly") !== "true" &&
+              reachable(element),
+          ) &&
           !document.body.inert
         );
       }, projectName),
@@ -857,10 +889,14 @@ function ffmpegExecutable(platform) {
 
 // Chromium sends a screencast frame only when the window changes; each frame is held until the
 // next one so the video keeps real time.
-async function recordWindow(page, filename, platform) {
+export async function recordWindow(
+  page,
+  filename,
+  { encoder: encoderPath, timeout = STEP_TIMEOUT },
+) {
   const fps = 10;
   const encoder = NodeChildProcess.spawn(
-    ffmpegExecutable(platform),
+    encoderPath,
     [
       "-loglevel",
       "error",
@@ -911,24 +947,31 @@ async function recordWindow(page, filename, platform) {
       last = frame;
     },
   });
-  return async () => {
-    // After a native restart the page is gone and stopping fails; only a hang is an error here.
-    await deadline(
-      page.screencast.stop().catch(() => {}),
-      STEP_TIMEOUT,
-      "Stopping the window screencast hung",
-    );
+  const finishEncoding = async () => {
     if (last) write(last, fps);
     encoder.stdin.end();
-    const status = await deadline(
-      finished,
-      STEP_TIMEOUT,
-      `The video encoder did not finish: ${errors}`,
-    ).catch((error) => {
-      encoder.kill("SIGKILL");
-      throw error;
-    });
+    const status = await deadline(finished, timeout, "The video encoder did not finish").catch(
+      async (error) => {
+        encoder.kill("SIGKILL");
+        await finished;
+        throw error;
+      },
+    );
     NodeAssert.equal(status, 0, `Recording the window failed: ${errors}`);
+  };
+  return async () => {
+    try {
+      // After a native restart the page is gone and stopping fails; only a hang is an error here.
+      await deadline(
+        page.screencast.stop().catch(() => {}),
+        timeout,
+        "Stopping the window screencast hung",
+      );
+    } catch (error) {
+      await finishEncoding().catch(() => {});
+      throw error;
+    }
+    await finishEncoding();
     return frames;
   };
 }
@@ -1122,7 +1165,9 @@ async function qualify(options) {
     const { page } = app;
     // The old app must exit; one that survives beside the relaunch is a failed handoff.
     const sourceMainPid = app.pid;
-    stopRecording = await recordWindow(page, NodePath.join(evidence, "restart.webm"), platform);
+    stopRecording = await recordWindow(page, NodePath.join(evidence, "restart.webm"), {
+      encoder: ffmpegExecutable(platform),
+    });
     NodeAssert.equal(await appVersion(page), source.manifest.version);
     // The synthetic profile holds no user data; its console and logs explain a failed run.
     const consoleLines = [];

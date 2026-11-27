@@ -75,7 +75,9 @@ a random `attemptId`, `fromVersion` and `targetVersion`; the sequence is `confir
 `shutdown-started`, `native-handoff`, `launched`, `backend-ready`, `workspace-ready`,
 `workspace-settled` (or `abandoned` with a `reason`). `workspace-ready` and, about a second later,
 `workspace-settled` record whether the restored workspace was reachable: `projectControlsVisible`,
-`composerUsable` and `windowUnlocked` (booleans the renderer observed). The attempt lives at
+`composerUsable` and `windowUnlocked` (booleans the renderer observed: the project's breadcrumb
+control and the chat composer must be visible, enabled, not inert and not covered). Ordinary
+launches without an update restart skip this observation. The attempt lives at
 `<desktop baseDir>/runtime/desktop-restart-attempt.json`, expires after 15 minutes, and is claimed by
 the first eligible launch. Cross-process durations use wall-clock time and include time the app was
 closed; negative or out-of-window differences invalidate the attempt rather than reporting zero. The

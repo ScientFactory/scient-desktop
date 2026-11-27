@@ -17,8 +17,8 @@ export function DesktopWorkspaceReadiness(props: {
   readonly environmentId: EnvironmentId | null;
   readonly initialized: boolean;
   readonly projectRestored: boolean;
-  /** The restored project's title, to check that its controls are reachable. */
-  readonly projectName?: string | null;
+  /** The restored project, whose own control must be reachable. */
+  readonly projectId?: string | null;
   /** Ends startup timing only; an update restart ends where its workspace is restored. */
   readonly startupOnly?: boolean;
 }) {
@@ -38,7 +38,7 @@ export function DesktopWorkspaceReadiness(props: {
   });
   const bridge = window.desktopBridge;
   const startupOnly = props.startupOnly === true;
-  const projectName = props.projectName ?? null;
+  const projectId = props.projectId ?? null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native startup and restart owners
   useEffect(() => {
@@ -50,12 +50,12 @@ export function DesktopWorkspaceReadiness(props: {
       projectRestored: props.projectRestored,
       startup,
       isCurrent: () => current,
-      observe: () => observeWorkspaceInteraction(document, projectName),
+      observe: () => observeWorkspaceInteraction(document, projectId),
       settle: () => new Promise((resolve) => setTimeout(resolve, RESTART_SETTLE_MS)),
     }).catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [bridge, ready, startupOnly, props.projectRestored, projectName]);
+  }, [bridge, ready, startupOnly, props.projectRestored, projectId]);
   return null;
 }

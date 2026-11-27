@@ -279,22 +279,26 @@ tag or release already exists.
    Packaged builds ignore Node's inspector switches (the `enableNodeCliInspectArguments`
    fuse is off in every build, rehearsals included), so the harness starts the installed
    app itself with `--remote-debugging-port=0` and drives its window over Chromium's
-   DevTools protocol. It takes the main process from DevTools and accepts the endpoint only
-   if that process is its own launch (otherwise it disconnects without closing or signalling
-   it), requires the endpoint to be written into the synthetic profile, and records the
-   restart interaction from DevTools screencast frames. Its own quits use DevTools'
+   DevTools protocol. Before attaching Playwright, it asks the endpoint for its main process
+   over a bare DevTools connection that sends only `SystemInfo.getProcessInfo`, and accepts
+   it only if that process is its own launch; otherwise it closes that connection and sends
+   nothing else. It requires the endpoint to be written into the synthetic profile and
+   records the restart interaction from DevTools screencast frames (the encoder is finished,
+   or killed after its deadline, even when stopping the screencast hangs). Its own quits use DevTools'
    `Browser.close` and must show the app's `before-quit received` log and a normal exit
    status; a forced exit is only cleanup and fails the ordinary-quit check.
    The native relaunch passes no switches and is not attached to: its `launched`,
    `backend-ready`, `workspace-ready` and `workspace-settled` receipts (one launch and
    process, with `projectRestored`) mark it ready, and the last two must record that the
-   restored project's controls and the composer were visible outside any inert region and
-   the window was not locked for the restart, at readiness and again a second later. The
+   restored project's own control (its chat-header breadcrumb, found by project id) and the
+   chat composer were reachable (visible, enabled, outside any inert region and on top at
+   their centre, not under an overlay) and the window was not locked for the restart, at
+   readiness and again a second later. The
    harness then checks the edit on disk, the single updated main process (any instance of
    the app, from any AppImage mount, counts) and the old process's exit, captures that
    process's window through the operating system, quits it normally, and launches the
-   installed target once more the same way to require the restored project's visible
-   controls, an unlocked window and the target version. The disposable Linux runner permits
+   installed target once more the same way to require the same reach for the restored
+   project's control and the composer, an unlocked window and the target version. The disposable Linux runner permits
    unprivileged user namespaces so Chromium's sandbox can start under AppArmor.
    macOS additionally requires signature, Gatekeeper and stapling checks. Windows
    requires valid Authenticode signatures, except that the workflow passes

@@ -114,4 +114,30 @@ describe("desktop workspace readiness", () => {
     await report();
     expect(events).toEqual([{ ready: { ...token, projectRestored: true, interaction: locked } }]);
   });
+
+  it("does not scan an ordinary startup's workspace, which no update restart waits on", async () => {
+    const reports: unknown[] = [];
+    let observations = 0;
+    await reportDesktopWorkspaceReady({
+      bridge: {
+        getRestartReadinessToken: async () => null,
+        reportWorkspaceReady: async (input: object) => {
+          reports.push(input);
+          return false;
+        },
+        reportWorkspaceSettled: async () => true,
+      },
+      startupOnly: false,
+      projectRestored: true,
+      startup: { reported: false },
+      isCurrent: () => true,
+      observe: () => {
+        observations += 1;
+        return usable;
+      },
+      settle: async () => undefined,
+    });
+    expect(reports).toEqual([{ projectRestored: true }]);
+    expect(observations).toBe(0);
+  });
 });

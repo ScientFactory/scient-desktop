@@ -27,21 +27,42 @@ export function workspaceReadiness(input: {
   );
 }
 
+/** Marks the restored project's own control (its chat-header breadcrumb) with the project id. */
+const PROJECT_CONTROL_ATTRIBUTE = "data-workspace-project-id";
+const COMPOSER_SELECTOR = '[data-testid="composer-editor"]';
+
+// Reachable by the user: not inert or disabled, shown, and on top where a click would land.
+function reachable(element: Element): boolean {
+  if (element.closest('[inert], [aria-disabled="true"]') !== null) return false;
+  if (element.matches(":disabled")) return false;
+  if (!element.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+  const box = element.getBoundingClientRect();
+  const hit = element.ownerDocument.elementFromPoint(
+    box.left + box.width / 2,
+    box.top + box.height / 2,
+  );
+  return hit !== null && element.contains(hit);
+}
+
 /** Whether the user can reach the restored project and its composer; reports booleans only. */
 export function observeWorkspaceInteraction(
   document: Document,
-  projectName: string | null,
+  projectId: string | null,
 ): WorkspaceInteraction {
-  const usable = (element: Element) =>
-    element.closest("[inert]") === null &&
-    element.checkVisibility({ opacityProperty: true, visibilityProperty: true });
   return {
     projectControlsVisible:
-      projectName !== null &&
-      [...document.querySelectorAll("button, a, span")].some(
-        (element) => element.textContent?.trim() === projectName && usable(element),
+      projectId !== null &&
+      [...document.querySelectorAll(`[${PROJECT_CONTROL_ATTRIBUTE}]`)].some(
+        (element) =>
+          element.getAttribute(PROJECT_CONTROL_ATTRIBUTE) === projectId && reachable(element),
       ),
-    composerUsable: [...document.querySelectorAll('[contenteditable="true"]')].some(usable),
+    composerUsable: [...document.querySelectorAll(COMPOSER_SELECTOR)].some(
+      (element) =>
+        element instanceof HTMLElement &&
+        element.isContentEditable &&
+        element.getAttribute("aria-readonly") !== "true" &&
+        reachable(element),
+    ),
     windowUnlocked: !document.body.inert,
   };
 }
@@ -77,10 +98,10 @@ export async function reportDesktopWorkspaceReady(input: {
   const token = await bridge.getRestartReadinessToken();
   if (!input.isCurrent() || (token === null && startup.reported)) return;
   startup.reported = true;
+  // Only an update restart's own workspace is observed; ordinary startup timing skips the scan.
   const completed = await bridge.reportWorkspaceReady({
-    ...token,
     projectRestored: input.projectRestored,
-    interaction: input.observe(),
+    ...(token === null ? {} : { ...token, interaction: input.observe() }),
   });
   if (!completed || token === null || !bridge.reportWorkspaceSettled) return;
   await input.settle();
