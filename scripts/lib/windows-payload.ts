@@ -198,13 +198,15 @@ export function analyzeWindowsPayloadInventory(input: {
     allowance += expected.size;
   }
   // SCIENT-FORK:START — the server's V8 compile cache holds one small entry per cached module and
-  // grows as upstream caches more of startup, so it counts apart from the core budget, up to a cap.
-  const compileCache = input.files.filter((file) =>
-    file.startsWith(WINDOWS_SERVER_COMPILE_CACHE_ROOT),
-  ).length;
-  if (compileCache > 0) {
-    counts.compileCache = compileCache;
-    allowance += Math.min(compileCache, WINDOWS_SERVER_COMPILE_CACHE_FILE_LIMIT);
+  // grows as upstream caches more of startup, so it counts apart from the core budget. Entries
+  // past its limit are unexpected.
+  const compileCache = input.files
+    .filter((file) => file.startsWith(WINDOWS_SERVER_COMPILE_CACHE_ROOT))
+    .toSorted();
+  if (compileCache.length > 0) {
+    counts.compileCache = compileCache.length;
+    allowance += compileCache.length;
+    unexpectedFiles.push(...compileCache.slice(WINDOWS_SERVER_COMPILE_CACHE_FILE_LIMIT));
   }
   // SCIENT-FORK:END
   counts.core =

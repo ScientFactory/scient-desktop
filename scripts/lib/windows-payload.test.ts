@@ -96,7 +96,7 @@ it("does not grant additional allowance to a large dependency spill", () => {
   assert.equal(result.counts.core, 20_000);
 });
 
-it("counts the server compile cache apart from the core budget, up to its cap", () => {
+it("counts the server compile cache apart from the core budget, up to its limit", () => {
   const cache = (count: number) =>
     Array.from({ length: count }, (_, index) => `resources/server-compile-cache/${index}`);
   const core = ["resources/app.asar", "Scient.exe"];
@@ -105,8 +105,11 @@ it("counts the server compile cache apart from the core budget, up to its cap", 
   assert.equal(result.counts.compileCache, 39);
   assert.equal(result.counts.core, 2);
   assert.equal(result.allowance, base + 39);
-  const oversized = analyzeWindowsPayloadInventory({ files: [...core, ...cache(70)], arch: "x64" });
-  assert.equal(oversized.allowance, base + 64);
+  const full = analyzeWindowsPayloadInventory({ files: [...core, ...cache(64)], arch: "x64" });
+  assert.deepEqual(full.unexpectedFiles, []);
+  const oversized = analyzeWindowsPayloadInventory({ files: [...core, ...cache(65)], arch: "x64" });
+  assert.equal(oversized.unexpectedFiles.length, 1);
+  assert.match(oversized.unexpectedFiles[0] ?? "", /^resources\/server-compile-cache\//);
 });
 
 it("validates slim Windows payloads without Linux Cursor helpers or Linux natives", () => {
