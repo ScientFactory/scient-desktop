@@ -710,6 +710,7 @@ jobs:
         with:
           name: synctex-runtime-${{ matrix.resource_key }}
           path: synctex-runtime/current
+          github-token: ${{ github.token }}
 
       - name: Download Windows native prerequisites
         if: matrix.platform == 'win'
@@ -717,6 +718,7 @@ jobs:
         with:
           name: windows-native-${{ matrix.arch }}
           path: windows-native
+          github-token: ${{ github.token }}
 
       - name: Prepare Azure Trusted Signing
         if: matrix.platform == 'win'
@@ -806,6 +808,7 @@ jobs:
         with:
           artifact-ids: ${{ steps.server_bytecode.outputs.artifact-id }}
           path: ${{ runner.temp }}/server-bytecode
+          github-token: ${{ github.token }}
       # SCIENT-FORK:END
 
       - name: Build desktop artifact
@@ -1061,6 +1064,7 @@ jobs:
         with:
           artifact-ids: ${{ steps.staged_app.outputs.artifact-id }}
           path: server-bytecode-input
+          github-token: ${{ github.token }}
       - name: Generate server bytecode with the staged app's engine
         shell: bash
         run: |
@@ -1086,6 +1090,7 @@ jobs:
         with:
           artifact-ids: ${{ steps.package.outputs.artifact-id }}
           path: verify
+          github-token: ${{ github.token }}
       - name: Verify packaged natives
         shell: bash
         env:
@@ -1233,10 +1238,12 @@ jobs:
         with:
           pattern: resource-monitor-*
           path: resource-monitors
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: synctex-runtime-*
           path: synctex-runtimes
+          github-token: ${{ github.token }}
       - name: Add native monitors and create tarball
         shell: bash
         env:

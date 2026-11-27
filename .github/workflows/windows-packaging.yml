@@ -253,6 +253,7 @@ jobs:
         with:
           name: windows-packaging-prerequisites
           path: windows-prerequisites
+          github-token: ${{ github.token }}
       # electron-builder downloads Electron and its NSIS tools on every run without these.
       - name: Restore Electron downloads
         id: electron_cache

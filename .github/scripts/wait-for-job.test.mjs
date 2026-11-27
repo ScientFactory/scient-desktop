@@ -23,10 +23,17 @@ const artifacts = (...createdAt) => ({
   })),
 });
 
-// A fake `gh` applies the script's own --jq filter to the next queued response for that
-// endpoint (the last one repeats); a queued `apiError` fails that request after printing an
-// error body to stdout, as `gh api` does; `sleep` returns at once.
-function waitForJob({ jobs, artifactLists, args = [] }) {
+// A fake `gh` applies the script's --jq filter to the next queued response for that endpoint
+// (the last repeats); a queued `apiError` fails after printing an error body to stdout, as `gh
+// api` does. A fake `curl` answers the download endpoint with the next queued HTTP status and
+// records the URL; `sleep` returns at once.
+function waitForJob({
+  jobs,
+  artifactLists,
+  downloads = [302],
+  args = [],
+  unwritableOutput = false,
+}) {
   const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-wait-for-job-"));
   try {
     const queue = (file, responses) =>
@@ -36,6 +43,9 @@ function waitForJob({ jobs, artifactLists, args = [] }) {
       );
     queue("jobs", jobs);
     queue("artifacts", artifactLists);
+    queue("downloads", downloads);
+    const downloadRequests = NodePath.join(bin, "download-requests");
+    NodeFS.writeFileSync(downloadRequests, "");
     NodeFS.writeFileSync(
       NodePath.join(bin, "gh"),
       `#!/usr/bin/env bash
@@ -49,9 +59,23 @@ printf '%s\\n' "$line" | jq -r "$4"
 `,
       { mode: 0o755 },
     );
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "curl"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+queue="${bin}/downloads"
+[[ " $* " == *" Authorization: Bearer test-token "* ]] || { echo "unauthenticated" >&2; exit 2; }
+printf '%s\\n' "\${@: -1}" >> "${downloadRequests}"
+head -n 1 "$queue"
+if [ "$(wc -l < "$queue")" -gt 1 ]; then tail -n +2 "$queue" > "$queue.next" && mv "$queue.next" "$queue"; fi
+`,
+      { mode: 0o755 },
+    );
     NodeFS.writeFileSync(NodePath.join(bin, "sleep"), "#!/usr/bin/env bash\n", { mode: 0o755 });
     const output = NodePath.join(bin, "output");
-    NodeFS.writeFileSync(output, "");
+    // A directory in place of the output file makes every write to it fail.
+    if (unwritableOutput) NodeFS.mkdirSync(output);
+    else NodeFS.writeFileSync(output, "");
     const result = NodeChildProcess.spawnSync(
       "bash",
       [script, "Package macOS x64", name, ...args],
@@ -61,13 +85,19 @@ printf '%s\\n' "$line" | jq -r "$4"
           ...process.env,
           PATH: `${bin}${NodePath.delimiter}${process.env.PATH}`,
           GITHUB_REPOSITORY: "ScientFactory/scient-desktop",
+          GITHUB_API_URL: "https://api.example.test",
+          GH_TOKEN: "test-token",
           GITHUB_RUN_ID: "1",
           GITHUB_RUN_ATTEMPT: "2",
           GITHUB_OUTPUT: output,
         },
       },
     );
-    return { ...result, output: NodeFS.readFileSync(output, "utf8") };
+    return {
+      ...result,
+      output: unwritableOutput ? "" : NodeFS.readFileSync(output, "utf8"),
+      downloadRequests: NodeFS.readFileSync(downloadRequests, "utf8").split("\n").filter(Boolean),
+    };
   } finally {
     NodeFS.rmSync(bin, { recursive: true, force: true });
   }
@@ -162,4 +192,56 @@ NodeTest.test("retries a failed API request, and fails the wait if it keeps fail
   NodeAssert.equal(down.status, 1);
   NodeAssert.match(down.stderr, /Could not list resource-monitor-darwin-x64 uploads/u);
   NodeAssert.doesNotMatch(down.stderr, /succeeded without uploading/u);
+});
+
+NodeTest.test("names an upload only once GitHub has served its download twice in a row", () => {
+  const download =
+    "https://api.example.test/repos/ScientFactory/scient-desktop/actions/artifacts/1/zip";
+  for (const [args, status] of [
+    [[], job("completed", "success")],
+    [["--uploaded"], job("in_progress")],
+  ]) {
+    // Listed, then refused, then served once, refused again, and finally served twice.
+    const settled = waitForJob({
+      jobs: [status],
+      artifactLists: [artifacts("2026-11-10T19:40:00Z")],
+      downloads: [404, 302, 404, 302, 302],
+      args,
+    });
+    NodeAssert.equal(settled.status, 0);
+    NodeAssert.equal(settled.output, "artifact-id=1\n");
+    NodeAssert.deepEqual(settled.downloadRequests, Array(5).fill(download));
+  }
+});
+
+NodeTest.test("fails the wait when GitHub keeps refusing a listed upload's download", () => {
+  const refused = waitForJob({
+    jobs: [job("completed", "success")],
+    artifactLists: [artifacts("2026-11-10T19:40:00Z")],
+    downloads: [404],
+  });
+  NodeAssert.equal(refused.status, 1);
+  NodeAssert.equal(refused.output, "");
+  NodeAssert.equal(refused.downloadRequests.length, 30);
+  NodeAssert.match(
+    refused.stderr,
+    /Download check for resource-monitor-darwin-x64 1 answered HTTP 404/u,
+  );
+  NodeAssert.match(
+    refused.stderr,
+    /resource-monitor-darwin-x64 1 is listed, but GitHub still refuses to download it/u,
+  );
+});
+
+NodeTest.test("fails the wait when it cannot record the upload's ID", () => {
+  const unrecorded = waitForJob({
+    jobs: [job("completed", "success")],
+    artifactLists: [artifacts("2026-11-10T19:40:00Z")],
+    unwritableOutput: true,
+  });
+  NodeAssert.equal(unrecorded.status, 1);
+  NodeAssert.match(
+    unrecorded.stderr,
+    /Could not record resource-monitor-darwin-x64 1 as the step output/u,
+  );
 });
