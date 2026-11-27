@@ -36,6 +36,9 @@ import * as UpdateCheckOnWake from "./scient/updateChecks/UpdateCheckOnWake.ts";
 import * as DesktopUpdateFacts from "./scient/updateOutcomes/DesktopUpdateFacts.ts";
 import * as DesktopUpdateFactsHttpDelivery from "./scient/updateOutcomes/DesktopUpdateFactsHttpDelivery.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — startup timing, reported through the update facts journal.
+import * as DesktopStartupTiming from "./scient/startupTiming/DesktopStartupTiming.ts";
+// SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
@@ -219,6 +222,9 @@ const layerDesktopPreview = PreviewManager.layer.pipe(
 const layerDesktopWindow = DesktopWindow.layer.pipe(
   // SCIENT-FORK: the same journal layer as the updater's, so both share one journal.
   Layer.provideMerge(DesktopTelemetryPublisher.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
+  // SCIENT-FORK:START — startup timing joins that journal, so it follows the same analytics gate.
+  Layer.provideMerge(DesktopStartupTiming.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
+  // SCIENT-FORK:END
   Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(layerDesktopServerExposure),
   Layer.provideMerge(layerDesktopPreview),

@@ -42,9 +42,13 @@ the stable scheduler and production gate.
   runtimes, so a release holds two macOS runners, not four. Linux and Windows
   packages set up while their prerequisites build, then wait for their own
   target's. The remote server asset starts once every target's SyncTeX runtime
-  and resource monitor exist, and fails if any is missing; Windows payload
-  verification starts once the Windows package exists. Assembly still requires
-  every job to succeed.
+  and resource monitor exist, and fails if any is missing. The Windows payload
+  verifier first generates the Windows server bytecode once the staged Windows
+  app exists, then verifies once the Windows package exists. Each wait names the
+  exact upload it found; the three Windows bytecode and verifier handoffs download
+  that artifact by ID, while the SyncTeX and resource monitor downloads still
+  select by name. A failed API request during a wait is retried a few times
+  before it fails the wait. Assembly still requires every job to succeed.
 - The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
   default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
   updater manifests are generated from the archive as before.
@@ -63,6 +67,34 @@ the stable scheduler and production gate.
   The unpacked artifact is transferred to Windows 2025 for native verification.
   Structural validation runs on every host; native probes require both the
   matching operating system and architecture.
+- Packages ship prepared server bytecode: V8's compile cache for the server
+  modules the backend loads first (the CLI entry and the server's declarative
+  layers, a subset of startup), so the first launch after an install or update
+  does not compile those from source. Only the packaged engine can generate it: macOS
+  and Linux packages do so while packaging, and the Linux-hosted Windows packager
+  logs `Skipping unexecutable target win32/x64` while staging the input below.
+  That staging builds an unsigned `dir` app from the release bundles and hands it
+  to the Windows verifier, which generates the bytecode with that app's own
+  `Scient.exe` (`scripts/native-server-compile-cache.mjs generate`) and records
+  the SHA-256 of each covered server module. The signed package reuses the same
+  bundles (`--skip-build`); its afterPack hook installs the bytecode only for the
+  same Electron version, platform, architecture and module bytes, and otherwise
+  fails the build. The verifier then requires the packaged engine, loaded through
+  the backend's own preload, to accept every prepared module (`check`), in the
+  unpacked app and again after silently installing the release installer. Its
+  last step reports that installer's SHA-256, and assembly fails unless the
+  release's Windows installer has the same digest, so a package rerun whose
+  installer bytes changed needs its verifier rerun too. Windows Packaging runs
+  the same check on its installed slim app. Payload validation allows at most 64
+  prepared-bytecode files.
+  A user's machine benefits only when its engine's identity matches the
+  manifest's, including V8's `cachedDataVersionTag`, which also reflects V8 flags
+  and detected CPU features, and, on Windows, when the prepared files can be
+  hard-linked into the user's cache (same volume). Otherwise, and for a missing,
+  damaged or stale entry, the modules compile from their shipped source. A Windows
+  backend never exits normally, so it flushes the compile cache after startup even
+  when prepared bytecode was used; otherwise modules outside the prepared set
+  would compile on every launch.
 - CI calls Windows Packaging for changes affecting packaged code on pull
   requests, merge groups, and main. Successful qualification is part of the
   existing required `Test` check; an unresolved diff runs qualification, and

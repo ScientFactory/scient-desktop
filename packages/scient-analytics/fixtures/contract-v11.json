@@ -183,6 +183,38 @@
       }
     },
     {
+      "case": "app.startup.timing:fallbacks",
+      "name": "app.startup.timing",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "launchKind": "unknown",
+        "platform": "unknown",
+        "architecture": "unknown",
+        "uiReadyBucket": "unknown",
+        "projectRestored": false,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.startup.timing:representative",
+      "name": "app.startup.timing",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "launchKind": "unknown",
+        "platform": "macos",
+        "architecture": "arm64",
+        "uiReadyBucket": "unknown",
+        "projectRestored": false,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
       "case": "server.boot.heartbeat:fallbacks",
       "name": "server.boot.heartbeat",
       "privacyLevel": "essential",
@@ -2329,6 +2361,59 @@
         "lastCheckAgeBucket": "never",
         "droppedFactsBucket": "0",
         "disabledClass": "policy",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.startup.timing:startup-first-after-install",
+      "name": "app.startup.timing",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "launchKind": "first-after-install",
+        "platform": "windows",
+        "architecture": "x64",
+        "uiReadyBucket": "30-60s",
+        "backendReadyBucket": "30-60s",
+        "windowShownBucket": "30-60s",
+        "projectRestored": false,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.startup.timing:startup-later",
+      "name": "app.startup.timing",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "launchKind": "later",
+        "platform": "macos",
+        "architecture": "arm64",
+        "uiReadyBucket": "under-2s",
+        "backendReadyBucket": "under-2s",
+        "windowShownBucket": "under-2s",
+        "projectRestored": true,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.startup.timing:startup-hostile",
+      "name": "app.startup.timing",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "launchKind": "unknown",
+        "platform": "unknown",
+        "architecture": "unknown",
+        "uiReadyBucket": "unknown",
+        "backendReadyBucket": "unknown",
+        "projectRestored": false,
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
