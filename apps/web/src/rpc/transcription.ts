@@ -225,7 +225,7 @@ type Commands = {
     onlyInProject?: true;
     response: { media: RecordingSource[] };
   };
-  "media-list": { response: { media: RecordingSource[] } };
+  "media-list": { found?: true; response: { media: RecordingSource[] } };
   "recording-rename": { source: string; title: string; response: { media: RecordingSource[] } };
   "recording-trash": { source: string; response: { trashed: true } };
   pause: { id: string; response: RecordingStatus };

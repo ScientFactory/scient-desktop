@@ -272,7 +272,11 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
     </div>,
   );
   await expect.element(screen.getByText("Paused")).toBeVisible();
-  await expect.element(screen.getByText("Not transcribed")).toBeVisible();
+  // A recording with no transcript yet carries no status, only a quiet Transcribe action.
+  await expect.element(screen.getByText("Not transcribed")).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("button", { name: "Transcribe", exact: true }).first())
+    .toBeInTheDocument();
   await expect.element(screen.getByRole("checkbox", { name: "Select Queued.m4a" })).toBeDisabled();
   await expect.element(screen.getByText(/Hebrew/).first()).toBeVisible();
   await expect.element(screen.getByText(/Whisper Large v3/)).not.toBeInTheDocument();

@@ -271,14 +271,13 @@ it.effect("lists project media that was never added and finds a file's transcrip
       );
     });
     yield* jobs.execute({ action: "media-register", project, source: transcribed });
-    const listed = yield* jobs.execute({ action: "media-list", project });
-    expect(listed).toEqual({
-      media: expect.arrayContaining([
-        { source: downloaded, size: 5, created: expect.any(Number), queued: false },
-        expect.objectContaining({ source: transcribed }),
-      ]),
+    // Recordings added to Scient and files found in the project are listed apart.
+    expect(yield* jobs.execute({ action: "media-list", project })).toEqual({
+      media: [expect.objectContaining({ source: transcribed })],
     });
-    expect(listed).toHaveProperty("media.length", 2);
+    expect(yield* jobs.execute({ action: "media-list", project, found: true })).toEqual({
+      media: [{ source: downloaded, size: 5, created: expect.any(Number), queued: false }],
+    });
     expect(
       yield* jobs.execute({ action: "list", project, includeCreated: true, source: transcribed }),
     ).toMatchObject([{ job: { id } }]);

@@ -197,7 +197,11 @@ export const Request = Schema.Union([
     source: Schema.optionalKey(path),
   }),
   Schema.Struct({ action: Schema.Literal("sample-language"), project: path, source: path }),
-  Schema.Struct({ action: Schema.Literal("media-list"), project: path }),
+  Schema.Struct({
+    action: Schema.Literal("media-list"),
+    project: path,
+    found: Schema.optional(Schema.Literal(true)),
+  }),
   Schema.Struct({
     action: Schema.Literal("capture-chunk"),
     project: path,
@@ -1241,6 +1245,8 @@ const make = Effect.gen(function* () {
               }),
           );
           const registered = media.filter((record) => record !== undefined);
+          // Files found in the project are listed apart from recordings added to Scient.
+          if (!input.found) return { media: registered };
           const known = new Set(registered.map(({ source }) => source));
           const found = (await discoveredMedia(project, nowMs)).flatMap((file) => {
             if (known.has(file.source)) return [];
@@ -1255,7 +1261,7 @@ const make = Effect.gen(function* () {
               },
             ];
           });
-          return { media: [...registered, ...found] };
+          return { media: found };
         }
         const status = async (id: string): Promise<Status> => {
           if (active?.root === root && active.id === id && active.status) return active.status;
