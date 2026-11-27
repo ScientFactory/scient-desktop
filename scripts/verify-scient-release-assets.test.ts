@@ -183,6 +183,23 @@ describe("Scient release asset verification", () => {
     }
   });
 
+  it("rejects a blockmap for a file a manifest lists but the updater never maps", () => {
+    const root = createValidFixture();
+    try {
+      writeManifest(root, "latest.yml", "0.6.0", [
+        { name: "Scient-0.6.0-x64.exe", value: "windows" },
+        { name: "scient-server-0.6.0.tgz", value: "server" },
+      ]);
+      NodeFS.writeFileSync(
+        NodePath.join(root, "scient-server-0.6.0.tgz.blockmap"),
+        blockmap("server"),
+      );
+      assert.throws(() => verify(root), "unattested blockmap");
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires the blockmaps of the Windows installer and macOS updater ZIPs", () => {
     for (const [payload, label] of [
       ["Scient-0.6.0-x64.exe", "Windows"],

@@ -20,6 +20,8 @@ interface ManifestDefinition {
   readonly requiredPayloads: ReadonlyArray<string>;
   /** Payloads electron-updater downloads differentially, so their `.blockmap` must ship. */
   readonly requiredBlockmaps: ReadonlyArray<string>;
+  /** The only payloads that may ship a `.blockmap`, even if the manifest lists other files. */
+  readonly blockmapPayloads: ReadonlyArray<string>;
 }
 
 function requiredValue(args: ReadonlyArray<string>, flag: string): string {
@@ -80,12 +82,19 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
         `Scient-${version}-x64.zip`,
       ],
       requiredBlockmaps: [`Scient-${version}-arm64.zip`, `Scient-${version}-x64.zip`],
+      blockmapPayloads: [
+        `Scient-${version}-arm64.dmg`,
+        `Scient-${version}-arm64.zip`,
+        `Scient-${version}-x64.dmg`,
+        `Scient-${version}-x64.zip`,
+      ],
     },
     {
       name: `${manifestChannel}.yml`,
       label: "Windows",
       requiredPayloads: [`Scient-${version}-x64.exe`],
       requiredBlockmaps: [`Scient-${version}-x64.exe`],
+      blockmapPayloads: [`Scient-${version}-x64.exe`],
     },
     {
       name: `${manifestChannel}-linux.yml`,
@@ -93,11 +102,14 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
       requiredPayloads: [`Scient-${version}-x86_64.AppImage`],
       // The AppImage carries its blockmap inside the file (manifest `blockMapSize`).
       requiredBlockmaps: [],
+      blockmapPayloads: [],
     },
   ];
 
   const allowed = new Set<string>();
-  const payloads = new Set<string>();
+  const blockmapPayloads = new Set(
+    definitions.flatMap((definition) => definition.blockmapPayloads),
+  );
   for (const definition of definitions) {
     const manifestPath = NodePath.join(assetsDir, definition.name);
     assertRegularNonemptyFile(manifestPath, `${definition.label} update manifest`);
@@ -120,7 +132,6 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
       }
       urls.add(file.url);
       allowed.add(file.url);
-      payloads.add(file.url);
       const payloadPath = NodePath.join(assetsDir, file.url);
       const stat = assertRegularNonemptyFile(payloadPath, `${definition.label} update payload`);
       if (stat.size !== file.size || digest(payloadPath, "sha512", "base64") !== file.sha512) {
@@ -161,7 +172,7 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
   for (const name of actual) {
     if (!name.endsWith(".blockmap")) continue;
     const payloadName = name.slice(0, -".blockmap".length);
-    if (!payloads.has(payloadName)) {
+    if (!blockmapPayloads.has(payloadName)) {
       throw new Error(`Release assembly contains unattested blockmap: ${name}.`);
     }
     const blockmapPath = NodePath.join(assetsDir, name);
