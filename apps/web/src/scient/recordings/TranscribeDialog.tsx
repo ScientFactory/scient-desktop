@@ -47,6 +47,7 @@ export function TranscribeDialog({
   title,
   previousId,
   batchSources,
+  otherBatches = [],
   onClose,
   onStart,
 }: {
@@ -56,6 +57,8 @@ export function TranscribeDialog({
   title: string;
   previousId?: string;
   batchSources?: readonly string[];
+  /** Recordings selected in other projects, started with the same choices. */
+  otherBatches?: readonly { project: string; sources: readonly string[] }[];
   onClose: () => void;
   onStart: () => void;
 }) {
@@ -294,17 +297,31 @@ export function TranscribeDialog({
           } else if (engine) {
             if (engine.engine === "cloud") await consentToTranscriptionEngine(engine.id);
             if (batchSources) {
-              await transcriptionCommand("start-batch", project, {
-                source,
-                sources: batchSources,
+              const choices = {
                 language: effectiveLanguage,
                 engine: engine.engine,
                 model: engine.model,
                 ...(engine.engine === "cloud" ? { cloudEngineId: engine.id } : {}),
-                ...(correction === "off" ? { mode: "off" } : {}),
-                ...(wordsEnabled ? {} : { useWords: false }),
+                ...(correction === "off" ? { mode: "off" as const } : {}),
+                ...(wordsEnabled ? {} : { useWords: false as const }),
                 ...(correction !== "off" && correctionModel ? { correctionModel } : {}),
-              });
+              };
+              // One batch per project; a project with a single recording starts it alone.
+              for (const batch of [{ project, sources: batchSources }, ...otherBatches]) {
+                const [first, ...rest] = batch.sources;
+                if (!first) continue;
+                if (rest.length)
+                  await transcriptionCommand("start-batch", batch.project, {
+                    source: first,
+                    sources: batch.sources,
+                    ...choices,
+                  });
+                else
+                  await transcriptionCommand("start", batch.project, {
+                    source: first,
+                    ...choices,
+                  });
+              }
             } else {
               await transcriptionCommand("start", project, {
                 source,

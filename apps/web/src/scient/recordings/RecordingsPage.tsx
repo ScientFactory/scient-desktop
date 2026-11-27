@@ -146,7 +146,20 @@ export function RecordingsPage({
     source: string;
     previousId?: string;
     batchSources?: readonly string[];
+    otherBatches?: readonly { project: Project; sources: readonly string[] }[];
   }>();
+  // Recordings chosen across projects are transcribed with one set of choices.
+  const transcribeAll = (groups: readonly { project: Project; sources: readonly string[] }[]) => {
+    const [first, ...others] = groups.filter(({ sources }) => sources.length);
+    if (!first) return;
+    const total = groups.reduce((sum, { sources }) => sum + sources.length, 0);
+    setTranscribe({
+      project: first.project,
+      source: first.sources[0]!,
+      ...(total > 1 ? { batchSources: first.sources } : {}),
+      ...(others.length ? { otherBatches: others } : {}),
+    });
+  };
   const [jobActionPending, setJobActionPending] = useState(false);
   const [jobActionError, setJobActionError] = useState(false);
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
@@ -653,13 +666,8 @@ export function RecordingsPage({
           onAdded={(added) => {
             setFinding(false);
             refreshList();
-            const [only] = added;
-            if (added.length === 1 && only && only.sources.length <= 20)
-              setTranscribe({
-                project: only.project,
-                source: only.sources[0]!,
-                ...(only.sources.length > 1 ? { batchSources: only.sources } : {}),
-              });
+            if (added.reduce((sum, { sources }) => sum + sources.length, 0) <= 20)
+              transcribeAll(added);
           }}
         />
       ) : (
@@ -991,11 +999,7 @@ export function RecordingsPage({
                         <Checkbox
                           aria-label={gt("Select {recording}", { recording: fileName(source) })}
                           checked={selection.has(key)}
-                          disabled={
-                            queued ||
-                            (batchProject !== undefined && batchProject.id !== project.id) ||
-                            (!selection.has(key) && selectedFiles.length >= 20)
-                          }
+                          disabled={queued || (!selection.has(key) && selectedFiles.length >= 20)}
                           onCheckedChange={(checked) =>
                             setSelection((current) => {
                               const next = new Set(current);
@@ -1248,14 +1252,16 @@ export function RecordingsPage({
               <Button
                 size="sm"
                 aria-label={gt("Transcribe selected")}
-                onClick={() => {
-                  const sources = selectedFiles.map(({ source }) => source);
-                  setTranscribe({
-                    project: batchProject,
-                    source: sources[0]!,
-                    ...(sources.length > 1 ? { batchSources: sources } : {}),
-                  });
-                }}
+                onClick={() =>
+                  transcribeAll(
+                    [...new Set(selectedFiles.map(({ project }) => project))].map((project) => ({
+                      project,
+                      sources: selectedFiles
+                        .filter((file) => file.project.id === project.id)
+                        .map(({ source }) => source),
+                    })),
+                  )
+                }
               >
                 {gt("Transcribe")}
               </Button>
@@ -1267,14 +1273,29 @@ export function RecordingsPage({
         <TranscribeDialog
           key={transcribe.source}
           project={transcribe.project.workspaceRoot}
-          projectTitle={transcribe.project.title}
+          {...(transcribe.otherBatches ? {} : { projectTitle: transcribe.project.title })}
           source={transcribe.source}
           title={
             transcribe.batchSources
-              ? gt("{count} recordings", { count: transcribe.batchSources.length })
+              ? gt("{count} recordings", {
+                  count:
+                    transcribe.batchSources.length +
+                    (transcribe.otherBatches ?? []).reduce(
+                      (sum, { sources }) => sum + sources.length,
+                      0,
+                    ),
+                })
               : fileName(transcribe.source)
           }
           {...(transcribe.batchSources ? { batchSources: transcribe.batchSources } : {})}
+          {...(transcribe.otherBatches
+            ? {
+                otherBatches: transcribe.otherBatches.map(({ project, sources }) => ({
+                  project: project.workspaceRoot,
+                  sources,
+                })),
+              }
+            : {})}
           {...(transcribe.previousId ? { previousId: transcribe.previousId } : {})}
           onClose={() => setTranscribe(undefined)}
           onStart={() => {

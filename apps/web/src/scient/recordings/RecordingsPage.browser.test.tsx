@@ -19,6 +19,9 @@ const fixtures = vi.hoisted(() => {
   };
   return {
     job,
+    projects: [
+      { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
+    ],
     command: vi.fn(),
     consent: vi.fn(),
     makeNotes: vi.fn(),
@@ -101,9 +104,7 @@ vi.mock("./copyRecording", () => ({ copyRecording: {} }));
 vi.mock("./serverPlatform", () => ({ useRecycleBin: () => false }));
 vi.mock("../../state/entities", () => ({
   readThreadShell: fixtures.readThread,
-  useProjects: () => [
-    { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
-  ],
+  useProjects: () => fixtures.projects,
 }));
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => "test",
@@ -663,6 +664,95 @@ it("queues two selected recordings with one engine choice", async () => {
     model: "local",
     language: "auto",
   });
+});
+
+it("transcribes recordings selected in two projects with one choice", async () => {
+  const lab = { id: "lab", environmentId: "test", workspaceRoot: "/lab", title: "Lab meetings" };
+  fixtures.projects.push(lab);
+  try {
+    fixtures.command.mockReset().mockImplementation(async (action: string, project: string) => {
+      if (action === "list") return [];
+      if (action === "media-list")
+        return project === "/lab"
+          ? { media: [{ source: "/lab/Standup.m4a", size: 16000, created: 2 }] }
+          : { media: [{ source: "/class/First.m4a", size: 16000, created: 1 }] };
+      if (action === "inventory")
+        return {
+          local: [
+            { id: "local", name: "Whisper", installed: true, secondsPer30s: { accelerated: 1 } },
+          ],
+          chatgpt: { enabled: false, signedIn: false },
+          cloud: [],
+          recommendations: { auto: { id: "local", installed: true } },
+        };
+      if (action === "start") return {};
+      throw new Error(`Unexpected request ${action}`);
+    });
+    await using screen = await render(
+      <div className="h-screen">
+        <PanelHarness />
+      </div>,
+    );
+    await screen.getByRole("checkbox", { name: "Select First.m4a" }).click();
+    await screen.getByRole("checkbox", { name: "Select Standup.m4a" }).click();
+    await screen.getByRole("button", { name: "Transcribe selected" }).click();
+    await page.getByRole("button", { name: "Transcribe", exact: true }).click();
+    for (const [project, source] of [
+      ["/class", "/class/First.m4a"],
+      ["/lab", "/lab/Standup.m4a"],
+    ])
+      expect(fixtures.command).toHaveBeenCalledWith("start", project, {
+        source,
+        engine: "local",
+        model: "local",
+        language: "auto",
+      });
+  } finally {
+    fixtures.projects.pop();
+  }
+});
+
+it("adds files found in the projects from their own view", async () => {
+  const found = ["/class/clips/Board.mp4", "/class/Week 1.m4a"];
+  const added: string[] = [];
+  fixtures.command
+    .mockReset()
+    .mockImplementation(async (action: string, _project: string, input: unknown) => {
+      if (action === "list") return [];
+      if (action === "media-list") {
+        const media = (input as { found?: true }).found
+          ? found.filter((source) => !added.includes(source))
+          : added;
+        return { media: media.map((source) => ({ source, size: 16000, created: 1 })) };
+      }
+      if (action === "media-register") {
+        const { source } = input as { source: string };
+        added.push(source);
+        return { media: [{ source, size: 16000, created: 1 }] };
+      }
+      if (action === "inventory")
+        return {
+          local: [],
+          chatgpt: { enabled: false, signedIn: false },
+          cloud: [],
+          recommendations: {},
+        };
+      return {};
+    });
+  await using screen = await render(
+    <div className="h-screen">
+      <PanelHarness />
+    </div>,
+  );
+  await expect.element(screen.getByText("No recordings yet")).toBeVisible();
+  await screen.getByRole("button", { name: "From your projects" }).click();
+  await expect.element(screen.getByText("Board.mp4")).toBeVisible();
+  // A click on the box or anywhere on the row selects it once.
+  await screen.getByRole("checkbox", { name: "Select Board.mp4" }).click();
+  await screen.getByText("Week 1.m4a").click();
+  await expect.element(screen.getByText("2 selected")).toBeVisible();
+  await screen.getByRole("button", { name: "Add", exact: true }).click();
+  await expect.poll(() => added.toSorted()).toEqual(found.toSorted());
 });
 
 it("renames a recording in its row, shows its info and moves it to the Trash", async () => {
