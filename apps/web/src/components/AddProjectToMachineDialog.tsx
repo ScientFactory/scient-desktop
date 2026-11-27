@@ -259,15 +259,17 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         files: [...selectedFiles.keys()],
       });
       // An earlier request must not dismiss or navigate a newly opened dialog.
-      if (useRequest.getState().request !== request) return;
-      const targetRef = scopeProjectRef(target.environmentId, projectId);
-      silenceProjectCloneToasts(targetRef);
-      close();
-      openClonedProject(targetRef);
+      if (useRequest.getState().request === request) {
+        const targetRef = scopeProjectRef(target.environmentId, projectId);
+        silenceProjectCloneToasts(targetRef);
+        close();
+        openClonedProject(targetRef);
+      }
     } catch (cause) {
-      if (useRequest.getState().request !== request) return;
-      setError(thrownErrorMessage(cause, m) ?? gt("Could not start the clone."));
-      setSubmitting(false);
+      if (useRequest.getState().request === request) {
+        setError(thrownErrorMessage(cause, m) ?? gt("Could not start the clone."));
+        setSubmitting(false);
+      }
     }
     releaseToastHold();
   };

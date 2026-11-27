@@ -4,6 +4,7 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -48,13 +49,13 @@ describe("importPastedComposerText", () => {
     );
     expect(text).toBe(chip("Login"));
     const withBrackets = clipboard({
-      "text/plain": String.raw`[Fix \[login\]](https://app.t3.codes/threads/env-1/thread-1)`,
+      "text/plain": String.raw`[Fix \[login\]](${DEFAULT_HOSTED_APP_URL}/threads/env-1/thread-1)`,
     });
     expect(importPastedComposerText(withBrackets, importAll([]))).toBe(chip("Fix login"));
   });
 
   it("keeps the link when the composer cannot take the thread", () => {
-    const pasted = "https://app.t3.codes/threads/env-1/thread-1";
+    const pasted = `${DEFAULT_HOSTED_APP_URL}/threads/env-1/thread-1`;
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );

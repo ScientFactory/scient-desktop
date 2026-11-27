@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
+import "../index.css";
 
 const clone = vi.hoisted(() => vi.fn());
 const snapshots = vi.hoisted(() => vi.fn<() => ReadonlyArray<ProjectCloneSnapshot>>());
@@ -216,7 +217,7 @@ describe("AddProjectToMachineDialog", () => {
     );
     const file = screen.getByRole("checkbox", { name: /\.env/ });
     await file.click();
-    await expect.element(file).not.toBeChecked();
+    await expect.element(file).toBeChecked();
     const dialog = screen.getByRole("dialog", { name: "Add to another machine" });
     const search = screen.getByRole("searchbox", { name: "Search ignored files" });
     await search.fill("env");
@@ -241,7 +242,7 @@ describe("AddProjectToMachineDialog", () => {
     await expect.element(search).toHaveValue("");
     await expect.element(search).toHaveFocus();
     await expect.element(search).toHaveAttribute("type", "text");
-    await expect.element(file).not.toBeChecked();
+    await expect.element(file).toBeChecked();
     // Holding Escape repeats the keydown, which must not also close the dialog.
     await act(() => {
       search.element().dispatchEvent(

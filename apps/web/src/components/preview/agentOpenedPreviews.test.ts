@@ -224,13 +224,19 @@ describe("floatBrowserSurface", () => {
     expect(miniPlayerSource()).toBeUndefined();
 
     floatBrowserSurface(ref, "tab_a", state(tab(loading)));
-    expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_a"));
+    expect(miniPlayerSource()).toEqual({
+      ...browserMiniPlayerSource("tab_a"),
+      id: "browser:tab_a",
+    });
   });
 
   it("follows the desktop page when the server snapshot has not caught up", () => {
     setup();
     floatBrowserSurface(ref, "tab_a", state(tab({ _tag: "Idle" }), loading));
-    expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_a"));
+    expect(miniPlayerSource()).toEqual({
+      ...browserMiniPlayerSource("tab_a"),
+      id: "browser:tab_a",
+    });
   });
 });
 

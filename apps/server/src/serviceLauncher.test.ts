@@ -726,7 +726,7 @@ process.exit(0);
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-no-state-" });
       const versionDir = path.join(root, "runtime", "versions", "1.0.0");
-      yield* writeFakeRuntime(
+      const entryPath = yield* writeFakeRuntime(
         fs,
         path,
         versionDir,
@@ -741,7 +741,8 @@ process.exit(0);
         expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
       );
 
-      assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
+      // SCIENT-FORK: Scient's runtime entry sits in the version's package, beside the marker.
+      assert.isTrue(yield* fs.exists(path.join(path.dirname(entryPath), "started")));
     }),
   );
 

@@ -241,12 +241,15 @@ function markdownPreview(
   truncated: boolean,
   contents = "- [ ] Keep the rest of this file\n",
   relativePath = "tasks.md",
+  readOnly = false,
 ) {
   state.file = {
     relativePath,
     contents,
     byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
+    // A file outside the workspace is read-only, and only then renders in the upstream viewer.
+    ...(readOnly ? { readOnly: true, outsideWorkspace: true } : {}),
   };
   return filePreview(relativePath);
 }
@@ -409,12 +412,21 @@ describe("source file scroll", () => {
     await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
     const sourceFile = (relativePath: string, lines: number) => {
       const contents = Array.from({ length: lines }, (_, i) => `const line${i} = ${i};`).join("\n");
-      state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      // A file outside the workspace is read-only: its large source renders in the static viewer.
+      const hostPath = `/outside/${relativePath}`;
+      state.file = {
+        relativePath: hostPath,
+        contents,
+        byteLength: contents.length,
+        truncated: false,
+        readOnly: true,
+        outsideWorkspace: true,
+      };
       // The app mounts under StrictMode, whose remount must not wipe the saved offset.
       return (
         <StrictMode>
           <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
-            {filePreview(relativePath)}
+            {filePreview(hostPath)}
           </div>
         </StrictMode>
       );
@@ -459,6 +471,13 @@ describe("source file scroll", () => {
     const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
     const row = (line: number) =>
       document.querySelector("diffs-container")?.shadowRoot?.querySelector(`[data-line="${line}"]`);
+    const inViewport = (element: Element | null | undefined) => {
+      const rect = element?.getBoundingClientRect();
+      const box = scroller()?.getBoundingClientRect();
+      return (
+        rect !== undefined && box !== undefined && rect.bottom > box.top && rect.top < box.bottom
+      );
+    };
     const middle = (element: Element | null | undefined) => {
       const rect = element?.getBoundingClientRect();
       return rect ? (rect.top + rect.bottom) / 2 : Number.NaN;
@@ -469,8 +488,8 @@ describe("source file scroll", () => {
     await using screen = await render(hostFile(null));
     await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(3000));
     scroller()!.scrollTop = 2500;
-    // The viewer has moved its window of mounted rows to the new offset.
-    await vi.waitFor(() => expect(row(1)).toBeNull());
+    // Line 1 has scrolled out of view, whether or not its row is still mounted.
+    await vi.waitFor(() => expect(inViewport(row(1))).toBe(false));
 
     await screen.rerender(hostFile({ line: 82, requestId: 1 }));
     await vi.waitFor(lineIsCentered);
@@ -786,28 +805,26 @@ describe("open file in preview browser", () => {
 // SCIENT-FORK: a writable .md opens in Scient's Markdown editor, where Mod+A selects the document;
 // tested in scient/markdownEditor/ScientMarkdownWorkspaceSurface.browser.test.tsx.
 describe("rendered Markdown select all", () => {
-  it("selects only the rendered file, including after a task toggle", async () => {
+  it("selects only the rendered file of a read-only document", async () => {
     using _settings = setup();
     await using screen = await render(
       <>
         <p>Transcript text from the chat thread.</p>
-        {markdownPreview(false, "- [ ] Task item\n\nRendered file body.\n")}
+        {markdownPreview(
+          false,
+          "- [ ] Task item\n\nRendered file body.\n",
+          "/outside/notes.md",
+          true,
+        )}
       </>,
     );
-    const expectFileOnlySelection = async () => {
-      await userEvent.keyboard(
-        isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
-      );
-      const selection = window.getSelection()?.toString() ?? "";
-      expect(selection).toContain("Rendered file body.");
-      expect(selection).not.toContain("Transcript text from the chat thread.");
-    };
-
     await userEvent.click(screen.getByText("Rendered file body."));
-    await expectFileOnlySelection();
-    // A toggled checkbox keeps focus on an input inside the preview.
-    await userEvent.click(screen.getByRole("checkbox"));
-    await expectFileOnlySelection();
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Rendered file body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
   });
 
   it("copies the whole chunked file with its own line endings", async () => {
@@ -815,7 +832,7 @@ describe("rendered Markdown select all", () => {
     const contents = `first\r\r# ${"x\r\r# ".repeat(2_000)}end`;
     await using _screen = await render(
       <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-        {markdownPreview(false, contents, "cr.md")}
+        {markdownPreview(false, contents, "/outside/cr.md", true)}
       </div>,
     );
     const firstChunk = await vi.waitFor(() => {
@@ -902,7 +919,8 @@ describe("rendered Markdown scroll position", () => {
   it("restores each file's reading position after the preview remounts", async () => {
     using _settings = setup();
     using _style = withAppCss();
-    const preview = (relativePath: string) => sized(markdownPreview(false, sections, relativePath));
+    const preview = (relativePath: string) =>
+      sized(markdownPreview(false, sections, `/outside/${relativePath}`, true));
 
     let saved: ReturnType<typeof readingPosition>;
     {

@@ -3072,7 +3072,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (pendingUserInputs.length === 0 || Boolean(activePendingProgress?.activeQuestion)) &&
     !projectSelectionRequired &&
     // SCIENT-FORK: dictation owns the composer while it records or transcribes.
-    !voiceBusyRef.current;
+    !voiceBusy;
 
   const insertComposerText = (
     text: string,
@@ -3229,7 +3229,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         phase !== "connecting" &&
         pendingApprovals.length === 0 &&
         pendingUserInputs.length === 0 &&
-        !voiceBusyRef.current &&
+        !voiceBusy &&
         countPreparingComposerImages(attachmentTargetKey) === 0 &&
         !pendingDraftWork.has(attachmentTargetKey) &&
         readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),

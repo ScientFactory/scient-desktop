@@ -669,7 +669,8 @@ describe("AntigravityAdapterV2 client file system", () => {
         readTextFile: true,
         writeTextFile: false,
       });
-      assert.equal(initialize?.params?.clientInfo?.name, "t3-code");
+      // SCIENT-FORK: a runtime with no known version uses the compatible identity.
+      assert.equal(initialize?.params?.clientInfo?.name, "zed");
       assert.isUndefined(writeTextFile);
       if (readTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file reads");
