@@ -802,9 +802,8 @@ describe("open file in preview browser", () => {
   });
 });
 
-// SCIENT-FORK: a writable .md opens in Scient's Markdown editor, where Mod+A selects the document;
-// tested in scient/markdownEditor/ScientMarkdownWorkspaceSurface.browser.test.tsx.
 describe("rendered Markdown select all", () => {
+  // SCIENT-FORK:START — writable Markdown uses the editor and has its own Mod+A test.
   it("selects only the rendered file of a read-only document", async () => {
     using _settings = setup();
     await using screen = await render(
@@ -826,6 +825,7 @@ describe("rendered Markdown select all", () => {
     expect(selection).toContain("Rendered file body.");
     expect(selection).not.toContain("Transcript text from the chat thread.");
   });
+  // SCIENT-FORK:END
 
   it("copies the whole chunked file with its own line endings", async () => {
     using _settings = setup();
