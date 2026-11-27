@@ -381,7 +381,8 @@ async function launch({ exe, installDir, profile, name }) {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ELECTRON_NO_ASAR;
   delete env.NODE_OPTIONS;
-  const start = now();
+  const start = Budget.startBefore(now, deadline);
+  if (start === null) return { readyMs: null, stopped: true, failure: `${name}: ${BUDGET_SPENT}` };
   const child = NodeChildProcess.spawn(exe, [`--remote-debugging-port=${port}`], {
     env,
     detached: true,

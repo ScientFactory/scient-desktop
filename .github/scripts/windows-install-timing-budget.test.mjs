@@ -1,6 +1,11 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
-import { measurementBudget, readyDeadline, waitUntil } from "./windows-install-timing-budget.mjs";
+import {
+  measurementBudget,
+  readyDeadline,
+  startBefore,
+  waitUntil,
+} from "./windows-install-timing-budget.mjs";
 
 const BUDGET_MS = 12 * 60_000;
 const READY_MS = 2 * 60_000;
@@ -70,3 +75,25 @@ NodeTest.test(
     NodeAssert.equal(fake.time.now, deadline);
   },
 );
+
+NodeTest.test(
+  "a clock that moves between reads never stretches the deadline past the budget",
+  () => {
+    // Every read of the clock advances it, as a real clock does between two calls.
+    let now = 0;
+    const clock = () => (now += 30);
+    const budget = measurementBudget(clock, BUDGET_MS);
+    now = BUDGET_MS - 1_000;
+    const deadline = budget.deadline(READY_MS);
+    NodeAssert.ok(deadline !== null && deadline <= 30 + BUDGET_MS, `deadline ${deadline}`);
+    now = 30 + BUDGET_MS - 10;
+    NodeAssert.equal(budget.deadline(READY_MS), null);
+  },
+);
+
+NodeTest.test("a launch whose deadline passed before it could start does not start", () => {
+  let now = 9_990;
+  const clock = () => (now += 5);
+  NodeAssert.equal(startBefore(clock, 10_000), 9_995);
+  NodeAssert.equal(startBefore(clock, 10_000), null);
+});

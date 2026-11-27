@@ -205,12 +205,13 @@ Keep differential updates enabled and qualify the normal update path.
 Every release run also installs its exact Windows installer on a clean
 `windows-2025` runner and times it, in a separate **Windows install timing** run
 ([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml)).
-The release's job **Start Windows install timing** starts once every package job
-has succeeded and dispatches that run on the release's branch with the release's
-run ID, the ID of its `desktop-win-x64` artifact as **Package Windows x64**
-reported it (the timing run downloads exactly that upload) and its version; the
-job summary links the new run. The other release checks verify the unpacked app;
-this one runs the real installer.
+The last step of the release's **Assemble and attest release** job, **Start
+Windows install timing**, dispatches that run on the release's branch with the
+release's run ID, the ID of its `desktop-win-x64` artifact as **Package Windows
+x64** reported it (the timing run downloads exactly that upload) and its version;
+the job summary links the new run. It runs only once assembly has accepted the
+installer, before any publication approval. The other release checks verify the
+unpacked app; this one runs the real installer.
 
 Each of three samples installs silently into a new folder under the system drive,
 launches the installed app on a new profile, quits it by closing its window,
@@ -298,15 +299,27 @@ stage, roughly doubles the run, and never fails it.
 The timing is advisory. A regression adds a warning and a marked row in the
 summary. A failed stage, such as an installer error or a launch that never became
 ready, fails the timing run. The release run never waits for it: neither its
-concurrency group, assembly nor publication depends on the timing. **Start Windows
-install timing** sets `continue-on-error`, so a failed dispatch marks only that job
-failed while the release run still concludes successfully. A job that reaches its
-own `timeout-minutes` is cancelled instead, and a cancelled job makes the run
-conclude `cancelled` despite `continue-on-error`. So the job waits for nothing:
-its dispatch is cut at 60 seconds and its step at 2 minutes, both ending as
-failures, well inside the job's 10 minutes. When a package job fails, the release
-fails and the timing does not start. Read the timing summary before approving a
-Stable candidate; whether a regression blocks it is the release owner's decision.
+concurrency group, assembly nor publication depends on the timing run, and the
+dispatch needs no runner of its own, so it cannot sit queued while the release
+holds its concurrency group. The step sets `continue-on-error`, so a failed
+dispatch marks only that step failed while assembly and the release run still
+succeed. Its dispatch is cut at 60 seconds and the step at 2 minutes, both ending
+as failures; a job that reaches its own `timeout-minutes` is cancelled instead,
+which would make the run conclude `cancelled`, so assembly's bound includes those
+2 minutes. The step is why assembly's token may write Actions (to dispatch
+workflows); its checkout does not persist that token, so dependency installs
+cannot read it from the Git configuration. When packaging or assembly fails, the
+release fails and the timing does not start. Read the timing summary before
+approving a Stable candidate; whether a regression blocks it is the release
+owner's decision.
+
+The timing run is started from inside the release rather than by a
+`workflow_run` trigger on the release's completion: a Stable candidate awaiting
+its production approval has not completed, so such a trigger would time it only
+after approval, and a release dispatched with a workflow's `GITHUB_TOKEN` (as
+[`scheduled-stable-candidate.yml`](../../.github/workflows/scheduled-stable-candidate.yml)
+does) may raise no `workflow_run` event at all, since GitHub starts no workflow
+for most events that token causes.
 
 The numbers describe a 4-CPU GitHub runner, whose image turns Defender real-time
 scanning off (the summary records the state). Compare them between runs, not with

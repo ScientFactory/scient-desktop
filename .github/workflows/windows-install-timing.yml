@@ -2,9 +2,9 @@ name: Windows install timing
 run-name: Windows install timing of ${{ inputs.installer_url || format('{0} from run {1}', inputs.artifact, inputs.run_id) }}
 
 # Installs a real Windows installer on a clean runner and times the install, the first launch
-# and a second launch until the app is ready. Each release run dispatches it as a run of its own
-# once its Windows installer is uploaded, so the release never waits for it; run it by hand for
-# any installer an Actions run built, or any published installer URL.
+# and a second launch until the app is ready. Each release run's assembly dispatches it as a run
+# of its own once it accepts the Windows installer, so the release never waits for it; run it by
+# hand for any installer an Actions run built, or any published installer URL.
 on:
   workflow_dispatch:
     inputs:

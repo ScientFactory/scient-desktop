@@ -14,10 +14,16 @@ export function measurementBudget(clock, totalMs) {
   return {
     left: (ms) => until(clock, end, ms),
     deadline(ms) {
-      const left = until(clock, end, ms);
-      return left === 0 ? null : clock() + left;
+      const now = clock();
+      return now < end ? Math.min(now + ms, end) : null;
     },
   };
+}
+
+/** When a launch starts, read right before it does; null once `deadline` has passed. */
+export function startBefore(clock, deadline) {
+  const now = clock();
+  return now < deadline ? now : null;
 }
 
 /**
