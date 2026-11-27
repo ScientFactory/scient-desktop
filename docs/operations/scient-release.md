@@ -192,9 +192,12 @@ authentication gate, and onboarding renders only once the workspace snapshot and
 server configuration have arrived. The harness reads the page through the DevTools
 port it opens for the launch. The main window is created hidden and shown after
 its first paint, and until then the page reports itself visible, so the harness
-also opens the main process's inspector, as Node's `inspect -p` does, and asks
-Electron whether that window is shown. It records when the first window, the loaded
-page, the shown window, the shell and the card appeared, to show where the time went.
+also asks Windows which of the app's top-level windows are shown (visible, not
+minimized, not cloaked) and requires one the size of the page's own window; the
+connecting splash, shown first, is far smaller. The packaged app refuses Node
+inspector attachment, so Electron itself cannot be asked. The harness records when
+the first window, the loaded page, the shown window, the shell and the card
+appeared, to show where the time went, and the window sizes it matched.
 
 Every stage has a bound: 5 minutes to install, 2 minutes to ready, 30 seconds to
 quit (then the app's own processes are force-stopped within 15 seconds and the

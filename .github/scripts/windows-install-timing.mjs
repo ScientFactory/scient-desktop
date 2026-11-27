@@ -22,7 +22,6 @@ const MEASUREMENT_BUDGET_MS = 12 * 60_000;
 const COMMAND_TIMEOUT_MS = 30_000;
 const CDP_CONNECT_TIMEOUT_MS = 5_000;
 const CDP_CALL_TIMEOUT_MS = 5_000;
-const MAIN_INSPECTOR_PORT = 9229;
 const POLL_MS = 100;
 
 const [installerArg, outArg, samplesArg = "3"] = process.argv.slice(2);
@@ -204,31 +203,114 @@ function connect(wsUrl) {
   });
 }
 
-/**
- * Opens the app's main-process inspector, as Node's `inspect -p` does, to read its windows.
- * The main window is created hidden and shown once its renderer has painted; with background
- * throttling off until then, the page reports itself visible either way.
- */
-async function inspectMain(pid, deadline, wanted) {
-  let lastError = "it did not open";
-  while (wanted() && now() < deadline) {
-    try {
-      process._debugProcess(pid);
-      const targets = await json(`http://127.0.0.1:${MAIN_INSPECTOR_PORT}/json/list`);
-      const target = targets?.find((candidate) => candidate.webSocketDebuggerUrl);
-      if (target) {
-        const session = await connect(target.webSocketDebuggerUrl);
-        if (session && (await session.evaluate("process.pid")) === pid) return { session };
-        session?.close();
-        lastError = `port ${MAIN_INSPECTOR_PORT} answers for another process`;
-      }
-    } catch (error) {
-      lastError = error.message;
-    }
-    await sleep(250);
+// Lists a process's shown top-level windows (visible, not minimized, not cloaked) as their
+// outer sizes. The main window is created hidden and shown once its renderer has painted, and
+// until then the page reports itself visible; the packaged app refuses inspectors, so the
+// harness reads the windows from Windows itself.
+const WINDOWS_HELPER = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class ShownWindows {
+  delegate bool EnumProc(IntPtr window, IntPtr data);
+  [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr data);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+  public static string Of(uint target) {
+    var shown = new List<string>();
+    EnumWindows((window, data) => {
+      uint pid;
+      GetWindowThreadProcessId(window, out pid);
+      int cloaked = 0;
+      Rect rect;
+      if (pid == target && IsWindowVisible(window) && !IsIconic(window)
+          && (DwmGetWindowAttribute(window, 14, out cloaked, 4) != 0 || cloaked == 0)
+          && GetWindowRect(window, out rect))
+        shown.Add((rect.Right - rect.Left) + "x" + (rect.Bottom - rect.Top));
+      return true;
+    }, IntPtr.Zero);
+    return string.Join(",", shown);
   }
-  return { error: `could not inspect the main process (${lastError})` };
 }
+'@
+[Console]::Out.WriteLine('ready')
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+  $id, $target = $line -split ' '
+  [Console]::Out.WriteLine("$id " + [ShownWindows]::Of([uint32]$target))
+}
+`;
+
+/** One PowerShell process answering `windows(pid)` within `timeoutMs`; null when it cannot. */
+function startWindowHelper(timeoutMs = COMMAND_TIMEOUT_MS) {
+  const child = NodeChildProcess.spawn(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(WINDOWS_HELPER, "utf16le").toString("base64"),
+    ],
+    { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
+  );
+  const waiting = new Map();
+  let id = 0;
+  let buffer = "";
+  const answer = (key, value) => {
+    waiting.get(key)?.(value);
+    waiting.delete(key);
+  };
+  const request = (line, key) =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => answer(key, null), timeoutMs);
+      waiting.set(key, (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      });
+      if (line !== null) child.stdin.write(`${line}\n`);
+    });
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+      const line = buffer.slice(0, end).trim();
+      buffer = buffer.slice(end + 1);
+      if (line === "ready") answer("ready", true);
+      else answer(line.split(" ")[0], line.split(" ")[1] ?? "");
+    }
+  });
+  child.on("error", () => {});
+  child.on("exit", () => {
+    for (const key of waiting.keys()) answer(key, null);
+  });
+  child.stdin.on("error", () => {});
+  // Compiling the helper takes a few seconds, so it starts once, before any sample.
+  const ready = request(null, "ready");
+  return {
+    ready,
+    async windows(pid) {
+      if (!(await ready)) return null;
+      id += 1;
+      const sizes = await request(`${id} ${pid}`, String(id));
+      if (sizes === null) return null;
+      return sizes === "" ? [] : sizes.split(",").map((size) => size.split("x").map(Number));
+    },
+    close: () => child.kill(),
+  };
+}
+
+// The splash is 360 by 220; the main window several times that. Window frames differ by a few pixels.
+const SIZE_TOLERANCE_PX = 32;
+const isPageWindow = ([width, height], page) =>
+  [1, page.devicePixelRatio].some(
+    (scale) =>
+      Math.abs(width - page.outerWidth * scale) <= SIZE_TOLERANCE_PX &&
+      Math.abs(height - page.outerHeight * scale) <= SIZE_TOLERANCE_PX,
+  );
 
 // The new profile's expected view: onboarding's Getting started card, shown inside the app shell's
 // main view. The root route renders the shell only after the bundled server answered its
@@ -245,26 +327,13 @@ const PROBE = `(() => {
     href: location.href,
     readyState: document.readyState,
     visibilityState: document.visibilityState,
+    outerWidth,
+    outerHeight,
+    devicePixelRatio,
     shell: document.querySelector('[data-slot="sidebar-wrapper"]') !== null,
     view: shown(main?.querySelector('[data-scient-getting-started-card]')) && !document.body.inert,
   };
 })()`;
-
-const NATIVE_PROBE = `(() => {
-  const { BrowserWindow } = process.getBuiltinModule("module").createRequire(process.execPath)("electron");
-  return BrowserWindow.getAllWindows()
-    .filter((window) => !window.isDestroyed())
-    .map((window) => ({ url: window.webContents.getURL(), shown: window.isVisible() && !window.isMinimized() }));
-})()`;
-
-const site = (url) => {
-  try {
-    const { protocol, host } = new URL(url);
-    return `${protocol}//${host}`;
-  } catch {
-    return url;
-  }
-};
 
 async function quit(child, installDir) {
   const start = now();
@@ -310,23 +379,19 @@ async function launch({ exe, installDir, profile, name }) {
   };
   const deadline = start + readyTimeout;
   const sessions = new Map();
-  let launching = true;
-  let inspecting = null;
-  let main = {};
   let readyPage = null;
+  let windowsUnread = false;
+  let windowSizes = null;
   let stop = { quitMs: null, forcedQuit: false, stopped: false };
   let failure = null;
   try {
     while (readyPage === null && appExit.code === null && now() < deadline) {
       const targets = (await json(`http://127.0.0.1:${port}/json/list`)) ?? [];
-      // Native window state, once the main process can be read.
-      const windows = main.session ? ((await main.session.evaluate(NATIVE_PROBE)) ?? []) : [];
+      const windows = await windowHelper.windows(child.pid);
+      windowsUnread ||= windows === null;
       for (const target of targets) {
         if (target.type !== "page" || target.url.startsWith("devtools")) continue;
         mark("windowMs", "first window");
-        inspecting ??= inspectMain(child.pid, deadline, () => launching).then(
-          (result) => (main = result),
-        );
         let session = sessions.get(target.id);
         if (session === undefined || !session.open) {
           session = await connect(target.webSocketDebuggerUrl);
@@ -335,16 +400,18 @@ async function launch({ exe, installDir, profile, name }) {
         }
         const value = await session.evaluate(PROBE);
         if (!value) continue;
-        // The connecting splash is a data: page; the main window serves the app's own origin.
-        const shown = windows.some(
-          (window) => window.shown && site(window.url) === site(value.href),
-        );
+        // Only the page's own window counts: the connecting splash is shown first.
+        const shown = (windows ?? []).some((size) => isPageWindow(size, value));
         if (value.readyState === "complete") mark("pageLoadedMs", "page loaded");
         if (shown) mark("windowShownMs", "main window shown");
         if (value.shell) mark("appShellMs", "app shell");
         if (value.view) mark("viewMs", "Getting started view");
         if (value.view && shown && value.visibilityState === "visible") {
           mark("readyMs", "ready");
+          windowSizes = {
+            shown: windows.map((size) => size.join("x")),
+            page: `${value.outerWidth}x${value.outerHeight} at ${value.devicePixelRatio}x`,
+          };
           readyPage = session;
           break;
         }
@@ -352,7 +419,7 @@ async function launch({ exe, installDir, profile, name }) {
       if (readyPage === null) await sleep(POLL_MS);
     }
     if (readyPage === null) {
-      const seen = `window ${marks.windowShownMs === undefined ? "never shown" : "shown"}, view ${marks.viewMs === undefined ? "never shown" : "shown"}${main.error ? `; ${main.error}` : ""}`;
+      const seen = `window ${marks.windowShownMs === undefined ? "never shown" : "shown"}, view ${marks.viewMs === undefined ? "never shown" : "shown"}${windowsUnread ? "; the app's windows could not always be read" : ""}`;
       failure =
         appExit.code !== null
           ? `${name}: the app exited (code ${appExit.code}) before it was ready (${seen})`
@@ -366,10 +433,7 @@ async function launch({ exe, installDir, profile, name }) {
   } catch (error) {
     failure = `${name}: ${error.message}`;
   } finally {
-    launching = false;
     for (const session of sessions.values()) session.close();
-    await inspecting;
-    main.session?.close();
     stop = await quit(child, installDir);
     if (!stop.stopped) log(`  ${name}: app processes survived a forced stop`);
     else if (stop.forcedQuit)
@@ -377,7 +441,7 @@ async function launch({ exe, installDir, profile, name }) {
     else log(`  ${name}: quit in ${seconds(stop.quitMs)}`);
   }
   if (failure === null && !stop.stopped) failure = `${name}: app processes survived a forced stop`;
-  return { ...marks, readyMs: marks.readyMs ?? null, ...stop, failure };
+  return { ...marks, readyMs: marks.readyMs ?? null, windowSizes, ...stop, failure };
 }
 
 /** Uninstalls and removes the install folder; the reasons it could not, if any. */
@@ -487,7 +551,7 @@ const defenderRealtime = (() => {
 const measurement = {
   schemaVersion: 2,
   readiness:
-    'the Getting started view visible in the app shell\'s main view ([data-scient-getting-started-card] in main[data-slot="sidebar-inset"]) and its native window shown',
+    "the Getting started view visible in the app shell's main view ([data-scient-getting-started-card] in main[data-slot=\"sidebar-inset\"]) and the page's own window shown",
   installer: {
     name: NodePath.basename(installer),
     bytes: NodeFS.statSync(installer).size,
@@ -530,8 +594,10 @@ function write() {
 log(
   `Timing ${measurement.installer.name} (${(measurement.installer.bytes / 1e6).toFixed(0)} MB), ${samples} samples, ${measurement.runner.logicalCpus} CPUs, Defender real-time ${defenderRealtime}`,
 );
+const windowHelper = startWindowHelper();
 try {
   write();
+  if (!(await windowHelper.ready)) measurement.errors.push("the window reader did not start");
   for (let index = 1; index <= samples; index++) {
     measurement.samples.push(await sample(index));
     write();
@@ -539,6 +605,7 @@ try {
 } catch (error) {
   measurement.errors.push(`the measurement stopped: ${error.message}`);
 } finally {
+  windowHelper.close();
   write();
   log(
     `Median install ${measurement.median.installMs} ms, first launch ${measurement.median.firstLaunchMs} ms, second launch ${measurement.median.secondLaunchMs} ms`,
