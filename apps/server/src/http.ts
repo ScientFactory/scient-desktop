@@ -202,6 +202,9 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
     ...assetResponseHeaders(asset.path, asset),
   };
+  if (asset.renderIntent === "file-preview") {
+    headers["Cache-Control"] = "private, no-cache";
+  }
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
   const fs = yield* FileSystem.FileSystem;

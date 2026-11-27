@@ -62,6 +62,7 @@ async function renderPanel(
       terminalLabelsById={new Map()}
       onActivate={noop}
       onCloseSurface={noop}
+      onCloseSelectedSurfaces={noop}
       onCloseOtherSurfaces={noop}
       onCloseSurfacesToRight={noop}
       onCloseAllSurfaces={noop}

@@ -599,6 +599,10 @@ undoes it. Click the issue badge in the thread sidebar to see its issues and pul
 **Linked items**. Select an issue there to open it beside the thread. Agents link the issues they
 work on with the `link_issue` tool.
 
+To list Jira Cloud issues, add a Jira account in **Settings → Source control & issues**, then
+bind a Jira project. Use the account's email, site address, and API token. Your Jira permissions
+control which issues you can view, edit, and transition.
+
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
 ## GitHub stacks

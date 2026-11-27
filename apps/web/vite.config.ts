@@ -141,6 +141,12 @@ const browserTestProject = {
       "@pierre/diffs/ssr",
       "effect/testing",
       "saxes",
+      "@noble/ciphers/aes.js",
+      "@noble/hashes/hmac.js",
+      "@noble/hashes/legacy.js",
+      "@noble/hashes/pbkdf2.js",
+      "@noble/hashes/sha2.js",
+      "@noble/hashes/utils.js",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",
       "@betteroffice/docx/layout/render",
@@ -150,6 +156,7 @@ const browserTestProject = {
       "@betteroffice/xlsx",
       "@betteroffice/xlsx/headless",
       "fast-xml-parser",
+      "parse5",
       "entities",
       "dompurify",
       "heic-to/csp",
@@ -393,6 +400,7 @@ export default defineConfig(({ command, mode }) => {
         "@pierre/diffs/react",
         "@pierre/diffs/worker",
         "@pierre/diffs/worker/worker.js",
+        "@t3tools/client-runtime > @zip.js/zip.js/index-native.cjs",
         "effect/Array",
         "effect/Order",
         "react-dom/client",
@@ -529,6 +537,7 @@ export default defineConfig(({ command, mode }) => {
       rolldownOptions: {
         input: {
           main: NodeURL.fileURLToPath(new URL("./index.html", import.meta.url)),
+          "epub-preview": NodeURL.fileURLToPath(new URL("./epub-preview.html", import.meta.url)),
           "scient-document": NodeURL.fileURLToPath(
             new URL("./scient-document.html", import.meta.url),
           ),

@@ -11,7 +11,11 @@ import { AgentInvocationContext } from "../scient/operations/AgentInvocationCont
 import { listAvailableScientOperations } from "../scient/operations/AgentOperationDispatcher.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { scientOperationCatalog } from "./ScientOperationCatalog.ts";
-import { McpInvocationContext, type McpCapability } from "./McpInvocationContext.ts";
+import {
+  McpInvocationContext,
+  type McpCapability,
+  type McpInvocationScope,
+} from "./McpInvocationContext.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 import { outsideCall, withProjectInput } from "./toolkits/sources/outside.ts";
 
@@ -57,6 +61,18 @@ export function hostToolVisibility(
   };
 }
 
+/** Operation discovery shares authorization and workspace binding with tool execution. */
+export const discoverScientMcpOperationIds = Effect.fn("ScientMcpProtocol.discoverOperations")(
+  function* (scope: McpInvocationScope) {
+    if (scope.thread === undefined) return new Set<string>();
+    const invocation = scientInvocationForMcp({ ...scope, thread: scope.thread });
+    const available = yield* listAvailableScientOperations().pipe(
+      Effect.provideService(AgentInvocationContext, invocation),
+    );
+    return new Set<string>(available.map((operation) => operation.id));
+  },
+);
+
 export function makeScientToolListLayer(
   hostTools: ReadonlyArray<Tool.Any> = [],
   gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>> = {},
@@ -75,18 +91,9 @@ export function makeScientToolListLayer(
           const mcpInvocation = yield* Effect.withFiber((fiber) =>
             Effect.succeed(Context.getUnsafe(fiber.context, McpInvocationContext)),
           );
-          const invocation =
-            mcpInvocation.thread === undefined
-              ? undefined
-              : scientInvocationForMcp({ ...mcpInvocation, thread: mcpInvocation.thread });
-          const available =
-            invocation === undefined
-              ? []
-              : yield* listAvailableScientOperations().pipe(
-                  Effect.provideService(WorkspaceBindingResolver, resolver),
-                  Effect.provideService(AgentInvocationContext, invocation),
-                );
-          const ids = new Set(available.map((operation) => operation.id));
+          const ids = yield* discoverScientMcpOperationIds(mcpInvocation).pipe(
+            Effect.provideService(WorkspaceBindingResolver, resolver),
+          );
           for (const tool of listed.tools) {
             if (!scientOperationCatalog.forTool(tool.name) && !host.owns(tool.name))
               return yield* Effect.die(new Error(`Undeclared MCP tool ownership: ${tool.name}`));

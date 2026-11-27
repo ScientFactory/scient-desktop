@@ -101,7 +101,11 @@ export function attachmentTokenAllowance(
 // SCIENT-FORK: upstream's estimateTextTokens is unused; Scient measures stored history from its
 // recorded byte counts in ProviderTurnStartService, at the same four bytes per token.
 
-// One UTF-8 byte per token keeps the new turn and imported history pessimistic.
+export function handoffByteCap(tokenCap: number): number {
+  return Math.min(HANDOFF_BYTE_CAP, tokenCap * 4);
+}
+
+// One UTF-8 byte per remaining token keeps the native context window reservation pessimistic.
 export function handoffBudget(input: {
   readonly tokenCap: number | null;
   // SCIENT-FORK:START — receiving-context policy, with unchanged generic defaults.
@@ -133,7 +137,7 @@ export function handoffBudget(input: {
     Math.min(
       input.byteCap ?? HANDOFF_BYTE_CAP,
       // The selector consumes bytes; provider capacity and preset caps consume tokens.
-      (input.tokenCap ?? Infinity) * bytesPerToken,
+      (input.tokenCap ?? Infinity) * (input.bytesPerToken ?? 4),
       (window - native - current - workReserve) * bytesPerToken,
     ),
   );

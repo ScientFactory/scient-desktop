@@ -340,6 +340,8 @@ jobs:
             apps/server/src/provider/providerCompatibility.ts \
             apps/server/src/provider/antigravityAuthSupport.ts \
             apps/server/src/provider/acp \
+            apps/server/src/mcp/McpToolExposure.ts \
+            apps/server/src/provider/scient/ScientAgentToolLoading.ts \
             apps/server/src/scient/skills/antigravityPluginSkillProjection.ts \
             apps/server/src/scient/skills/antigravityUserSkillLinks.ts \
             apps/server/src/scient/providerLifecycle/antigravityBrowserHelperPreflight.ts \
