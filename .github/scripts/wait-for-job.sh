@@ -34,11 +34,12 @@ api() {
 # nine downloads begun within a second of the listing failed, whether download-artifact looked the
 # ID up itself (`None of the provided artifact IDs were found`) or through the REST API (`Not
 # Found`). So an upload is named only once the REST download endpoint has served it twice, five
-# seconds apart; one it still refuses after 30 polls fails the wait. Each check is cut at 30 s, so
-# a stalled request counts as a refusal instead of using up the job's time.
+# seconds apart. One it still refuses two minutes after the first refusal, or after 30 polls, fails
+# the wait; each check is cut at 10 s. That keeps a refused upload to under three minutes per wait,
+# well inside every caller's step and job limits.
 serves() {
   local code
-  code=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+  code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
     "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/artifacts/$1/zip") ||
     code="${code:-000}, curl exit $?"
   [ "$code" = 302 ] && return 0
@@ -46,6 +47,7 @@ serves() {
   return 1
 }
 refused=0
+first_refused=0
 # Takes the newest artifact uploaded at or after $1, exiting once it can be downloaded; fails when
 # there is none yet. A rerun's job must not take an earlier attempt's copy.
 take_since() {
@@ -65,8 +67,9 @@ take_since() {
     exit 0
   fi
   refused=$((refused + 1))
-  echo "$artifact $id is listed, but GitHub does not serve its download yet ($refused of 30)." >&2
-  if [ "$refused" -ge 30 ]; then
+  if [ "$refused" -eq 1 ]; then first_refused=$SECONDS; fi
+  echo "$artifact $id is listed, but GitHub does not serve its download yet (refusal $refused)." >&2
+  if [ "$refused" -ge 30 ] || [ $((SECONDS - first_refused)) -ge 120 ]; then
     echo "$artifact $id is listed, but GitHub still refuses to download it." >&2
     exit 1
   fi
