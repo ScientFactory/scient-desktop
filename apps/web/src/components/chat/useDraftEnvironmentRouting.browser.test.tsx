@@ -23,7 +23,6 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import {
-  COMPOSER_DRAFT_STORAGE_VERSION,
   DraftId,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
@@ -724,46 +723,41 @@ it.each(["leave the draft", "choose automatic routing", "switch to another machi
 it.each([
   {
     label: "a legacy worktree",
-    version: 9,
+    saved: "unmarked",
     envMode: "worktree",
     destination: "local",
     expected: "worktree",
   },
   {
     label: "a legacy local",
-    version: 9,
+    saved: "unmarked",
     envMode: "local",
     destination: "worktree",
     expected: "local",
   },
   {
-    label: "an inherited local on the current schema",
-    version: COMPOSER_DRAFT_STORAGE_VERSION,
+    label: "an inherited local",
+    saved: "inherited",
     envMode: "local",
     destination: "worktree",
     expected: "worktree",
   },
 ] as const)(
   "switches $label draft by hand under the destination's default",
-  async ({ version, envMode, destination, expected }) => {
+  async ({ saved: savedAs, envMode, destination, expected }) => {
     const { b, draftId, input, store } = fanoutSetup();
     resources.projects = resources.projects.map((project) =>
       project.environmentId === b ? { ...project, defaultThreadEnvMode: destination } : project,
     );
     store.setDraftThreadContext(draftId, { envMode });
-    // The saved state, round-tripped through the store's own migrate and merge as zustand runs them.
+    // The saved state, round-tripped through the store's own merge as zustand runs it. An
+    // unmarked row stands for one an older build wrote, which carried no workspace marker.
     const persist = useComposerDraftStore.persist.getOptions();
     const saved = JSON.parse(
-      JSON.stringify({
-        version,
-        state: partializeComposerDraftStoreState(useComposerDraftStore.getState()),
-      }),
-    ) as { version: number; state: unknown };
-    const migrated =
-      saved.version === COMPOSER_DRAFT_STORAGE_VERSION
-        ? saved.state
-        : persist.migrate!(saved.state, saved.version);
-    useComposerDraftStore.setState(persist.merge!(migrated, useComposerDraftStore.getState()));
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    ) as { draftThreadsByThreadKey: Record<string, Record<string, unknown>> };
+    if (savedAs === "unmarked") delete saved.draftThreadsByThreadKey[draftId]!.workspaceExplicit;
+    useComposerDraftStore.setState(persist.merge!(saved, useComposerDraftStore.getState()));
     expect(store.getDraftSession(draftId)?.envMode).toBe(envMode);
     await using screen = await render(
       <Harness

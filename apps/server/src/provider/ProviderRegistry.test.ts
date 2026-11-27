@@ -6313,7 +6313,6 @@ it.layer(
             ["gateway/kimi-3[1m]", "Kimi (mine)", true],
           ],
         );
-        assert.strictEqual(status.modelsIncomplete, undefined);
         assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
         assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
           {
@@ -6805,7 +6804,6 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
-        assert.strictEqual(status.modelsIncomplete, true);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

@@ -208,7 +208,7 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("counts a configured gateway alias as reported even when it resolves to a catalog model", () => {
+  it("does not list a configured gateway alias that resolves to a catalog model", () => {
     const catalog = catalogFromManifest(manifest());
     const reported = [
       {
@@ -219,38 +219,29 @@ describe("Claude model catalog", () => {
       },
     ];
 
-    assert.deepStrictEqual(claudeReportedModels(catalog, ["GATEWAY/current"], reported), {
-      models: [],
-      hasNonCatalogModels: true,
-    });
-    assert.deepStrictEqual(claudeReportedModels(catalog, [], reported), {
-      models: [],
-      hasNonCatalogModels: false,
-    });
+    assert.deepStrictEqual(claudeReportedModels(catalog, ["GATEWAY/current"], reported), []);
+    assert.deepStrictEqual(claudeReportedModels(catalog, [], reported), []);
   });
 
   it.each([
-    ["synthetic", "gateway/current", ["synthetic"], true],
-    ["synthetic", "gateway/current", ["gateway/current"], true],
-    ["synthetic", "gateway/current", [], false],
-    ["synthetic", "", ["synthetic"], false],
-    ["synthetic", "SYNTHETIC[1m]", ["synthetic"], false],
-    ["synthetic", "claude-synthetic-next", ["synthetic"], false],
-    ["synthetic", "global.anthropic.claude-synthetic-next-v1:0[1m]", ["synthetic"], false],
-    ["sonnet", "gateway/current", ["sonnet"], false],
-    ["sonnet", "gateway/current", ["gateway/current"], false],
-    ["sonnet", "global.anthropic.claude-sonnet-5-5[1m]", ["sonnet"], false],
+    ["synthetic", "gateway/current", ["synthetic"]],
+    ["synthetic", "gateway/current", ["gateway/current"]],
+    ["synthetic", "gateway/current", []],
+    ["synthetic", "", ["synthetic"]],
+    ["synthetic", "SYNTHETIC[1m]", ["synthetic"]],
+    ["synthetic", "claude-synthetic-next", ["synthetic"]],
+    ["synthetic", "global.anthropic.claude-synthetic-next-v1:0[1m]", ["synthetic"]],
+    ["sonnet", "gateway/current", ["sonnet"]],
+    ["sonnet", "gateway/current", ["gateway/current"]],
+    ["sonnet", "global.anthropic.claude-sonnet-5-5[1m]", ["sonnet"]],
   ])(
-    "checks gateway inventory for %s resolving to %s with custom models %j",
-    (value, resolvedModel, customModels, hasNonCatalogModels) => {
+    "dedupes reported %s resolving to %s against catalog and custom models %j",
+    (value, resolvedModel, customModels) => {
       const catalog =
         value === "sonnet" ? BUNDLED_CLAUDE_MODEL_CATALOG : catalogFromManifest(manifest());
       const reported = [{ value, resolvedModel, displayName: "", description: "" }];
 
-      assert.deepStrictEqual(claudeReportedModels(catalog, customModels, reported), {
-        models: [],
-        hasNonCatalogModels,
-      });
+      assert.deepStrictEqual(claudeReportedModels(catalog, customModels, reported), []);
     },
   );
 

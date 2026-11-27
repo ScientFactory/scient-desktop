@@ -907,7 +907,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
-  const { models: reportedModels, hasNonCatalogModels } = claudeReportedModels(
+  const reportedModels = claudeReportedModels(
     modelCatalog,
     claudeSettings.customModels,
     capabilities?.models,
@@ -1037,7 +1037,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     parsedVersion
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
-  const provider = buildServerProvider({
+  return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
     checkedAt,
@@ -1062,9 +1062,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
     },
   });
-  // Claude Code lists gateway models only while its one gateway cache holds this base URL, and
-  // then all of them, including those already configured as custom models.
-  return hasNonCatalogModels ? provider : { ...provider, modelsIncomplete: true };
 });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);

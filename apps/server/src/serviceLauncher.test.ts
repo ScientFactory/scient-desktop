@@ -795,7 +795,18 @@ process.exit(0);
     }),
   );
 
-  it.effect("starts the runtime a versioned unit pins when several are installed", () =>
+  // A versioned unit as installed: its program runs `version` from `programRoot`, and T3CODE_HOME is `home`.
+  const versionedUnitPlist = (home: string, programRoot: string, version: string) =>
+    `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n<key>ProgramArguments</key>\n<array>\n<string>${programRoot}/node</string>\n<string>${programRoot}/runtime/versions/${version}/t3</string>\n<string>__service-launcher</string>\n</array>\n<key>EnvironmentVariables</key>\n<dict>\n<key>T3CODE_HOME</key>\n<string>${home}</string>\n</dict>\n</dict>\n</plist>\n`;
+
+  const versionedUnitMarker = `
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
+process.exit(0);
+`;
+
+  // A bound versioned unit names a bundle, but its label does not prove it is this attempt.
+  it.effect("refuses several runtimes when a versioned unit bound to this home names one", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -804,26 +815,97 @@ process.exit(0);
       const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
       const statePath = path.join(root, "runtime", "service-state.json");
       yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(unitPath, versionedUnitPlist(root, root, "1.0.0"));
+      const entries: Array<string> = [];
+      for (const version of ["1.0.0", "1.1.0"]) {
+        entries.push(
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            versionedUnitMarker,
+          ),
+        );
+      }
+      const childCount = spawnedChildren.length;
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow(
+          "Service state is missing and 2 installed runtimes were found",
+        ),
+      );
+
+      assert.equal(spawnedChildren.length, childCount);
+      assert.isFalse(yield* fs.exists(statePath));
+      for (const entryPath of entries) {
+        assert.isFalse(yield* fs.exists(path.join(path.dirname(entryPath), "started")));
+      }
+    }),
+  );
+
+  // Negative control: the home is this one, but the command runs a bundle from another root.
+  it.effect("refuses several runtimes when a unit with this home runs another root's runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-foreign-" });
+      const home = path.join(root, "home");
+      const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
       yield* fs.writeFileString(
         unitPath,
-        `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n<key>ProgramArguments</key>\n<array>\n<string>${root}/node</string>\n<string>${root}/runtime/versions/1.0.0/t3</string>\n<string>__service-launcher</string>\n</array>\n</dict>\n</plist>\n`,
+        versionedUnitPlist(root, path.join(root, "other-home"), "1.0.0"),
       );
-      const marker = `
-import { writeFileSync } from "node:fs";
-writeFileSync(new URL("./started", import.meta.url), "");
-process.exit(0);
-`;
-      const pinned = yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.0.0"),
-        marker,
+      const entries: Array<string> = [];
+      for (const version of ["1.0.0", "1.1.0"]) {
+        entries.push(
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            versionedUnitMarker,
+          ),
+        );
+      }
+      const childCount = spawnedChildren.length;
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow(
+          "Service state is missing and 2 installed runtimes were found",
+        ),
       );
-      const newer = yield* writeFakeRuntime(
+
+      assert.equal(spawnedChildren.length, childCount);
+      assert.isFalse(yield* fs.exists(statePath));
+      for (const entryPath of entries) {
+        assert.isFalse(yield* fs.exists(path.join(path.dirname(entryPath), "started")));
+      }
+    }),
+  );
+
+  it.effect("recovers the only runtime when a unit names another root's runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-sole-" });
+      const home = path.join(root, "home");
+      const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        unitPath,
+        versionedUnitPlist(root, path.join(root, "other-home"), "1.0.0"),
+      );
+      const sole = yield* writeFakeRuntime(
         fs,
         path,
         path.join(root, "runtime", "versions", "1.1.0"),
-        marker,
+        versionedUnitMarker,
       );
       vi.stubEnv("HOME", home);
       vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
@@ -832,11 +914,11 @@ process.exit(0);
         expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
       );
 
-      assert.isTrue(yield* fs.exists(path.join(path.dirname(pinned), "started")));
-      assert.isFalse(yield* fs.exists(path.join(path.dirname(newer), "started")));
-      assert.include(yield* fs.readFileString(statePath), '"activeVersion": "1.0.0"');
+      assert.isTrue(yield* fs.exists(path.join(path.dirname(sole), "started")));
+      assert.include(yield* fs.readFileString(statePath), '"activeVersion": "1.1.0"');
     }),
   );
+
   // SCIENT-FORK:END
 
   it.effect("refuses non-install legacy documents without rewriting or spawning", () =>

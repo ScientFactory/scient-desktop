@@ -200,30 +200,58 @@ describe("workspace choices in saved drafts", () => {
     );
   });
 
-  it.each([COMPOSER_DRAFT_STORAGE_VERSION, COMPOSER_DRAFT_STORAGE_VERSION + 1])(
-    "keeps stored flags and leaves unflagged drafts inherited on schema v%i",
-    (version) => {
-      const hydrated = restore(version, {
-        draftsByThreadKey: {},
-        draftThreadsByThreadKey: {
-          [worktreeKey]: savedDraftThread("saved-worktree-choice", "worktree"),
-          [localKey]: {
-            ...savedDraftThread("saved-local-choice", "local"),
-            workspaceExplicit: true,
-          },
-          [emptyPathKey]: {
-            ...savedDraftThread("saved-empty-path-draft", "local"),
-            workspaceExplicit: false,
-          },
-        },
-        logicalProjectDraftThreadKeyByLogicalProjectKey: {},
-      });
+  it("pins a legacy choice when the stored schema is migrated rather than merged", () => {
+    const hydrated = restore(8, {
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {
+        [localKey]: savedDraftThread("saved-local-choice", "local"),
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+    });
 
-      expect(hydrated.draftThreadsByThreadKey[worktreeKey]).not.toHaveProperty("workspaceExplicit");
-      expect(hydrated.draftThreadsByThreadKey[localKey]).toMatchObject({ workspaceExplicit: true });
-      expect(hydrated.draftThreadsByThreadKey[emptyPathKey]).not.toHaveProperty(
-        "workspaceExplicit",
-      );
-    },
-  );
+    expect(hydrated.draftThreadsByThreadKey[localKey]).toMatchObject({ workspaceExplicit: true });
+  });
+
+  it("keeps a stored flag and leaves a draft marked inherited unpinned", () => {
+    const hydrated = restore(COMPOSER_DRAFT_STORAGE_VERSION, {
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {
+        [worktreeKey]: {
+          ...savedDraftThread("saved-worktree-choice", "worktree"),
+          workspaceExplicit: false,
+        },
+        [localKey]: {
+          ...savedDraftThread("saved-local-choice", "local"),
+          workspaceExplicit: true,
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+    });
+
+    expect(hydrated.draftThreadsByThreadKey[worktreeKey]).not.toHaveProperty("workspaceExplicit");
+    expect(hydrated.draftThreadsByThreadKey[localKey]).toMatchObject({ workspaceExplicit: true });
+  });
+
+  it("saves an inherited workspace marked false and a picked one marked true, and reloads both", () => {
+    const inheritedId = DraftId.make("saved-inherited-marker");
+    const pickedId = DraftId.make("saved-picked-marker");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, inheritedId);
+    store.setDraftThreadContext(inheritedId, { envMode: "local" });
+    store.setProjectDraftThreadId(
+      scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-saved-marker")),
+      pickedId,
+    );
+    store.setDraftThreadContext(pickedId, { envMode: "local", workspaceExplicit: true });
+
+    const saved = JSON.parse(
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    ) as { draftThreadsByThreadKey: Record<string, { workspaceExplicit?: boolean }> };
+    expect(saved.draftThreadsByThreadKey[inheritedId]).toMatchObject({ workspaceExplicit: false });
+    expect(saved.draftThreadsByThreadKey[pickedId]).toMatchObject({ workspaceExplicit: true });
+
+    const hydrated = restore(COMPOSER_DRAFT_STORAGE_VERSION, saved);
+    expect(hydrated.draftThreadsByThreadKey[inheritedId]).not.toHaveProperty("workspaceExplicit");
+    expect(hydrated.draftThreadsByThreadKey[pickedId]).toMatchObject({ workspaceExplicit: true });
+  });
 });

@@ -742,31 +742,10 @@ async function readStateContents(statePath: string): Promise<string | undefined>
 }
 
 /**
- * The runtime a versioned unit pins, else the only complete runtime. The stable Scient launcher
- * pins none, and choosing among several could pick a stage-only or rejected trial bundle.
+ * The only complete runtime. Scient's units name no version (the boot plan starts the stable
+ * launcher), so a unit cannot prove which of several bundles is the attempt; the launcher refuses.
  */
-async function installedRuntimeVersion(
-  baseDir: string,
-  serviceUnit: ServiceUnit | undefined,
-): Promise<string | undefined> {
-  const unit =
-    serviceUnit &&
-    (await NodeFSP.readFile(serviceUnit.path)
-      .then(decodeServiceUnit)
-      .catch(() => undefined));
-  const unitVersion =
-    unit === undefined
-      ? undefined
-      : SERVICE_UNIT_PROGRAMS.map((program) => program.exec(unit)?.[2]).find(
-          (version) => version !== undefined,
-        );
-  if (
-    unitVersion !== undefined &&
-    isExactServiceVersion(unitVersion) &&
-    (await runtimeExists(baseDir, unitVersion))
-  ) {
-    return unitVersion;
-  }
+async function installedRuntimeVersion(baseDir: string): Promise<string | undefined> {
   const entries = await NodeFSP.readdir(NodePath.join(baseDir, "runtime", "versions")).catch(
     () => [],
   );
@@ -785,16 +764,12 @@ async function installedRuntimeVersion(
 }
 
 // Without the state file every start would fail; select the installed runtime again.
-async function recoverServiceState(
-  baseDir: string,
-  statePath: string,
-  serviceUnit: ServiceUnit | undefined,
-): Promise<string> {
+async function recoverServiceState(baseDir: string, statePath: string): Promise<string> {
   const release = await acquireServiceSelectionLock(statePath);
   try {
     const written = await readStateContents(statePath);
     if (written !== undefined) return written;
-    const activeVersion = await installedRuntimeVersion(baseDir, serviceUnit);
+    const activeVersion = await installedRuntimeVersion(baseDir);
     if (activeVersion === undefined) {
       throw new Error("Service state is missing and no installed runtime was found.");
     }
@@ -1679,8 +1654,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
     const contents =
-      (await readStateContents(statePath)) ??
-      (await recoverServiceState(baseDir, statePath, serviceUnit));
+      (await readStateContents(statePath)) ?? (await recoverServiceState(baseDir, statePath));
     let state = parseServiceState(contents);
     if (state === undefined) {
       state = adoptLegacyServiceState(contents);
