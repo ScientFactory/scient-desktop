@@ -46,7 +46,9 @@ export function BrowserTabHoverCard(props: {
     runtimeTabId !== null &&
     capture !== undefined &&
     thumbnail === null &&
-    !(loaded !== null && loaded.key === thumbnailKey && loaded.settled);
+    loaded !== null &&
+    loaded.key === thumbnailKey &&
+    !loaded.settled;
 
   // Only the latest open's capture may replace the shown picture; a slower
   // earlier capture (or one that returns null) must not overwrite it.
