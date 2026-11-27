@@ -81,6 +81,13 @@ describe("Scient settings search routing", () => {
       to: "/settings/scientific-computing",
     });
   });
+  it("finds Scientific Computing by any language it lists", () => {
+    for (const language of ["python", "octave", "wolfram", "haskell", "spss"]) {
+      expect(searchSettings(language).map((item) => item.to)).toContain(
+        "/settings/scientific-computing",
+      );
+    }
+  });
   it("finds Word export by the words people look for it with", () => {
     for (const query of ["word export", "pandoc", "docx", "export"]) {
       expect(searchSettings(query)[0], query).toMatchObject({

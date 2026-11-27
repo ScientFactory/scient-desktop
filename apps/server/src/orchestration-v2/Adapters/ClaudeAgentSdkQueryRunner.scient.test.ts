@@ -11,7 +11,7 @@ const processRow = (pid: number, ppid: number, startedSecond: number) => ({
   pid,
   ppid,
   pgid: pid,
-  started: `Sun Nov 15 10:00:0${startedSecond} 2026`,
+  startTimeSeconds: Date.UTC(2026, 10, 15, 10, 0, startedSecond) / 1000,
 });
 type Table = ReadonlyArray<ReturnType<typeof processRow>>;
 

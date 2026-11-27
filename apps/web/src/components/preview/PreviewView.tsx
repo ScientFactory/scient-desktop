@@ -40,6 +40,7 @@ import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
+  previewNavStatus,
   rememberPreviewUrl,
   updatePreviewServerSnapshot,
   useThreadPreviewState,
@@ -198,7 +199,13 @@ function focusPreviewWebview(runtimeTabId: string) {
 
 function focusPreviewPage(runtimeTabId: string) {
   const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  if (
+    active &&
+    active !== document.body &&
+    !active.closest("[data-preview-panel-mode], [data-browser-surface-overlay]")
+  ) {
+    return;
+  }
   focusPreviewWebview(runtimeTabId);
 }
 
@@ -292,12 +299,7 @@ export function PreviewView({
     previewState.serverEpoch,
   );
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
-  // A new Electron tab is Idle until its first URL commits, while the server already has it Loading.
-  const desktopNavStatus =
-    !serverOwnsRendering && desktopOverlay?.navStatus._tag !== "Idle"
-      ? desktopOverlay?.navStatus
-      : undefined;
-  const navStatus = desktopNavStatus ?? snapshot?.navStatus ?? { _tag: "Idle" as const };
+  const navStatus = previewNavStatus(snapshot, desktopOverlay);
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const clientPdfUrl =
     navStatus._tag === "Success" ? previewPdfAssetUrl(url, environmentHttpBaseUrl) : null;
@@ -1077,6 +1079,51 @@ export function PreviewView({
     };
   }, [visible]);
 
+  const desktopSlotShown = Boolean(
+    runtimeTabId && snapshot && !isServerTab && !showEmptyState && previewBridge,
+  );
+  const pageOverlays = (
+    <>
+      {runtimeTabId &&
+      desktopOverlay &&
+      !showEmptyState &&
+      !isUnreachable &&
+      !activeRecordingTabIds.has(runtimeTabId) ? (
+        <AgentBrowserCursor
+          tabId={runtimeTabId}
+          zoomFactor={layoutZoomFactor}
+          controller={controller}
+        />
+      ) : null}
+      {controller === "agent" ? (
+        <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur">
+          <T>Agent controlling browser</T>
+        </div>
+      ) : null}
+      {find && canFindInPage && find.tabId === runtimeTabId ? (
+        <PreviewFindBar
+          key={find.tabId}
+          tabId={find.tabId}
+          focusRequestId={find.requestId}
+          onClose={closeFind}
+        />
+      ) : null}
+      {/* SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained. */}
+      {signInBlocked &&
+      runtimeTabId &&
+      signInBlocked.pageUrl === url &&
+      (signInBlocked.context !== "tab" || googleSignInPage(url) === "rejected") ? (
+        <GoogleSignInBlockedNotice
+          {...signInRecovery}
+          restartUrl={signInBlocked.restartUrl}
+          onSignedIn={(target) => void navigateToResolvedUrl(target)}
+          onDismiss={() => dismissSignInBlocked(runtimeTabId)}
+        />
+      ) : null}
+      {/* SCIENT-FORK:END */}
+    </>
+  );
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
@@ -1283,7 +1330,9 @@ export function PreviewView({
               tabId={runtimeTabId}
               visible={visible && !isUnreachable}
               className="absolute inset-0 h-full w-full"
-            />
+            >
+              {pageOverlays}
+            </BrowserSurfaceSlot>
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
@@ -1319,43 +1368,7 @@ export function PreviewView({
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
         ) : null}
-        {runtimeTabId &&
-        desktopOverlay &&
-        !showEmptyState &&
-        !isUnreachable &&
-        !activeRecordingTabIds.has(runtimeTabId) ? (
-          <AgentBrowserCursor
-            tabId={runtimeTabId}
-            zoomFactor={layoutZoomFactor}
-            controller={controller}
-          />
-        ) : null}
-        {controller === "agent" ? (
-          <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur">
-            <T>Agent controlling browser</T>
-          </div>
-        ) : null}
-        {find && canFindInPage && find.tabId === runtimeTabId ? (
-          <PreviewFindBar
-            key={find.tabId}
-            tabId={find.tabId}
-            focusRequestId={find.requestId}
-            onClose={closeFind}
-          />
-        ) : null}
-        {/* SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained. */}
-        {signInBlocked &&
-        runtimeTabId &&
-        signInBlocked.pageUrl === url &&
-        (signInBlocked.context !== "tab" || googleSignInPage(url) === "rejected") ? (
-          <GoogleSignInBlockedNotice
-            {...signInRecovery}
-            restartUrl={signInBlocked.restartUrl}
-            onSignedIn={(target) => void navigateToResolvedUrl(target)}
-            onDismiss={() => dismissSignInBlocked(runtimeTabId)}
-          />
-        ) : null}
-        {/* SCIENT-FORK:END */}
+        {desktopSlotShown ? null : pageOverlays}
         {navStatus._tag === "LoadFailed" && navStatus.download ? (
           <div className="absolute inset-0 z-10 bg-background">
             <ServerTabFileNotShown

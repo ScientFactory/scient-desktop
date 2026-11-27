@@ -2432,6 +2432,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                   diffCheckpoints: () => Effect.die("Rejected capture must not read a diff"),
                   deleteCheckpointRefs: () =>
                     Effect.die("Rejected capture must not publish cleanup"),
+                  copyCheckpointRef: () =>
+                    Effect.die("Rejected capture must not copy a checkpoint"),
                   listAuthoredPaths: () =>
                     Effect.die("Rejected capture must not list authored paths"),
                   // No clean HEAD, so the baseline takes the full capture that fails.

@@ -40,6 +40,7 @@ import { seedDraftModelSelection } from "../lib/seedDraftModelSelection";
 import { newProjectId } from "../lib/utils";
 import { readProject, subscribeProject, useProject } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { holdProjectCloneToasts, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { useDebouncedValue } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
@@ -238,6 +239,11 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     }
     setSubmitting(true);
     setError(null);
+    const requestedId = newProjectId();
+    // The clone list can arrive before the start reply.
+    const releaseToastHold = holdProjectCloneToasts(
+      scopeProjectRef(target.environmentId, requestedId),
+    );
     try {
       const projectId = await addProjectToMachine({
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
@@ -246,7 +252,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           project.workspaceRoot,
         ),
         target: { environmentId: target.environmentId, label: target.label },
-        projectId: newProjectId(),
+        projectId: requestedId,
         title: project.title,
         remoteUrl,
         destinationPath: destinationPath.trim(),
@@ -254,13 +260,16 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       });
       // An earlier request must not dismiss or navigate a newly opened dialog.
       if (useRequest.getState().request !== request) return;
+      const targetRef = scopeProjectRef(target.environmentId, projectId);
+      silenceProjectCloneToasts(targetRef);
       close();
-      openClonedProject(scopeProjectRef(target.environmentId, projectId));
+      openClonedProject(targetRef);
     } catch (cause) {
       if (useRequest.getState().request !== request) return;
       setError(thrownErrorMessage(cause, m) ?? gt("Could not start the clone."));
       setSubmitting(false);
     }
+    releaseToastHold();
   };
 
   return (
@@ -419,17 +428,26 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   ) : null}
                 </div>
                 {canSearchFiles && (allIgnoredFiles.data?.truncated || fileQuery.length > 0) ? (
+                  // Native search inputs clear on Escape even during IME composition.
                   <Input
                     size="sm"
-                    type="search"
+                    type="text"
+                    role="searchbox"
+                    enterKeyHint="search"
                     aria-label={gt("Search ignored files")}
                     placeholder={gt("Search ignored files")}
                     value={fileQuery}
                     maxLength={256}
                     onChange={(event) => setFileQuery(event.target.value)}
-                    // Enter would otherwise submit the clone.
                     onKeyDown={(event) => {
+                      // Enter would otherwise submit the clone.
                       if (event.key === "Enter") event.preventDefault();
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      if (event.key === "Escape" && (fileQuery || event.repeat)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setFileQuery("");
+                      }
                     }}
                     spellCheck={false}
                     autoComplete="off"

@@ -1154,8 +1154,10 @@ function OpenCommandPaletteDialog(props: {
     // SCIENT-FORK:END
   });
 
-  function popView(): void {
+  const popView = useStableCallback((): void => {
     browseNavigation.invalidate();
+    cloneLookupGeneration.current += 1;
+    setIsRemoteProjectLookingUp(false);
     // SCIENT-FORK:START
     resetAddProjectBrowseScope();
     // SCIENT-FORK:END
@@ -1171,7 +1173,7 @@ function OpenCommandPaletteDialog(props: {
     clearHighlightedItem();
     setIsNewProjectFolderDraft(false);
     // SCIENT-FORK:END
-  }
+  });
 
   function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();

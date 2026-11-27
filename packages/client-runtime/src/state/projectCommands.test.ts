@@ -95,6 +95,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
   const readResponse = {
     wait: Effect.void as Effect.Effect<void, ProjectReadFileError>,
     missing: false,
+    contents: "old",
   };
   const supervisor = EnvironmentSupervisor.of({
     // SCIENT-FORK:END
@@ -125,7 +126,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
                   : {
                       relativePath: "foo",
                       byteLength,
-                      contents: "old",
+                      contents: readResponse.contents,
                       revision: "read",
                       truncated: false,
                     },
@@ -229,6 +230,38 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
     fileEvents,
   };
   // SCIENT-FORK:END
+});
+
+describe("readFile", () => {
+  it.effect("reads the file afresh when it is reopened after another client changed it", () =>
+    Effect.gen(function* () {
+      // SCIENT-FORK: the file RPC uses the authenticated environment session.
+      const h = yield* makeMetadataHarness();
+      const query = h.commands.readFile({
+        environmentId: ENVIRONMENT_ID,
+        input: { cwd: "/repo", relativePath: "foo" },
+      });
+      // Stale-while-revalidate refreshes from a task on the registry scheduler;
+      // queue behind it so the read sees the revalidation instead of racing it.
+      const afterScheduledTasks = Effect.callback<void>((resume) => {
+        h.registry.schedulerAsync.makeDispatcher().scheduleTask(() => resume(Effect.void), 0);
+      });
+      const readContents = afterScheduledTasks.pipe(
+        Effect.andThen(AtomRegistry.getResult(h.registry, query, { suspendOnWaiting: true })),
+        Effect.map((result) => result.contents),
+      );
+
+      const closeFile = h.registry.mount(query);
+      expect(yield* readContents).toBe("old");
+      closeFile();
+      yield* afterScheduledTasks;
+
+      // Saved on another device; this client did not write it.
+      h.readResponse.contents = "saved elsewhere";
+      h.registry.mount(query);
+      expect(yield* readContents).toBe("saved elsewhere");
+    }),
+  );
 });
 
 describe("writeFile metadata", () => {
