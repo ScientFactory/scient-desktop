@@ -419,7 +419,8 @@ jobs:
         timeout-minutes: 10
         run: node scripts/qualify-windows-install-folder.mjs fixtures (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path
       # SCIENT-FORK:START — also exercise the slim Windows release build (--omit-wsl-runtime)
-      # with real app.asar/server.asar packaging, standalone verifier, and launch smoke.
+      # with real app.asar/server.asar packaging, standalone verifier, launch smoke, and the
+      # installed app accepting its prepared server bytecode.
       - name: Build and qualify the slim Windows installer (--omit-wsl-runtime)
         shell: pwsh
         timeout-minutes: 10
@@ -446,6 +447,8 @@ jobs:
           if ($slimProc.ExitCode -ne 0) { throw "Slim installer failed with exit $($slimProc.ExitCode)" }
           node scripts/qualify-windows-packaged-runtime.mjs "$slimInstallDir" --launch-smoke
           if ($LASTEXITCODE -ne 0) { throw 'Slim Windows runtime qualification failed' }
+          node scripts/native-server-compile-cache.mjs check "$slimInstallDir" Scient.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The installed slim app did not accept its server bytecode' }
       # SCIENT-FORK:END
       # The installer and its blockmap are already compressed; deflating them again only costs time.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
