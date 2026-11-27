@@ -2,7 +2,7 @@ import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-  T3_CODE_ORCHESTRATION_SECTIONS,
+  t3CodeOrchestrationSections,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -12,8 +12,10 @@ import {
 import { scientAgentCopy } from "./ScientAgentCopy.ts";
 
 /** Upstream's orchestration rules in Scient's copy; one Codex entry each. */
-export const SCIENT_ORCHESTRATION_SECTIONS: ReadonlyArray<string> =
-  T3_CODE_ORCHESTRATION_SECTIONS.map(scientAgentCopy);
+export const scientOrchestrationSections = (nativeSubagents?: boolean): ReadonlyArray<string> =>
+  t3CodeOrchestrationSections(nativeSubagents).map(scientAgentCopy);
+
+const SCIENT_ORCHESTRATION_SECTIONS = scientOrchestrationSections();
 
 export const SCIENT_ORCHESTRATION_INSTRUCTIONS = `
 

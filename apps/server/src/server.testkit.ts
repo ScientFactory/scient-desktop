@@ -173,6 +173,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -1032,9 +1033,9 @@ export const buildAppUnderTest = (options?: {
                     );
                     launch = Context.get(controlled, ThreadLaunchV2.ThreadLaunchService);
                   }
-                  const cleanupContext = yield* Layer.build(StorageCleanup.layer).pipe(
-                    Effect.provide(context),
-                  );
+                  const cleanupContext = yield* Layer.build(
+                    StorageCleanup.layer.pipe(Layer.provide(PendingSettleScripts.layer)),
+                  ).pipe(Effect.provide(context));
                   context = Context.add(
                     context,
                     ThreadLaunchV2.ThreadLaunchService,

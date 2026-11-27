@@ -241,6 +241,7 @@ import { ChunkedMarkdown } from "./ChunkedMarkdown";
 // SCIENT-FORK:START — a file with footnotes renders whole so they resolve
 import { splitScientFileMarkdown } from "~/scient/markdown/scientMarkdownPieces";
 // SCIENT-FORK:END
+import { createPositionMemory, PreviewPositionKey, previewPositionKey } from "./previewPosition";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -724,12 +725,15 @@ interface FileRevealState {
   revealedScrollTop: number | null;
 }
 
+const codeScrollPositions = createPositionMemory<number>();
+
 export function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
   citation?: FileCitation,
   markLine = true,
+  positionKeyFor?: (path: string) => string,
 ): {
   readonly onPostRender: (scroller: "virtualizer" | "codeView") => FilePostRender;
   readonly move: (from: string, to: string) => void;
@@ -737,10 +741,12 @@ export function useFileLineReveal(
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
   // SCIENT-FORK:START — an in-place rename carries a handled reveal along, never replays it
   const move = (from: string, to: string) => {
-    const state = revealStatesByPath.get(from);
+    const fromKey = positionKeyFor?.(from) ?? from;
+    const toKey = positionKeyFor?.(to) ?? to;
+    const state = revealStatesByPath.get(fromKey);
     if (state === undefined) return;
-    revealStatesByPath.delete(from);
-    revealStatesByPath.set(to, state);
+    revealStatesByPath.delete(fromKey);
+    revealStatesByPath.set(toKey, state);
   };
   // SCIENT-FORK:END
   const onPostRender =
@@ -748,18 +754,20 @@ export function useFileLineReveal(
     (fileContainer, instance, phase) => {
       if (relativePath === null) return;
 
-      const existingState = revealStatesByPath.get(relativePath);
+      const positionKey = positionKeyFor?.(relativePath) ?? null;
+      const stateKey = positionKey ?? relativePath;
+      const existingState = revealStatesByPath.get(stateKey);
       const state: FileRevealState = existingState ?? {
         frameId: null,
         cancelGuard: null,
         handledRequestId: null,
         latestRequestId: null,
-        scrollTop: 0,
+        scrollTop: codeScrollPositions.get(positionKey) ?? 0,
         scrollContainer: null,
         restoreFrameId: null,
         revealedScrollTop: null,
       };
-      if (!existingState) revealStatesByPath.set(relativePath, state);
+      if (!existingState) revealStatesByPath.set(stateKey, state);
 
       const cancelPendingReveal = () => {
         if (state.frameId !== null) {
@@ -780,6 +788,7 @@ export function useFileLineReveal(
         const restorePending = state.restoreFrameId !== null;
         cancelPendingReveal();
         if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+        codeScrollPositions.set(positionKey, state.scrollTop);
         // A rebuilt CodeView estimates its line heights again, so a saved offset no longer points at
         // the line. Starting the worker pool rebuilds the viewer right after its first render.
         if (state.revealedScrollTop !== null && state.revealedScrollTop === state.scrollTop) {
@@ -1757,7 +1766,23 @@ function renderedToggleLabel(
 // SCIENT-FORK:START — the file list's saved state is read through usePanelFilesOpen
 // SCIENT-FORK:END
 
-export default function FilePreviewPanel({
+export default function FilePreviewPanel(props: FilePreviewPanelProps) {
+  const relativePath =
+    props.attachment === undefined
+      ? resolveFilePreviewPath(props.relativePath, props.cwd)
+      : props.relativePath;
+  const positionKey =
+    props.attachment === undefined && relativePath !== null
+      ? previewPositionKey(props.environmentId, props.threadRef.threadId, props.cwd, relativePath)
+      : null;
+  return (
+    <PreviewPositionKey value={positionKey}>
+      <FilePreviewPanelContent {...props} />
+    </PreviewPositionKey>
+  );
+}
+
+function FilePreviewPanelContent({
   // SCIENT-FORK:START
   scientSurfaceId,
   // SCIENT-FORK:END
@@ -2365,6 +2390,8 @@ export default function FilePreviewPanel({
     currentRevealLine,
     revealRequestId,
     citationRevealActive ? fileCitation : undefined,
+    true,
+    (path) => previewPositionKey(environmentId, threadRef.threadId, cwd, path),
   );
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
@@ -3131,7 +3158,7 @@ export default function FilePreviewPanel({
           ) : // SCIENT-FORK:END
           relativePath && absolutePath && showsLargeText ? (
             <WorkspaceLargeTextPreview
-              key={`${absolutePath}:${renderTable}:${renderMarkdown}:${fileRefreshRevision}`}
+              key={`${threadRef.threadId}:${absolutePath}:${renderTable}:${renderMarkdown}:${fileRefreshRevision}`}
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
@@ -3229,7 +3256,7 @@ export default function FilePreviewPanel({
               ) : (
                 // SCIENT-FORK:START
                 <StaticTextFileSurface
-                  key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                  key={`${threadRef.threadId}:${relativePath}:${resolvedTheme}:${file.data.revision}`}
                   threadRef={threadRef}
                   onCite={onCiteFile}
                   citationReveal={citationRevealActive ? fileCitation : undefined}
@@ -3372,7 +3399,7 @@ export default function FilePreviewPanel({
               />
             ) : tableDelimiter && renderTable ? (
               <DelimitedTablePreview
-                key={relativePath}
+                key={`${threadRef.threadId}:${relativePath}`}
                 name={relativePath}
                 text={file.data.contents}
                 delimiter={tableDelimiter}
@@ -3395,6 +3422,7 @@ export default function FilePreviewPanel({
             ) : // SCIENT-FORK:END
             isHostFile || !canWriteFiles ? (
               <StaticTextFileSurface
+                key={previewPositionKey(environmentId, threadRef.threadId, cwd, relativePath)}
                 threadRef={threadRef}
                 onCite={onCiteFile}
                 citationReveal={citationRevealActive ? fileCitation : undefined}
@@ -3413,7 +3441,7 @@ export default function FilePreviewPanel({
                   onCite={onCiteFile}
                   citationReveal={citationRevealActive ? fileCitation : undefined}
                   citationBaseline={file.authoritativeData?.contents}
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={`${threadRef.threadId}:${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   projectId={projectId}
                   cwd={cwd}

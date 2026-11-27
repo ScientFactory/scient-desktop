@@ -793,16 +793,32 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // in history or guidance. Eagerly load bridge schemas, including after tree
     // restores, while retaining deferred exposure for Pi's allowlist rules.
     // Pi still applies --tools/--exclude-tools to this active loadout.
+    const eagerSchemas = ctx.model?.api === "openai-completions";
     const required = [
       ...(hasToolSearch ? ["tool_search"] : []),
-      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => modelToolName(tool.name)) : []),
-      // SCIENT-FORK:START: Scient Extensions: declare connector tools to completion gateways too.
-      // Only projected names, which every model API accepts.
-      ...(ctx.model?.api === "openai-completions" ? connectorToolOwners.keys() : []),
-      // SCIENT-FORK:END
+      ...(eagerSchemas ? catalog.map((tool) => modelToolName(tool.name)) : []),
+      // SCIENT-FORK: Scient Extensions declares the projected connector names.
+      ...(eagerSchemas ? connectorToolOwners.keys() : []),
     ];
-    const missing = required.filter((name) => !active.includes(name));
-    if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
+    const current = pi.getActiveTools();
+    const missing = required.filter((name) => !current.includes(name));
+    if (missing.length > 0) pi.setActiveTools([...current, ...missing]);
+    // An alias is callable only while active, and Pi records every active
+    // declaration in the transcript, hidden or not. Calls to the alias of an
+    // active public tool are renamed at message_end instead. Once tool_search
+    // loads a deferred tool, its alias is already in the transcript: dropping it
+    // re-declares it in the prompt head, so the next request misses the cache.
+    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+    const loaded = pi.getActiveTools();
+    const aliases = catalog
+      .filter((tool) => registered.has(ALIAS_PREFIX + tool.name) &&
+        followsPublicTool(tool.name, registered, loaded) &&
+        (!loaded.includes(modelToolName(tool.name)) ||
+          (!eagerSchemas && isDeferred(tool.name) && loaded.includes(ALIAS_PREFIX + tool.name))))
+      .map((tool) => ALIAS_PREFIX + tool.name);
+    const kept = loaded.filter((name) => !name.startsWith(ALIAS_PREFIX) || aliases.includes(name));
+    const added = aliases.filter((name) => !loaded.includes(name));
+    if (added.length > 0 || kept.length !== loaded.length) pi.setActiveTools([...kept, ...added]);
   };
 
   // Tree navigation restores its saved loadout after session_start.

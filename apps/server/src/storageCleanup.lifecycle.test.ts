@@ -1,3 +1,4 @@
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -151,6 +152,7 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
         ),
       );
       const cleanupLayer = StorageCleanup.layer.pipe(
+        Layer.provide(PendingSettleScripts.layer),
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),

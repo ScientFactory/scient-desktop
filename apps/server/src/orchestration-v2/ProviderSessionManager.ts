@@ -370,6 +370,7 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     readonly threadId: ThreadId;
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
+    readonly handoffProviderThread?: OrchestrationV2ProviderThread;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
    * Releases the session unless, at the moment of removal, a turn is busy on it other than one
@@ -4721,6 +4722,23 @@ export const layerWithOptions = (
                 );
               }
             }
+            const handoff = input.handoffProviderThread;
+            // Keep the source attached until it confirms release so a retry can still find it.
+            if (handoff?.nativeThreadRef != null) {
+              yield* threadAttachment.withLock(
+                threadAttachmentKey(input),
+                Effect.gen(function* () {
+                  const entry = (yield* Ref.get(sessions)).get(key);
+                  if (!entry?.supportsMultipleProviderThreads) return;
+                  const unloadThread = entry.exposedRuntime.unloadThread;
+                  if (unloadThread !== undefined) {
+                    yield* unloadThread({ providerThread: handoff, awaitClosed: true }).pipe(
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                    );
+                  }
+                }),
+              );
+            }
             // SCIENT-FORK:START — the detach mutation runs under the text-snapshot permit below.
             const detachMutation = Ref.modify(sessions, (current) => {
               // SCIENT-FORK:END
@@ -4837,7 +4855,8 @@ export const layerWithOptions = (
               // The projection includes native children owned by other app threads;
               // lock each owner so an attached child stays loaded and later attaches wait.
               for (const providerThread of detachedProviderThreads) {
-                if (providerThread.nativeThreadRef === null) continue;
+                if (providerThread.nativeThreadRef === null || providerThread.id === handoff?.id)
+                  continue;
                 const ownerThreadId = providerThread.appThreadId ?? input.threadId;
                 yield* threadAttachment.withLock(
                   threadAttachmentKey({
@@ -4852,8 +4871,17 @@ export const layerWithOptions = (
                     ) {
                       return;
                     }
-                    // SCIENT-FORK: the replacement owner may resume as soon as detach returns.
-                    yield* unloadThread({ providerThread, awaitRelease: true }).pipe(
+                    if (
+                      handoff !== undefined &&
+                      (providerThread.ownerNodeId !== null || ownerThreadId !== input.threadId) &&
+                      entry.runtime.hasPendingBackgroundWorkForThread !== undefined &&
+                      (yield* entry.runtime
+                        .hasPendingBackgroundWorkForThread(providerThread)
+                        .pipe(Effect.orElseSucceed(() => true)))
+                    ) {
+                      return;
+                    }
+                    yield* unloadThread({ providerThread, awaitClosed: true }).pipe(
                       Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                       Effect.catchCause((cause) =>
                         Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {

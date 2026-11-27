@@ -580,7 +580,7 @@ export const make = Effect.gen(function* () {
         }),
     });
     if (!isInsideRealRoot(realWorkspaceRoot, resolved.realTargetPath)) {
-      if (purpose === "contained") {
+      if (purpose === "contained" || isNetworkPath(resolved.realTargetPath)) {
         return yield* new WorkspaceFilePathEscapeError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
