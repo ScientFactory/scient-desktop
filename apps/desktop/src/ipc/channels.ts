@@ -201,6 +201,7 @@ export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
 // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
 export const GET_RESTART_READINESS_TOKEN_CHANNEL = "scient:restart:readiness-token";
 export const REPORT_WORKSPACE_READY_CHANNEL = "scient:restart:workspace-ready";
+export const REPORT_WORKSPACE_SETTLED_CHANNEL = "scient:restart:workspace-settled";
 export const PREPARE_UPDATE_SAVE_CHANNEL = "scient:update:prepare-save";
 export const COMPLETE_UPDATE_SAVE_CHANNEL = "scient:update:complete-save";
 export const RELEASE_UPDATE_SAVE_CHANNEL = "scient:update:release-save";

@@ -12,6 +12,12 @@ const Token = Schema.Struct({
   launchId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
 });
 
+const Interaction = Schema.Struct({
+  projectControlsVisible: Schema.Boolean,
+  composerUsable: Schema.Boolean,
+  windowUnlocked: Schema.Boolean,
+});
+
 const isAppFrame = Effect.fn("desktop.restartReadiness.isAppFrame")(function* (
   event: DesktopIpc.DesktopIpcInvokeEvent | undefined,
 ) {
@@ -46,11 +52,12 @@ export const reportReady = DesktopIpc.makeIpcMethod({
     attemptId: Schema.optionalKey(Token.fields.attemptId),
     launchId: Schema.optionalKey(Token.fields.launchId),
     projectRestored: Schema.Boolean,
+    interaction: Schema.optionalKey(Interaction),
   }),
   result: Schema.Boolean,
   handler: Effect.fn("desktop.restartReadiness.reportReady")(function* (ack, event) {
     if (!(yield* isAppFrame(event))) return false;
-    const { attemptId, launchId, projectRestored } = ack;
+    const { attemptId, launchId, projectRestored, interaction } = ack;
     const startup = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
     const timing = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
     // Both take their ready time before either logs or writes, so neither counts the other's I/O.
@@ -59,9 +66,26 @@ export const reportReady = DesktopIpc.makeIpcMethod({
       : Effect.void;
     const restartCompleted =
       attemptId !== undefined && launchId !== undefined && Option.isSome(timing)
-        ? yield* timing.value.workspaceReady({ attemptId, launchId, projectRestored })
+        ? yield* timing.value.workspaceReady({
+            attemptId,
+            launchId,
+            projectRestored,
+            ...(interaction === undefined ? {} : { interaction }),
+          })
         : false;
     yield* recordStartup;
     return restartCompleted;
+  }),
+});
+
+/** The restored workspace a moment after its restart completed; true only for that workspace. */
+export const reportSettled = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REPORT_WORKSPACE_SETTLED_CHANNEL,
+  payload: Schema.Struct({ ...Token.fields, interaction: Interaction }),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.restartReadiness.reportSettled")(function* (ack, event) {
+    if (!(yield* isAppFrame(event))) return false;
+    const timing = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
+    return Option.isSome(timing) ? yield* timing.value.workspaceSettled(ack) : false;
   }),
 });

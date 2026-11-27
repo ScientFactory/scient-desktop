@@ -159,6 +159,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
   yield* ipc.handle(RestartReadinessIpc.getToken);
   yield* ipc.handle(RestartReadinessIpc.reportReady);
+  yield* ipc.handle(RestartReadinessIpc.reportSettled);
   yield* ipc.handle(UpdateSaveIpc.complete);
   // SCIENT-FORK:END
 

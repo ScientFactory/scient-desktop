@@ -279,12 +279,19 @@ tag or release already exists.
    Packaged builds ignore Node's inspector switches (the `enableNodeCliInspectArguments`
    fuse is off in every build, rehearsals included), so the harness starts the installed
    app itself with `--remote-debugging-port=0` and drives its window over Chromium's
-   DevTools protocol. It takes the main process from DevTools, requires the endpoint to be
-   written into the synthetic profile, and records the restart interaction from DevTools
-   screencast frames. The native relaunch passes no switches and is not attached to:
-   its `launched`, `backend-ready` and `workspace-ready` receipts (one launch and
-   process, with `projectRestored`) mark it ready. The harness then checks the edit on
-   disk, the single updated main process and the old process's exit, captures that
+   DevTools protocol. It takes the main process from DevTools and accepts the endpoint only
+   if that process is its own launch (otherwise it disconnects without closing or signalling
+   it), requires the endpoint to be written into the synthetic profile, and records the
+   restart interaction from DevTools screencast frames. Its own quits use DevTools'
+   `Browser.close` and must show the app's `before-quit received` log and a normal exit
+   status; a forced exit is only cleanup and fails the ordinary-quit check.
+   The native relaunch passes no switches and is not attached to: its `launched`,
+   `backend-ready`, `workspace-ready` and `workspace-settled` receipts (one launch and
+   process, with `projectRestored`) mark it ready, and the last two must record that the
+   restored project's controls and the composer were visible outside any inert region and
+   the window was not locked for the restart, at readiness and again a second later. The
+   harness then checks the edit on disk, the single updated main process (any instance of
+   the app, from any AppImage mount, counts) and the old process's exit, captures that
    process's window through the operating system, quits it normally, and launches the
    installed target once more the same way to require the restored project's visible
    controls, an unlocked window and the target version. The disposable Linux runner permits

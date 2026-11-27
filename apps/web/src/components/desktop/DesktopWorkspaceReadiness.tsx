@@ -4,7 +4,12 @@ import { useEffect } from "react";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentShellStatus } from "../../state/shell";
-import { reportDesktopWorkspaceReady, workspaceReadiness } from "./workspaceReadiness";
+import {
+  observeWorkspaceInteraction,
+  reportDesktopWorkspaceReady,
+  RESTART_SETTLE_MS,
+  workspaceReadiness,
+} from "./workspaceReadiness";
 
 const startup = { reported: false };
 
@@ -12,6 +17,8 @@ export function DesktopWorkspaceReadiness(props: {
   readonly environmentId: EnvironmentId | null;
   readonly initialized: boolean;
   readonly projectRestored: boolean;
+  /** The restored project's title, to check that its controls are reachable. */
+  readonly projectName?: string | null;
   /** Ends startup timing only; an update restart ends where its workspace is restored. */
   readonly startupOnly?: boolean;
 }) {
@@ -31,6 +38,7 @@ export function DesktopWorkspaceReadiness(props: {
   });
   const bridge = window.desktopBridge;
   const startupOnly = props.startupOnly === true;
+  const projectName = props.projectName ?? null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native startup and restart owners
   useEffect(() => {
@@ -42,10 +50,12 @@ export function DesktopWorkspaceReadiness(props: {
       projectRestored: props.projectRestored,
       startup,
       isCurrent: () => current,
+      observe: () => observeWorkspaceInteraction(document, projectName),
+      settle: () => new Promise((resolve) => setTimeout(resolve, RESTART_SETTLE_MS)),
     }).catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [bridge, ready, startupOnly, props.projectRestored]);
+  }, [bridge, ready, startupOnly, props.projectRestored, projectName]);
   return null;
 }

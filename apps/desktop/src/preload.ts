@@ -125,6 +125,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.GET_RESTART_READINESS_TOKEN_CHANNEL),
   reportWorkspaceReady: (input) =>
     ipcRenderer.invoke(IpcChannels.REPORT_WORKSPACE_READY_CHANNEL, input),
+  reportWorkspaceSettled: (input) =>
+    ipcRenderer.invoke(IpcChannels.REPORT_WORKSPACE_SETTLED_CHANNEL, input),
   onPrepareUpdateSave: (listener) => {
     const handle = (_event: Electron.IpcRendererEvent, input: unknown) => {
       if (typeof input !== "object" || input === null) return;

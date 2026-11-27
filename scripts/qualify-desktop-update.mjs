@@ -12,6 +12,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 const TIMEOUT = 300_000;
+// One external command or shutdown step; a hang fails at that step, not at the job's timeout.
+const STEP_TIMEOUT = 60_000;
 // Windows builds are unsigned until Trusted Signing has a certificate profile. "optional" accepts an
 // unsigned installer (such a build pins no publisher, so updates are not signature-checked) but
 // never a damaged signature; it is recorded in the receipt.
@@ -87,9 +89,10 @@ export function qualifyTiming(events, fromVersion, targetVersion) {
   const launched = named("launched");
   const backend = named("backend-ready");
   const ready = named("workspace-ready");
+  const settled = named("workspace-settled");
   NodeAssert.ok(Number.isFinite(shutdown.elapsedMs) && shutdown.elapsedMs >= 0);
   NodeAssert.ok(Number.isFinite(handoff.elapsedMs) && handoff.elapsedMs >= shutdown.elapsedMs);
-  for (const event of [launched, backend, ready]) {
+  for (const event of [launched, backend, ready, settled]) {
     NodeAssert.equal(
       event.launchId,
       launched.launchId,
@@ -104,6 +107,11 @@ export function qualifyTiming(events, fromVersion, targetVersion) {
   NodeAssert.equal(typeof launched.launchId, "string");
   NodeAssert.ok(Number.isSafeInteger(launched.processId) && launched.processId > 0);
   NodeAssert.equal(ready.projectRestored, true, "A selected project must really be restored");
+  // The natively relaunched process itself showed the project and took input, at readiness and
+  // once settled; a lock its restart left behind would be gone by the harness's next launch.
+  for (const event of [ready, settled])
+    for (const field of ["projectControlsVisible", "composerUsable", "windowUnlocked"])
+      NodeAssert.equal(event[field], true, `The relaunched app's ${event.event} needs ${field}`);
   for (const [field, value] of Object.entries({
     confirmToLaunchMs: launched.confirmToLaunchMs,
     handoffToLaunchMs: launched.handoffToLaunchMs,
@@ -112,6 +120,10 @@ export function qualifyTiming(events, fromVersion, targetVersion) {
     launchToReadyMs: ready.launchToReadyMs,
   }))
     NodeAssert.ok(Number.isFinite(value) && value >= 0, `Missing or invalid ${field}`);
+  NodeAssert.ok(
+    Number.isFinite(settled.settledAfterReadyMs) && settled.settledAfterReadyMs >= 0,
+    "Missing or invalid settledAfterReadyMs",
+  );
   NodeAssert.ok(
     ready.launchToReadyMs >= backend.launchToBackendMs,
     "Workspace readiness preceded its backend",
@@ -125,6 +137,7 @@ export function qualifyTiming(events, fromVersion, targetVersion) {
     launchToBackendMs: backend.launchToBackendMs,
     launchToReadyMs: ready.launchToReadyMs,
     confirmToReadyMs: ready.confirmToReadyMs,
+    settledAfterReadyMs: settled.settledAfterReadyMs,
   };
 }
 
@@ -458,11 +471,12 @@ function quitOwnedUpdatedProcess(pid, executable, platform) {
         "-Command",
         `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').ExecutablePath`,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: STEP_TIMEOUT },
     ).trim();
   } else if (platform === "darwin") {
     actual = NodeChildProcess.execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
       encoding: "utf8",
+      timeout: STEP_TIMEOUT,
     }).trim();
   } else {
     const environment = NodeFS.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
@@ -487,7 +501,10 @@ function quitOwnedUpdatedProcess(pid, executable, platform) {
   );
   // Without /F, taskkill asks the windows to close; the app then quits as it does for any window close.
   if (platform === "win32")
-    NodeChildProcess.execFileSync("taskkill", ["/PID", String(pid)], { stdio: "pipe" });
+    NodeChildProcess.execFileSync("taskkill", ["/PID", String(pid)], {
+      stdio: "pipe",
+      timeout: STEP_TIMEOUT,
+    });
   else process.kill(pid, "SIGTERM");
 }
 
@@ -510,6 +527,17 @@ function descendsFrom(candidate, ancestor, parentOf) {
   return false;
 }
 
+// Every instance of the app counts, whichever AppImage mount or extraction it runs from;
+// Chromium's helper processes carry --type=.
+export function linuxMainCandidates(processes, executableName) {
+  return processes
+    .filter(
+      (entry) =>
+        NodePath.posix.basename(entry.exe) === executableName && !entry.command.includes("--type="),
+    )
+    .map(({ pid, command }) => ({ pid, command }));
+}
+
 function requireSingleMain(pid, executable, platform) {
   let candidates;
   let parentOf;
@@ -522,7 +550,7 @@ function requireSingleMain(pid, executable, platform) {
           "-Command",
           "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress",
         ],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: STEP_TIMEOUT },
       ),
     );
     const parents = new Map(rows.map((row) => [row.ProcessId, row.ParentProcessId]));
@@ -537,6 +565,7 @@ function requireSingleMain(pid, executable, platform) {
   } else if (platform === "darwin") {
     const rows = NodeChildProcess.execFileSync("ps", ["-axo", "pid=,ppid=,comm="], {
       encoding: "utf8",
+      timeout: STEP_TIMEOUT,
     })
       .split("\n")
       .map((row) => /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(row))
@@ -546,20 +575,25 @@ function requireSingleMain(pid, executable, platform) {
     parentOf = (child) => parents.get(child) ?? 0;
     candidates = rows.filter((row) => row.command === executable);
   } else {
-    const actual = NodeFS.readlinkSync(`/proc/${pid}/exe`);
     parentOf = linuxParentOf;
-    candidates = NodeFS.readdirSync("/proc")
-      .filter((name) => /^\d+$/.test(name))
-      .flatMap((name) => {
-        try {
-          const command = NodeFS.readFileSync(`/proc/${name}/cmdline`, "utf8");
-          return NodeFS.readlinkSync(`/proc/${name}/exe`) === actual && !command.includes("--type=")
-            ? [{ pid: Number(name), command: command.replaceAll("\0", " ") }]
-            : [];
-        } catch {
-          return [];
-        }
-      });
+    candidates = linuxMainCandidates(
+      NodeFS.readdirSync("/proc")
+        .filter((name) => /^\d+$/.test(name))
+        .flatMap((name) => {
+          try {
+            return [
+              {
+                pid: Number(name),
+                exe: NodeFS.readlinkSync(`/proc/${name}/exe`),
+                command: NodeFS.readFileSync(`/proc/${name}/cmdline`, "utf8").replaceAll("\0", " "),
+              },
+            ];
+          } catch {
+            return [];
+          }
+        }),
+      NodePath.posix.basename(NodeFS.readlinkSync(`/proc/${pid}/exe`)),
+    );
   }
   const mains = candidates.filter((candidate) => !descendsFrom(candidate.pid, pid, parentOf));
   if (mains.length !== 1 || mains[0].pid !== pid)
@@ -617,8 +651,57 @@ async function waitForExit(pid, timeout) {
   return !processAlive(pid);
 }
 
-async function launchInstalled({ executable, env, userData, platform, log }) {
-  const { chromium } = await import("playwright-core");
+// Rejects with `message` if `promise` has not settled in time; the timer never outlives the race.
+async function deadline(promise, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Browser.close quits through the app's own before-quit and shutdown; a kill skips both.
+export function requireGracefulQuit(output, exit) {
+  NodeAssert.deepEqual(
+    exit,
+    { code: 0, signal: null },
+    `The app must exit normally when asked to quit, not ${JSON.stringify(exit)}`,
+  );
+  NodeAssert.match(output, /\bbefore-quit received\b/, "The app's own quit path must run");
+  NodeAssert.doesNotMatch(
+    output,
+    /exiting before shutdown completed/,
+    "The app must finish its shutdown before it exits",
+  );
+}
+
+// Ownership comes first: a DevTools endpoint answering for a process this harness did not start
+// is only disconnected (closing a browser reached over CDP closes just the connection).
+export async function attachOwnedBrowser({ connect, spawnedPid, platform, parentOf }) {
+  const browser = await connect();
+  try {
+    const session = await browser.newBrowserCDPSession();
+    const pid = browserProcessId((await session.send("SystemInfo.getProcessInfo")).processInfo);
+    await session.detach();
+    // An AppImage runtime may start the Electron main process as its own child.
+    NodeAssert.ok(
+      pid === spawnedPid || (platform === "linux" && descendsFrom(pid, spawnedPid, parentOf)),
+      `DevTools answered for process ${pid}, which this harness did not start (${spawnedPid})`,
+    );
+    return { browser, pid };
+  } catch (error) {
+    await browser.close().catch(() => {});
+    throw error;
+  }
+}
+
+export async function launchInstalled({ executable, env, userData, platform, log, connect }) {
   const activePort = NodePath.join(userData, "DevToolsActivePort");
   NodeFS.rmSync(activePort, { force: true });
   const child = NodeChildProcess.spawn(executable, ["--remote-debugging-port=0"], {
@@ -627,7 +710,14 @@ async function launchInstalled({ executable, env, userData, platform, log }) {
   });
   let output = "";
   let failure;
-  const exited = new Promise((resolve) => child.once("exit", resolve));
+  let exit;
+  const exited = new Promise((resolve) =>
+    child.once("exit", (code, signal) => {
+      exit = { code, signal };
+      resolve();
+    }),
+  );
+  const closed = new Promise((resolve) => child.once("close", resolve));
   child.once("error", (error) => (failure = error));
   const collect = (chunk) => {
     output += chunk;
@@ -635,24 +725,37 @@ async function launchInstalled({ executable, env, userData, platform, log }) {
   };
   child.stdout.on("data", collect);
   child.stderr.on("data", collect);
-  const running = () => failure === undefined && child.exitCode === null && !child.signalCode;
-  let browser;
-  let pid;
+  const running = () => failure === undefined && exit === undefined;
+  let owned;
+  // An ordinary quit, as the app menu's Quit, and only of the app this harness owns; never a kill.
   const quit = async () => {
+    NodeAssert.ok(owned && running(), "Only a running app this harness started can be quit");
+    const session = await owned.browser.newBrowserCDPSession();
+    // The reply may not outlive the app.
+    void session.send("Browser.close").catch(() => {});
+    await deadline(exited, 60_000, "The app did not quit when asked");
+    NodeAssert.ok(await waitForExit(owned.pid, 30_000), "The app's main process outlived its quit");
+    // Its last output may still be in the pipe; a surviving grandchild may hold it open.
+    await deadline(closed, 10_000, "").catch(() => {});
+    await owned.browser.close().catch(() => {});
+    requireGracefulQuit(output, exit);
+  };
+  // Cleanup after a failure; it may force the exit, so it is never a scenario's quit.
+  const stop = async () => {
+    const session =
+      owned && running()
+        ? await owned.browser.newBrowserCDPSession().catch(() => undefined)
+        : undefined;
+    if (session) {
+      void session.send("Browser.close").catch(() => {});
+      await deadline(exited, 30_000, "").catch(() => {});
+    }
     if (running()) {
-      const session = await browser?.newBrowserCDPSession().catch(() => undefined);
-      // Browser.close quits the app as its menu's Quit does; the reply may not outlive the app.
-      if (session) void session.send("Browser.close").catch(() => {});
-      else child.kill();
-      await Promise.race([exited, delay(60_000)]);
-    }
-    const stopped = !running() && (pid === undefined || (await waitForExit(pid, 30_000)));
-    if (!stopped) {
       child.kill("SIGKILL");
-      if (pid !== undefined && processAlive(pid)) process.kill(pid, "SIGKILL");
+      await deadline(exited, STEP_TIMEOUT, "").catch(() => {});
     }
-    await browser?.close().catch(() => {});
-    NodeAssert.ok(stopped, "The app did not quit when asked");
+    if (owned && !(await waitForExit(owned.pid, 10_000))) process.kill(owned.pid, "SIGKILL");
+    await owned?.browser.close().catch(() => {});
   };
   try {
     const endpoint = await poll(() => {
@@ -670,18 +773,20 @@ async function launchInstalled({ executable, env, userData, platform, log }) {
       `The app did not use the synthetic Electron user data at ${userData}`,
       30_000,
     );
-    browser = await chromium.connectOverCDP(endpoint.url, { timeout: TIMEOUT });
-    const session = await browser.newBrowserCDPSession();
-    pid = browserProcessId((await session.send("SystemInfo.getProcessInfo")).processInfo);
-    await session.detach();
-    // An AppImage runtime may start the Electron main process as its own child.
-    NodeAssert.ok(
-      pid === child.pid || (platform === "linux" && descendsFrom(pid, child.pid, linuxParentOf)),
-      `DevTools answered for process ${pid}, which this harness did not start (${child.pid})`,
-    );
-    console.log(`Launched ${executable}: started process ${child.pid}, main process ${pid}`);
+    owned = await attachOwnedBrowser({
+      connect:
+        connect ??
+        (async () =>
+          (await import("playwright-core")).chromium.connectOverCDP(endpoint.url, {
+            timeout: TIMEOUT,
+          })),
+      spawnedPid: child.pid,
+      platform,
+      parentOf: linuxParentOf,
+    });
+    console.log(`Launched ${executable}: started process ${child.pid}, main process ${owned.pid}`);
     const page = await poll(async () => {
-      for (const candidate of browser.contexts().flatMap((context) => context.pages()))
+      for (const candidate of owned.browser.contexts().flatMap((context) => context.pages()))
         if (
           await candidate
             .evaluate(() => typeof window.desktopBridge?.checkForUpdate === "function")
@@ -689,9 +794,9 @@ async function launchInstalled({ executable, env, userData, platform, log }) {
         )
           return candidate;
     }, "The app opened no Scient window");
-    return { pid, page, quit, running };
+    return { pid: owned.pid, page, quit, stop };
   } catch (error) {
-    await quit().catch(() => {});
+    await stop().catch(() => {});
     throw error;
   }
 }
@@ -807,10 +912,23 @@ async function recordWindow(page, filename, platform) {
     },
   });
   return async () => {
-    await page.screencast.stop().catch(() => {});
+    // After a native restart the page is gone and stopping fails; only a hang is an error here.
+    await deadline(
+      page.screencast.stop().catch(() => {}),
+      STEP_TIMEOUT,
+      "Stopping the window screencast hung",
+    );
     if (last) write(last, fps);
     encoder.stdin.end();
-    NodeAssert.equal(await finished, 0, `Recording the window failed: ${errors}`);
+    const status = await deadline(
+      finished,
+      STEP_TIMEOUT,
+      `The video encoder did not finish: ${errors}`,
+    ).catch((error) => {
+      encoder.kill("SIGKILL");
+      throw error;
+    });
+    NodeAssert.equal(status, 0, `Recording the window failed: ${errors}`);
     return frames;
   };
 }
@@ -868,7 +986,7 @@ function powershell(script) {
   return NodeChildProcess.execFileSync(
     "powershell.exe",
     ["-NoProfile", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
-    { encoding: "utf8" },
+    { encoding: "utf8", timeout: STEP_TIMEOUT },
   ).trim();
 }
 
@@ -889,14 +1007,13 @@ function captureWindow(pid, filename, platform) {
         NodeChildProcess.execFileSync(
           "osascript",
           ["-l", "JavaScript", "-e", macWindows, String(pid)],
-          {
-            encoding: "utf8",
-          },
+          { encoding: "utf8", timeout: STEP_TIMEOUT },
         ),
       ),
     );
     NodeChildProcess.execFileSync("screencapture", ["-x", "-o", `-l${window.id}`, filename], {
       stdio: "pipe",
+      timeout: STEP_TIMEOUT,
     });
   } else if (platform === "win32") {
     const window = largestWindow(
@@ -911,9 +1028,7 @@ function captureWindow(pid, filename, platform) {
       ids = NodeChildProcess.execFileSync(
         "xdotool",
         ["search", "--onlyvisible", "--pid", String(pid)],
-        {
-          encoding: "utf8",
-        },
+        { encoding: "utf8", timeout: STEP_TIMEOUT },
       )
         .split("\n")
         .filter((id) => /^\d+$/.test(id));
@@ -923,13 +1038,16 @@ function captureWindow(pid, filename, platform) {
         const geometry = NodeChildProcess.execFileSync(
           "xdotool",
           ["getwindowgeometry", "--shell", id],
-          { encoding: "utf8" },
+          { encoding: "utf8", timeout: STEP_TIMEOUT },
         );
         const field = (name) => Number(new RegExp(`^${name}=(\\d+)$`, "m").exec(geometry)?.[1]);
         return { id, width: field("WIDTH"), height: field("HEIGHT") };
       }),
     );
-    NodeChildProcess.execFileSync("import", ["-window", window.id, filename], { stdio: "pipe" });
+    NodeChildProcess.execFileSync("import", ["-window", window.id, filename], {
+      stdio: "pipe",
+      timeout: STEP_TIMEOUT,
+    });
   }
   NodeAssert.ok(NodeFS.statSync(filename).size > 0, "The relaunched window capture is empty");
 }
@@ -1196,6 +1314,8 @@ async function qualify(options) {
         arch: HostProcess.Architecture.defaultValue(),
         sourceVersion: source.manifest.version,
         targetVersion: target.manifest.version,
+        // Both quits ran the app's own before-quit and shutdown and exited with status 0.
+        quitGracefully: true,
         passed: true,
       };
     } else {
@@ -1291,7 +1411,21 @@ async function qualify(options) {
           await page.keyboard.insertText(duringPreparation);
           await page.evaluate(() => window.__qualificationRestoreTimers());
         }
-        const events = await completion;
+        await completion;
+        // The settled receipt follows readiness by about a second plus a trace flush; when it
+        // never comes, qualifyTiming names it as missing.
+        const events = await waitForTrace(
+          trace,
+          (events) =>
+            events.some(
+              (event) =>
+                event.event === "workspace-settled" &&
+                event.fromVersion === source.manifest.version &&
+                event.targetVersion === target.manifest.version,
+            ),
+          observation.signal,
+          STEP_TIMEOUT,
+        ).catch(() => timingEvents(NodeFS.readFileSync(trace, "utf8")));
         const successfulEvents =
           recoveredPreparationAttempt === undefined
             ? events
@@ -1352,6 +1486,9 @@ async function qualify(options) {
           preparationFailureRecovered: recoveredPreparationAttempt !== undefined,
           unsavedEditPreserved: true,
           finalSaveChecked: checksFinalSave,
+          restoredProjectControlsVisible: true,
+          restoredComposerUsable: true,
+          restoredWindowUnlocked: true,
           nextLaunchProjectControlsVisible: true,
           nextLaunchWindowUnlocked: true,
           ...timings,
@@ -1378,8 +1515,8 @@ async function qualify(options) {
           console.error("Could not stop the updated app:", error);
         }
       }
-      await relaunched?.quit().catch(() => {});
-      await app?.quit().catch(() => {});
+      await relaunched?.stop().catch((error) => console.error("Could not stop the app:", error));
+      await app?.stop().catch((error) => console.error("Could not stop the app:", error));
     } finally {
       await new Promise((resolve) => server.close(resolve));
       // After the app stopped, so its trace is complete.
