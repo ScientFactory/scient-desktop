@@ -207,9 +207,9 @@ Every release run also installs its exact Windows installer on a clean
 ([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml)).
 The release's job **Start Windows install timing** waits for **Package Windows x64**
 to succeed, then dispatches that run on the release's branch with the release's
-run ID, its `desktop-win-x64` artifact and its version; the job summary links the
-new run. The other release checks verify the unpacked app; this one runs the real
-installer.
+run ID, the ID of its `desktop-win-x64` artifact (the timing run downloads exactly
+that upload) and its version; the job summary links the new run. The other release
+checks verify the unpacked app; this one runs the real installer.
 
 Each of three samples installs silently into a new folder under the system drive,
 launches the installed app on a new profile, quits it by closing its window,
@@ -232,17 +232,21 @@ the first window, the loaded page, the shown window, the shell and the card
 appeared, to show where the time went, and the window sizes it matched.
 
 Every stage has a bound: 5 minutes to install, 2 minutes to ready, 30 seconds to
-quit (then the app's own processes are force-stopped within 15 seconds and the
-sample records a forced quit) and 4 minutes to uninstall: 2 for the uninstaller,
-then 2 for it to remove the install folder in the background. No install or launch
-starts after 12 minutes of measuring, about four times a normal run; the samples
-left are recorded as not run. Each sample's cleanup always runs, even after a failure:
-it force-stops the app, verifies that none of its processes are left, uninstalls
-and removes the folder. A launch whose processes survive a forced stop ends the
-sample, since a relaunch beside them would time nothing real. The measurement step
-is bounded at 18 minutes and the whole run at 35; a normal run takes about 4.
+quit and 4 minutes to uninstall: 2 for the uninstaller, then 2 for it to remove the
+install folder in the background. A launch that does not quit in time is force-stopped
+and records a forced quit; its whole stop, verification included, is bounded at 45
+seconds, and every process query inside it is cut to what remains. No install or
+launch starts after 12 minutes of measuring, about four times a normal run; the
+samples left are recorded as not run. Each sample's cleanup always runs, even after
+a failure: within 15 seconds it force-stops the app and verifies that none of its
+processes is left, then uninstalls and removes the folder. A launch whose processes
+survive a forced stop ends the sample, since a relaunch beside them would time
+nothing real. When the cleanup cannot verify that none is left, it records the
+failure, skips the uninstall, and no later sample starts. These bounds keep the
+measurement inside its 18-minute step; a normal run takes about 4 minutes.
 `measurement.json` is rewritten after every sample, so even a stopped run keeps
-what it measured.
+what it measured; it marks itself complete only once every planned sample ran to
+its end with a verified cleanup.
 
 The job summary shows each median, every sample, the baseline and the change. The
 `windows-install-timing` artifact holds `windows-install-timing.json`, a
@@ -251,6 +255,9 @@ sample and of any failed one, and is kept 90 days.
 
 The baseline is the newest kept timing record that passes every check:
 
+- Its timing run concluded successfully and its record is marked complete, so a
+  run stopped after its first good sample, whose record already shows medians and
+  no failures, never counts.
 - It timed the `desktop-win-x64` artifact of a release run, whether that release
   dispatched it or someone ran it by hand, with no failed stage and all three
   medians.
@@ -264,18 +271,32 @@ The baseline is the newest kept timing record that passes every check:
 The lookup reads every page of kept records and logs why it skipped each one. When
 none passes, or the lookup fails (it then warns), the baseline is the committed
 [`windows-install-timing-baseline.json`](../../.github/windows-install-timing-baseline.json),
-v0.6.34 timed by the same harness over five samples. A stage regresses when its median is more
-than 25% slower and also more than its floor slower: 5 seconds to install, 1.5
-seconds for the first launch and 1 second for the second. The floors absorb runner
-noise; single launches on these runners vary by about 2 seconds.
+v0.6.34 timed by the same harness over five samples. A stage is slower than the
+baseline's record when its median is more than 25% slower and also more than its
+floor slower: 5 seconds to install, 1.5 seconds for the first launch and 1 second
+for the second.
+
+Runner speed alone moves a whole timing past those bounds: the same v0.6.34
+installer took 7.4 and 11.3 seconds to a first ready launch on two runners. So
+before calling a regression, the run re-checks on the same runner: it downloads the
+baseline's own installer (its published URL, or the `desktop-win-x64` artifact of
+its release run), times it with the same samples after the candidate, and keeps a
+stage regressed only if the candidate is also slower than that re-timing past both
+bounds. Otherwise the stage reads "not confirmed" with the re-timed number. When
+the re-check cannot run cleanly (the artifact has expired, the bytes differ from
+the baseline's recorded SHA-256, or a re-timed stage failed), the regression stands
+and the summary says it was not re-checked. The re-check runs only after a candidate
+measurement with no failed stage, roughly doubles the run, and never fails it.
 
 The timing is advisory. A regression adds a warning and a marked row in the
 summary. A failed stage, such as an installer error or a launch that never became
 ready, fails the timing run. The release run never waits for it: neither its
-concurrency group, its conclusion, assembly nor publication depends on the timing,
-and a failed dispatch only adds a warning. Read the timing summary before
-approving a Stable candidate; whether a regression blocks it is the release
-owner's decision.
+concurrency group, assembly nor publication depends on the timing. **Start Windows
+install timing** sets `continue-on-error` and a 60-minute bound, so a slow package,
+a failed GitHub API read or a failed dispatch marks only that job failed while the
+release run still concludes successfully; a Windows package later than that goes
+untimed. Read the timing summary before approving a Stable candidate; whether a
+regression blocks it is the release owner's decision.
 
 The numbers describe a 4-CPU GitHub runner, whose image turns Defender real-time
 scanning off (the summary records the state). Compare them between runs, not with
@@ -283,8 +304,10 @@ users' machines. To time any other installer, run **Windows install timing** by
 hand with the `run_id` and `artifact` of the run that built it (`desktop-win-x64`
 from a release run; from CI's Windows Packaging, `windows-packaging-slim-installer`
 for the release shape or `windows-packaging-installer` for the one with WSL) or
-with an HTTPS `installer_url`. To reset the committed baseline, replace it with the
-`windows-install-timing.json` of an accepted release's timing run.
+with an HTTPS `installer_url`. A manual run may leave `artifact_id` blank: it then
+downloads that run's newest artifact of the name. To reset the committed baseline,
+replace it with the `windows-install-timing.json` of an accepted release's timing
+run.
 
 ## Production identity and data safety
 

@@ -1,7 +1,7 @@
-// Which installer a Windows install timing measures (`source --out <file> [--run-id <id>
-// --artifact <name> | --installer-url <url>] [--version <v>]`) and which earlier timing it
-// compares with (`find --context <file> --committed <file> --dir <dir>`, which adds file= and
-// committed= to $GITHUB_OUTPUT and falls back to the committed baseline on any lookup error).
+// Which installer a timing measures (`source --out <file> [--run-id <id> --artifact <name>
+// [--artifact-id <id>] | --installer-url <url>] [--version <v>]`) and which earlier timing it
+// compares with (`find --context <file> --committed <file> --dir <dir>`: file= and committed= to
+// $GITHUB_OUTPUT, the committed baseline on any lookup error).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -30,7 +30,15 @@ export function baselineChannel(context) {
   return context.channel === "beta" && !context.rehearsal ? "beta" : "stable";
 }
 
-export function describeSource({ run, artifact, installerUrl, version, runId, runUrl }) {
+export function describeSource({
+  run,
+  artifact,
+  artifactId,
+  installerUrl,
+  version,
+  runId,
+  runUrl,
+}) {
   const release = run && artifact === RELEASE_ARTIFACT ? releaseChannel(run) : null;
   return {
     kind: release ? "release" : "manual",
@@ -42,16 +50,27 @@ export function describeSource({ run, artifact, installerUrl, version, runId, ru
     installerUrl: installerUrl || null,
     installerRunId: run ? String(run.id) : null,
     installerArtifact: installerUrl ? null : artifact,
+    installerArtifactId: artifactId || null,
     installerRunCreatedAt: run?.created_at ?? null,
     runId,
     runUrl,
   };
 }
 
+/** Why `artifact` (the API's record) is not `name` from run `runId`, or null when it is. */
+export function artifactMismatch(artifact, runId, name) {
+  if (String(artifact?.workflow_run?.id) !== String(runId))
+    return `it belongs to run ${artifact?.workflow_run?.id}, not ${runId}`;
+  if (artifact.name !== name) return `it is ${artifact.name}, not ${name}`;
+  return null;
+}
+
 /** Why a timing record cannot be the baseline for `context`, or null when it can. */
 export function recordRejection(record, context) {
   const recorded = record?.context;
   if (record?.schemaVersion !== SCHEMA_VERSION || !recorded) return "an older record format";
+  if (record.measurement?.complete !== true)
+    return "its measurement did not record finishing every sample";
   if (recorded.kind !== "release" || recorded.installerArtifact !== RELEASE_ARTIFACT)
     return "not a release installer";
   if (recorded.rehearsal) return "a rehearsal";
@@ -109,7 +128,9 @@ export function findBaseline({ api, download, repository, context, deadline, log
         ? "not a timing run"
         : timingRun.status !== "completed"
           ? "its timing run is still running"
-          : null;
+          : timingRun.conclusion !== "success"
+            ? `its timing run concluded ${timingRun.conclusion}`
+            : null;
     let file = null;
     let record = null;
     if (reason === null) {
@@ -159,6 +180,7 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
       out: { type: "string" },
       "run-id": { type: "string" },
       artifact: { type: "string" },
+      "artifact-id": { type: "string" },
       "installer-url": { type: "string" },
       version: { type: "string" },
       context: { type: "string" },
@@ -174,28 +196,45 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   const log = (message) => console.log(message);
   if (positionals[0] === "source") {
     const runIdInput = values["run-id"] ?? "";
+    const artifactId = values["artifact-id"] ?? "";
     const installerUrl = values["installer-url"] ?? "";
     if ((runIdInput === "") === (installerUrl === ""))
       throw new Error("Give either a run ID and artifact or an installer URL");
     if (runIdInput !== "" && (!/^\d+$/u.test(runIdInput) || !values.artifact))
       throw new Error("The run ID must be numeric and come with an artifact name");
+    if (artifactId !== "" && (runIdInput === "" || !/^\d+$/u.test(artifactId)))
+      throw new Error("An artifact ID must be numeric and come with its run ID");
     if (installerUrl !== "" && new URL(installerUrl).protocol !== "https:")
       throw new Error("The installer URL must use HTTPS");
+    // Timed all the same when unreadable; only a verified release run's timing can become a baseline.
+    const unverified = (what, error) => {
+      console.log(
+        `::warning title=Windows install timing source::Could not read ${what} (${String(error.message).split("\n")[0]}); recording this timing as manual`,
+      );
+      return { id: Number(runIdInput) };
+    };
     let run = null;
     if (runIdInput !== "") {
       try {
         run = api(`repos/${repository}/actions/runs/${runIdInput}`);
       } catch (error) {
-        // Timed all the same; only a verified release run's timing can become a baseline.
-        console.log(
-          `::warning title=Windows install timing source::Could not read run ${runIdInput} (${String(error.message).split("\n")[0]}); recording this timing as manual`,
-        );
-        run = { id: Number(runIdInput) };
+        run = unverified(`run ${runIdInput}`, error);
       }
+    }
+    if (artifactId !== "") {
+      let artifact = null;
+      try {
+        artifact = api(`repos/${repository}/actions/artifacts/${artifactId}`);
+      } catch (error) {
+        run = unverified(`artifact ${artifactId}`, error);
+      }
+      const mismatch = artifact && artifactMismatch(artifact, runIdInput, values.artifact);
+      if (mismatch) throw new Error(`Artifact ${artifactId} is not the one to time: ${mismatch}`);
     }
     const context = describeSource({
       run,
       artifact: values.artifact,
+      artifactId,
       installerUrl,
       version: values.version,
       runId,

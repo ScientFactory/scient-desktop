@@ -16,6 +16,10 @@ on:
         description: Its artifact holding exactly one installer .exe (release runs desktop-win-x64; CI windows-packaging-slim-installer)
         type: string
         default: desktop-win-x64
+      artifact_id:
+        description: That artifact's ID, downloaded by ID (a release passes it); blank downloads the newest artifact of that name
+        type: string
+        default: ""
       installer_url:
         description: Or an HTTPS URL of a published installer (leave run_id blank)
         type: string
@@ -37,8 +41,9 @@ jobs:
   timing:
     name: Windows install and launch timing
     runs-on: windows-2025
-    # The sum of the step bounds below; a normal run takes about 4 minutes.
-    timeout-minutes: 35
+    # The sum of the step bounds below; a normal run takes about 4 minutes, and twice that when a
+    # regression is re-checked.
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -53,12 +58,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run_id }}
           ARTIFACT: ${{ inputs.artifact }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
           INSTALLER_URL: ${{ inputs.installer_url }}
           VERSION: ${{ inputs.version }}
         run: |
           mkdir -p timing
           node .github/scripts/windows-install-timing-baseline.mjs source --out timing/context.json \
-            --run-id "$RUN_ID" --artifact "$ARTIFACT" --installer-url "$INSTALLER_URL" --version "$VERSION"
+            --run-id "$RUN_ID" --artifact "$ARTIFACT" --artifact-id "$ARTIFACT_ID" \
+            --installer-url "$INSTALLER_URL" --version "$VERSION"
       - name: Download the installer artifact
         if: inputs.installer_url == ''
         timeout-minutes: 5
@@ -66,7 +73,8 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run_id }}
-          name: ${{ inputs.artifact }}
+          name: ${{ inputs.artifact_id == '' && inputs.artifact || '' }}
+          artifact-ids: ${{ inputs.artifact_id }}
           path: installer
       - name: Download the installer
         if: inputs.installer_url != ''
@@ -91,6 +99,7 @@ jobs:
       # A 12-minute measurement budget (four times a normal run), then up to 5 minutes to stop the
       # app and uninstall the sample in progress. measurement.json is rewritten after each sample.
       - name: Time install and launches
+        id: measure
         timeout-minutes: 18
         shell: bash
         env:
@@ -109,6 +118,55 @@ jobs:
         run: |
           node .github/scripts/windows-install-timing-baseline.mjs find --context timing/context.json \
             --committed .github/windows-install-timing-baseline.json --dir "$RUNNER_TEMP/baselines"
+      - name: Check against the baseline
+        id: check
+        if: ${{ !cancelled() && steps.measure.outcome == 'success' }}
+        timeout-minutes: 1
+        shell: bash
+        env:
+          BASELINE: ${{ steps.baseline.outputs.file || '.github/windows-install-timing-baseline.json' }}
+        run: |
+          node .github/scripts/windows-install-timing-report.mjs --check \
+            --measurement timing/measurement.json --baseline "$BASELINE"
+      # A stage slower than the baseline's record is re-checked against the baseline's own installer,
+      # timed after this one on the same runner; runner speed alone moves a whole timing.
+      - name: Download the baseline's installer
+        id: baseline_installer
+        if: ${{ !cancelled() && steps.check.outputs.regressed == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE: ${{ steps.baseline.outputs.file || '.github/windows-install-timing-baseline.json' }}
+        run: |
+          set -euo pipefail
+          field() { node -p "JSON.parse(require('node:fs').readFileSync(process.env.BASELINE, 'utf8')).context.$1 ?? ''"; }
+          url="$(field installerUrl)"
+          run="$(field installerRunId)"
+          artifact="$(field installerArtifact)"
+          mkdir -p baseline-installer
+          if [[ "$url" == https://* ]]; then
+            curl -fsSL --retry 3 -o "baseline-installer/${url##*/}" "$url"
+          elif [[ "$run" =~ ^[0-9]+$ && -n "$artifact" ]]; then
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n "$artifact" -D baseline-installer
+          else
+            echo "The baseline names no installer to download." >&2
+            exit 1
+          fi
+      - name: Time the baseline's installer again
+        if: ${{ !cancelled() && steps.baseline_installer.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 18
+        shell: bash
+        env:
+          SAMPLES: ${{ inputs.samples }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          found=(baseline-installer/**/*.exe)
+          [[ ${#found[@]} -eq 1 ]] || { echo "Expected one installer .exe, found ${#found[@]}." >&2; exit 1; }
+          node .github/scripts/windows-install-timing.mjs "${found[0]}" timing/baseline-rerun "$SAMPLES"
       - name: Compare and summarize
         if: ${{ !cancelled() && hashFiles('timing/measurement.json') != '' }}
         timeout-minutes: 1
@@ -118,11 +176,12 @@ jobs:
           COMMITTED: ${{ steps.baseline.outputs.committed || 'true' }}
         run: |
           set -euo pipefail
-          committed=()
-          [[ "$COMMITTED" == true ]] && committed=(--committed-baseline)
+          flags=()
+          [[ "$COMMITTED" == true ]] && flags+=(--committed-baseline)
+          [[ -f timing/baseline-rerun/measurement.json ]] && flags+=(--rerun timing/baseline-rerun/measurement.json)
           node .github/scripts/windows-install-timing-report.mjs \
             --measurement timing/measurement.json --context timing/context.json \
-            --baseline "$BASELINE" "${committed[@]}" \
+            --baseline "$BASELINE" "${flags[@]}" \
             --out timing/windows-install-timing.json --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}

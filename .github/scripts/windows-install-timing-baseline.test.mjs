@@ -7,6 +7,7 @@ import * as NodeTest from "node:test";
 import {
   RELEASE_WORKFLOW,
   TIMING_WORKFLOW,
+  artifactMismatch,
   describeSource,
   findBaseline,
 } from "./windows-install-timing-baseline.mjs";
@@ -30,18 +31,19 @@ const record = (installerRun, version, overrides = {}) => ({
     ...describeSource({ run: installerRun, artifact: "desktop-win-x64", version }),
     ...overrides.context,
   },
-  measurement: { failures: [], median, ...overrides.measurement },
+  measurement: { failures: [], median, complete: true, ...overrides.measurement },
 });
 
 /** A repository whose timing artifacts span two pages, newest first within each. */
 function fixture(entries) {
   const runs = new Map();
   const records = new Map();
-  const artifacts = entries.map(({ timingRun, release, saved }, index) => {
+  const artifacts = entries.map(({ timingRun, conclusion = "success", release, saved }, index) => {
     runs.set(String(timingRun), {
       id: timingRun,
       path: TIMING_WORKFLOW,
       status: "completed",
+      conclusion,
     });
     if (release) runs.set(String(release.id), release);
     records.set(String(timingRun), saved);
@@ -142,6 +144,49 @@ NodeTest.test("a record whose labels disagree with its release run is not truste
     "run 801: skipped, its release run built beta, not stable",
     "run 802: skipped, not a release installer",
   ]);
+});
+
+NodeTest.test("a timing that did not finish every sample is never the baseline", () => {
+  const stable = (id) => releaseRun(id, "release/stable");
+  const reasons = [];
+  const file = find(
+    fixture([
+      // Stopped after a good first sample: the record shows medians and no failures.
+      {
+        timingRun: 801,
+        conclusion: "failure",
+        release: stable(25),
+        saved: record(stable(25), "0.6.35"),
+      },
+      {
+        timingRun: 802,
+        release: stable(24),
+        saved: record(stable(24), "0.6.35", { measurement: { complete: false } }),
+      },
+      { timingRun: 803, release: stable(23), saved: record(stable(23), "0.6.34") },
+    ]),
+    describeSource({ installerUrl: "https://example.test/Scient.exe", runId: "900" }),
+    (line) => reasons.push(line),
+  );
+  NodeAssert.equal(JSON.parse(NodeFS.readFileSync(file, "utf8")).context.version, "0.6.34");
+  NodeAssert.deepEqual(reasons.slice(1), [
+    "run 801: skipped, its timing run concluded failure",
+    "run 802: skipped, its measurement did not record finishing every sample",
+    "run 803: 0.6.34, accepted",
+  ]);
+});
+
+NodeTest.test("an artifact ID counts only for the named artifact of the named run", () => {
+  const artifact = { id: 5, name: "desktop-win-x64", workflow_run: { id: 26 } };
+  NodeAssert.equal(artifactMismatch(artifact, "26", "desktop-win-x64"), null);
+  NodeAssert.equal(
+    artifactMismatch(artifact, "27", "desktop-win-x64"),
+    "it belongs to run 26, not 27",
+  );
+  NodeAssert.equal(
+    artifactMismatch({ ...artifact, name: "desktop-mac-x64" }, "26", "desktop-win-x64"),
+    "it is desktop-mac-x64, not desktop-win-x64",
+  );
 });
 
 NodeTest.test("a Beta timing compares only with an earlier Beta", () => {

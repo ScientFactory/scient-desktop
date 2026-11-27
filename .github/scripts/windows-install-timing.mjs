@@ -14,6 +14,9 @@ import { median } from "./windows-install-timing-report.mjs";
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const READY_TIMEOUT_MS = 2 * 60_000;
 const QUIT_TIMEOUT_MS = 30_000;
+// A launch's whole stop: the quit, then force-stopping and verifying none of its processes is left.
+const STOP_TIMEOUT_MS = 45_000;
+// The same check before uninstalling; past it the sample stops and no later sample starts.
 const FORCED_STOP_TIMEOUT_MS = 15_000;
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
 const REMOVAL_TIMEOUT_MS = 2 * 60_000;
@@ -44,8 +47,9 @@ const budgetEnd = now() + MEASUREMENT_BUDGET_MS;
 const budgeted = (ms) => Math.max(0, Math.min(ms, Math.floor(budgetEnd - now())));
 const BUDGET_SPENT = `not run: the ${MEASUREMENT_BUDGET_MS / 60_000}-minute measurement budget ran out`;
 
-/** Runs a program to completion or kills it at `timeoutMs`. */
+/** Runs a program to completion or kills it at `timeoutMs`; with no time left it does not start. */
 function run(file, args, timeoutMs) {
+  if (timeoutMs <= 0) return { ok: false, timedOut: true, reason: "no time left to run it" };
   const result = NodeChildProcess.spawnSync(file, args, {
     encoding: "utf8",
     timeout: timeoutMs,
@@ -61,11 +65,14 @@ function run(file, args, timeoutMs) {
   };
 }
 
-const powershell = (script) =>
+/** `ms`, cut to what remains before `deadline`. */
+const until = (deadline, ms) => Math.min(ms, Math.floor(deadline - now()));
+
+const powershell = (script, timeoutMs = COMMAND_TIMEOUT_MS) =>
   NodeChildProcess.execFileSync("powershell.exe", ["-NoProfile", "-Command", script], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    timeout: COMMAND_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
   }).trim();
 
@@ -83,11 +90,14 @@ function sizeOf(dir) {
   return { bytes, files };
 }
 
-/** The app's own processes, everything running from its install folder; null when unknown. */
-function appProcesses(installDir) {
+/** The app's own processes, everything running from its install folder; null when unknown by `deadline`. */
+function appProcesses(installDir, deadline = now() + COMMAND_TIMEOUT_MS) {
+  const timeoutMs = until(deadline, COMMAND_TIMEOUT_MS);
+  if (timeoutMs <= 0) return null;
   try {
     const out = powershell(
       "Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress",
+      timeoutMs,
     );
     const rows = out ? JSON.parse(out) : [];
     const root = `${installDir.toLowerCase()}${NodePath.sep}`;
@@ -99,23 +109,31 @@ function appProcesses(installDir) {
   }
 }
 
-const noAppProcesses = (installDir) => appProcesses(installDir)?.length === 0;
+const noAppProcesses = (installDir, deadline) => appProcesses(installDir, deadline)?.length === 0;
 
-async function waitUntil(predicate, timeoutMs, intervalMs = 500) {
-  const deadline = now() + timeoutMs;
+/** True once `predicate` holds, false at `deadline`; the predicate bounds its own work. */
+async function waitUntil(predicate, deadline, intervalMs = 500) {
   while (now() < deadline) {
     if (await predicate()) return true;
-    await sleep(intervalMs);
+    await sleep(Math.max(0, until(deadline, intervalMs)));
   }
-  return await predicate();
+  return false;
 }
 
-/** Force-stops every process from the install folder; true once none is left. */
-async function stopAll(installDir) {
-  for (const pid of appProcesses(installDir) ?? []) {
-    run("taskkill.exe", ["/PID", String(pid), "/T", "/F"], COMMAND_TIMEOUT_MS);
+/** Force-stops every process from the install folder; true once none is verified left by `deadline`. */
+async function stopAll(installDir, deadline) {
+  while (now() < deadline) {
+    const pids = appProcesses(installDir, deadline);
+    if (pids?.length === 0) return true;
+    if (pids?.length)
+      run(
+        "taskkill.exe",
+        ["/T", "/F", ...pids.flatMap((pid) => ["/PID", String(pid)])],
+        until(deadline, COMMAND_TIMEOUT_MS),
+      );
+    await sleep(Math.max(0, until(deadline, 500)));
   }
-  return await waitUntil(() => noAppProcesses(installDir), FORCED_STOP_TIMEOUT_MS);
+  return false;
 }
 
 function freePort() {
@@ -337,12 +355,17 @@ const PROBE = `(() => {
 
 async function quit(child, installDir) {
   const start = now();
+  const quitBy = start + QUIT_TIMEOUT_MS;
   // Without /F, taskkill closes the app's windows as a person does; the app then quits.
-  run("taskkill.exe", ["/PID", String(child.pid)], COMMAND_TIMEOUT_MS);
-  if (await waitUntil(() => noAppProcesses(installDir), QUIT_TIMEOUT_MS)) {
+  run("taskkill.exe", ["/PID", String(child.pid)], until(quitBy, COMMAND_TIMEOUT_MS));
+  if (await waitUntil(() => noAppProcesses(installDir, quitBy), quitBy)) {
     return { quitMs: elapsed(start), forcedQuit: false, stopped: true };
   }
-  return { quitMs: null, forcedQuit: true, stopped: await stopAll(installDir) };
+  return {
+    quitMs: null,
+    forcedQuit: true,
+    stopped: await stopAll(installDir, start + STOP_TIMEOUT_MS),
+  };
 }
 
 async function launch({ exe, installDir, profile, name }) {
@@ -444,16 +467,26 @@ async function launch({ exe, installDir, profile, name }) {
   return { ...marks, readyMs: marks.readyMs ?? null, windowSizes, ...stop, failure };
 }
 
-/** Uninstalls and removes the install folder; the reasons it could not, if any. */
+/**
+ * Uninstalls and removes the install folder: the reasons it could not, if any, and whether none
+ * of the app's processes was verified left. Without that it neither uninstalls nor removes.
+ */
 async function removeInstall(installDir) {
+  if (!(await stopAll(installDir, now() + FORCED_STOP_TIMEOUT_MS))) {
+    return {
+      stopped: false,
+      problems: [
+        `its app processes could not be verified stopped within ${seconds(FORCED_STOP_TIMEOUT_MS)}`,
+      ],
+    };
+  }
   const problems = [];
-  if (!(await stopAll(installDir))) problems.push("app processes survived a forced stop");
   const uninstaller = NodePath.join(installDir, "Uninstall Scient.exe");
   if (NodeFS.existsSync(uninstaller)) {
     const result = run(uninstaller, ["/S"], UNINSTALL_TIMEOUT_MS);
     if (!result.ok) problems.push(`the uninstaller failed (${result.reason})`);
     // The uninstaller copies itself out and removes the folder in the background.
-    else if (!(await waitUntil(() => !NodeFS.existsSync(installDir), REMOVAL_TIMEOUT_MS)))
+    else if (!(await waitUntil(() => !NodeFS.existsSync(installDir), now() + REMOVAL_TIMEOUT_MS)))
       problems.push(
         `the install folder remained ${seconds(REMOVAL_TIMEOUT_MS)} after uninstalling`,
       );
@@ -463,7 +496,7 @@ async function removeInstall(installDir) {
   } catch (error) {
     problems.push(`the install folder could not be removed (${error.message})`);
   }
-  return problems;
+  return { stopped: true, problems };
 }
 
 async function sample(index) {
@@ -472,7 +505,7 @@ async function sample(index) {
     `${process.env.SystemDrive ?? "C:"}\\`,
     `scient-timing-${index}`,
   );
-  const result = { index, installDir, installMs: null, failures: [] };
+  const result = { index, installDir, installMs: null, cleanupVerified: false, failures: [] };
   const fail = (message) => {
     result.failures.push(`${name}: ${message}`);
     log(`${name}: ${message}`);
@@ -524,7 +557,9 @@ async function sample(index) {
         log(`${name}: could not keep the logs (${error.message})`);
       }
     }
-    for (const problem of await removeInstall(installDir)) fail(problem);
+    const removal = await removeInstall(installDir);
+    result.cleanupVerified = removal.stopped;
+    for (const problem of removal.problems) fail(problem);
     if (profileRoot) {
       try {
         NodeFS.rmSync(profileRoot, {
@@ -567,9 +602,14 @@ const measurement = {
     installMs: INSTALL_TIMEOUT_MS,
     readyMs: READY_TIMEOUT_MS,
     quitMs: QUIT_TIMEOUT_MS,
+    stopMs: STOP_TIMEOUT_MS,
+    forcedStopMs: FORCED_STOP_TIMEOUT_MS,
     uninstallMs: UNINSTALL_TIMEOUT_MS + REMOVAL_TIMEOUT_MS,
     measurementBudgetMs: MEASUREMENT_BUDGET_MS,
   },
+  plannedSamples: samples,
+  // Set once every planned sample ran to its end; a stopped or cut-short run leaves it false.
+  complete: false,
   samples: [],
   errors: [],
 };
@@ -599,9 +639,19 @@ try {
   write();
   if (!(await windowHelper.ready)) measurement.errors.push("the window reader did not start");
   for (let index = 1; index <= samples; index++) {
-    measurement.samples.push(await sample(index));
+    const result = await sample(index);
+    measurement.samples.push(result);
     write();
+    if (!result.cleanupVerified) {
+      measurement.errors.push(
+        `sampling stopped after sample-${index}: a later sample would run beside its app`,
+      );
+      break;
+    }
   }
+  measurement.complete =
+    measurement.samples.length === samples &&
+    measurement.samples.every((result) => result.cleanupVerified);
 } catch (error) {
   measurement.errors.push(`the measurement stopped: ${error.message}`);
 } finally {
