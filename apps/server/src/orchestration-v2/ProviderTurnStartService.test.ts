@@ -1539,6 +1539,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
+          forgetLoadedProviderThread: () => Effect.void,
           get: () =>
             Effect.succeed(
               input.previousTurn?.liveSession === false
@@ -3692,9 +3693,14 @@ effectIt.effect(
       // The typed store failure stays retryable until the worker's final attempt.
       expect(error._tag).toBe("ProviderTurnStartError");
       expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
-      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
-      expect(harness.events).toEqual([]);
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      // The failed native owner is retired; no run or handoff transition was committed.
+      expect(harness.events).toHaveLength(1);
+      expect(harness.events[0]).toMatchObject({
+        type: "provider-thread.updated",
+        payload: { status: "error" },
+      });
     }),
 );
 

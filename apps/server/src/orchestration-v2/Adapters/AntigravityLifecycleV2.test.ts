@@ -642,6 +642,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
                 { name: "ELECTRON_RUN_AS_NODE", value: "1" },
                 { name: "T3_ACP_MCP_ENDPOINT", value: mcp.endpoint },
                 { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+                { name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred-proxy" },
               ]);
             }
           }

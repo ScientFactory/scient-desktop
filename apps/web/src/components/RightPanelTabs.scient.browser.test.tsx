@@ -132,6 +132,7 @@ function tabs(
       terminalLabelsById={new Map()}
       onActivate={noop}
       onCloseSurface={noop}
+      onCloseSelectedSurfaces={noop}
       onCloseOtherSurfaces={noop}
       onCloseSurfacesToRight={noop}
       onCloseAllSurfaces={noop}
@@ -377,11 +378,11 @@ describe("dragging a tab out of the window", () => {
 
   it("opens a tab dropped outside the window in a new window, not one dropped inside", async () => {
     setup();
-    const onMoveSurface = vi.fn();
+    const onMoveSurfaces = vi.fn();
     const onOpenSurfaceInNewWindow = vi.fn();
     await using screen = await render(
       tabs(null, favicon(PIXEL_B, "http://24x.xf.local/admin"), undefined, undefined, {
-        onMoveSurface,
+        onMoveSurfaces,
         onOpenSurfaceInNewWindow,
       }),
     );
@@ -393,7 +394,7 @@ describe("dragging a tab out of the window", () => {
         atCursor: true,
       }),
     );
-    expect(onMoveSurface).not.toHaveBeenCalled();
+    expect(onMoveSurfaces).not.toHaveBeenCalled();
 
     await drag(second, { x: 2, y: 2 });
     expect(onOpenSurfaceInNewWindow).toHaveBeenCalledOnce();

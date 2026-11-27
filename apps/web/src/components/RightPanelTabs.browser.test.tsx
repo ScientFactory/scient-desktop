@@ -1,9 +1,9 @@
 import "~/index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -100,6 +100,7 @@ describe("RightPanelTabs", () => {
           terminalLabelsById={new Map(surfaces.map((surface) => [surface.id, "Terminal"]))}
           onActivate={noop}
           onCloseSurface={noop}
+          onCloseSelectedSurfaces={noop}
           onCloseOtherSurfaces={noop}
           onCloseSurfacesToRight={noop}
           onCloseAllSurfaces={noop}
@@ -159,7 +160,10 @@ const BROWSER_SURFACE: RightPanelSurface = {
 };
 const DIFF_SURFACE: RightPanelSurface = { id: "diff", kind: "diff" };
 
-function panel(activeSurface: RightPanelSurface) {
+function panel(
+  activeSurface: RightPanelSurface,
+  previewSessions: RightPanelTabsProps["previewSessions"] = {},
+) {
   const noop = () => {};
   const props: RightPanelTabsProps = {
     mode: "inline",
@@ -176,11 +180,12 @@ function panel(activeSurface: RightPanelSurface) {
     environmentId: EnvironmentId.make("environment-local"),
     activeSurfaceId: activeSurface.id,
     pendingSurfaceIds: new Set(),
-    previewSessions: {},
+    previewSessions,
     desktopByTabId: {},
     terminalLabelsById: new Map(),
     onActivate: noop,
     onCloseSurface: noop,
+    onCloseSelectedSurfaces: noop,
     onCloseOtherSurfaces: noop,
     onCloseSurfacesToRight: noop,
     onCloseAllSurfaces: noop,
@@ -223,6 +228,56 @@ function panel(activeSurface: RightPanelSurface) {
   };
   return <RightPanelTabs {...props} />;
 }
+
+it("drags a Shift-clicked range and closes it from a selected tab's menu", async () => {
+  const files: RightPanelSurface = { id: "files", kind: "files" };
+  const linkedItems: RightPanelSurface = { id: "pull-requests", kind: "pull-requests" };
+  const onMoveSurfaces = vi.fn();
+  const onCloseSelectedSurfaces = vi.fn();
+  await using screen = await render(
+    <RightPanelTabs
+      {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+      surfaces={[DIFF_SURFACE, files, linkedItems]}
+      onMoveSurfaces={onMoveSurfaces}
+      onCloseSelectedSurfaces={onCloseSelectedSurfaces}
+    >
+      {null}
+    </RightPanelTabs>,
+  );
+  const diffTab = screen.getByRole("button", { name: "Diff", exact: true });
+  const filesTab = screen.getByRole("button", { name: "Files", exact: true });
+  const linkedItemsTab = screen.getByRole("button", { name: "Linked items", exact: true });
+
+  await userEvent.click(linkedItemsTab, { modifiers: ["Shift"] });
+  await expect.element(filesTab).toHaveAttribute("aria-pressed", "true");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(filesTab).toHaveAttribute("aria-pressed", "false");
+
+  await userEvent.click(filesTab, { modifiers: ["Shift"] });
+  await expect.element(diffTab).toHaveAttribute("aria-pressed", "true");
+  await expect.element(filesTab).toHaveAttribute("aria-pressed", "true");
+  await expect.element(linkedItemsTab).toHaveAttribute("aria-pressed", "false");
+
+  await userEvent.hover(filesTab);
+  await commands.pointerDown();
+  try {
+    await userEvent.hover(filesTab, { position: { x: 1, y: 5 } });
+    await userEvent.hover(linkedItemsTab, { force: true });
+    await vi.waitFor(() => {
+      const dragged = getComputedStyle(filesTab.element().closest("[data-selected-tab]")!);
+      const peer = getComputedStyle(diffTab.element().closest("[data-selected-tab]")!);
+      expect(dragged.transform).not.toBe("none");
+      expect(peer.transform).toBe(dragged.transform);
+    });
+  } finally {
+    await commands.pointerUp();
+  }
+  expect(onMoveSurfaces).toHaveBeenCalledExactlyOnceWith(["diff", "files"], "pull-requests");
+
+  await userEvent.click(diffTab, { button: "right" });
+  await userEvent.click(page.getByRole("menuitem", { name: "Close selected tabs" }));
+  expect(onCloseSelectedSurfaces).toHaveBeenCalledExactlyOnceWith([DIFF_SURFACE, files]);
+});
 
 // Chromium focuses on an uncancelled mousedown and runs history back/forward on an
 // uncancelled button 3/4 mouseup.
@@ -373,3 +428,34 @@ describe("add surface launcher", () => {
     expect(page.getByRole("menu").query()).toBeNull();
   });
 });
+
+// SCIENT-FORK:START — activating a browser tab must not replace its title button.
+describe("browser tab hover card", () => {
+  it("keeps the browser title button focused through range selection and activation", async () => {
+    const sessions: Record<string, PreviewSessionSnapshot> = {
+      "tab-1": {
+        threadId: ThreadId.make("thread-1"),
+        tabId: "tab-1",
+        navStatus: { _tag: "Success", url: "https://example.com/", title: "Example page" },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-11-27T00:00:00.000Z",
+      },
+    };
+    await using screen = await render(panel(DIFF_SURFACE, sessions));
+    const browserTab = screen.getByRole("button", { name: "Example page", exact: true });
+    const diffTab = screen.getByRole("button", { name: "Diff", exact: true });
+    const button = browserTab.element();
+    await expect.element(browserTab).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(browserTab, { modifiers: ["Shift"] });
+    await expect.element(browserTab).toHaveAttribute("aria-pressed", "true");
+    await expect.element(diffTab).toHaveAttribute("aria-pressed", "true");
+    expect(document.activeElement).toBe(button);
+
+    await screen.rerender(panel(BROWSER_SURFACE, sessions));
+    expect(document.activeElement).toBe(button);
+    await expect.element(browserTab).toHaveAttribute("aria-pressed", "true");
+  });
+});
+// SCIENT-FORK:END

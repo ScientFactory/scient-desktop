@@ -162,6 +162,13 @@ describe("Antigravity Auto", () => {
       for (const t3Call of [
         request("Run mcp_scient_scient_thread_list?"),
         request("MCP Tool delegate_task", { ServerName: "scient", ToolName: "delegate_task" }),
+        request("Run mcp_scient_tool_search?"),
+        request("Run mcp_scient_tool_call?", { name: "preview_status", arguments: {} }),
+        request("MCP Tool tool_call", {
+          ServerName: "scient",
+          ToolName: "tool_call",
+          Arguments: { name: "preview_status", arguments: {} },
+        }),
       ]) {
         expect(antigravityPermissionDisposition(policy, t3Call)).toBe("allow");
         expect(
@@ -177,6 +184,16 @@ describe("Antigravity Auto", () => {
       for (const otherCall of [
         // Names no server, so another MCP server's tool of the same name looks identical.
         request("Running preview_status"),
+        request("Running tool_call"),
+        request("Run mcp_scient_tool_call?"),
+        request("Run mcp_scient_tool_call?", { name: "tool_call", arguments: {} }),
+        request("Run mcp_scient_tool_call?", { name: "tool_search", arguments: {} }),
+        request("Run mcp_scient_tool_call?", { name: "unknown_tool", arguments: {} }),
+        request("MCP Tool tool_call", {
+          ServerName: "scient",
+          ToolName: "tool_call",
+          Arguments: { name: "unknown_tool", arguments: {} },
+        }),
         request("Run mcp_github_create_issue"),
         request("MCP Tool preview_status", { ServerName: "other", ToolName: "preview_status" }),
         // SCIENT-FORK: T3's server name names no Scient server.

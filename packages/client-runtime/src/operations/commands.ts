@@ -970,6 +970,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
           ? {}
           : { idleCompaction: input.message.idleCompaction }),
         attachments,
+        ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
         // SCIENT-FORK:START — forward the composer's explicit skill selection.
         ...(input.selectedScientSkillNames === undefined
           ? {}

@@ -262,6 +262,7 @@ it.effect.each(
         ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
         ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
         "tool_search",
+        "tool_call",
         "scient_background_wait",
         "scient_workflow",
       ]);

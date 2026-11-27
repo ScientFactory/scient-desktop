@@ -27,6 +27,9 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START — Incognito browser tabs show no hover-card thumbnail.
+import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -38,7 +41,12 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
-import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
+import {
+  horizontalListSortingStrategy,
+  SortableContext,
+  type SortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   Bot,
@@ -66,8 +74,12 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
+  type Ref,
+  type RefObject,
   useEffect,
   useEffectEvent,
+  useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -121,6 +133,7 @@ import { canDuplicatePanelSurface } from "~/scient/rightPanel/panelTabCommands";
 import { PanelFilesToggle } from "~/scient/rightPanel/PanelFilesColumn";
 import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
 import { useTabDragOut } from "~/scient/multiWindow/tabDragOut";
+import { BrowserTabHoverCard } from "~/scient/browser/BrowserTabHoverCard";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelViewProperties } from "~/scient/analytics/viewCategories";
@@ -144,7 +157,12 @@ import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
+export interface RightPanelTabsHandle {
+  closeSelectedTabs: () => boolean;
+}
+
 export interface RightPanelTabsProps {
+  ref?: Ref<RightPanelTabsHandle>;
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -154,6 +172,7 @@ export interface RightPanelTabsProps {
   defaultWidth?: number;
   inlineSize?: PreviewPanelInlineSize;
   layoutControls?: ReactNode;
+  selectionScope?: string | null;
   surfaces: readonly RightPanelSurface[];
   environmentId: EnvironmentId | null;
   activeSurfaceId: string | null;
@@ -168,6 +187,7 @@ export interface RightPanelTabsProps {
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
+  onCloseSelectedSurfaces: (surfaces: readonly RightPanelSurface[]) => void;
   /** Moves a subagent, side chat or linked thread tab to the main screen. */
   onOpenInMainView?: (
     surface: Extract<RightPanelSurface, { kind: "thread" | "linked-thread" }>,
@@ -175,7 +195,7 @@ export interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
-  onMoveSurface?: (surfaceId: string, toIndex: number) => void;
+  onMoveSurfaces?: (surfaceIds: readonly string[], targetId: string) => void;
   // SCIENT-FORK:START — when set, "+" and its shortcut open the launcher as a tab
   onAddNewTab?: ((options?: { readonly whenEmpty?: boolean }) => void) | undefined;
   /** Opens a second copy of a browser or terminal tab. */
@@ -289,6 +309,7 @@ type TabContextMenuAction =
   | "copy-full-path"
   | "toggle-mute"
   | "close"
+  | "close-selected"
   | "close-others"
   | "close-to-right"
   | "close-all";
@@ -367,6 +388,7 @@ export function buildTabContextMenuItems(
     readonly pathCopyFormats: readonly FilePathCopyFormat[];
     readonly mute: { readonly label: string; readonly disabled: boolean } | null;
     readonly surfaceIndex: number;
+    readonly selected?: boolean;
     readonly surfaceCount: number;
   },
   resolve: MessageResolver = m,
@@ -382,7 +404,9 @@ export function buildTabContextMenuItems(
     items.push({ id: "toggle-mute", ...input.mute });
   }
   items.push(
-    { id: "close", label: resolve(msg("Close")) },
+    input.selected
+      ? { id: "close-selected", label: resolve(msg("Close selected tabs")) }
+      : { id: "close", label: resolve(msg("Close")) },
     {
       id: "close-others",
       label: resolve(msg("Close others")),
@@ -883,7 +907,11 @@ function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url:
     <FaviconImage
       sources={[capturedUrl, publicProviderUrl]}
       fallback={<Globe className="size-3 shrink-0" />}
-      className="size-3 shrink-0 rounded-sm object-contain"
+      // SCIENT-FORK:START — favicons at full 16px in their own shape: no radius
+      // clipping or added background, so square and transparent marks stay as
+      // the site drew them and read at a glance like other browsers' tabs.
+      className="size-4 shrink-0 object-contain"
+      // SCIENT-FORK:END
     />
   );
 }
@@ -908,6 +936,17 @@ function previewFaviconOf(
   const capturedUrl = favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
   return { url, capturedUrl };
 }
+
+// SCIENT-FORK:START — only the built-in Incognito profile is ephemeral; its
+// tabs get a text-only hover card and are never captured.
+function previewIsIncognitoOf(
+  surface: RightPanelSurface,
+  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
+): boolean {
+  if (surface.kind !== "preview" || !surface.resourceId) return false;
+  return sessions[surface.resourceId]?.profileId === INCOGNITO_BROWSER_PROFILE_ID;
+}
+// SCIENT-FORK:END
 
 function SurfaceIcon({
   surface,
@@ -1140,9 +1179,34 @@ function PullRequestSurfaceIcon({
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
+function tabSortingStrategy(selectionStart: number, selectionLength: number): SortingStrategy {
+  if (selectionLength < 2) return horizontalListSortingStrategy;
+  const selectionEnd = selectionStart + selectionLength - 1;
+  return (input) => {
+    const { activeIndex, overIndex, index, rects } = input;
+    if (activeIndex < selectionStart || activeIndex > selectionEnd) {
+      return horizontalListSortingStrategy(input);
+    }
+    const first = rects[selectionStart];
+    const last = rects[selectionEnd];
+    const second = rects[selectionStart + 1];
+    if (!first || !last || !second) return null;
+    const stride = last.right - first.left + (second.left - first.right);
+    if (index > selectionEnd && index <= overIndex) {
+      return { x: -stride, y: 0, scaleX: 1, scaleY: 1 };
+    }
+    if (index < selectionStart && index >= overIndex) {
+      return { x: stride, y: 0, scaleX: 1, scaleY: 1 };
+    }
+    return null;
+  };
+}
+
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
-  onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
+  selectedIds: readonly string[];
+  onClearSelection: () => void;
+  onMove: RightPanelTabsProps["onMoveSurfaces"];
   // SCIENT-FORK:START — a tab dropped outside the app window opens in a window of its own
   onOpenInNewWindow: RightPanelTabsProps["onOpenSurfaceInNewWindow"];
   // SCIENT-FORK:END
@@ -1150,25 +1214,36 @@ function SortableTabList(props: {
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
-  const { onMove, surfaces } = props;
+  const { onMove, selectedIds } = props;
+  const strategy = tabSortingStrategy(
+    surfaceIds.findIndex((id) => id === selectedIds[0]),
+    selectedIds.length,
+  );
   // SCIENT-FORK:START
-  const dragOut = useTabDragOut(surfaces, props.onOpenInNewWindow);
+  const dragOut = useTabDragOut(props.surfaces, props.onOpenInNewWindow);
   // SCIENT-FORK:END
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return;
-    const toIndex = surfaces.findIndex((surface) => surface.id === over.id);
-    if (toIndex >= 0) onMove?.(String(active.id), toIndex);
+    if (!over) return;
+    const activeId = String(active.id);
+    const targetId = String(over.id);
+    const movingIds = selectedIds.includes(activeId) ? selectedIds : [activeId];
+    if (!movingIds.includes(targetId)) onMove?.(movingIds, targetId);
   };
+  const dragHandlers = dragOut.handlers(handleDragEnd);
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={TAB_DRAG_MODIFIERS}
-      // SCIENT-FORK:START — the tab strip's drag handlers also open a tab dropped outside the window
-      {...dragOut.handlers(handleDragEnd)}
+      // SCIENT-FORK:START — a drag leaving the window still opens a window of its own.
+      {...dragHandlers}
+      onDragStart={(event) => {
+        dragHandlers.onDragStart();
+        if (!selectedIds.includes(String(event.active.id))) props.onClearSelection();
+      }}
       // SCIENT-FORK:END
     >
-      <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
+      <SortableContext items={surfaceIds} strategy={strategy}>
         {props.children}
       </SortableContext>
     </DndContext>
@@ -1176,7 +1251,7 @@ function SortableTabList(props: {
 }
 
 interface RightPanelTabHandlers {
-  onActivate: (surface: RightPanelSurface) => void;
+  onActivate: (surface: RightPanelSurface, extendSelection: boolean) => void;
   onClose: (surface: RightPanelSurface) => void;
   onAuxClick: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
   onContextMenu: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
@@ -1196,6 +1271,8 @@ function RightPanelTab(
     surface: RightPanelSurface;
     dragDisabled: boolean;
     active: boolean;
+    selected: boolean;
+    tabListRef: RefObject<HTMLDivElement | null>;
     pending: boolean;
     // SCIENT-FORK:START — file persistence attention and delegated-agent activity.
     attention: boolean;
@@ -1206,6 +1283,11 @@ function RightPanelTab(
     audioRuntimeTabId: string | null;
     previewUrl: string | null;
     previewCapturedUrl: string | null;
+    // SCIENT-FORK:START — browser-tab hover card.
+    previewThumbnailTabId: string | null;
+    previewIncognito: boolean;
+    previewNavEpoch: string | null;
+    // SCIENT-FORK:END
     theme: "light" | "dark";
     environmentId: EnvironmentId | null;
     pullRequestStatusSeed: PullRequestTabStatusSeed | undefined;
@@ -1231,6 +1313,21 @@ function RightPanelTab(
     id: surface.id,
     disabled: props.dragDisabled,
   });
+  const translation = CSS.Translate.toString(transform);
+  const { tabListRef } = props;
+  const groupTranslation = props.selected && isDragging ? translation : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shares the applied drag transform with selected peers before paint, including during autoscroll
+  useLayoutEffect(() => {
+    if (groupTranslation === undefined) return;
+    const strip = tabListRef.current;
+    if (!strip) return;
+    strip.setAttribute("data-dragging-selection", "");
+    strip.style.setProperty("--selected-tab-drag-transform", groupTranslation);
+    return () => {
+      strip.removeAttribute("data-dragging-selection");
+      strip.style.removeProperty("--selected-tab-drag-transform");
+    };
+  }, [groupTranslation, tabListRef]);
   const sideChatShell = useQuietThreadShell(
     surface.kind === "thread" && props.environmentId !== null
       ? scopeThreadRef(props.environmentId, surface.threadId)
@@ -1243,6 +1340,75 @@ function RightPanelTab(
         ? sideChatShell.title
         : formatSubagentDisplayTitle(sideChatShell.title);
   const sideChatState = sideChatTabState(sideChatShell);
+  // SCIENT-FORK:START — the tab's title button, shared by the tooltip and the
+  // browser-tab hover card below.
+  const titleButton = (
+    <button
+      type="button"
+      onDoubleClick={(event) => {
+        if (!event.shiftKey && surface.kind === "device" && props.canRename) {
+          onStartRename(surface.id);
+        }
+      }}
+      className="cursor-pointer flex min-w-0 flex-1 items-center"
+      aria-pressed={props.active || props.selected}
+      aria-label={
+        props.attention
+          ? gt("{title}: changes need attention", { title })
+          : sideChatState === null
+            ? undefined
+            : gt("{title}, {state}", {
+                title,
+                state: messages(SIDE_CHAT_STATE_LABELS[sideChatState]),
+              })
+      }
+      onClick={(event) => onActivate(surface, event.shiftKey)}
+    >
+      <span className="min-w-0 flex-1 truncate text-start" dir="auto">
+        {title}
+      </span>
+      {props.attention ? (
+        <TriangleAlert
+          className="ml-1 size-3 shrink-0 text-warning dark:text-warning"
+          aria-hidden
+        />
+      ) : null}
+    </button>
+  );
+  // A browser tab explains itself with a hover card (title, site, and — while
+  // inactive — a page picture). The card stays mounted across activation so
+  // the title button keeps keyboard focus; other tabs keep the title tooltip.
+  const titleControl =
+    surface.kind === "preview" && props.previewUrl !== null ? (
+      <BrowserTabHoverCard
+        trigger={titleButton}
+        title={title}
+        url={props.previewUrl}
+        runtimeTabId={props.previewThumbnailTabId}
+        incognito={props.previewIncognito}
+        active={props.active}
+        navEpoch={props.previewNavEpoch}
+      />
+    ) : (
+      <SharedTooltipTrigger
+        render={titleButton}
+        className="text-start"
+        label={
+          <span dir="auto">
+            {surface.kind === "device" ? (
+              <DeviceTabTooltip
+                surface={surface}
+                environmentId={props.environmentId}
+                title={title}
+              />
+            ) : (
+              title
+            )}
+          </span>
+        }
+      />
+    );
+  // SCIENT-FORK:END
   const content = (
     <>
       <PanelTabCloseButton label={gt("Close {title}", { title })} onClick={() => onClose(surface)}>
@@ -1321,56 +1487,7 @@ function RightPanelTab(
           }}
         />
       ) : (
-        <SharedTooltipTrigger
-          render={
-            <button
-              type="button"
-              onDoubleClick={() => {
-                if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
-              }}
-              className="cursor-pointer flex min-w-0 flex-1 items-center"
-              aria-label={
-                props.attention
-                  ? gt("{title}: changes need attention", { title })
-                  : sideChatState === null
-                    ? undefined
-                    : gt("{title}, {state}", {
-                        title,
-                        state: messages(SIDE_CHAT_STATE_LABELS[sideChatState]),
-                      })
-              }
-              onClick={() => onActivate(surface)}
-            >
-              {/* SCIENT-FORK:START — preserve automatic direction and persistence attention */}
-              <span className="min-w-0 flex-1 truncate text-start" dir="auto">
-                {title}
-              </span>
-              {props.attention ? (
-                <TriangleAlert
-                  className="ml-1 size-3 shrink-0 text-warning dark:text-warning"
-                  aria-hidden
-                />
-              ) : null}
-              {/* SCIENT-FORK:END */}
-            </button>
-          }
-          // SCIENT-FORK:START — preserve automatic direction
-          className="text-start"
-          label={
-            <span dir="auto">
-              {surface.kind === "device" ? (
-                <DeviceTabTooltip
-                  surface={surface}
-                  environmentId={props.environmentId}
-                  title={title}
-                />
-              ) : (
-                title
-              )}
-            </span>
-          }
-          // SCIENT-FORK:END
-        />
+        titleControl
       )}
     </>
   );
@@ -1378,13 +1495,17 @@ function RightPanelTab(
     <div
       data-active-tab={props.active}
       dir="auto"
+      data-selected-tab={props.selected || undefined}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onActivate(surface, event.shiftKey);
+      }}
       onMouseDown={preventTabMiddleButtonDefault}
       onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
       onContextMenu={(event) => onContextMenu(event, surface)}
       {...listeners}
       ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      style={{ transform: translation, transition }}
       className={cn(
         "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
         // SCIENT-FORK:START — Scient's tab look (scient/rightPanel/tabStrip)
@@ -1394,6 +1515,11 @@ function RightPanelTab(
         props.active
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        props.selected &&
+          "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/50 hover:bg-primary/20",
+        props.selected &&
+          !isDragging &&
+          "in-data-dragging-selection:relative in-data-dragging-selection:z-10 in-data-dragging-selection:transform-(--selected-tab-drag-transform)! in-data-dragging-selection:transition-none!",
         isDragging && "relative z-10",
       )}
     >
@@ -1402,7 +1528,7 @@ function RightPanelTab(
   );
 }
 
-export function RightPanelTabs(props: RightPanelTabsProps) {
+export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
   const gt = useGT();
   const messages = useMessages();
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
@@ -1432,6 +1558,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   );
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{
+    scope: RightPanelTabsProps["selectionScope"];
+    anchorId: string;
+    endId: string;
+  } | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [documentsSubmenuOpen, setDocumentsSubmenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -1439,6 +1570,32 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollLeft: false,
     canScrollRight: false,
   });
+  const anchorIndex = selection
+    ? props.surfaces.findIndex((surface) => surface.id === selection.anchorId)
+    : -1;
+  const endIndex = selection
+    ? props.surfaces.findIndex((surface) => surface.id === selection.endId)
+    : -1;
+  const hasSelection =
+    selection !== null &&
+    props.open !== false &&
+    selection.scope === props.selectionScope &&
+    selection.anchorId === props.activeSurfaceId &&
+    anchorIndex >= 0 &&
+    endIndex >= 0;
+  if (selection !== null && !hasSelection) setSelection(null);
+  const selectedSurfaces = hasSelection
+    ? props.surfaces.slice(Math.min(anchorIndex, endIndex), Math.max(anchorIndex, endIndex) + 1)
+    : [];
+  const selectedIds = selectedSurfaces.map((surface) => surface.id);
+  const clearSelection = useStableCallback(() => setSelection(null));
+  useImperativeHandle(ref, () => ({
+    closeSelectedTabs: () => {
+      if (!hasSelection) return false;
+      props.onCloseSelectedSurfaces(selectedSurfaces);
+      return true;
+    },
+  }));
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
@@ -1690,6 +1847,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 )
               : null,
           surfaceIndex,
+          selected: selectedIds.includes(surface.id),
           surfaceCount: props.surfaces.length,
         },
         messages,
@@ -1737,6 +1895,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       case "close":
         props.onCloseSurface(surface);
         break;
+      case "close-selected":
+        props.onCloseSelectedSurfaces(selectedSurfaces);
+        break;
       case "close-others":
         props.onCloseOtherSurfaces(surface);
         break;
@@ -1756,7 +1917,20 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.stopPropagation();
     props.onCloseSurface(surface);
   };
-  const onActivateTab = useStableCallback(props.onActivate);
+  const onActivateTab = useStableCallback(
+    (surface: RightPanelSurface, extendSelection: boolean) => {
+      if (extendSelection && focusedSurface) {
+        setSelection(
+          surface.id === focusedSurface.id
+            ? null
+            : { scope: props.selectionScope, anchorId: focusedSurface.id, endId: surface.id },
+        );
+        return;
+      }
+      setSelection(null);
+      props.onActivate(surface);
+    },
+  );
   const onCloseTab = useStableCallback(props.onCloseSurface);
   const onTabAuxClick = useStableCallback(handleTabAuxClick);
   const onTabContextMenu = useStableCallback(
@@ -1877,21 +2051,29 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           )}
           // SCIENT-FORK:END
           data-right-panel-tab-list
+          onKeyDown={(event) => {
+            if (!hasSelection || event.key !== "Escape" || event.defaultPrevented) return;
+            event.preventDefault();
+            event.stopPropagation();
+            clearSelection();
+          }}
         >
           {/* SCIENT-FORK:START — tabs shrink to fit before anything scrolls, with room
               for the open tab's outward curves */}
           <div
             className={
               props.onAddNewTab
-                ? "flex h-full w-full items-center gap-1 px-2.5"
-                : "flex h-full w-max min-w-full items-center gap-1"
+                ? "flex h-full w-full items-center gap-1 in-data-dragging-selection:overflow-x-clip px-2.5"
+                : "flex h-full w-max min-w-full items-center gap-1 in-data-dragging-selection:overflow-x-clip"
             }
           >
             {/* SCIENT-FORK:END */}
             {/* SCIENT-FORK:START — a tab dropped outside the window opens in a window of its own */}
             <SortableTabList
               surfaces={props.surfaces}
-              onMove={props.onMoveSurface}
+              selectedIds={selectedIds}
+              onClearSelection={clearSelection}
+              onMove={props.onMoveSurfaces}
               onOpenInNewWindow={props.onOpenSurfaceInNewWindow}
             >
               {/* SCIENT-FORK:END */}
@@ -1906,8 +2088,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   <RightPanelTab
                     key={surface.id}
                     surface={surface}
-                    dragDisabled={!props.onMoveSurface || renamingDevice === surface.id}
+                    dragDisabled={!props.onMoveSurfaces || renamingDevice === surface.id}
                     active={surface.id === props.activeSurfaceId}
+                    selected={selectedIds.includes(surface.id)}
+                    tabListRef={tabListRef}
                     pending={props.pendingSurfaceIds.has(surface.id)}
                     // SCIENT-FORK:START — preserve disambiguated file titles and attention across tab extraction.
                     title={
@@ -1933,6 +2117,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     }
                     previewUrl={favicon.url}
                     previewCapturedUrl={favicon.capturedUrl}
+                    // SCIENT-FORK:START — browser-tab hover card.
+                    previewThumbnailTabId={
+                      previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
+                    }
+                    previewIncognito={previewIsIncognitoOf(surface, props.previewSessions)}
+                    previewNavEpoch={
+                      surface.kind === "preview" && surface.resourceId
+                        ? (props.previewSessions[surface.resourceId]?.updatedAt ?? null)
+                        : null
+                    }
+                    // SCIENT-FORK:END
                     theme={resolvedTheme}
                     environmentId={props.environmentId}
                     pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}

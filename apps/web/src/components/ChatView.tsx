@@ -507,6 +507,7 @@ import { observeResize } from "~/lib/observeResize";
 
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import type { RightPanelTabsHandle } from "./RightPanelTabs";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -708,6 +709,7 @@ function ChatViewContent(props: ChatViewProps) {
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
+    currentRouteThreadKeyRef,
     threadDraftTarget: baseComposerDraftTarget,
     activeThreadId: serverThread !== null || draftThread !== null ? threadId : null,
     serverProjection,
@@ -2407,13 +2409,13 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   // A plain folder holding tracked repositories has turn diffs without being a Git repository.
   const diffAvailable =
-    // SCIENT-FORK:START — diffs need a project and a server thread.
+    // SCIENT-FORK:START — branch changes use the draft's checkout; turn diffs need a server thread.
     hasProjectWorkspace &&
-    isServerThread &&
-    // SCIENT-FORK:END
-    (isGitRepo ||
-      (activeProject?.trackedFolders?.length ?? 0) > 0 ||
-      turnDiffSummaries.some((summary) => summary.repositories !== undefined));
+    ((gitStatusCwd !== null && isGitRepo) ||
+      (isServerThread &&
+        ((activeProject?.trackedFolders?.length ?? 0) > 0 ||
+          turnDiffSummaries.some((summary) => summary.repositories !== undefined))));
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — fork baseline and new-worktree availability.
   const {
     hasForkBaseline,
@@ -2827,6 +2829,7 @@ function ChatViewContent(props: ChatViewProps) {
     closeOtherSurfaces: closeOtherRightPanelSurfacesNow,
     closeSurfacesToRight: closeRightPanelSurfacesToRightNow,
     closeAllSurfaces: closeAllRightPanelSurfacesNow,
+    closeSelectedSurfaces: closeSelectedRightPanelSurfacesNow,
   } = useRightPanelSurfaceClose({
     threadRef: activeThreadRef,
     terminalLabelsById: activeTerminalLabelsById,
@@ -2838,6 +2841,13 @@ function ChatViewContent(props: ChatViewProps) {
   const closeRightPanelSurface = (surface: RightPanelSurface) =>
     runAfterPendingSurfaceSave([surface.id], () => closeRightPanelSurfaceNow(surface));
   const closeRightPanelSurfaceStable = useStableCallback(closeRightPanelSurface);
+  const closeSelectedRightPanelSurfaces = useStableCallback(
+    (surfaces: readonly RightPanelSurface[]) =>
+      runAfterPendingSurfaceSave(
+        surfaces.map((surface) => surface.id),
+        () => closeSelectedRightPanelSurfacesNow(surfaces),
+      ),
+  );
   const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) =>
     runAfterPendingSurfaceSave(
       rightPanelState.surfaces.filter((entry) => entry.id !== surface.id).map((entry) => entry.id),
@@ -3272,7 +3282,7 @@ function ChatViewContent(props: ChatViewProps) {
     copyRightPanelFilePathStable,
     createBrowserSurface,
     createBrowserSurfaceStable,
-    moveRightPanelSurfaceStable,
+    moveRightPanelSurfacesStable,
     onOpenToolDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
@@ -3303,7 +3313,6 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPullRequests,
     pullRequestsSurfaceAvailable: linkedItemsSurfaceAvailable,
     onDiffPanelOpen,
-    closeRightPanelSurface,
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const {
@@ -3734,6 +3743,12 @@ function ChatViewContent(props: ChatViewProps) {
     addTerminal: addTerminalSurfaceStable,
   });
   // SCIENT-FORK:END
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
+  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
+    if (rightPanelTabsRef.current?.closeSelectedTabs()) return;
+    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
+  });
+
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
@@ -3752,6 +3767,10 @@ function ChatViewContent(props: ChatViewProps) {
       ...terminalShortcuts,
       ...rightPanelShortcuts,
       ...threadLifecycleShortcuts,
+      "rightPanel.close": ({ event }) => {
+        if (!activeRightPanelSurface) return false;
+        if (!event.repeat) closeActiveRightPanelSurfaceStable();
+      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
@@ -3797,10 +3816,6 @@ function ChatViewContent(props: ChatViewProps) {
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       return script ? () => void runProjectScriptStable(script) : undefined;
     },
-  });
-
-  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
-    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
   });
 
   // A focused desktop browser page forwards these chords as menu actions.
@@ -5220,9 +5235,7 @@ function ChatViewContent(props: ChatViewProps) {
                     ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                     : {})}
                   onComposerFocusRequest={scheduleComposerFocusStable}
-                  {...(isServerThread && isGitRepo
-                    ? { onOpenChanges: openChangesFromThreadPanelStable }
-                    : {})}
+                  {...(isGitRepo ? { onOpenChanges: openChangesFromThreadPanelStable } : {})}
                   onRunProjectScript={runProjectScriptStable}
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
@@ -5266,6 +5279,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       {rightPanelPresent && activeThreadRef && !embedded ? (
         <ChatRightPanel
+          ref={rightPanelTabsRef}
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
@@ -5287,6 +5301,7 @@ function ChatViewContent(props: ChatViewProps) {
             ) : null
           }
           surfaces={renderedRightPanelSurfaces}
+          selectionScope={activeThreadKey}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={genericPendingFileSurfaceIds}
@@ -5297,6 +5312,7 @@ function ChatViewContent(props: ChatViewProps) {
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurfaceStable}
           onCloseSurface={closeRightPanelSurfaceStable}
+          onCloseSelectedSurfaces={closeSelectedRightPanelSurfaces}
           onOpenInMainView={openSurfaceInMainView}
           onRenameDevice={(surfaceId, title) => {
             if (activeThreadRef)
@@ -5305,7 +5321,7 @@ function ChatViewContent(props: ChatViewProps) {
           onCloseOtherSurfaces={closeOtherRightPanelSurfacesStable}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRightStable}
           onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
-          onMoveSurface={moveRightPanelSurfaceStable}
+          onMoveSurfaces={moveRightPanelSurfacesStable}
           onCopyFilePath={copyRightPanelFilePathStable}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurfaceStable}

@@ -751,10 +751,16 @@ async function readPackageNoticeText(
     const directoryEntries = await NodeFSP.readdir(NodePath.join(packageRoot, directory), {
       withFileTypes: true,
     });
+    const isLicenseDirectory = NodePath.basename(directory).toLowerCase() === "licenses";
     await Promise.all(
       directoryEntries.map(async (entry) => {
         const relativePath = NodePath.join(directory, entry.name);
-        if (entry.isFile() && isNoticeTextFile(entry.name, packageName)) {
+        if (
+          entry.isFile() &&
+          (isNoticeTextFile(entry.name, packageName) ||
+            (isLicenseDirectory &&
+              NOTICE_TEXT_EXTENSIONS.has(NodePath.extname(entry.name).toLowerCase())))
+        ) {
           noticeFiles.push(relativePath);
           return;
         }

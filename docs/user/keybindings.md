@@ -301,11 +301,9 @@ editing a queued message or answering a question.
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
 
-`rightPanel.close` closes the active right panel tab and defaults to `mod+w`. Press it again to close
-the next tab. With the terminal focused, `mod+w` closes the terminal instead, and with nothing left
-to close it closes the desktop window as before. Browsers reserve `mod+w` for closing their own tab
-and never pass it to the page, so in a browser rebind this command (and `terminal.close`) to a
-shortcut the browser leaves alone, such as `alt+w`.
+`rightPanel.close` closes the selected range of right-panel tabs, or the active tab if none are
+selected. It defaults to `mod+w` in the desktop app. With a terminal focused, the shortcut closes
+the terminal instead.
 
 `rightPanel.new` opens a new tab in the side panel and defaults to `mod+t`. A new tab shows the
 **Tools** page, where you choose what the tab becomes. With the panel closed, the shortcut opens it
@@ -391,8 +389,8 @@ Background submission from a new thread is the exception. `mod+enter` starts tha
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
 
-In the desktop app, `mod+w` closes the focused terminal or the active right-panel
-tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`
+In the desktop app, `mod+w` closes the focused terminal, a selected range of right-panel
+tabs, or the active tab. With nothing open to close, the window stays open. In a browser, `mod+w`
 closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
 shortcut such as `alt+w`.
 
