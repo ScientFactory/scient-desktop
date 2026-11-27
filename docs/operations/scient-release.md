@@ -205,13 +205,21 @@ Keep differential updates enabled and qualify the normal update path.
 Every release run also installs its exact Windows installer on a clean
 `windows-2025` runner and times it, in a separate **Windows install timing** run
 ([`windows-install-timing.yml`](../../.github/workflows/windows-install-timing.yml)).
-The last step of the release's **Assemble and attest release** job, **Start
-Windows install timing**, dispatches that run on the release's branch with the
-release's run ID, the ID of its `desktop-win-x64` artifact as **Package Windows
-x64** reported it (the timing run downloads exactly that upload) and its version;
-the job summary links the new run. It runs only once assembly has accepted the
-installer, before any publication approval. The other release checks verify the
-unpacked app; this one runs the real installer.
+The release's first job, **Start Windows install timing**, dispatches that run on
+the release's branch with the release's run ID and run attempt as soon as the
+release starts; its job summary links the new run. The timing run waits, on a Linux
+runner and for up to 90 minutes, until **Package Windows x64** of that attempt has
+finished. Once that job has succeeded, it takes the `desktop-win-x64` upload of
+that attempt by its artifact ID, reads the version from the installer's file name
+(`Scient-<version>-x64.exe`), and only then starts the Windows runner. When that
+attempt ends without packaging Windows, or the 90 minutes pass, the timing run
+ends successfully with the reason in its summary, times nothing and keeps no
+record. Timing starts when packaging ends, while verification and assembly still
+run, so its summary is normally ready by the time a Stable candidate waits for its
+production approval. It can time an installer that a later release check rejects;
+such a record never becomes a baseline, because the baseline needs a release run
+that succeeded. The other release checks verify the unpacked app; this one runs
+the real installer.
 
 Each of three samples installs silently into a new folder under the system drive,
 launches the installed app on a new profile, quits it by closing its window,
@@ -299,21 +307,22 @@ stage, roughly doubles the run, and never fails it.
 The timing is advisory. A regression adds a warning and a marked row in the
 summary. A failed stage, such as an installer error or a launch that never became
 ready, fails the timing run. The release run never waits for it: neither its
-concurrency group, assembly nor publication depends on the timing run, and the
-dispatch needs no runner of its own, so it cannot sit queued while the release
-holds its concurrency group. The step sets `continue-on-error`, so a failed
-dispatch marks only that step failed while assembly and the release run still
-succeed. Its dispatch is cut at 60 seconds and the step at 2 minutes, both ending
-as failures; a job that reaches its own `timeout-minutes` is cancelled instead,
-which would make the run conclude `cancelled`, so assembly's bound includes those
-2 minutes. The step is why assembly's token may write Actions (to dispatch
-workflows); assembly drops the token its checkout keeps for Git before installing
-dependencies, so their scripts cannot read it. When packaging or assembly fails, the
-release fails and the timing does not start. Read the timing summary before
-approving a Stable candidate; whether a regression blocks it is the release
-owner's decision.
+concurrency group, assembly nor publication depends on the timing run. **Start
+Windows install timing** sets `continue-on-error`, so a failed dispatch marks only
+that job failed while the release run still succeeds. Its dispatch is cut at 60
+seconds and its step at 2 minutes, both ending as failures; a job that reaches its
+own `timeout-minutes` is cancelled instead, which would make the run conclude
+`cancelled`, so the job's 5-minute bound outlasts the step. The job needs a runner
+of its own, and the release run is not finished until that job is; it starts with
+the release, so it queues while preflight and packaging run. It could hold the
+release's concurrency group past assembly only if a Linux runner stayed queued
+longer than the whole release. It is the only release job whose token may write
+Actions (to dispatch the timing run). That permission could also cancel or re-run
+workflows and delete artifacts, so the job checks out no code and installs
+nothing: it makes one `gh api` call. Read the timing summary before approving a
+Stable candidate; whether a regression blocks it is the release owner's decision.
 
-The timing run is started from inside the release rather than by a
+The release starts the timing run itself rather than leaving it to a
 `workflow_run` trigger on the release's completion: a Stable candidate awaiting
 its production approval has not completed, so such a trigger would time it only
 after approval, and a release dispatched with a workflow's `GITHUB_TOKEN` (as
@@ -328,9 +337,12 @@ hand with the `run_id` and `artifact` of the run that built it (`desktop-win-x64
 from a release run; from CI's Windows Packaging, `windows-packaging-slim-installer`
 for the release shape or `windows-packaging-installer` for the one with WSL) or
 with an HTTPS `installer_url`. A manual run may leave `artifact_id` blank: it then
-downloads that run's newest artifact of the name. To reset the committed baseline,
-replace it with the `windows-install-timing.json` of an accepted release's timing
-run.
+downloads that run's newest artifact of the name. **Re-run failed jobs** on a
+release does not re-run a **Start Windows install timing** that succeeded, and the
+earlier timing run waited on the earlier attempt only; time the new attempt by hand
+with its `run_id` and `release_attempt`, which waits for that attempt's packaging
+as a release-started run does. To reset the committed baseline, replace it with the
+`windows-install-timing.json` of an accepted release's timing run.
 
 ## Production identity and data safety
 

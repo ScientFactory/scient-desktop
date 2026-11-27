@@ -1,7 +1,7 @@
-// `source --out <file> [--run-id <id> --artifact <name> [--artifact-id <id>] | --installer-url
-// <url>] [--version <v>]`: which installer a timing measures. `find --context <file> --committed
-// <file> --dir <dir>`: its baseline (the committed one on any lookup error). `installer --baseline
-// <file>`: where that baseline's installer comes from. Both write to $GITHUB_OUTPUT.
+// `wait --run-id --attempt --artifact`: a release attempt's packaged installer ID, or none.
+// `source --out [--run-id --artifact [--artifact-id] | --installer-url] [--version]
+// [--installer-name]`: which installer a timing measures. `find --context --committed --dir`: its
+// baseline. `installer --baseline`: that baseline's installer. All but `source` set step outputs.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -14,6 +14,7 @@ export const RELEASE_ARTIFACT = "desktop-win-x64";
 export const TIMING_ARTIFACT = "windows-install-timing";
 export const SCHEMA_VERSION = 2;
 const MEDIANS = ["installMs", "firstLaunchMs", "secondLaunchMs"];
+export const PACKAGE_JOB = "Package Windows x64";
 
 /** A release run's channel, from its branch: the release preflight fails any other pairing. */
 export function releaseChannel(run) {
@@ -63,6 +64,67 @@ export function artifactMismatch(artifact, runId, name) {
     return `it belongs to run ${artifact?.workflow_run?.id}, not ${runId}`;
   if (artifact.name !== name) return `it is ${artifact.name}, not ${name}`;
   return null;
+}
+
+/** The version in an installer's file name (`Scient-<version>-x64.exe`), or null. */
+export function installerVersion(name) {
+  return /^Scient-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)-x64\.exe$/u.exec(name ?? "")?.[1] ?? null;
+}
+
+/**
+ * Polls attempt `attempt` of release run `runId` until its `job` has finished. Returns
+ * `{ artifactId }` once the job succeeded and uploaded `artifact` in this attempt, or `{ skip }`
+ * with the reason when the job ended otherwise, the attempt ended without it, or `deadline` (a
+ * `now()` value) passed. Throws once `maxFailures` polls in a row fail.
+ */
+export function waitForInstaller({
+  api,
+  repository,
+  runId,
+  attempt,
+  job = PACKAGE_JOB,
+  artifact = RELEASE_ARTIFACT,
+  now,
+  sleep,
+  deadline,
+  log,
+  pollMs = 30_000,
+  maxFailures = 5,
+}) {
+  const attemptPath = `repos/${repository}/actions/runs/${runId}/attempts/${attempt}`;
+  let failures = 0;
+  for (;;) {
+    try {
+      // The attempt's state first: once it reads completed, the job list that follows is final.
+      const run = api(attemptPath);
+      const found = api(`${attemptPath}/jobs?per_page=100`, { paginate: true })
+        .flatMap((page) => page.jobs ?? [])
+        .find((entry) => entry.name === job);
+      if (found?.status === "completed") {
+        if (found.conclusion !== "success") return { skip: `${job} ended ${found.conclusion}` };
+        const upload = api(
+          `repos/${repository}/actions/runs/${runId}/artifacts?name=${artifact}&per_page=100`,
+        )
+          .artifacts?.filter(
+            (entry) =>
+              entry.name === artifact && !entry.expired && entry.created_at >= found.started_at,
+          )
+          .toSorted((a, b) => b.created_at.localeCompare(a.created_at))[0];
+        if (!upload) throw new Error(`${job} succeeded but no ${artifact} upload is listed yet`);
+        return { artifactId: String(upload.id) };
+      }
+      if (run.status === "completed")
+        return { skip: `the release ended (${run.conclusion}) before ${job} finished` };
+      failures = 0;
+      log(`${job}: ${found?.status ?? "not started"}`);
+    } catch (error) {
+      failures += 1;
+      log(`Poll failed (${failures} of ${maxFailures} in a row): ${String(error.message)}`);
+      if (failures >= maxFailures) throw error;
+    }
+    if (now() + pollMs > deadline) return { skip: `${job} had not finished in time` };
+    sleep(pollMs);
+  }
 }
 
 /** Why a timing record cannot be the baseline for `context`, or null when it can. */
@@ -173,6 +235,7 @@ export function findBaseline({ api, download, repository, context, deadline, log
 }
 
 const LOOKUP_MS = 2 * 60_000;
+const WAIT_MS = 90 * 60_000;
 const GH_CALL_MS = 60_000;
 
 function gh(args) {
@@ -206,6 +269,8 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
       "artifact-id": { type: "string" },
       "installer-url": { type: "string" },
       version: { type: "string" },
+      "installer-name": { type: "string" },
+      attempt: { type: "string" },
       context: { type: "string" },
       committed: { type: "string" },
       dir: { type: "string" },
@@ -218,7 +283,41 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
     GITHUB_SERVER_URL: server,
   } = process.env;
   const log = (message) => console.log(message);
-  if (positionals[0] === "source") {
+  if (positionals[0] === "wait") {
+    const releaseRunId = values["run-id"] ?? "";
+    const attempt = values.attempt ?? "";
+    const artifact = values.artifact ?? RELEASE_ARTIFACT;
+    if (!/^\d+$/u.test(releaseRunId) || !/^\d+$/u.test(attempt))
+      throw new Error("The release run ID and attempt must be numeric");
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    const result = waitForInstaller({
+      api,
+      repository,
+      runId: releaseRunId,
+      attempt,
+      artifact,
+      now: () => performance.now(),
+      sleep: (ms) => Atomics.wait(pause, 0, 0, ms),
+      deadline: performance.now() + WAIT_MS,
+      log,
+    });
+    const release = `release run [${releaseRunId}](${server}/${repository}/actions/runs/${releaseRunId}/attempts/${attempt}) (attempt ${attempt})`;
+    if (result.skip) {
+      log(`::notice title=Windows install timing::Not timed: ${result.skip}`);
+    } else {
+      log(`${artifact} of run ${releaseRunId}: artifact ${result.artifactId}`);
+    }
+    if (process.env.GITHUB_STEP_SUMMARY)
+      NodeFS.appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        result.skip
+          ? `Not timed: ${result.skip}, in ${release}. No timing record is kept.\n`
+          : `Timing \`${artifact}\` (artifact ${result.artifactId}) of ${release}.\n`,
+      );
+    const output = `artifact_id=${result.artifactId ?? ""}\n`;
+    if (process.env.GITHUB_OUTPUT) NodeFS.appendFileSync(process.env.GITHUB_OUTPUT, output);
+    else process.stdout.write(output);
+  } else if (positionals[0] === "source") {
     const runIdInput = values["run-id"] ?? "";
     const artifactId = values["artifact-id"] ?? "";
     const installerUrl = values["installer-url"] ?? "";
@@ -260,7 +359,7 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
       artifact: values.artifact,
       artifactId,
       installerUrl,
-      version: values.version,
+      version: values.version || installerVersion(values["installer-name"]) || "",
       runId,
       runUrl: `${server}/${repository}/actions/runs/${runId}`,
     });
@@ -304,6 +403,6 @@ if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
     if (process.env.GITHUB_OUTPUT) NodeFS.appendFileSync(process.env.GITHUB_OUTPUT, output);
     else process.stdout.write(output);
   } else {
-    throw new Error("usage: source | find | installer");
+    throw new Error("usage: wait | source | find | installer");
   }
 }

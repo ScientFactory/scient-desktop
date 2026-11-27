@@ -62,6 +62,38 @@ env:
   RELEASE_REHEARSAL: ${{ inputs.rehearsal == true }}
 
 jobs:
+  # SCIENT-FORK:START — advisory: time this release's Windows installer in a run of its own
+  # (windows-install-timing.yml), which waits for this attempt's Package Windows x64. Started
+  # with the run so its runner queues beside preflight, not after assembly. The only job here
+  # that may write Actions, so it checks out and installs nothing. A step timeout fails the step,
+  # which continue-on-error covers; a job timeout would cancel the run, so the job outlasts it.
+  start_install_timing:
+    name: Start Windows install timing
+    if: ${{ inputs.rehearsal && startsWith(github.ref_name, 'release-rehearsal/') || !inputs.rehearsal && github.ref_name == (inputs.channel == 'beta' && 'main' || 'release/stable') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the timing run
+        timeout-minutes: 2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! out="$(timeout 60 gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/windows-install-timing.yml/dispatches" \
+            -f ref="$GITHUB_REF_NAME" -F return_run_details=true \
+            -f "inputs[run_id]=$GITHUB_RUN_ID" -f "inputs[release_attempt]=$GITHUB_RUN_ATTEMPT" \
+            --jq '.html_url // empty' 2>&1)"; then
+            echo "Could not start the timing run: $out" >&2
+            exit 1
+          fi
+          echo "Windows install timing of attempt $GITHUB_RUN_ATTEMPT: ${out:-started}" | tee -a "$GITHUB_STEP_SUMMARY"
+  # SCIENT-FORK:END
+
   beta-inventory:
     name: Read isolated Beta release reservations
     if: inputs.channel == 'beta'
@@ -458,11 +490,6 @@ jobs:
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    # SCIENT-FORK:START — the Windows installer's artifact, for Start Windows install timing.
-    # Only the Windows leg sets it; a matrix job's other legs leave it empty, which does not replace it.
-    outputs:
-      win_x64_artifact_id: ${{ matrix.platform == 'win' && matrix.arch == 'x64' && steps.desktop_artifact.outputs.artifact-id || '' }}
-    # SCIENT-FORK:END
     strategy:
       fail-fast: false
       matrix:
@@ -1026,9 +1053,6 @@ jobs:
           compression-level: 1
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        # SCIENT-FORK:START — the Windows leg's upload, for Start Windows install timing.
-        id: desktop_artifact
-        # SCIENT-FORK:END
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
@@ -1291,12 +1315,7 @@ jobs:
     needs: [preflight, build_desktop, verify_windows_desktop, build_server_asset]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' && needs.verify_windows_desktop.result == 'success' && needs.build_server_asset.result == 'success' }}
     runs-on: ubuntu-24.04
-    # SCIENT-FORK:START — 2 more minutes for the bounded timing dispatch; actions: write starts it.
-    timeout-minutes: 12
-    permissions:
-      contents: read
-      actions: write
-    # SCIENT-FORK:END
+    timeout-minutes: 10
     outputs:
       artifact_digest: ${{ steps.release_candidate.outputs.artifact-digest }}
       artifact_id: ${{ steps.release_candidate.outputs.artifact-id }}
@@ -1305,25 +1324,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-      # SCIENT-FORK:START — the job's token may write Actions; dependency installs get none of it.
-      # checkout keeps the token in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. `persist-credentials: false` fails here: its cleanup runs `git submodule foreach`,
-      # which stops at the vendored gitlinks under .repos (no .gitmodules entry).
-      - name: Drop checkout credentials
-        run: |
-          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-            rm -f "$file"
-            git config --local --unset-all "$key"
-          done
-          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-            git config --local --unset-all "$key"
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::checkout credentials are still present"
-            exit 1
-          fi
-      # SCIENT-FORK:END
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
@@ -1448,28 +1448,6 @@ jobs:
               echo "This is a non-publishing rehearsal. It cannot be promoted by rerunning publication against rebuilt artifacts."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-      # SCIENT-FORK:START — advisory: time the accepted Windows installer in a run of its own
-      # (windows-install-timing.yml). A step timeout fails the step, which continue-on-error
-      # covers; only a job timeout would cancel the run, and the job has 2 minutes for this.
-      - name: Start Windows install timing
-        if: needs.build_desktop.outputs.win_x64_artifact_id != ''
-        continue-on-error: true
-        timeout-minutes: 2
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.preflight.outputs.version }}
-          ARTIFACT_ID: ${{ needs.build_desktop.outputs.win_x64_artifact_id }}
-        run: |
-          if ! out="$(timeout 60 gh workflow run windows-install-timing.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f run_id="$GITHUB_RUN_ID" -f artifact=desktop-win-x64 -f artifact_id="$ARTIFACT_ID" \
-            -f version="$VERSION" 2>&1)"; then
-            echo "Could not start the timing run: $out" >&2
-            exit 1
-          fi
-          echo "$out"
-          echo "Windows install timing started for \`$VERSION\`: $out" >> "$GITHUB_STEP_SUMMARY"
-      # SCIENT-FORK:END
 
   qualify_installed_updates:
     name: Qualify installed update restarts

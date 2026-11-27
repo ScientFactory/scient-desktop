@@ -11,6 +11,8 @@ import {
   baselineInstaller,
   describeSource,
   findBaseline,
+  installerVersion,
+  waitForInstaller,
 } from "./windows-install-timing-baseline.mjs";
 
 const REPOSITORY = "ScientFactory/scient-desktop";
@@ -281,4 +283,122 @@ NodeTest.test("a failed lookup warns and falls back to the committed baseline", 
   NodeAssert.equal(result.status, 0, result.stderr);
   NodeAssert.match(result.stdout, /::warning .*HTTP 502: Bad Gateway/u);
   NodeAssert.equal(NodeFS.readFileSync(output, "utf8"), "file=committed.json\ncommitted=true\n");
+});
+
+/**
+ * A release attempt whose state moves one step per poll: `states[i]` is `{ run, job, artifacts }`
+ * (the attempt's status/conclusion, the Package job's or none, and the run's listed uploads) or
+ * an Error for a failed poll.
+ */
+function releaseAttempt(states) {
+  let poll = -1;
+  let clock = 0;
+  const calls = [];
+  const state = () => states[Math.min(poll, states.length - 1)];
+  const api = (path, { paginate = false } = {}) => {
+    calls.push(path);
+    if (path.endsWith("/attempts/2")) {
+      poll += 1;
+      if (state() instanceof Error) throw state();
+      return { id: 26, run_attempt: 2, ...state().run };
+    }
+    if (path.includes("/attempts/2/jobs?")) {
+      NodeAssert.ok(paginate, "the job list must be paginated");
+      const { job } = state();
+      const other = { name: "Package macOS arm64", status: "completed", conclusion: "success" };
+      return [{ jobs: job ? [other, { name: "Package Windows x64", ...job }] : [other] }];
+    }
+    if (path.includes("/artifacts?name=desktop-win-x64")) return { artifacts: state().artifacts };
+    throw new Error(`HTTP 404: ${path}`);
+  };
+  return {
+    calls,
+    wait: (overrides = {}) =>
+      waitForInstaller({
+        api,
+        repository: REPOSITORY,
+        runId: "26",
+        attempt: "2",
+        now: () => clock,
+        sleep: (ms) => {
+          clock += ms;
+        },
+        deadline: 90 * 60_000,
+        log: () => {},
+        ...overrides,
+      }),
+  };
+}
+const running = { status: "in_progress", conclusion: null };
+const started = "2026-11-27T10:00:00Z";
+
+NodeTest.test("the timing waits for this attempt's packaged installer and takes its upload", () => {
+  const done = { status: "completed", conclusion: "success", started_at: started };
+  // The first attempt's upload of the same name stays listed for the run.
+  const earlier = {
+    id: 11,
+    name: "desktop-win-x64",
+    expired: false,
+    created_at: "2026-11-27T09:30:00Z",
+  };
+  const current = {
+    id: 12,
+    name: "desktop-win-x64",
+    expired: false,
+    created_at: "2026-11-27T10:20:00Z",
+  };
+  const release = releaseAttempt([
+    { run: running },
+    { run: running, job: { status: "in_progress", conclusion: null, started_at: started } },
+    // This attempt's upload is not listed yet: the earlier one must not stand in for it.
+    { run: running, job: done, artifacts: [earlier] },
+    { run: running, job: done, artifacts: [earlier, current] },
+  ]);
+  NodeAssert.deepEqual(release.wait(), { artifactId: "12" });
+  NodeAssert.equal(release.calls.filter((path) => path.endsWith("/attempts/2")).length, 4);
+});
+
+NodeTest.test("a release that ends before packaging Windows is not timed", () => {
+  // Cancelled during preflight: the package matrix was never created.
+  const cancelled = releaseAttempt([
+    { run: running },
+    { run: { status: "completed", conclusion: "cancelled" } },
+  ]);
+  NodeAssert.deepEqual(cancelled.wait(), {
+    skip: "the release ended (cancelled) before Package Windows x64 finished",
+  });
+  NodeAssert.ok(!cancelled.calls.some((path) => path.includes("/artifacts")));
+
+  const failed = releaseAttempt([
+    { run: running, job: { status: "completed", conclusion: "failure", started_at: started } },
+  ]);
+  NodeAssert.deepEqual(failed.wait(), { skip: "Package Windows x64 ended failure" });
+});
+
+NodeTest.test("the wait gives up at its deadline and on an API that keeps failing", () => {
+  const slow = releaseAttempt([{ run: running, job: { status: "queued", conclusion: null } }]);
+  NodeAssert.deepEqual(slow.wait({ deadline: 10 * 60_000 }), {
+    skip: "Package Windows x64 had not finished in time",
+  });
+
+  // Failures in a row end the wait; one between successful polls does not.
+  const flaky = releaseAttempt([
+    new Error("HTTP 502"),
+    { run: running },
+    new Error("HTTP 502"),
+    new Error("HTTP 502"),
+    { run: { status: "completed", conclusion: "failure" } },
+  ]);
+  NodeAssert.deepEqual(flaky.wait({ maxFailures: 3 }), {
+    skip: "the release ended (failure) before Package Windows x64 finished",
+  });
+  const down = releaseAttempt([new Error("HTTP 502")]);
+  NodeAssert.throws(() => down.wait({ maxFailures: 3 }), /HTTP 502/u);
+});
+
+NodeTest.test("a release installer's version comes from its file name", () => {
+  NodeAssert.equal(installerVersion("Scient-0.6.36-x64.exe"), "0.6.36");
+  NodeAssert.equal(installerVersion("Scient-0.6.36-beta.2-x64.exe"), "0.6.36-beta.2");
+  NodeAssert.equal(installerVersion("Scient-0.6.36-arm64.exe"), null);
+  NodeAssert.equal(installerVersion(undefined), null);
 });

@@ -2,9 +2,10 @@ name: Windows install timing
 run-name: Windows install timing of ${{ inputs.installer_url || format('{0} from run {1}', inputs.artifact, inputs.run_id) }}
 
 # Installs a real Windows installer on a clean runner and times the install, the first launch
-# and a second launch until the app is ready. Each release run's assembly dispatches it as a run
-# of its own once it accepts the Windows installer, so the release never waits for it; run it by
-# hand for any installer an Actions run built, or any published installer URL.
+# and a second launch until the app is ready. Each release run dispatches it as a run of its own
+# as soon as the release starts, with `release_attempt`; it then waits for that attempt's
+# Package Windows x64, so the release never waits for it. Run it by hand for any installer an
+# Actions run built, or any published installer URL.
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +18,11 @@ on:
         type: string
         default: desktop-win-x64
       artifact_id:
-        description: That artifact's ID, downloaded by ID (a release passes it); blank downloads the newest artifact of that name
+        description: That artifact's ID, downloaded by ID; blank downloads the newest artifact of that name
+        type: string
+        default: ""
+      release_attempt:
+        description: Set by a release run, its attempt; waits for that attempt to package Windows and times its upload
         type: string
         default: ""
       installer_url:
@@ -25,7 +30,7 @@ on:
         type: string
         default: ""
       version:
-        description: The installer's version, if known (a release passes its own)
+        description: The installer's version, if known; blank reads it from a Scient-<version>-x64.exe name
         type: string
         default: ""
       samples:
@@ -38,12 +43,16 @@ permissions:
   actions: read
 
 jobs:
-  timing:
-    name: Windows install and launch timing
-    runs-on: windows-2025
-    # Above the sum of the step bounds below (59 minutes); a normal run takes about 4 minutes, and
-    # twice that when a regression is re-checked.
-    timeout-minutes: 65
+  # Waits on a cheap runner, not the Windows one. Ends with no artifact ID, and so no timing, when
+  # the release attempt ends without packaging Windows.
+  release:
+    name: Wait for the release's Windows installer
+    if: inputs.release_attempt != ''
+    runs-on: ubuntu-24.04
+    # Above the wait's own 90-minute limit, which ends it cleanly.
+    timeout-minutes: 100
+    outputs:
+      artifact_id: ${{ steps.wait.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -51,21 +60,35 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
-      - name: Identify the installer
-        timeout-minutes: 2
-        shell: bash
+      - name: Wait for Package Windows x64
+        id: wait
+        timeout-minutes: 95
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run_id }}
+          RELEASE_ATTEMPT: ${{ inputs.release_attempt }}
           ARTIFACT: ${{ inputs.artifact }}
-          ARTIFACT_ID: ${{ inputs.artifact_id }}
-          INSTALLER_URL: ${{ inputs.installer_url }}
-          VERSION: ${{ inputs.version }}
         run: |
-          mkdir -p timing
-          node .github/scripts/windows-install-timing-baseline.mjs source --out timing/context.json \
-            --run-id "$RUN_ID" --artifact "$ARTIFACT" --artifact-id "$ARTIFACT_ID" \
-            --installer-url "$INSTALLER_URL" --version "$VERSION"
+          node .github/scripts/windows-install-timing-baseline.mjs wait \
+            --run-id "$RUN_ID" --attempt "$RELEASE_ATTEMPT" --artifact "$ARTIFACT"
+
+  timing:
+    name: Windows install and launch timing
+    needs: release
+    if: ${{ !cancelled() && (inputs.release_attempt == '' || needs.release.outputs.artifact_id != '') }}
+    runs-on: windows-2025
+    # Above the sum of the step bounds below (59 minutes); a normal run takes about 4 minutes, and
+    # twice that when a regression is re-checked.
+    timeout-minutes: 65
+    env:
+      ARTIFACT_ID: ${{ needs.release.outputs.artifact_id || inputs.artifact_id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: .github
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
       - name: Download the installer artifact
         if: inputs.installer_url == ''
         timeout-minutes: 5
@@ -73,8 +96,8 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run_id }}
-          name: ${{ inputs.artifact_id == '' && inputs.artifact || '' }}
-          artifact-ids: ${{ inputs.artifact_id }}
+          name: ${{ env.ARTIFACT_ID == '' && inputs.artifact || '' }}
+          artifact-ids: ${{ env.ARTIFACT_ID }}
           path: installer
       - name: Download the installer
         if: inputs.installer_url != ''
@@ -95,7 +118,24 @@ jobs:
           $found = @(Get-ChildItem installer -Recurse -File -Filter *.exe)
           if ($found.Count -ne 1) { throw "Expected exactly one installer .exe, found $($found.Count): $($found.Name -join ', ')" }
           "path=$($found[0].FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($found[0].Name)" >> $env:GITHUB_OUTPUT
           Write-Host "Installer: $($found[0].Name), $($found[0].Length) bytes"
+      # Before anything runs the installer: an artifact ID must name the artifact of that run.
+      - name: Identify the installer
+        timeout-minutes: 2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          ARTIFACT: ${{ inputs.artifact }}
+          INSTALLER_URL: ${{ inputs.installer_url }}
+          VERSION: ${{ inputs.version }}
+          INSTALLER_NAME: ${{ steps.installer.outputs.name }}
+        run: |
+          mkdir -p timing
+          node .github/scripts/windows-install-timing-baseline.mjs source --out timing/context.json \
+            --run-id "$RUN_ID" --artifact "$ARTIFACT" --artifact-id "$ARTIFACT_ID" \
+            --installer-url "$INSTALLER_URL" --version "$VERSION" --installer-name "$INSTALLER_NAME"
       # A 12-minute measurement budget (four times a normal run), then up to 5 minutes to stop the
       # app and uninstall the sample in progress. measurement.json is rewritten after each sample.
       - name: Time install and launches

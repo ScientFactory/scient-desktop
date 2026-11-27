@@ -67,6 +67,23 @@ describe("Scient release machinery", () => {
     assert.notInclude(workflow.split(/^  publish:\n/mu)[0] ?? "", "contents: write");
   });
 
+  it("lets only a job that installs nothing write Actions before publication", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const beforePublish = workflow.split(/^jobs:\n/mu)[1]?.split(/^  publish:\n/mu)[0] ?? "";
+    const writers = beforePublish
+      .split(/^ {2}(?=[\w-]+:\n)/mu)
+      .filter((job) => /^\s+actions: write$/mu.test(job));
+    // Dependency install scripts could otherwise use the token to dispatch or cancel workflows.
+    assert.deepStrictEqual(
+      writers.map((job) => job.split(":")[0]),
+      ["start_install_timing"],
+    );
+    assert.notMatch(writers[0] ?? "", /uses:|vp install|checkout/u);
+  });
+
   it("packages the remote server only with every target's monitor and SyncTeX runtime", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
