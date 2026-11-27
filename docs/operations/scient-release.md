@@ -229,7 +229,7 @@ The baseline is the newest kept timing record that passes every check:
 The lookup reads every page of kept records and logs why it skipped each one. When
 none passes, or the lookup fails (it then warns), the baseline is the committed
 [`windows-install-timing-baseline.json`](../../.github/windows-install-timing-baseline.json),
-v0.6.34 measured by the same harness. A stage regresses when its median is more
+v0.6.34 timed by the same harness over five samples. A stage regresses when its median is more
 than 25% slower and also more than its floor slower: 5 seconds to install, 1.5
 seconds for the first launch and 1 second for the second. The floors absorb runner
 noise; single launches on these runners vary by about 2 seconds.
