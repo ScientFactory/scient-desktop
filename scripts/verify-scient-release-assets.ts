@@ -11,12 +11,17 @@ import {
   scientServerAssetName,
 } from "@t3tools/shared/scientRelease";
 
+import { assertBlockmapDescribesPayload } from "./lib/update-blockmap.ts";
 import { parseUpdateManifest } from "./lib/update-manifest.ts";
 
 interface ManifestDefinition {
   readonly name: string;
   readonly label: string;
   readonly requiredPayloads: ReadonlyArray<string>;
+  /** Payloads electron-updater downloads differentially, so their `.blockmap` must ship. */
+  readonly requiredBlockmaps: ReadonlyArray<string>;
+  /** The only payloads that may ship a `.blockmap`, even if the manifest lists other files. */
+  readonly blockmapPayloads: ReadonlyArray<string>;
 }
 
 function requiredValue(args: ReadonlyArray<string>, flag: string): string {
@@ -76,20 +81,35 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
         `Scient-${version}-x64.dmg`,
         `Scient-${version}-x64.zip`,
       ],
+      requiredBlockmaps: [`Scient-${version}-arm64.zip`, `Scient-${version}-x64.zip`],
+      blockmapPayloads: [
+        `Scient-${version}-arm64.dmg`,
+        `Scient-${version}-arm64.zip`,
+        `Scient-${version}-x64.dmg`,
+        `Scient-${version}-x64.zip`,
+      ],
     },
     {
       name: `${manifestChannel}.yml`,
       label: "Windows",
       requiredPayloads: [`Scient-${version}-x64.exe`],
+      requiredBlockmaps: [`Scient-${version}-x64.exe`],
+      blockmapPayloads: [`Scient-${version}-x64.exe`],
     },
     {
       name: `${manifestChannel}-linux.yml`,
       label: "Linux",
       requiredPayloads: [`Scient-${version}-x86_64.AppImage`],
+      // The AppImage carries its blockmap inside the file (manifest `blockMapSize`).
+      requiredBlockmaps: [],
+      blockmapPayloads: [],
     },
   ];
 
   const allowed = new Set<string>();
+  const blockmapPayloads = new Set(
+    definitions.flatMap((definition) => definition.blockmapPayloads),
+  );
   for (const definition of definitions) {
     const manifestPath = NodePath.join(assetsDir, definition.name);
     assertRegularNonemptyFile(manifestPath, `${definition.label} update manifest`);
@@ -127,6 +147,12 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
         );
       }
     }
+    for (const required of definition.requiredBlockmaps) {
+      assertRegularNonemptyFile(
+        NodePath.join(assetsDir, `${required}.blockmap`),
+        `${definition.label} update blockmap`,
+      );
+    }
   }
 
   const windowsInstaller = `Scient-${version}-x64.exe`;
@@ -146,10 +172,12 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
   for (const name of actual) {
     if (!name.endsWith(".blockmap")) continue;
     const payloadName = name.slice(0, -".blockmap".length);
-    if (!allowed.has(payloadName)) {
+    if (!blockmapPayloads.has(payloadName)) {
       throw new Error(`Release assembly contains unattested blockmap: ${name}.`);
     }
-    assertRegularNonemptyFile(NodePath.join(assetsDir, name), "update blockmap");
+    const blockmapPath = NodePath.join(assetsDir, name);
+    assertRegularNonemptyFile(blockmapPath, "update blockmap");
+    assertBlockmapDescribesPayload(blockmapPath, NodePath.join(assetsDir, payloadName));
     allowed.add(name);
   }
   const unexpected = actual.filter((name) => !allowed.has(name));

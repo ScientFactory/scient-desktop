@@ -433,8 +433,12 @@ tag or release already exists.
    `SHA256SUMS.txt`, and `scient-release-handoff.json`. Assembly fails unless
    every manifest-referenced payload exists and matches its declared size and
    SHA-512, every required architecture is present, and no unattested file is
-   included. Record the run ID, artifact ID, and artifact digest shown in its
-   summary.
+   included. The Windows installer and both macOS updater ZIPs must ship a
+   `.blockmap`, the map electron-updater uses for differential downloads, and
+   every blockmap that ships, DMG maps included, must decode and have chunks
+   that cover its payload exactly, each matching its BLAKE2b checksum. A missing,
+   corrupt, or other build's map fails assembly. The AppImage embeds its map.
+   Record the run ID, artifact ID, and artifact digest shown in its summary.
 5. Resolve artifact, signing, installed-app, updater, migration, website, and
    rollback gates against that exact candidate. Reject the pending production
    deployment if any gate fails; fix the source and build a new candidate rather
