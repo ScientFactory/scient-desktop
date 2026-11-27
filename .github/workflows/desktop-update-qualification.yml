@@ -113,10 +113,11 @@ jobs:
           pattern: scient-release-v*
           merge-multiple: true
           path: update-target
+      # xdotool and ImageMagick capture the natively relaunched app's own window.
       - name: Install Linux graphical prerequisites
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install -y xvfb libfuse2 libasound2t64
+          sudo apt-get update && sudo apt-get install -y xvfb libfuse2 libasound2t64 xdotool imagemagick
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # Scient accepts an administrator's update feed only over HTTPS. A certificate made for this
       # run, trusted only by this disposable machine, serves the loopback feed; its signing key is

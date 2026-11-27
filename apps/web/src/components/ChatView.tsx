@@ -4437,6 +4437,7 @@ function ChatViewContent(props: ChatViewProps) {
           (!isServerThread || serverProjection !== null)
         }
         projectRestored={activeProject !== null}
+        projectId={activeProject?.id ?? null}
       />
       {/* SCIENT-FORK:END */}
       <ThreadAnswerAcknowledgement threadRef={routeThreadDetailRef} />

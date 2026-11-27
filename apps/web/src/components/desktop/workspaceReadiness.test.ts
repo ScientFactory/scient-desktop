@@ -10,6 +10,8 @@ const ready = {
   liveSnapshot: true,
 };
 
+const usable = { projectControlsVisible: true, composerUsable: true, windowUnlocked: true };
+
 describe("desktop workspace readiness", () => {
   it("requires a committed usable local workspace rather than a renderer or cached snapshot", () => {
     expect(workspaceReadiness(ready)).toBe(true);
@@ -34,6 +36,10 @@ describe("desktop workspace readiness", () => {
         reports.push(input);
         return true;
       },
+      reportWorkspaceSettled: async (input: object) => {
+        reports.push({ settled: input });
+        return true;
+      },
     };
     const startup = { reported: false };
     const report = (startupOnly: boolean, projectRestored: boolean) =>
@@ -43,6 +49,8 @@ describe("desktop workspace readiness", () => {
         projectRestored,
         startup,
         isCurrent: () => true,
+        observe: () => usable,
+        settle: async () => undefined,
       });
 
     await report(true, false);
@@ -54,6 +62,82 @@ describe("desktop workspace readiness", () => {
     expect(reports).toHaveLength(1);
 
     await report(false, true);
-    expect(reports).toEqual([{ projectRestored: false }, { ...token, projectRestored: true }]);
+    expect(reports).toEqual([
+      { projectRestored: false },
+      { ...token, projectRestored: true, interaction: usable },
+      { settled: { ...token, interaction: usable } },
+    ]);
+  });
+
+  it("observes a completed restart's workspace at readiness and again once it settles", async () => {
+    const token = { attemptId: "attempt-1", launchId: "launch-1" };
+    const locked = { ...usable, composerUsable: false, windowUnlocked: false };
+    const events: unknown[] = [];
+    let observation = usable;
+    let completes = true;
+    const bridge = {
+      getRestartReadinessToken: async () => token,
+      reportWorkspaceReady: async (input: object) => {
+        events.push({ ready: input });
+        return completes;
+      },
+      reportWorkspaceSettled: async (input: object) => {
+        events.push({ settled: input });
+        return true;
+      },
+    };
+    const report = () =>
+      reportDesktopWorkspaceReady({
+        bridge,
+        startupOnly: false,
+        projectRestored: true,
+        startup: { reported: false },
+        isCurrent: () => true,
+        observe: () => observation,
+        settle: async () => {
+          events.push("settle");
+          // A lock that appears only after readiness.
+          observation = locked;
+        },
+      });
+
+    await report();
+    expect(events).toEqual([
+      { ready: { ...token, projectRestored: true, interaction: usable } },
+      "settle",
+      { settled: { ...token, interaction: locked } },
+    ]);
+
+    // A report that completed no restart is not followed up.
+    events.length = 0;
+    completes = false;
+    await report();
+    expect(events).toEqual([{ ready: { ...token, projectRestored: true, interaction: locked } }]);
+  });
+
+  it("does not scan an ordinary startup's workspace, which no update restart waits on", async () => {
+    const reports: unknown[] = [];
+    let observations = 0;
+    await reportDesktopWorkspaceReady({
+      bridge: {
+        getRestartReadinessToken: async () => null,
+        reportWorkspaceReady: async (input: object) => {
+          reports.push(input);
+          return false;
+        },
+        reportWorkspaceSettled: async () => true,
+      },
+      startupOnly: false,
+      projectRestored: true,
+      startup: { reported: false },
+      isCurrent: () => true,
+      observe: () => {
+        observations += 1;
+        return usable;
+      },
+      settle: async () => undefined,
+    });
+    expect(reports).toEqual([{ projectRestored: true }]);
+    expect(observations).toBe(0);
   });
 });

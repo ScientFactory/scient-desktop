@@ -98,6 +98,47 @@ it.effect(
     }),
 );
 
+it.effect("records what the restored workspace let the user reach, at readiness and settled", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    yield* f.handoff;
+    const next = f.process("1.1.0", "target");
+    const timing = yield* next.make;
+    yield* timing.launch;
+    yield* timing.backendReady;
+    const token = { attemptId: "attempt-1", launchId: "target" };
+    const usable = { projectControlsVisible: true, composerUsable: true, windowUnlocked: true };
+    const locked = { projectControlsVisible: false, composerUsable: false, windowUnlocked: false };
+    // Nothing has become ready yet, so there is nothing to settle.
+    assert.isFalse(yield* timing.workspaceSettled({ ...token, interaction: usable }));
+    next.clock.monotonic = 80;
+    assert.isTrue(
+      yield* timing.workspaceReady({ ...token, projectRestored: true, interaction: usable }),
+    );
+    assert.deepInclude(f.events.at(-1), { event: "workspace-ready", ...usable });
+    next.clock.monotonic = 1_085;
+    assert.isFalse(
+      yield* timing.workspaceSettled({ ...token, launchId: "other", interaction: locked }),
+    );
+    assert.isFalse(
+      yield* timing.workspaceSettled({ ...token, attemptId: "other", interaction: locked }),
+    );
+    assert.isTrue(yield* timing.workspaceSettled({ ...token, interaction: locked }));
+    assert.deepEqual(f.events.at(-1), {
+      event: "workspace-settled",
+      attemptId: "attempt-1",
+      fromVersion: "1.0.0",
+      targetVersion: "1.1.0",
+      launchId: "target",
+      processId: 200,
+      settledAfterReadyMs: 1_005,
+      ...locked,
+    });
+    assert.isFalse(yield* timing.workspaceSettled({ ...token, interaction: usable }));
+    assert.equal(f.events.filter((e) => e.event === "workspace-settled").length, 1);
+  }),
+);
+
 it.effect(
   "rejects wrong attempt and process acknowledgements and records readiness only once",
   () =>

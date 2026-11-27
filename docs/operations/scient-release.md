@@ -283,10 +283,29 @@ tag or release already exists.
    managed feed and synthetic project, drives the real restart controls, and
    temporarily freezes autosave to type and confirm an actual unsaved file edit,
    then resumes the renderer's timers before consent so save RPCs can run normally.
-   After native relaunch, the harness checks the edit on disk and attaches with Node's PID inspector
-   to verify the real restored project's visible controls and unlocked input.
-   Attachment happens after the measured workspace-ready receipt; no debug hook
-   or launch switch is added to production. The disposable Linux runner permits
+   Packaged builds ignore Node's inspector switches (the `enableNodeCliInspectArguments`
+   fuse is off in every build, rehearsals included), so the harness starts the installed
+   app itself with `--remote-debugging-port=0` and drives its window over Chromium's
+   DevTools protocol. Before attaching Playwright, it asks the endpoint for its main process
+   over a bare DevTools connection that sends only `SystemInfo.getProcessInfo`, and accepts
+   it only if that process is its own launch; otherwise it closes that connection and sends
+   nothing else. It requires the endpoint to be written into the synthetic profile and
+   records the restart interaction from DevTools screencast frames (the encoder is finished,
+   or killed after its deadline, even when stopping the screencast hangs). Its own quits use DevTools'
+   `Browser.close` and must show the app's `before-quit received` log and a normal exit
+   status; a forced exit is only cleanup and fails the ordinary-quit check.
+   The native relaunch passes no switches and is not attached to: its `launched`,
+   `backend-ready`, `workspace-ready` and `workspace-settled` receipts (one launch and
+   process, with `projectRestored`) mark it ready, and the last two must record that the
+   restored project's own control (its chat-header breadcrumb, found by project id) and the
+   chat composer were reachable (visible, enabled, outside any inert region and on top at
+   their centre, not under an overlay) and the window was not locked for the restart, at
+   readiness and again a second later. The
+   harness then checks the edit on disk, the single updated main process (any instance of
+   the app, from any AppImage mount, counts) and the old process's exit, captures that
+   process's window through the operating system, quits it normally, and launches the
+   installed target once more the same way to require the same reach for the restored
+   project's control and the composer, an unlocked window and the target version. The disposable Linux runner permits
    unprivileged user namespaces so Chromium's sandbox can start under AppArmor.
    macOS additionally requires signature, Gatekeeper and stapling checks. Windows
    requires valid Authenticode signatures, except that the workflow passes
@@ -317,8 +336,10 @@ tag or release already exists.
    download checksum, verifies that preparation did not shut down the app,
    then downloads the genuine target and completes a fresh consented restart.
 
-   Retain the per-target `native-update-*` artifacts: the JSON receipt, before/after
-   screenshots, and recorded restart interaction. Compare repeated
+   Retain the per-target `native-update-*` artifacts: the JSON receipt, the
+   `before-restart`, `restarted-window` (operating-system capture) and
+   `restored-workspace` screenshots, the recorded restart interaction, and the app
+   output and desktop logs. Compare repeated
    `confirmToReadyMs`, `preparationAndSaveMs`, `shutdownMs`, `handoffToLaunchMs`
    and `launchToReadyMs` rather than treating process launch as usability.
    These receipts do not establish physical low-end-machine performance,

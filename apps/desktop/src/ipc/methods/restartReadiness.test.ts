@@ -13,7 +13,7 @@ import {
   DesktopStartupTiming,
   makeStartupTiming,
 } from "../../scient/startupTiming/DesktopStartupTiming.ts";
-import { getToken, reportReady } from "./restartReadiness.ts";
+import { getToken, reportReady, reportSettled } from "./restartReadiness.ts";
 
 function fixture(
   destroyed = false,
@@ -25,6 +25,7 @@ function fixture(
   const acknowledgements: unknown[] = [];
   const restartSampledAt: number[] = [];
   const startupReports: unknown[] = [];
+  const settlements: unknown[] = [];
   const window = {
     isDestroyed: () => destroyed,
     webContents: { id: 41, mainFrame },
@@ -41,6 +42,11 @@ function fixture(
           clock.now += 100;
           return true;
         }),
+      workspaceSettled: (ack) =>
+        Effect.sync(() => {
+          settlements.push(ack);
+          return true;
+        }),
     }),
     startup === undefined
       ? Layer.mock(DesktopStartupTiming, {
@@ -52,7 +58,16 @@ function fixture(
         })
       : Layer.succeed(DesktopStartupTiming, startup(clock)),
   );
-  return { layer, mainFrame, token, clock, acknowledgements, restartSampledAt, startupReports };
+  return {
+    layer,
+    mainFrame,
+    token,
+    clock,
+    acknowledgements,
+    restartSampledAt,
+    startupReports,
+    settlements,
+  };
 }
 
 it.effect("accepts only a registered app top frame and forwards no renderer timestamps", () =>
@@ -76,6 +91,32 @@ it.effect("accepts only a registered app top frame and forwards no renderer time
         .pipe(Effect.provide(f.layer)),
     );
     assert.deepEqual(f.acknowledgements, [{ ...f.token, projectRestored: true }]);
+  }),
+);
+
+it.effect("forwards what the restored workspace let the user reach, only from the app frame", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const app = { sender: { id: 41 }, senderFrame: f.mainFrame };
+    const preview = { sender: { id: 99 }, senderFrame: f.mainFrame };
+    const interaction = {
+      projectControlsVisible: true,
+      composerUsable: true,
+      windowUnlocked: false,
+    };
+    yield* reportReady
+      .handler({ ...f.token, projectRestored: true, interaction }, app)
+      .pipe(Effect.provide(f.layer));
+    assert.deepEqual(f.acknowledgements, [{ ...f.token, projectRestored: true, interaction }]);
+    assert.isFalse(
+      yield* reportSettled
+        .handler({ ...f.token, interaction }, preview)
+        .pipe(Effect.provide(f.layer)),
+    );
+    assert.isTrue(
+      yield* reportSettled.handler({ ...f.token, interaction }, app).pipe(Effect.provide(f.layer)),
+    );
+    assert.deepEqual(f.settlements, [{ ...f.token, interaction }]);
   }),
 );
 
