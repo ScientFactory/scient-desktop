@@ -34,10 +34,16 @@ api() {
 # nine downloads begun within a second of the listing failed, whether download-artifact looked the
 # ID up itself (`None of the provided artifact IDs were found`) or through the REST API (`Not
 # Found`). So an upload is named only once the REST download endpoint has served it twice, five
-# seconds apart; one it still refuses after 30 polls fails the wait.
+# seconds apart; one it still refuses after 30 polls fails the wait. Each check is cut at 30 s, so
+# a stalled request counts as a refusal instead of using up the job's time.
 serves() {
-  [ "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
-    "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/artifacts/$1/zip" || true)" = 302 ]
+  local code
+  code=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+    "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/artifacts/$1/zip") ||
+    code="${code:-000}, curl exit $?"
+  [ "$code" = 302 ] && return 0
+  echo "Download check for $artifact $1 answered HTTP $code." >&2
+  return 1
 }
 refused=0
 # Takes the newest artifact uploaded at or after $1, exiting once it can be downloaded; fails when
@@ -50,7 +56,12 @@ take_since() {
   fi
   [ -n "$id" ] || return 1
   if serves "$id" && sleep 5 && serves "$id"; then
-    echo "artifact-id=$id" >>"${GITHUB_OUTPUT:-/dev/null}"
+    # take_since runs inside conditionals, where `set -e` is off: a failed write must fail
+    # explicitly, or the download step would get no ID and fetch every artifact of the run.
+    if ! echo "artifact-id=$id" >>"${GITHUB_OUTPUT:-/dev/null}"; then
+      echo "Could not record $artifact $id as the step output." >&2
+      exit 1
+    fi
     exit 0
   fi
   refused=$((refused + 1))
