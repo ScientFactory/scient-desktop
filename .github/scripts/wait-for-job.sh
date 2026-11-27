@@ -14,15 +14,32 @@ uploaded=false
 [ "${3:-}" = "--uploaded" ] && uploaded=true
 jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"
 artifacts="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$artifact"
+# A failed API request is retried a few times; one that keeps failing fails the wait, rather
+# than reading as a job that uploaded nothing.
+api() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    gh api "$@" && return 0
+    echo "GitHub API request failed (attempt $attempt of 5)." >&2
+    [ "$attempt" -lt 5 ] && sleep $((attempt * 5))
+  done
+  return 1
+}
 # The newest artifact uploaded at or after $1. A rerun's job must not take an earlier attempt's copy.
 artifact_since() {
   local id
-  id=$(SINCE="$1" gh api "$artifacts" --jq '[.artifacts[] | select(.expired == false and .created_at >= env.SINCE)] | max_by(.created_at) | .id // empty')
+  if ! id=$(SINCE="$1" api "$artifacts" --jq '[.artifacts[] | select(.expired == false and .created_at >= env.SINCE)] | max_by(.created_at) | .id // empty'); then
+    echo "Could not list $artifact uploads." >&2
+    exit 1
+  fi
   [ -n "$id" ] || return 1
   echo "artifact-id=$id" >>"${GITHUB_OUTPUT:-/dev/null}"
 }
 while :; do
-  job=$(gh api "$jobs" --jq '[.jobs[] | select(.name | endswith(env.JOB_SUFFIX))][0] // {} | "\(.status // "absent") \(.conclusion // "-") \(.started_at // "-")"')
+  if ! job=$(api "$jobs" --jq '[.jobs[] | select(.name | endswith(env.JOB_SUFFIX))][0] // {} | "\(.status // "absent") \(.conclusion // "-") \(.started_at // "-")"'); then
+    echo "Could not read $JOB_SUFFIX's status." >&2
+    exit 1
+  fi
   read -r status conclusion started <<<"$job"
   case "$status" in
     absent)

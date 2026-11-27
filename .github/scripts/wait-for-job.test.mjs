@@ -24,7 +24,7 @@ const artifacts = (...createdAt) => ({
 });
 
 // A fake `gh` applies the script's own --jq filter to the next queued response for that
-// endpoint (the last one repeats); `sleep` returns at once.
+// endpoint (the last one repeats); a queued `apiError` fails that request; `sleep` returns at once.
 function waitForJob({ jobs, artifactLists, args = [] }) {
   const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-wait-for-job-"));
   try {
@@ -41,8 +41,10 @@ function waitForJob({ jobs, artifactLists, args = [] }) {
 set -euo pipefail
 queue="${bin}/artifacts"
 case "$2" in */jobs*) queue="${bin}/jobs" ;; esac
-head -n 1 "$queue" | jq -r "$4"
+line="$(head -n 1 "$queue")"
 if [ "$(wc -l < "$queue")" -gt 1 ]; then tail -n +2 "$queue" > "$queue.next" && mv "$queue.next" "$queue"; fi
+if [ "$line" = '"apiError"' ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+printf '%s\\n' "$line" | jq -r "$4"
 `,
       { mode: 0o755 },
     );
@@ -142,4 +144,21 @@ NodeTest.test("names the newest upload of a job a partial rerun reused", () => {
     NodeAssert.equal(reused.status, 0);
     NodeAssert.equal(reused.output, "artifact-id=2\n");
   }
+});
+
+NodeTest.test("retries a failed API request, and fails the wait if it keeps failing", () => {
+  const uploadedAt = "2026-11-10T19:40:00Z";
+  const retried = waitForJob({
+    jobs: ["apiError", job("completed", "success")],
+    artifactLists: ["apiError", artifacts(uploadedAt)],
+  });
+  NodeAssert.equal(retried.status, 0);
+  NodeAssert.equal(retried.output, "artifact-id=1\n");
+  const down = waitForJob({
+    jobs: [job("completed", "success")],
+    artifactLists: ["apiError"],
+  });
+  NodeAssert.equal(down.status, 1);
+  NodeAssert.match(down.stderr, /Could not list resource-monitor-darwin-x64 uploads/u);
+  NodeAssert.doesNotMatch(down.stderr, /succeeded without uploading/u);
 });

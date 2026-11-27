@@ -45,8 +45,10 @@ the stable scheduler and production gate.
   and resource monitor exist, and fails if any is missing. The Windows payload
   verifier first generates the Windows server bytecode once the staged Windows
   app exists, then verifies once the Windows package exists. Each wait names the
-  exact upload it found, and the next step downloads that artifact by ID. Assembly
-  still requires every job to succeed.
+  exact upload it found; the three Windows bytecode and verifier handoffs download
+  that artifact by ID, while the SyncTeX and resource monitor downloads still
+  select by name. A failed API request during a wait is retried a few times
+  before it fails the wait. Assembly still requires every job to succeed.
 - The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
   default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
   updater manifests are generated from the archive as before.
