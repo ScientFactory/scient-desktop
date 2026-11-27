@@ -324,6 +324,46 @@ describe("Scient analytics background runtime", () => {
     });
   });
 
+  it("sends startup timing by the hour, so its session's exact start gives no interval", async () => {
+    const outboxPath = fixturePath();
+    const runtime = createAnalyticsRuntime(
+      options({ outboxPath, now: () => new Date("2026-11-16T12:34:56.789Z") }),
+    );
+    const occurredAt = "2026-11-16T11:37:12.345Z";
+    const fact = { occurredAt, appVersion: "0.6.29", buildChannel: "stable" } as const;
+    try {
+      expect(runtime.record("app.session.started", { platform: "macos" })).toBe(true);
+      expect(
+        await runtime.ingest([
+          {
+            ...fact,
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a27",
+            name: "app.startup.timing",
+            properties: { launchKind: "later", uiReadyBucket: "under-2s" },
+          },
+          {
+            ...fact,
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a28",
+            name: "app.update.outcome",
+            properties: { step: "install", outcome: "handoff-attempted" },
+          },
+        ]),
+      ).toBe(true);
+    } finally {
+      await runtime.close();
+    }
+    const database = new NodeSqlite.DatabaseSync(outboxPath);
+    const rows = database
+      .prepare("SELECT name, occurred_at FROM analytics_outbox ORDER BY name")
+      .all() as unknown as ReadonlyArray<{ readonly name: string; readonly occurred_at: string }>;
+    database.close();
+    expect(rows).toEqual([
+      { name: "app.session.started", occurred_at: "2026-11-16T12:34:56.789Z" },
+      { name: "app.startup.timing", occurred_at: "2026-11-16T11:00:00.000Z" },
+      { name: "app.update.outcome", occurred_at: occurredAt },
+    ]);
+  });
+
   it("settles recorded events it must not send without queueing them", async () => {
     const runtime = createAnalyticsRuntime(
       options({ now: () => new Date("2026-11-16T12:00:00.000Z") }),

@@ -4,14 +4,16 @@ import { useEffect } from "react";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentShellStatus } from "../../state/shell";
-import { workspaceReadiness } from "./workspaceReadiness";
+import { reportDesktopWorkspaceReady, workspaceReadiness } from "./workspaceReadiness";
 
-let startupReported = false;
+const startup = { reported: false };
 
 export function DesktopWorkspaceReadiness(props: {
   readonly environmentId: EnvironmentId | null;
   readonly initialized: boolean;
   readonly projectRestored: boolean;
+  /** Ends startup timing only; an update restart ends where its workspace is restored. */
+  readonly startupOnly?: boolean;
 }) {
   const primary = usePrimaryEnvironment();
   const shell = useEnvironmentShellStatus(primary?.environmentId ?? null);
@@ -28,23 +30,22 @@ export function DesktopWorkspaceReadiness(props: {
     liveSnapshot: shell === "live",
   });
   const bridge = window.desktopBridge;
+  const startupOnly = props.startupOnly === true;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native startup and restart owners
   useEffect(() => {
-    if (!ready || !bridge?.getRestartReadinessToken || !bridge.reportWorkspaceReady) return;
+    if (!ready || !bridge) return;
     let current = true;
-    void bridge
-      .getRestartReadinessToken()
-      .then(async (token) => {
-        // Startup timing takes the first report; later ones matter only with a restart token.
-        if (!current || (token === null && startupReported)) return;
-        startupReported = true;
-        await bridge.reportWorkspaceReady?.({ ...token, projectRestored: props.projectRestored });
-      })
-      .catch(() => undefined);
+    void reportDesktopWorkspaceReady({
+      bridge,
+      startupOnly,
+      projectRestored: props.projectRestored,
+      startup,
+      isCurrent: () => current,
+    }).catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [bridge, ready, props.projectRestored]);
+  }, [bridge, ready, startupOnly, props.projectRestored]);
   return null;
 }

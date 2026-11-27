@@ -20,7 +20,8 @@ import * as DesktopStartupTiming from "./DesktopStartupTiming.ts";
 describe("classifyLaunch", () => {
   it.each([
     [null, false, "first-after-install"],
-    [null, true, "first-after-update"],
+    // State with no launch record: an older build, or a first launch that stopped before its backend was ready.
+    [null, true, "unknown"],
     ["1.2.2", true, "first-after-update"],
     ["1.2.2", false, "first-after-update"],
     ["1.2.3", true, "later"],
@@ -29,6 +30,30 @@ describe("classifyLaunch", () => {
       DesktopStartupTiming.classifyLaunch({ lastStartedVersion, appVersion: "1.2.3", ranBefore }),
       kind,
     );
+  });
+});
+
+describe("startupBucket", () => {
+  it.each([
+    [0, "under-2s"],
+    [1_999, "under-2s"],
+    [2_000, "2-4s"],
+    [3_999, "2-4s"],
+    [4_000, "4-8s"],
+    [7_999, "4-8s"],
+    [8_000, "8-15s"],
+    [14_999, "8-15s"],
+    [15_000, "15-30s"],
+    [29_999, "15-30s"],
+    [30_000, "30-60s"],
+    [59_999, "30-60s"],
+    [60_000, "over-60s"],
+    [3_600_000, "over-60s"],
+    [-1, "unknown"],
+    [Number.NaN, "unknown"],
+    [Number.POSITIVE_INFINITY, "unknown"],
+  ])("puts a %s ms startup stage in %s", (ms, bucket) => {
+    assert.equal(DesktopStartupTiming.startupBucket(ms), bucket);
   });
 });
 
@@ -62,9 +87,9 @@ describe("makeStartupTiming", () => {
           launchKind: "first-after-update",
           platform: "windows",
           architecture: "other",
-          uiReadyMs: 16_200,
-          backendReadyMs: 9_100,
-          windowShownMs: 12_400,
+          uiReadyBucket: "15-30s",
+          backendReadyBucket: "8-15s",
+          windowShownBucket: "8-15s",
           projectRestored: true,
         },
       ]);
@@ -87,7 +112,7 @@ describe("makeStartupTiming", () => {
           launchKind: "later",
           platform: "macos",
           architecture: "arm64",
-          uiReadyMs: 1_500,
+          uiReadyBucket: "under-2s",
           projectRestored: false,
         },
       ]);
@@ -168,23 +193,31 @@ describe("DesktopStartupTiming layer", () => {
           assert.equal(facts[0]?.appVersion, version);
           kinds.push(facts[0]?.properties.launchKind);
           assert.equal(facts[0]?.properties.platform, "windows");
-          assert.isAtLeast(facts[0]?.properties.uiReadyMs as number, 0);
+          // Only buckets reach the journal, never a raw time.
+          assert.include(
+            ["under-2s", "2-4s", "4-8s", "8-15s", "15-30s", "30-60s", "over-60s"],
+            facts[0]?.properties.uiReadyBucket,
+          );
+          assert.isEmpty(Object.keys(facts[0]?.properties ?? {}).filter((k) => k.endsWith("Ms")));
         }
         assert.deepEqual(kinds, ["first-after-install", "later", "first-after-update", "later"]);
       }),
   );
 
-  it.effect("treats an existing install without a launch record as updated", () =>
-    Effect.gen(function* () {
-      const home = temporaryHome();
-      const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment.pipe(
-        Effect.provide(environmentLayer(home, "1.2.3")),
-      );
-      NodeFS.mkdirSync(stateDir, { recursive: true });
-      NodeFS.writeFileSync(NodePath.join(stateDir, "environment-id"), "local\n");
-      const facts = yield* launch(home, "1.2.3", "true");
-      assert.equal(facts[0]?.properties.launchKind, "first-after-update");
-    }),
+  it.effect(
+    "reports an unknown kind after a first launch that stopped before its backend was ready",
+    () =>
+      Effect.gen(function* () {
+        const home = temporaryHome();
+        const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+          Effect.provide(environmentLayer(home, "1.2.3")),
+        );
+        // The server writes its environment id while it starts, before startup recovery's record.
+        NodeFS.mkdirSync(stateDir, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(stateDir, "environment-id"), "local\n");
+        const facts = yield* launch(home, "1.2.3", "true");
+        assert.equal(facts[0]?.properties.launchKind, "unknown");
+      }),
   );
 
   it.effect("records nothing while analytics is off; the next launch still counts as later", () =>

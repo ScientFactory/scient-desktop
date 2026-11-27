@@ -50,18 +50,15 @@ export const reportReady = DesktopIpc.makeIpcMethod({
   result: Schema.Boolean,
   handler: Effect.fn("desktop.restartReadiness.reportReady")(function* (ack, event) {
     if (!(yield* isAppFrame(event))) return false;
-    const startup = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
-    if (Option.isSome(startup)) {
-      yield* startup.value.workspaceReady({ projectRestored: ack.projectRestored });
-    }
-    if (ack.attemptId === undefined || ack.launchId === undefined) return false;
+    const { attemptId, launchId, projectRestored } = ack;
     const timing = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
-    return Option.isSome(timing)
-      ? yield* timing.value.workspaceReady({
-          attemptId: ack.attemptId,
-          launchId: ack.launchId,
-          projectRestored: ack.projectRestored,
-        })
-      : false;
+    // The restart takes its time first: startup timing then writes its journal.
+    const restartCompleted =
+      attemptId !== undefined && launchId !== undefined && Option.isSome(timing)
+        ? yield* timing.value.workspaceReady({ attemptId, launchId, projectRestored })
+        : false;
+    const startup = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
+    if (Option.isSome(startup)) yield* startup.value.workspaceReady({ projectRestored });
+    return restartCompleted;
   }),
 });

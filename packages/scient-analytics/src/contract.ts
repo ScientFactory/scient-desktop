@@ -1135,38 +1135,40 @@ function updateSummaryProperties(input: Readonly<Record<string, unknown>>) {
   };
 }
 
-/**
- * How long a launch took to reach a stage. Steps roughly double, so each one is equally coarse
- * relative to the time: a warm launch on a fast computer lands under 2 s, while a first open the
- * operating system scans or reads from a cold disk can take a minute, so the slow end keeps steps
- * of its own rather than one "over 15 s".
- */
-export function startupBucket(value: unknown): string {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
-  if (value < 2_000) return "under-2s";
-  if (value < 4_000) return "2-4s";
-  if (value < 8_000) return "4-8s";
-  if (value < 15_000) return "8-15s";
-  if (value < 30_000) return "15-30s";
-  if (value < 60_000) return "30-60s";
-  return "over-60s";
-}
-
+/** Doubling steps the desktop computes before it journals a time; nothing finer is accepted. */
+const STARTUP_BUCKETS = ["under-2s", "2-4s", "4-8s", "8-15s", "15-30s", "30-60s", "over-60s"];
 const LAUNCH_KINDS = ["first-after-install", "first-after-update", "later"];
 
 function startupTimingProperties(input: Readonly<Record<string, unknown>>) {
   closedEvent(input);
-  const backendReadyMs = property(input, "backendReadyMs");
-  const windowShownMs = property(input, "windowShownMs");
+  const backendReadyBucket = property(input, "backendReadyBucket");
+  const windowShownBucket = property(input, "windowShownBucket");
   return {
     launchKind: closedCategory(property(input, "launchKind"), LAUNCH_KINDS),
     platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
     architecture: closedCategory(property(input, "architecture"), [...ARCHITECTURE_VALUES]),
-    uiReadyBucket: startupBucket(property(input, "uiReadyMs")),
-    ...(backendReadyMs === undefined ? {} : { backendReadyBucket: startupBucket(backendReadyMs) }),
-    ...(windowShownMs === undefined ? {} : { windowShownBucket: startupBucket(windowShownMs) }),
+    uiReadyBucket: closedCategory(property(input, "uiReadyBucket"), STARTUP_BUCKETS),
+    ...(backendReadyBucket === undefined
+      ? {}
+      : { backendReadyBucket: closedCategory(backendReadyBucket, STARTUP_BUCKETS) }),
+    ...(windowShownBucket === undefined
+      ? {}
+      : { windowShownBucket: closedCategory(windowShownBucket, STARTUP_BUCKETS) }),
     projectRestored: normalizedBoolean(property(input, "projectRestored")),
   };
+}
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * The time an event is sent with, in epoch ms. Startup timing shares its session with
+ * `app.session.started`, so an exact time would give the gap between them to the millisecond; it
+ * is sent by the hour.
+ */
+export function exportedOccurredAtMs(name: string, occurredAtMs: number): number {
+  return name === "app.startup.timing"
+    ? Math.floor(occurredAtMs / HOUR_MS) * HOUR_MS
+    : occurredAtMs;
 }
 
 function turnTerminalStatus(value: unknown): string {

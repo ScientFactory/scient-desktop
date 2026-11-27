@@ -1,12 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  durationBucket,
-  modelKey,
-  normalizedKeys,
-  normalizeInheritedEvent,
-  startupBucket,
-} from "./contract.ts";
+import { durationBucket, modelKey, normalizedKeys, normalizeInheritedEvent } from "./contract.ts";
 import { ANALYTICS_CONTRACT_REVISION, eventContractViolation } from "./wireContract.ts";
 
 const context = {
@@ -613,40 +607,16 @@ describe("Scient analytics contract", () => {
     expect(JSON.stringify(failure)).not.toContain("/private/path");
   });
 
-  it.each([
-    [0, "under-2s"],
-    [1_999, "under-2s"],
-    [2_000, "2-4s"],
-    [3_999, "2-4s"],
-    [4_000, "4-8s"],
-    [7_999, "4-8s"],
-    [8_000, "8-15s"],
-    [14_999, "8-15s"],
-    [15_000, "15-30s"],
-    [29_999, "15-30s"],
-    [30_000, "30-60s"],
-    [59_999, "30-60s"],
-    [60_000, "over-60s"],
-    [3_600_000, "over-60s"],
-    [-1, "unknown"],
-    [Number.NaN, "unknown"],
-    [Number.POSITIVE_INFINITY, "unknown"],
-    ["4000", "unknown"],
-    [undefined, "unknown"],
-  ])("puts a %s ms startup stage in %s", (value, bucket) => {
-    expect(startupBucket(value)).toBe(bucket);
-  });
-
-  it("sends startup timing as buckets and closed values only", () => {
+  it("sends startup timing as closed buckets and values only", () => {
     const event = normalizeInheritedEvent(
       "app.startup.timing",
       {
         launchKind: "first-after-update",
         platform: "windows",
         architecture: "x64",
-        uiReadyMs: 16_437.8,
-        backendReadyMs: 9_120.4,
-        windowShownMs: 12_002.1,
+        uiReadyBucket: "15-30s",
+        backendReadyBucket: "8-15s",
+        windowShownBucket: "8-15s",
         projectRestored: true,
         machineName: "PRIVATE-HOST",
       },
@@ -670,19 +640,20 @@ describe("Scient analytics contract", () => {
       },
     });
 
-    // A stage that never happened stays absent; free text never becomes a launch kind.
+    // A stage that never happened stays absent; free text and raw times never pass.
     const sparse = normalizeInheritedEvent(
       "app.startup.timing",
-      { launchKind: "first-ever", platform: "android", uiReadyMs: 900 },
+      { launchKind: "first-ever", platform: "android", uiReadyBucket: "1.4s", uiReadyMs: 1_437 },
       context,
     );
     expect(sparse?.properties).toMatchObject({
       launchKind: "unknown",
       platform: "unknown",
       architecture: "unknown",
-      uiReadyBucket: "under-2s",
+      uiReadyBucket: "unknown",
       projectRestored: false,
     });
+    expect(sparse?.properties).not.toHaveProperty("uiReadyMs");
     expect(sparse?.properties).not.toHaveProperty("backendReadyBucket");
     expect(sparse?.properties).not.toHaveProperty("windowShownBucket");
   });

@@ -949,23 +949,31 @@ analytics is off for that launch) and the same delivery to one backend.
 - `uiReadyBucket`: from the desktop process's start to the first time a renderer reports the
   existing workspace readiness (local primary connected, settings hydrated, live snapshot, not
   navigating; the same signal an update restart's measurement ends on) on a chat, the no-project
-  screen or Getting Started, where a first launch opens.
+  screen or Getting Started, where a first launch opens. Getting Started reports startup only: it
+  never fetches an update restart's token, which the restored chat or no-project screen spends.
+  The desktop takes the restart's ready time before startup timing writes its journal.
 - `backendReadyBucket` and `windowShownBucket`: the primary backend's first readiness and the
   first main window shown; a stage the launch never reached is absent.
-- `launchKind`: `first-after-install`, `first-after-update` or `later`, from the version startup
-  recovery records in `desktop-last-started-version` once a launch's primary backend is ready
-  (whether or not analytics is on), read before this launch overwrites it. With no record, an
-  existing local environment id or desktop settings mean an older build ran here, so the launch
-  counts as after an update. A launch whose backend never became ready leaves the next one first.
+- `launchKind`: `first-after-install`, `first-after-update`, `later` or `unknown`, from the version
+  startup recovery records in `desktop-last-started-version` once a launch's primary backend is
+  ready (whether or not analytics is on), read before this launch overwrites it. With no record and
+  no earlier state the launch is first after install. With no record but an existing local
+  environment id or desktop settings, the kind is `unknown`: that state comes from a build older
+  than the record or from a first launch that stopped before its backend was ready (the server
+  writes its environment id while starting), and nothing local tells them apart.
 - `platform`, `architecture` and the envelope's `appVersion`/`buildChannel`, as on
   `app.session.started`, and `projectRestored` (a project opened rather than the no-project screen).
 
-Times leave the computer only as buckets: `under-2s`, `2-4s`, `4-8s`, `8-15s`, `15-30s`, `30-60s`,
-`over-60s` (`startupBucket` in the contract). Steps roughly double, so each is equally coarse
-relative to the time; a warm launch lands under 2 s, while a first open that the operating system
-scans or reads from a cold disk can take a minute, so the slow end keeps its own steps. A launch
-that never reaches readiness (quit or crashed first, a remote-only primary, or a first screen such
-as Settings) records nothing; count launches with `app.session.started`, not with this event.
+Times reach the journal, and leave the computer, only as buckets: `under-2s`, `2-4s`, `4-8s`,
+`8-15s`, `15-30s`, `30-60s`, `over-60s`. The desktop buckets them (`startupBucket` in
+`DesktopStartupTiming.ts`) and the contract accepts only those values. Steps roughly double, so each
+is equally coarse relative to the time; a warm launch lands under 2 s, while a first open that the
+operating system scans or reads from a cold disk can take a minute, so the slow end keeps its own
+steps. The event is sent with its time floored to the hour (`exportedOccurredAtMs` in the contract):
+it shares a session with `app.session.started`, whose exact time would otherwise give a
+millisecond interval. A launch that never reaches readiness (quit or crashed first, a remote-only
+primary, or a first screen such as Settings) records nothing; count launches with
+`app.session.started`, not with this event.
 
 ## Privacy invariants
 

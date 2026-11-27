@@ -16,6 +16,7 @@ function fixture(destroyed = false) {
   const token = { attemptId: "attempt-1", launchId: "launch-1" };
   const acknowledgements: unknown[] = [];
   const startupReports: unknown[] = [];
+  const calls: Array<"restart" | "startup"> = [];
   const window = {
     isDestroyed: () => destroyed,
     webContents: { id: 41, mainFrame },
@@ -27,14 +28,19 @@ function fixture(destroyed = false) {
       workspaceReady: (ack) =>
         Effect.sync(() => {
           acknowledgements.push(ack);
+          calls.push("restart");
           return true;
         }),
     }),
     Layer.mock(DesktopStartupTiming, {
-      workspaceReady: (input) => Effect.sync(() => void startupReports.push(input)),
+      workspaceReady: (input) =>
+        Effect.sync(() => {
+          startupReports.push(input);
+          calls.push("startup");
+        }),
     }),
   );
-  return { layer, mainFrame, token, acknowledgements, startupReports };
+  return { layer, mainFrame, token, acknowledgements, startupReports, calls };
 }
 
 it.effect("accepts only a registered app top frame and forwards no renderer timestamps", () =>
@@ -93,5 +99,18 @@ it.effect("ends startup timing on every launch, and a restart measurement only w
     );
     assert.deepEqual(f.startupReports, [{ projectRestored: false }]);
     assert.deepEqual(f.acknowledgements, []);
+  }),
+);
+
+it.effect("takes the restart's ready time before startup timing writes its journal", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const event = { sender: { id: 41 }, senderFrame: f.mainFrame };
+    assert.isTrue(
+      yield* reportReady
+        .handler({ ...f.token, projectRestored: true }, event)
+        .pipe(Effect.provide(f.layer)),
+    );
+    assert.deepEqual(f.calls, ["restart", "startup"]);
   }),
 );

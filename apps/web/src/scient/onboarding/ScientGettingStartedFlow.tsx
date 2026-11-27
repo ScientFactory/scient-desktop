@@ -208,11 +208,12 @@ export function ScientGettingStartedFlow(props: {
       onBack={goBack}
       onSkip={skip}
     >
-      {/* A first launch opens here, so startup timing must see it as a ready workspace. */}
+      {/* A first launch opens here; an update restart instead ends where its workspace returns. */}
       <DesktopWorkspaceReadiness
         environmentId={primaryEnvironmentId}
         initialized
         projectRestored={false}
+        startupOnly
       />
       {activeStep === "agent" ? (
         <GettingStartedAgentStep

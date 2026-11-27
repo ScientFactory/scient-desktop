@@ -1,7 +1,7 @@
 /**
  * DesktopStartupTiming - time from this process's start to a usable workspace, recorded once as an
- * `app.startup.timing` fact in the update-facts journal (same analytics gate and delivery); the
- * analytics contract turns the times into coarse buckets before anything leaves the computer.
+ * `app.startup.timing` fact in the update-facts journal (same analytics gate and delivery). Only
+ * coarse buckets reach the journal; the analytics contract accepts nothing finer.
  * @module DesktopStartupTiming
  */
 import * as Context from "effect/Context";
@@ -13,12 +13,13 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopStartupRecovery from "../../app/DesktopStartupRecovery.ts";
 import * as DesktopUpdateFacts from "../updateOutcomes/DesktopUpdateFacts.ts";
 
-export type LaunchKind = "first-after-install" | "first-after-update" | "later";
+export type LaunchKind = "first-after-install" | "first-after-update" | "later" | "unknown";
 
 /**
  * A launch is the first of its version when the last launch that started its backend ran another
  * version. With no such record, state an earlier launch left (its local environment id or desktop
- * settings) means a build older than the record ran here, so this launch follows an update.
+ * settings) comes either from a build older than the record or from a first launch that stopped
+ * before its backend was ready, so the kind is unknown.
  */
 export function classifyLaunch(input: {
   readonly lastStartedVersion: string | null;
@@ -26,9 +27,26 @@ export function classifyLaunch(input: {
   readonly ranBefore: boolean;
 }): LaunchKind {
   if (input.lastStartedVersion === null) {
-    return input.ranBefore ? "first-after-update" : "first-after-install";
+    return input.ranBefore ? "unknown" : "first-after-install";
   }
   return input.lastStartedVersion === input.appVersion ? "later" : "first-after-update";
+}
+
+/**
+ * How long a launch took to reach a stage. Steps roughly double, so each one is equally coarse
+ * relative to the time: a warm launch on a fast computer lands under 2 s, while a first open the
+ * operating system scans or reads from a cold disk can take a minute, so the slow end keeps steps
+ * of its own rather than one "over 15 s".
+ */
+export function startupBucket(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "unknown";
+  if (ms < 2_000) return "under-2s";
+  if (ms < 4_000) return "2-4s";
+  if (ms < 8_000) return "4-8s";
+  if (ms < 15_000) return "8-15s";
+  if (ms < 30_000) return "15-30s";
+  if (ms < 60_000) return "30-60s";
+  return "over-60s";
 }
 
 function analyticsPlatform(platform: NodeJS.Platform): "macos" | "windows" | "linux" | "other" {
@@ -83,9 +101,11 @@ export const makeStartupTiming = (input: {
           input.architecture === "arm64" || input.architecture === "x64"
             ? input.architecture
             : "other",
-        uiReadyMs,
-        ...(backendReadyMs === undefined ? {} : { backendReadyMs }),
-        ...(windowShownMs === undefined ? {} : { windowShownMs }),
+        uiReadyBucket: startupBucket(uiReadyMs),
+        ...(backendReadyMs === undefined
+          ? {}
+          : { backendReadyBucket: startupBucket(backendReadyMs) }),
+        ...(windowShownMs === undefined ? {} : { windowShownBucket: startupBucket(windowShownMs) }),
         projectRestored,
       });
     }),

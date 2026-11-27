@@ -22,8 +22,9 @@ import * as DesktopState from "./DesktopState.ts";
 
 // SCIENT-FORK: Scient releases, not the upstream project releases.
 const RELEASES_URL = "https://github.com/ScientFactory/scient-desktop/releases";
-// SCIENT-FORK: exported for startup timing, which reads the previous started version.
+// SCIENT-FORK:START — exported for startup timing, which reads the previous started version.
 export const LAST_STARTED_VERSION_FILE = "desktop-last-started-version";
+// SCIENT-FORK:END
 // Buttons are plain links to this host; will-navigate cancels them and runs the action.
 const ACTION_ORIGIN = "https://startup-recovery.invalid";
 
