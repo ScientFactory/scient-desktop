@@ -645,6 +645,9 @@ export const DesktopPreviewColorSchemeSchema: Schema.Codec<DesktopPreviewColorSc
 
 export const FAVICON_DATA_URL_MAX_LENGTH = 8192;
 export const FAVICON_CAPTURED_AT_MAX = 8_640_000_000_000_000;
+// SCIENT-FORK:START — bound for a browser-tab hover-card thumbnail data URL.
+export const TAB_THUMBNAIL_DATA_URL_MAX_LENGTH = 262_144;
+// SCIENT-FORK:END
 
 export interface DesktopPreviewFavicon {
   dataUrl: string;
@@ -1056,6 +1059,14 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
 });
 
 export const DesktopPreviewPdfExportInputSchema = DesktopPreviewTabInputSchema;
+
+// SCIENT-FORK:START — a thumbnail request names the address it expects, so the
+// desktop can refuse pixels from a guest that has since navigated elsewhere.
+export const DesktopPreviewTabThumbnailInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  url: Schema.String,
+});
+// SCIENT-FORK:END
 
 /** Apply zoom and color scheme at creation to avoid flashing browser defaults. */
 export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
@@ -1520,8 +1531,10 @@ export interface DesktopPreviewBridge {
   exportPdf: (tabId: string) => Promise<DesktopPreviewPdfExportArtifact>;
   /** Render one signed project HTML document in an isolated hidden Chromium guest. */
   renderHtmlPdf: (sourceUrl: string) => Promise<DesktopControlledHtmlPdfRenderArtifact>;
-  // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library"; null when it can't be read.
+  // SCIENT-FORK:START — Scient browser tabs: read a tab for "Save to Library", and a
+  // small in-memory thumbnail for the tab hover card; null when unavailable.
   readLibraryPage?: (tabId: string) => Promise<DesktopPreviewLibraryPage | null>;
+  captureTabThumbnail?: (tabId: string, url: string) => Promise<string | null>;
   // SCIENT-FORK:END
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;

@@ -601,9 +601,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     exportPdf: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL, { tabId }),
     renderHtmlPdf: (sourceUrl) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL, { sourceUrl }),
-    // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+    // SCIENT-FORK:START — Scient Library page read, and the tab hover-card thumbnail.
     readLibraryPage: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_LIBRARY_PAGE_CHANNEL, { tabId }),
+    captureTabThumbnail: (tabId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_TAB_THUMBNAIL_CHANNEL, { tabId, url }),
     // SCIENT-FORK:END
     revealArtifact: (path) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
