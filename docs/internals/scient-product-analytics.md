@@ -1002,7 +1002,8 @@ No window title, path, name or free text enters them.
 after windowless time since the previous summary:
 
 - `reason`: `launch`, `daily` or `quit`.
-- `enabled`: whether closing the last window keeps Scient running, as the app applies it.
+- `enabled`: the switch's effective value. A change takes effect at the next start, so after a
+  `setting-changed` the behaviour follows the previous value until Scient starts again.
 - `setBy`: `default` (no choice stored, so the platform's default applies) or `person`.
 - `daily` and `quit` only: `windowlessCount`, the windowless periods begun since the previous
   summary, and `windowlessTimeBucket`, the time with no window since then, including a period

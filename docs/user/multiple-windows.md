@@ -66,7 +66,8 @@ it moves, so scroll position and typed form input are not kept.
 With **Settings → General → Keep Scient running in the background** on,
 closing the last window leaves Scient running with no window, so agents and
 sign-ins keep working. It is on by default on macOS and off by default on
-Windows and Linux; once you change it, your choice stays. Open Scient again, or
+Windows and Linux; once you change it, your choice stays. A change takes effect
+the next time Scient starts. Open Scient again, or
 click its Dock icon on macOS, to bring a window back. On Windows and Linux,
 while the switch is on, Scient's tray icon has **Open Scient** and **Quit
 completely**; on macOS, **Quit Scient** (`Cmd+Q`) quits completely. Quitting
