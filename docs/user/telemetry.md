@@ -92,8 +92,8 @@ Scient reads both only when it starts: a value set afterwards, or one that only
 your shell profile (for example `~/.zshrc`) sets while you open Scient from the
 Dock, Finder or Start menu, is not guaranteed to apply to that launch.
 
-On a CI runner Scient sends nothing unless `SCIENT_ANALYTICS_ENABLED=true` is set
-when it is launched, and `DO_NOT_TRACK` is not.
+On a CI runner a packaged desktop build sends usage data only if you launch it
+with `SCIENT_ANALYTICS_ENABLED=true` and leave Do Not Track off.
 
 An administrator can turn it off for every user on a machine with a
 [managed policy](./managed-policy.md#other-capabilities).
