@@ -4,7 +4,7 @@ import "../../../index.css";
 import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import { createScientNestedCodeEditor } from "../nodes/codeMirrorCodeEditor";
@@ -227,20 +227,24 @@ describe("persistent Mermaid source editing", () => {
 
     const { host, onUserSourceChange } = await fixture(_fixture, "write", repaired);
     expect(host.querySelector(".cm-editor")).toBeNull();
+    const more = page.elementLocator(host).getByRole("button", {
+      name: "More diagram actions",
+      exact: true,
+    });
+    const editSource = page.getByRole("menu").getByRole("menuitem", {
+      name: "Edit source",
+      exact: true,
+    });
     const openFromMenu = async () => {
-      await userEvent.click(
-        host.querySelector<HTMLButtonElement>('[aria-label="More diagram actions"]')!,
-      );
-      await userEvent.click(
-        [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-          (item) => item.textContent === "Edit source",
-        )!,
-      );
+      await userEvent.click(more);
+      await expect.element(editSource).toBeVisible();
+      await userEvent.click(editSource);
     };
     await openFromMenu();
     const editor = nestedEditor(host);
     expect(sourceBox(host).closest(".scient-mermaid-card")).not.toBeNull();
     expect(editor.hasFocus).toBe(true);
+    await expect.element(page.getByRole("menu", { includeHidden: true })).not.toBeInTheDocument();
     await escape(editor);
     expect(sourceBox(host).hidden).toBe(true);
     await openFromMenu();
