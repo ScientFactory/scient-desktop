@@ -1247,7 +1247,7 @@ const make = Effect.gen(function* () {
         worktreePath: isolatedPath,
         force: false,
         execute: git.execute,
-        run: (args) => cleanupGit(repositoryRoot, [...args], "git worktree remove"),
+        run: (args, cwd) => cleanupGit(cwd, [...args], "git worktree remove"),
       });
       return null;
     });

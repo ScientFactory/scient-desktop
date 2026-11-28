@@ -50,6 +50,10 @@ vi.mock("../hooks/useTheme", async (importOriginal) => ({
 }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../state/environments", async (original) => ({
+  ...(await original()),
+  useEnvironment: () => undefined,
+}));
 vi.mock("../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/session")>()),
   usePreparedConnection: () => ({ _tag: "None" }),

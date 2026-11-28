@@ -3303,7 +3303,7 @@
   "c646366e142ba05f": "Der WSL-Status des Desktops ist nicht verfügbar.",
   "228dcd284ea651b3": "Der WSL-Status konnte nicht geladen werden.",
   "b08d105dd2553f8d": "Das Projekt ist nicht in der Desktop-App erschienen.",
-  "7a4b3f3b83e121d7": "{organization} hat anonyme Nutzungsdaten deaktiviert.",
+  "bf45d68027d21097": "{organization} hat Produktnutzungsdaten deaktiviert.",
   "d85822b18e9475df": "Verwaltet von {organization}.",
   "922269f8691aa3ba": "Es ließ sich nicht feststellen, ob diese Umgebung auf diesem Computer läuft.",
   "35cade9cc8a01363": "Portweiterleitung braucht die Desktop-App.",

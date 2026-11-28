@@ -411,7 +411,7 @@ export function layerWithRegistry<Error>(
     CommandReceiptStore.layer,
     layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
-  ).pipe(Layer.provide(layerDatabase));
+  ).pipe(Layer.provide(Layer.merge(layerDatabase, NodeCrypto.layer)));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase, ThreadViewers.layer)),
     // SCIENT-FORK: observe or gate the real canonical writer.

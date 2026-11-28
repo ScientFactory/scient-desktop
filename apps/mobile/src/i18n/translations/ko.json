@@ -5824,5 +5824,6 @@
   "4aa6f8d0d5800dca": "{count, plural, other {정리된 스레드 {count}개 더 보기}}",
   "f6cf1627f4acc5ef": "댓글 공개 범위",
   "eb1fd384ad5919dd": "내부 메모",
-  "b45f0b467e9406d0": "고객에게 답변"
+  "b45f0b467e9406d0": "고객에게 답변",
+  "15e5597f8f93ce12": "{start}~{end}"
 }

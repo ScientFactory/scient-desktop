@@ -35,6 +35,7 @@ export function useProjectOpening(open: boolean, close: () => void) {
       handoff: () => void;
     }) => Promise<void>,
     onError: (error: unknown) => void,
+    closeProjectView = close,
   ) => {
     if (!open || !mounted.current) return;
     if (active.current?.key === key && active.current.intent.isCurrent()) return;
@@ -53,7 +54,7 @@ export function useProjectOpening(open: boolean, close: () => void) {
               // Close before awaiting navigation, but don't cancel our own handoff
               // when the dialog unmounts. Never close it again on async completion.
               attempt.handedOff = true;
-              close();
+              closeProjectView();
             },
           });
         } catch (error) {

@@ -59,7 +59,12 @@ import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import { writeConversationFork } from "../orchestration-v2/scient-fork/ConversationForkRecords.ts";
 
 const layerEventPersistence = EventSink.layer.pipe(
-  Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
+  Layer.provideMerge(
+    Layer.merge(
+      EventStore.layer,
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+    ),
+  ),
 );
 const layerServices = Layer.mergeAll(
   LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(layerEventPersistence)),

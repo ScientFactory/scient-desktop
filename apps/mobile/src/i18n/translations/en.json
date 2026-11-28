@@ -5848,5 +5848,6 @@
   "4aa6f8d0d5800dca": "{count, plural, one {Show {count} more settled thread} other {Show {count} more settled threads}}",
   "f6cf1627f4acc5ef": "Comment audience",
   "eb1fd384ad5919dd": "Internal note",
-  "b45f0b467e9406d0": "Reply to customer"
+  "b45f0b467e9406d0": "Reply to customer",
+  "15e5597f8f93ce12": "{start} to {end}"
 }

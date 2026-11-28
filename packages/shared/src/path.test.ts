@@ -131,6 +131,8 @@ describe("workspaceRelativeFilePath", () => {
     // SCIENT-FORK:END
     ["/repo/a\\b.txt", "/repo", "a\\b.txt"],
     ["/repo/a/b.txt", "/repo", "a/b.txt"],
+    ["/repo//src/app.ts", "/repo", "src/app.ts"],
+    ["C:\\repo\\\\src\\app.ts", "C:\\repo", "src/app.ts"],
     ["/repo/a\\", "/repo", "a\\"],
     ["/repo/..\\notes.md", "/repo", "..\\notes.md"],
     ["/repo/a\\/../../notes.md", "/repo", null],

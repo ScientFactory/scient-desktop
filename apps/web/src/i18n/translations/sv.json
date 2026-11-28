@@ -3302,7 +3302,7 @@
   "c646366e142ba05f": "Skrivbordsappens WSL-status är inte tillgänglig.",
   "228dcd284ea651b3": "Det gick inte att läsa in WSL-statusen.",
   "b08d105dd2553f8d": "Projektet visades inte i skrivbordsappen.",
-  "7a4b3f3b83e121d7": "{organization} har stängt av anonym användningsdata.",
+  "bf45d68027d21097": "{organization} har stängt av produktanvändningsdata.",
   "d85822b18e9475df": "Hanteras av {organization}.",
   "922269f8691aa3ba": "Det gick inte att avgöra om den här miljön körs på den här datorn.",
   "35cade9cc8a01363": "Portvidarebefordring kräver skrivbordsappen.",

@@ -5846,5 +5846,6 @@
   "4aa6f8d0d5800dca": "{count, plural, one {Visa {count} klar tråd till} other {Visa {count} klara trådar till}}",
   "f6cf1627f4acc5ef": "Kommentarens synlighet",
   "eb1fd384ad5919dd": "Intern anteckning",
-  "b45f0b467e9406d0": "Svara kunden"
+  "b45f0b467e9406d0": "Svara kunden",
+  "15e5597f8f93ce12": "{start} till {end}"
 }

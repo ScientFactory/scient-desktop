@@ -13,6 +13,7 @@ import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
+  isSkillReloadCommand,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProvidersForCwd,
@@ -209,6 +210,16 @@ describe("scientManagedSkillReleaseKey", () => {
 });
 
 // SCIENT-FORK:END
+
+describe("isSkillReloadCommand", () => {
+  it("matches only a bare reload command", () => {
+    expect(isSkillReloadCommand(" /reload-skills\n")).toBe(true);
+    expect(isSkillReloadCommand("/Reload-Plugins")).toBe(true);
+    expect(isSkillReloadCommand("/reload-skills then use it")).toBe(false);
+    expect(isSkillReloadCommand("reload-skills")).toBe(false);
+  });
+});
+
 describe("workspace provider snapshots", () => {
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([

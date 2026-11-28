@@ -1785,6 +1785,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.refreshManagedRuntimeCatalog ?? false,
             input.workspaceSnapshotsOnDemand ?? true,
             input.modelCatalogOnly ?? false,
+            input.limitsOnly ?? false,
           ]),
       },
     }),

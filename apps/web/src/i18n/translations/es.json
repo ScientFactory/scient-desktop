@@ -3302,7 +3302,7 @@
   "c646366e142ba05f": "El estado de WSL del escritorio no está disponible.",
   "228dcd284ea651b3": "No se pudo cargar el estado de WSL.",
   "b08d105dd2553f8d": "El proyecto no apareció en la app de escritorio.",
-  "7a4b3f3b83e121d7": "{organization} desactivó los datos de uso anónimos.",
+  "bf45d68027d21097": "{organization} desactivó los datos de uso del producto.",
   "d85822b18e9475df": "Gestionado por {organization}.",
   "922269f8691aa3ba": "No se pudo saber si este entorno se ejecuta en este equipo.",
   "35cade9cc8a01363": "El reenvío de puertos necesita la app de escritorio.",
