@@ -349,7 +349,7 @@ describe("orchestrator MCP delegation", () => {
 
           const heldFollowup = yield* send(fx, {
             threadId: childThreadId,
-            message: "This queued follow-up must remain stopped until resumed.",
+            message: "This queued follow-up must never start after cancellation.",
             mode: "queue",
             clientRequestId: "delegated-child-held-followup",
           });
@@ -422,25 +422,7 @@ describe("orchestrator MCP delegation", () => {
             latestTerminalStatus: "interrupted",
           });
 
-          // The held follow-up never starts; cancelling it settles its own task.
-          yield* fx.waitFor(parentThreadId, (projection) =>
-            projection.subagents.some(
-              (task) => task.id === heldFollowup.taskId && task.status === "idle",
-            ),
-          );
-          expect(
-            (yield* fx.projection(childThreadId)).runs.find((run) => run.id === heldFollowup.runId),
-          ).toMatchObject({ status: "queued", queueHeld: true, startedAt: null });
-          const cancelHeld = yield* fx
-            .invoke("task_cancel", {
-              taskId: heldFollowup.taskId,
-              clientRequestId: "cancel-held-delegated-followup",
-            })
-            .pipe(
-              Effect.flatMap((call) => decodeTaskCancelResult(call.structuredContent)),
-              Effect.orDie,
-            );
-          expect(cancelHeld.status).toBe("cancel_requested");
+          // Cancelling the completed task also cancels the parent's queued follow-up.
           yield* fx.waitFor(parentThreadId, (projection) =>
             projection.subagents.some(
               (task) => task.id === heldFollowup.taskId && task.status === "cancelled",

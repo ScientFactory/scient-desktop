@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
+import { makeLinkedWorktreeCleanupFixture } from "./testUtils/linkedWorktreeCleanupFixture.ts";
 import { threadCreated, THREAD_ID } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import { ServerConfig } from "./config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "./persistence/Sqlite.ts";
@@ -62,8 +63,11 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const now = yield* DateTime.now;
       const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
-      yield* fs.makeDirectory(worktreePath, { recursive: true });
-      yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
+      const {
+        execute: executeWorktreeGit,
+        moves,
+        removals,
+      } = yield* makeLinkedWorktreeCleanupFixture(config.baseDir, worktreePath);
       const created = threadCreated(ProviderDriverKind.make("codex"));
       yield* sink.commitProjectCommand({
         commandId: CommandId.make("cleanup-project"),
@@ -135,8 +139,6 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
       const completionRead = yield* Deferred.make<void>();
       let completed = false;
       let headReads = 0;
-      let isolatedPath: string | undefined;
-      const removals: string[] = [];
       const settings = yield* Settings.ServerSettingsService.pipe(
         Effect.provide(
           Settings.layerTest({
@@ -209,16 +211,12 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                         : ["symbolic-ref", "--quiet", "HEAD"],
                     );
                   }
-                  if (input.args[0] === "worktree" && input.args[1] === "move") {
-                    assert.isFalse(input.args.includes("--force"));
-                    isolatedPath = input.args[3]!;
-                    yield* fs.rename(input.args[2]!, isolatedPath);
-                  }
-                  if (input.args.includes("remove")) {
-                    assert.isFalse(input.args.includes("--force"));
-                    const target = input.args.at(-1)!;
-                    removals.push(target);
-                    yield* fs.remove(target, { recursive: true });
+                  if (
+                    input.operation === "StorageCleanup.cleanupGit" ||
+                    input.operation === "StorageCleanup.worktreeAdminDir" ||
+                    input.operation === "StorageCleanup.worktreeRepository"
+                  ) {
+                    return yield* executeWorktreeGit(input);
                   }
                   return {
                     exitCode: ChildProcessSpawner.ExitCode(0),
@@ -276,6 +274,7 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
         }
       yield* Deferred.await(completionRead);
       yield* cleanup.drain;
+      const isolatedPath = moves[0]?.[3];
       assert.deepStrictEqual(
         removals,
         protection === "none" || protection === "cancelled" ? [isolatedPath] : [],

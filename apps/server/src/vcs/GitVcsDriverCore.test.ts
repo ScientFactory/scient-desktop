@@ -9040,10 +9040,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           Effect.gen(function* () {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "-c" &&
-              command.args[1] === "status.showUntrackedFiles=normal" &&
-              command.args[2] === "worktree" &&
-              command.args[3] === "remove"
+              typeof command.args[0] === "string" &&
+              command.args[0].startsWith("--git-dir=") &&
+              command.args[1] === "worktree" &&
+              command.args[2] === "remove"
             ) {
               yield* Deferred.succeed(removalStarted, undefined);
               yield* Effect.sleep("31 seconds");

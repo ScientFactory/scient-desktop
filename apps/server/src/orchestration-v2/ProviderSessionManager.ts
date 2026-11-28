@@ -2864,7 +2864,17 @@ export const layerWithOptions = (
           /** Session release unloads only the threads it would archive, and never waits. */
           readonly archiveOnly?: boolean;
         }): Effect.fn.Return<void> {
-          const outcome = yield* threadAttachment.withLock(
+          // SCIENT-FORK:START — a regular idle unload can hold the lock while recording its
+          // detach. A closing session must reach physical cleanup even during a pending write.
+          const withAttachmentLock =
+            input.archiveOnly === true
+              ? <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
+                  threadAttachment
+                    .tryWithLock(key, effect)
+                    .pipe(Effect.map(Option.getOrElse(() => "skipped" as const)))
+              : threadAttachment.withLock;
+          // SCIENT-FORK:END
+          const outcome = yield* withAttachmentLock(
             threadAttachmentKey(input),
             Effect.gen(function* () {
               const key = sessionKey(input.providerSessionId);
@@ -4799,7 +4809,13 @@ export const layerWithOptions = (
             const detachMutation = Ref.modify(sessions, (current) => {
               // SCIENT-FORK:END
               const entry = current.get(key);
-              if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
+              // SCIENT-FORK:START — an idle-detached thread can still own a native release to join.
+              if (
+                entry === undefined ||
+                (!entry.attachedThreadIds.has(input.threadId) &&
+                  !entry.idleUnloadedProviderThreads.has(input.threadId))
+              ) {
+                // SCIENT-FORK:END
                 return [
                   Option.none<{
                     readonly entry: LiveSessionEntry;
