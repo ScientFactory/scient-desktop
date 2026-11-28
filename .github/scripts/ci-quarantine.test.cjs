@@ -314,17 +314,34 @@ test("the receipt passes only as a consequence of quarantined jobs", () => {
   const [wslRule] = WITNESSES;
   const wsl = (conclusion, exercised = conclusion) =>
     job(8, wslRule.witness, [step(wslRule.step, exercised)], conclusion);
-  const pass = decide([webJob(), installer, wsl("success"), receipt]);
+  // A nightly or manual run: the installer uploaded a WSL payload after the waived failure.
+  const uploading = job(3, ROWS.voice.job, [
+    step(ROWS.voice.step, "failure", at(9), at(11)),
+    step(wslRule.payload, "success", at(12), at(13)),
+  ]);
+  const pass = decide([webJob(), uploading, wsl("success"), receipt]);
   assert.equal(pass.ok, true, pass.blocked.join("\n"));
   // The waived installer failure needs its WSL payload exercised: a skipped, cancelled, failed
   // or absent WSL job blocks.
   for (const jobs of [
-    [webJob(), installer, wsl("skipped"), receipt],
+    [webJob(), uploading, wsl("skipped"), receipt],
+    [webJob(), uploading, wsl("cancelled"), receipt],
+    [webJob(), uploading, wsl("success", "skipped"), receipt],
+    [webJob(), uploading, receipt],
+    // Without an upload the WSL job must still have been skipped, not cancelled or absent.
     [webJob(), installer, wsl("cancelled"), receipt],
-    [webJob(), installer, wsl("success", "skipped"), receipt],
     [webJob(), installer, receipt],
   ])
     assert.equal(decide(jobs).ok, false);
+  // A pull request's run builds no WSL payload and skips the WSL job: nothing to exercise.
+  const slim = job(3, ROWS.voice.job, [
+    step(ROWS.voice.step, "failure", at(9), at(11)),
+    step(wslRule.payload, "skipped", at(12), at(12)),
+  ]);
+  for (const installed of [installer, slim]) {
+    const result = decide([webJob(), installed, wsl("skipped"), receipt]);
+    assert.equal(result.ok, true, result.blocked.join("\n"));
+  }
   // Alone, the receipt's failure explains nothing.
   assert.equal(decide([receipt]).ok, false);
   // The receipt refusing anything but failed needs blocks.
@@ -591,10 +608,10 @@ test("the witness jobs and steps exist under these names", () => {
     path.join(ROOT, ".github/workflows/windows-packaging.yml"),
     "utf8",
   );
-  for (const { job: name, witness, step: s } of WITNESSES) {
+  for (const { job: name, payload, witness, step: s } of WITNESSES) {
     for (const each of [name, witness])
       assert.ok(workflow.includes(`name: ${each.split(" / ").slice(1).join(" / ")}`), each);
-    assert.ok(workflow.includes(`- name: ${s}`), s);
+    for (const each of [payload, s]) assert.ok(workflow.includes(`- name: ${each}`), each);
   }
 });
 
@@ -610,8 +627,10 @@ test("the consequence jobs and steps exist under these names", () => {
   }
 });
 
-test("steps that run despite an earlier failure say so in ci.yml, wherever they are", () => {
-  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+test("steps that run despite an earlier failure say so in their workflow, wherever they are", () => {
+  const workflow = [".github/workflows/ci.yml", ".github/workflows/windows-packaging.yml"]
+    .map((file) => fs.readFileSync(path.join(ROOT, file), "utf8"))
+    .join("\n");
   for (const name of RUN_DESPITE_FAILURE) {
     const conditions = [
       ...workflow.matchAll(
