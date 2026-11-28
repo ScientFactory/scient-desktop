@@ -1,8 +1,21 @@
 name: Windows Packaging
 
+# Pull requests, merge groups and main pushes qualify the slim installer that releases ship. The
+# full installer with the WSL runtime, which no release ships yet, is built and qualified only
+# when the caller asks for it: CI's nightly and manual runs.
 on:
   workflow_call:
+    inputs:
+      wsl:
+        description: Also build and qualify the full installer with the WSL runtime
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      wsl:
+        description: Also build and qualify the full installer with the WSL runtime
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -14,6 +27,7 @@ concurrency:
 jobs:
   linux_runtime:
     name: Windows packaging / Linux prerequisites
+    if: ${{ inputs.wsl }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -41,7 +55,7 @@ jobs:
           path: windows-prerequisites/
           if-no-files-found: error
 
-  # Starts beside linux_runtime and waits for its artifact only before the build needs it.
+  # With WSL, starts beside linux_runtime and waits for its artifact only before the full build.
   package_windows:
     name: Windows packaging / Installer and native runtime
     runs-on: windows-2025
@@ -51,7 +65,7 @@ jobs:
       actions: read
     # The exact WSL payload this execution uploaded, for qualify_wsl_runtime. The first step and
     # the step after a successful upload both record the attempt, so a payload that an earlier
-    # attempt of this job reported, or an upload that failed, never matches.
+    # attempt of this job reported, or an upload that failed, never matches. Empty without WSL.
     outputs:
       started_attempt: ${{ steps.execution.outputs.attempt }}
       wsl_attempt: ${{ steps.wsl_uploaded.outputs.attempt }}
@@ -243,17 +257,6 @@ jobs:
         shell: pwsh
         run: node scripts/stage-synctex-runtime.ts --platform win --arch x64 --output native-runtimes/synctex-runtime --verbose
 
-      - name: Wait for the Linux prerequisites
-        shell: bash
-        timeout-minutes: 15
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Linux prerequisites" windows-packaging-prerequisites
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: windows-packaging-prerequisites
-          path: windows-prerequisites
-          github-token: ${{ github.token }}
       # electron-builder downloads Electron and its NSIS tools on every run without these.
       - name: Restore Electron downloads
         id: electron_cache
@@ -265,65 +268,24 @@ jobs:
           key: windows-electron-downloads-v1-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json', 'node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/package.json') }}
       - name: Align qualification package versions
         run: node scripts/update-release-package-versions.ts 0.6.22
-      # Fixed qualification version exercises Scient's stable packaging shape.
-      # This is the release packer, with no signing secrets or publication step.
+      # Fixed qualification version exercises Scient's stable packaging shape: the slim installer
+      # releases ship. This is the release packer, with no signing secrets or publication step.
       - name: Build and validate the real NSIS installer
         shell: bash
         env:
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
         run: |
           set -euo pipefail
-          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --keep-stage --verbose \
-            --synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime" \
-            --wsl-prebuild "$GITHUB_WORKSPACE/windows-prerequisites/wsl-prebuild/pty.node" \
-            --wsl-synctex-runtime "$GITHUB_WORKSPACE/windows-prerequisites/synctex-wsl"
-      # The Linux runtime the installer carries, for the WSL qualification after this job;
-      # the installed copy must match it byte for byte below.
-      - name: Collect the packaged WSL runtime
-        id: wsl_collect
+          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --keep-stage --omit-wsl-runtime --verbose \
+            --synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime"
+      - name: Verify the packaged app with the release verifier
         shell: pwsh
         run: |
           $stage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($null -eq $stage) { throw 'Missing retained package stage' }
           $unpacked = Join-Path $stage.FullName 'app/dist/win-unpacked'
           "SCIENT_PACKAGING_UNPACKED=$unpacked" >> $env:GITHUB_ENV
-          New-Item -ItemType Directory -Path wsl-qualification | Out-Null
-          Copy-Item (Join-Path $unpacked 'resources/wsl-runtime.tar.gz') wsl-qualification/
-          $sha256 = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
-          "sha256=$sha256" >> $env:GITHUB_OUTPUT
-      # Production's install script for that tarball, generated here because this job has the
-      # workspace; the Linux verifier then needs only Node and its probe.
-      - name: Write the WSL install script for the qualification
-        id: wsl_install_script
-        shell: bash
-        env:
-          SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
-        run: |
-          set -euo pipefail
-          script_sha256="$(node scripts/write-scient-wsl-install-script.mjs wsl-qualification/wsl-runtime.tar.gz "$SHA256" "$GITHUB_RUN_ATTEMPT")"
-          echo "sha256=$script_sha256" >> "$GITHUB_OUTPUT"
-      - id: wsl_payload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: windows-packaging-wsl-runtime
-          path: |
-            wsl-qualification/wsl-runtime.tar.gz
-            wsl-qualification/wsl-runtime-install.sh
-            wsl-qualification/wsl-runtime-install.json
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-      - name: Record the uploaded WSL payload
-        id: wsl_uploaded
-        shell: bash
-        env:
-          ARTIFACT_ID: ${{ steps.wsl_payload.outputs.artifact-id }}
-          SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
-          INSTALL_SCRIPT_SHA256: ${{ steps.wsl_install_script.outputs.sha256 }}
-        run: |
-          set -euo pipefail
-          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ && "$SHA256" =~ ^[0-9a-f]{64}$ && "$INSTALL_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf 'attempt=%s\nartifact_id=%s\nsha256=%s\ninstall_script_sha256=%s\n' "$GITHUB_RUN_ATTEMPT" "$ARTIFACT_ID" "$SHA256" "$INSTALL_SCRIPT_SHA256" >> "$GITHUB_OUTPUT"
+          node scripts/verify-windows-desktop-artifact.ts --app-dir "$unpacked" --arch x64 --build-version 0.6.22 --omit-wsl-runtime
       - name: Exercise packaged terminal and Cursor helpers
         shell: pwsh
         run: node scripts/qualify-windows-packaged-runtime.mjs "$env:SCIENT_PACKAGING_UNPACKED"
@@ -408,48 +370,119 @@ jobs:
           node scripts/qualify-windows-install-folder.mjs installed "$installDir" "$folderId"
           if ($LASTEXITCODE -ne 0) { throw 'The installer did not protect the upgraded folder' }
           node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
-      - name: Require the installed WSL runtime to be the one qualified
-        shell: pwsh
-        run: |
-          $installed = (Get-FileHash (Join-Path $env:SCIENT_PACKAGING_INSTALL 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash
-          $qualified = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash
-          if ($installed -ne $qualified) { throw "Installed WSL runtime $installed is not the uploaded $qualified" }
+          if ($LASTEXITCODE -ne 0) { throw 'The upgraded app failed its runtime qualification' }
+          node scripts/native-server-compile-cache.mjs check "$installDir" Scient.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The upgraded app did not accept its server bytecode' }
       # Last: each install here replaces the registered upgrade install above.
       - name: Install into a fresh, a shared and a linked folder
         shell: pwsh
         timeout-minutes: 10
         run: node scripts/qualify-windows-install-folder.mjs fixtures (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path
-      # SCIENT-FORK:START — also exercise the slim Windows release build (--omit-wsl-runtime)
-      # with real app.asar/server.asar packaging, standalone verifier, launch smoke, and the
-      # installed app accepting its prepared server bytecode.
-      - name: Build and qualify the slim Windows installer (--omit-wsl-runtime)
+      # SCIENT-FORK:START — the full installer with the WSL runtime, on nightly and manual runs
+      # only. These steps run despite an earlier failure, so a waived failure never leaves the
+      # full package unqualified; each needs the step before it to have succeeded. Last: its
+      # install replaces the registered install above.
+      - name: Wait for the Linux prerequisites
+        if: ${{ !cancelled() && inputs.wsl }}
+        id: wsl_prerequisites
+        shell: bash
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Linux prerequisites" windows-packaging-prerequisites
+      - name: Download the Linux prerequisites
+        if: ${{ !cancelled() && steps.wsl_prerequisites.outcome == 'success' }}
+        id: wsl_prerequisites_download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-packaging-prerequisites
+          path: windows-prerequisites
+          github-token: ${{ github.token }}
+      - name: Build and validate the full WSL installer
+        if: ${{ !cancelled() && steps.wsl_prerequisites_download.outcome == 'success' }}
+        id: wsl_build
+        shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: 'true'
+        run: |
+          set -euo pipefail
+          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --skip-build --keep-stage --output-dir release-wsl --verbose \
+            --synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime" \
+            --wsl-prebuild "$GITHUB_WORKSPACE/windows-prerequisites/wsl-prebuild/pty.node" \
+            --wsl-synctex-runtime "$GITHUB_WORKSPACE/windows-prerequisites/synctex-wsl"
+      # The Linux runtime the full installer carries, for the WSL qualification after this job;
+      # the installed copy must match it byte for byte below.
+      - name: Collect the packaged WSL runtime
+        if: ${{ !cancelled() && steps.wsl_build.outcome == 'success' }}
+        id: wsl_collect
+        shell: pwsh
+        run: |
+          $stage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $stage) { throw 'Missing retained full package stage' }
+          $unpacked = Join-Path $stage.FullName 'app/dist/win-unpacked'
+          node scripts/verify-windows-desktop-artifact.ts --app-dir "$unpacked" --arch x64 --build-version 0.6.22
+          if ($LASTEXITCODE -ne 0) { throw 'Full Windows artifact verification failed' }
+          New-Item -ItemType Directory -Path wsl-qualification | Out-Null
+          Copy-Item (Join-Path $unpacked 'resources/wsl-runtime.tar.gz') wsl-qualification/
+          $sha256 = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$sha256" >> $env:GITHUB_OUTPUT
+      # Production's install script for that tarball, generated here because this job has the
+      # workspace; the Linux verifier then needs only Node and its probe.
+      - name: Write the WSL install script for the qualification
+        if: ${{ !cancelled() && steps.wsl_collect.outcome == 'success' }}
+        id: wsl_install_script
+        shell: bash
+        env:
+          SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          script_sha256="$(node scripts/write-scient-wsl-install-script.mjs wsl-qualification/wsl-runtime.tar.gz "$SHA256" "$GITHUB_RUN_ATTEMPT")"
+          echo "sha256=$script_sha256" >> "$GITHUB_OUTPUT"
+      - id: wsl_payload
+        if: ${{ !cancelled() && steps.wsl_install_script.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-packaging-wsl-runtime
+          path: |
+            wsl-qualification/wsl-runtime.tar.gz
+            wsl-qualification/wsl-runtime-install.sh
+            wsl-qualification/wsl-runtime-install.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Record the uploaded WSL payload
+        if: ${{ !cancelled() && steps.wsl_payload.outcome == 'success' }}
+        id: wsl_uploaded
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.wsl_payload.outputs.artifact-id }}
+          SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
+          INSTALL_SCRIPT_SHA256: ${{ steps.wsl_install_script.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ && "$SHA256" =~ ^[0-9a-f]{64}$ && "$INSTALL_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'attempt=%s\nartifact_id=%s\nsha256=%s\ninstall_script_sha256=%s\n' "$GITHUB_RUN_ATTEMPT" "$ARTIFACT_ID" "$SHA256" "$INSTALL_SCRIPT_SHA256" >> "$GITHUB_OUTPUT"
+      - name: Install the full WSL installer into a fresh folder
+        if: ${{ !cancelled() && steps.wsl_uploaded.outcome == 'success' }}
         shell: pwsh
         timeout-minutes: 10
         env:
-          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: 'true'
           SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
         run: |
-          $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-slim-profile'
-          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-slim-appdata'
-          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --skip-build --keep-stage --omit-wsl-runtime --output-dir release-slim --verbose `
-            --synctex-runtime "$env:GITHUB_WORKSPACE/native-runtimes/synctex-runtime"
-          if ($LASTEXITCODE -ne 0) { throw 'Slim Windows installer build failed' }
-          $slimStage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($null -eq $slimStage) { throw 'Missing retained slim package stage' }
-          $slimUnpacked = Join-Path $slimStage.FullName 'app/dist/win-unpacked'
-          node scripts/verify-windows-desktop-artifact.ts --app-dir "$slimUnpacked" --arch x64 --build-version 0.6.22 --omit-wsl-runtime
-          if ($LASTEXITCODE -ne 0) { throw 'Slim Windows artifact verification failed' }
-          # Install the slim NSIS artifact into a fresh protected directory so launch-smoke
-          # exercises real installer ACLs and the packaged Overleaf/speech/desktop runtime.
-          $slimInstallDir = 'C:\scient-install-slim'
-          if (Test-Path $slimInstallDir) { Remove-Item -Recurse -Force $slimInstallDir }
-          $slimInstaller = (Resolve-Path 'release-slim/Scient-0.6.22-x64.exe').Path
-          $slimProc = Start-Process $slimInstaller -ArgumentList '/S', "/D=$slimInstallDir" -Wait -PassThru
-          if ($slimProc.ExitCode -ne 0) { throw "Slim installer failed with exit $($slimProc.ExitCode)" }
-          node scripts/qualify-windows-packaged-runtime.mjs "$slimInstallDir" --launch-smoke
-          if ($LASTEXITCODE -ne 0) { throw 'Slim Windows runtime qualification failed' }
-          node scripts/native-server-compile-cache.mjs check "$slimInstallDir" Scient.exe
-          if ($LASTEXITCODE -ne 0) { throw 'The installed slim app did not accept its server bytecode' }
+          $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-wsl-profile'
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-wsl-appdata'
+          $installDir = 'C:\scient-install-wsl'
+          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+          $installer = (Resolve-Path 'release-wsl/Scient-0.6.22-x64.exe').Path
+          $process = Start-Process $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Full installer failed with exit $($process.ExitCode)" }
+          $installed = (Get-FileHash (Join-Path $installDir 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash
+          $qualified = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash
+          if ($installed -ne $qualified) { throw "Installed WSL runtime $installed is not the uploaded $qualified" }
+          node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
+          if ($LASTEXITCODE -ne 0) { throw 'The full app failed its runtime qualification' }
+          node scripts/native-server-compile-cache.mjs check "$installDir" Scient.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The full app did not accept its server bytecode' }
       # SCIENT-FORK:END
       # The installer and its blockmap are already compressed; deflating them again only costs time.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -490,14 +523,15 @@ jobs:
             ~\AppData\Local\electron-builder\Cache
           key: ${{ steps.electron_cache.outputs.cache-primary-key }}
 
-  # Runs once the installer job has ended, so no runner waits for the build. It also runs after
-  # a failed installer job, so a payload uploaded before a late failure is still qualified. It
-  # takes only the artifact and SHA-256 that this installer execution reported, also on a rerun of
-  # this job alone; with none, it fails. The installer job's own failure still fails the run.
+  # With WSL only. Runs once the installer job has ended, so no runner waits for the build. It
+  # also runs after a failed installer job, so a payload uploaded before a late failure is still
+  # qualified. It takes only the artifact and SHA-256 that this installer execution reported, also
+  # on a rerun of this job alone; with none, it fails. The installer job's own failure still fails
+  # the run.
   qualify_wsl_runtime:
     name: Windows packaging / Packaged WSL Linux runtime
     needs: package_windows
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.wsl }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
