@@ -230,12 +230,10 @@ which can also select either suite. The nightly run, and any main push that cann
 qualification, runs both on all four computers.
 
 Mac runner slots are the scarcest (15 macOS jobs at a time, shared by every repository in the
-organization), so a full run uses four of them. `Compute on Mac / macos-15` runs real R and
-Julia, managed Python and real Python one after another. The Intel Mac runs them in two jobs,
-`Compute on Mac / macos-15-intel / managed Python` and `Compute on Mac / macos-15-intel / real
-Python` (3.10 and 3.12), each listed only when its suite was selected, and its R and Julia keep
-their own job. To go back to one Intel job, replace the two Intel matrix entries with one that sets
-both `managed` and `python`. Each role runs the same steps as its own job
+organization), so a full run uses three of them. `Compute on Mac / macos-15` runs real R and
+Julia, managed Python and real Python one after another; `Compute on Mac / macos-15-intel` runs
+managed and real Python (3.10 and 3.12), and the Intel Mac's R and Julia keep their own job. Each
+role runs the same steps as its own job
 (`scripts/compute-ci-workflows.test.ts` compares them) and runs even after an earlier role
 failed. R and Julia run the same way on every computer: one job each on Linux, Windows and the
 Intel Mac, whose three proofs (plain Python, real files, R and Julia kernels) are roles too. [`compute-roles.mjs`](../../.github/scripts/compute-roles.mjs) starts each one clean: its
