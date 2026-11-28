@@ -803,22 +803,24 @@ function FindProjectsSection({
   const usageCheckboxId = `welcome-usage-access-${environmentId}`;
   const find = async () => {
     onFind();
-    if (!includeUsage || !serverConfig) return;
+    // SCIENT-FORK:START — usage access is on by default, so only an unchecked box saves an answer.
+    if (includeUsage || !serverConfig) return;
     const results = await Promise.all(
       (providers ?? []).flatMap((provider) => {
         if (!provider.enabled || !isImportSource(provider.driver)) return [];
         const instance = serverConfig.settings.providerInstances[provider.instanceId];
-        if (instance?.usageAccess !== undefined) return [];
+        if (instance?.usageAccess === "denied") return [];
         return [
           persistProviderInstance({
             operation: "upsert",
             instanceId: provider.instanceId,
-            instance: withProviderUsageAccess(instance, provider.driver, "allowed"),
+            instance: withProviderUsageAccess(instance, provider.driver, "denied"),
+            // SCIENT-FORK:END
           }),
         ];
       }),
     );
-    // Discovery goes ahead either way; Usage asks again for any agent that did not save.
+    // Discovery goes ahead either way; an agent that did not save keeps usage access on.
     if (results.some((result) => result._tag === "Failure" && !isAtomCommandInterrupted(result))) {
       toastManager.add({ type: "error", title: gt("Could not save usage access") });
     }

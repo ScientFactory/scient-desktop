@@ -2954,7 +2954,8 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("asks before reading an enabled instance's history and reads it once allowed", () =>
+  // SCIENT-FORK:START — usage access is on unless turned off, so nobody is asked.
+  it.effect("reads an unanswered instance's history without asking and stops once denied", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
@@ -2973,26 +2974,12 @@ describe("UsageService", () => {
               },
             }),
           );
-        // layerService grants every initial instance, so the grant is withdrawn here.
+        // layerService grants every initial instance, so the answer is removed here.
         yield* setClaude({ ...claude, enabled: true });
         const service = yield* UsageService.make;
-        const asked = yield* service.readSummary(WINDOW);
-        assert.isFalse(asked.buckets.some((bucket) => bucket.provider === "claude"));
-        assert.isFalse(asked.sources.some((source) => source.fingerprint.provider === "claude"));
-        assert.deepStrictEqual(withoutDefaultAntigravity(asked.accessRequests), [
-          {
-            instanceId: ProviderInstanceId.make("claudeAgent"),
-            driver: ProviderDriverKind.make("claudeAgent"),
-            provider: "claude",
-            paths: [NodePath.join(home, "claude", "projects")],
-          },
-        ]);
-
-        yield* setClaude({ ...claude, enabled: true, usageAccess: "allowed" });
-        const allowed = yield* service.readSummary(WINDOW);
-        assert.strictEqual(totalOutputTokens(allowed), 5);
-        assert.deepStrictEqual(withoutDefaultAntigravity(allowed.accessRequests), []);
-
+        const unanswered = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(unanswered), 5);
+        assert.deepStrictEqual(withoutDefaultAntigravity(unanswered.accessRequests), []);
         // Denying stops counting history already scanned, and a denied agent is not asked again.
         yield* setClaude({ ...claude, enabled: true, usageAccess: "denied" });
         const denied = yield* service.readSummary(WINDOW);
@@ -3010,6 +2997,7 @@ describe("UsageService", () => {
       );
     }),
   );
+  // SCIENT-FORK:END
 
   it.effect(
     "uses explicit account settings before environment and default homes, then refreshes them",

@@ -153,7 +153,8 @@ function UsageAccessRow({
         <span className="col-span-2 text-end">
           {canAnswer ? (
             <Button size="micro" variant="outline" onClick={() => setOpen(true)}>
-              {gt("Set up", { $context: "allow reading an agent's usage limits" })}
+              {/* SCIENT-FORK: usage access is on by default, so this row means someone turned it off. */}
+              {gt("Turn on")}
             </Button>
           ) : (
             <span className="text-muted-foreground">{gt("Unavailable")}</span>

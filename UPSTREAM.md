@@ -2748,6 +2748,17 @@ Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` 
 and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
 section of `docs/internals/scient-extensions.md`.
 
+## Usage access on by default
+
+T3's #43948 reads an agent's usage history and sign-in only after the user allows it, and asks
+on the Usage page until they answer. Scient treats an unanswered `usageAccess` as allowed; only
+`"denied"` stops the reads. The SCIENT-FORK lines are in `ProviderInstanceRegistry.ts` (the driver
+gate), `UsageService.ts` (`grantOf`, so `accessRequests` stays empty and no client asks),
+`ProviderInstanceCard.tsx` (the switch shows on) and `WelcomePage.tsx` (an unchecked usage box
+saves `"denied"`). T3's question UI stays in place and unused. When T3 changes the grant, keep
+unanswered as allowed. Tests: the usage-access cases in `UsageService.test.ts` and
+`ProviderInstanceRegistry.test.ts`.
+
 ## Security policy
 
 `.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on
