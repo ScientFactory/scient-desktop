@@ -35,7 +35,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -6570,7 +6569,6 @@ describe("orchestration v2 provider switching", () => {
         const layerDatabase = SqlitePersistence.layerMemory;
         const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
         const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
-          Layer.provide(NodeCrypto.layerDigest),
           Layer.provideMerge(layerDatabase),
         );
         const layerStoresProvided = Layer.mergeAll(

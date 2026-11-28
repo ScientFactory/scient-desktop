@@ -10,6 +10,7 @@ import {
   canForwardPorts,
   forwardedUrl,
   forwardPort,
+  PortForwardSameMachineError,
   useForwardLocality,
 } from "~/state/portForwards";
 import { useEnvironmentScope } from "~/state/session";
@@ -79,7 +80,12 @@ export function useOpenInSystemBrowser(
     }
     if (!forwardable) throw unreachable();
     // Starting a forward runs the probe; only a confirmed local environment opens directly.
-    const forward = await forwardPort(environmentId, port);
-    await api.shell.openExternal(forwardedUrl(forward, url));
+    // SCIENT-FORK:START — the desktop can finish the locality probe during this click.
+    const forward = await forwardPort(environmentId, port).catch((error: unknown) => {
+      if (error instanceof PortForwardSameMachineError) return null;
+      throw error;
+    });
+    await api.shell.openExternal(forward === null ? url : forwardedUrl(forward, url));
+    // SCIENT-FORK:END
   };
 }

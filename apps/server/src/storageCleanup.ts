@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import {
@@ -1221,6 +1222,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+    let deletionStarted = false;
     const removal = Effect.gen(function* () {
       yield* fs.chmod(container, 0o700);
       if (Option.isSome(annexed))
@@ -1246,13 +1248,34 @@ const make = Effect.gen(function* () {
         cwd: repositoryRoot,
         worktreePath: isolatedPath,
         force: false,
+        beforeDelete: Effect.sync(() => {
+          deletionStarted = true;
+        }),
         execute: git.execute,
         run: (args, cwd) => cleanupGit(cwd, [...args], "git worktree remove"),
       });
       return null;
     });
     return yield* removal.pipe(
-      Effect.catchCause((cause) => restore.pipe(Effect.andThen(Effect.failCause(cause)))),
+      Effect.catchCause((cause) => {
+        if (!deletionStarted) return restore.pipe(Effect.andThen(Effect.failCause(cause)));
+        return fs.exists(isolatedPath).pipe(
+          Effect.orElseSucceed(() => true),
+          Effect.flatMap((remains) =>
+            remains
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "StorageCleanup.cleanupGit",
+                    command: "git worktree remove",
+                    cwd: repositoryRoot,
+                    detail: `Cleanup stopped during deletion; remaining files are at ${isolatedPath}`,
+                    cause: Cause.squash(cause),
+                  }),
+                )
+              : Effect.failCause(cause),
+          ),
+        );
+      }),
       Effect.flatMap((reason) =>
         reason === null ? Effect.succeed(null) : restore.pipe(Effect.as(reason)),
       ),

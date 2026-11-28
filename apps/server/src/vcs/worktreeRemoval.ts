@@ -63,6 +63,9 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   readonly cwd: string;
   readonly worktreePath: string;
   readonly force: boolean;
+  // SCIENT-FORK:START — isolated cleanup may restore the original path before deletion.
+  readonly beforeDelete?: Effect.Effect<void>;
+  // SCIENT-FORK:END
   readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
   readonly run: (args: ReadonlyArray<string>, cwd: string) => Effect.Effect<A, E, R>;
 }) {
@@ -114,6 +117,9 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     Effect.orElseSucceed(() => false),
   );
   if (!linked) {
+    // SCIENT-FORK:START — Git owns both detection and deletion in this fallback.
+    if (input.beforeDelete !== undefined) yield* input.beforeDelete;
+    // SCIENT-FORK:END
     return yield* input.run(
       [
         ...statusConfig,
@@ -237,9 +243,13 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
   const failedToDelete = (cause: unknown) => refuse(`failed to delete '${worktreePath}'`, cause);
-  for (const name of yield* fileSystem
+  const entries = yield* fileSystem
     .readDirectory(worktreePath)
-    .pipe(Effect.mapError(failedToDelete))) {
+    .pipe(Effect.mapError(failedToDelete));
+  // SCIENT-FORK:START — after this point a failed remove can leave a partial checkout.
+  if (input.beforeDelete !== undefined) yield* input.beforeDelete;
+  // SCIENT-FORK:END
+  for (const name of entries) {
     if (name === ".git") continue;
     yield* fileSystem
       .remove(path.join(worktreePath, name), { recursive: true })

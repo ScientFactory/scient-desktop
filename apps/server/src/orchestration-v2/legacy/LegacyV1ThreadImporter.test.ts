@@ -11,7 +11,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
@@ -27,10 +26,7 @@ import { layerReaderDatabase, traceSqlRouting } from "../../persistence/testkit/
 
 const layerDatabase = layerReaderDatabase;
 const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
-const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
-  Layer.provide(NodeCrypto.layerDigest),
-  Layer.provideMerge(layerDatabase),
-);
+const layerProjectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(layerDatabase));
 const layerStoresProvided = Layer.mergeAll(
   layerDatabase,
   layerEventStoreProvided,

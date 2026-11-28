@@ -19,7 +19,6 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -35,7 +34,7 @@ import * as ThreadSearch from "./ThreadSearch.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
-  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+  ProjectionStore.layer,
   ProjectStore.layer,
 ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
@@ -1592,7 +1591,7 @@ it.effect("searches on the reader worker while the writer is busy", () =>
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-search-" });
     const layerFile = Layer.mergeAll(
       ThreadSearch.layer,
-      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+      ProjectionStore.layer,
       ProjectStore.layer,
     ).pipe(
       Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),

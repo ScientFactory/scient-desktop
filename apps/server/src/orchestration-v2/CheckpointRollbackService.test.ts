@@ -26,7 +26,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -1093,7 +1092,6 @@ const seedRollbackHistory = Effect.gen(function* () {
 });
 
 const layerProjections = ProjectionStore.layer.pipe(
-  Layer.provide(NodeCrypto.layerDigest),
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
