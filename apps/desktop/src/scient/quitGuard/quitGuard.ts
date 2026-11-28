@@ -12,6 +12,8 @@ import * as Electron from "electron";
 import { PRIMARY_INSTANCE_ID } from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
+import { SET_RUNNING_WORK_CHANNEL } from "../../ipc/channels.ts";
+import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
 
 // The person is waiting on Quit; past this the count is unknown and Quit asks.
 const READ_DEADLINE = Duration.seconds(2);
@@ -73,6 +75,19 @@ export const readRunningWork = Effect.gen(function* () {
 
 let readAtQuit: () => Promise<number | null> = () => Promise.resolve(0);
 
+/** How many runs quitting would stop, as an open window last reported it. */
+let reportedWork = 0;
+
+export const setRunningWork = makeIpcMethod({
+  channel: SET_RUNNING_WORK_CHANNEL,
+  payload: Schema.Int,
+  result: Schema.Void,
+  handler: (count) =>
+    Effect.sync(() => {
+      reportedWork = count;
+    }),
+});
+
 /** Called once the backend services exist; until then nothing can be running. */
 export const installRunningWorkReader = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(
@@ -105,11 +120,14 @@ export function quitPrompt(count: number | null): { message: string; detail: str
 }
 
 /**
- * Whether Quit asked and what the person chose, read when they quit since no window may be open to
- * report it. Quit goes on unless it is `cancelled`.
+ * Whether Quit asked and what the person chose; Quit goes on unless it is `cancelled`. With
+ * background running in effect no window may be open to report the count, so it is `read` from
+ * the backends; otherwise Quit uses the count the app `reported`, as upstream Scient does.
  */
-export async function confirmQuitStopsRunningWork(): Promise<"none" | "confirmed" | "cancelled"> {
-  const prompt = quitPrompt(await readAtQuit());
+export async function confirmQuitStopsRunningWork(
+  source: "reported" | "read",
+): Promise<"none" | "confirmed" | "cancelled"> {
+  const prompt = quitPrompt(source === "read" ? await readAtQuit() : reportedWork);
   if (prompt === null) return "none";
   const { response } = await Electron.dialog.showMessageBox({
     type: "warning",

@@ -31,7 +31,7 @@ import {
 } from "../scient/backgroundRunning/DesktopBackgroundRunning.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Quit reads this computer's running work when the person quits.
-import { installRunningWorkReader } from "../scient/quitGuard/quitGuard.ts";
+import { installRunningWorkReader, setRunningWork } from "../scient/quitGuard/quitGuard.ts";
 // SCIENT-FORK:END
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
@@ -150,6 +150,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:START — replaces upstream's installNotificationBadge(): one owner for the app icon.
   yield* installUnreadAnswerBadge();
   yield* installRunningWorkReader;
+  yield* ipc.handle(setRunningWork);
   // SCIENT-FORK:END
   yield* PreviewIpc.installPreviewEventForwarding();
 

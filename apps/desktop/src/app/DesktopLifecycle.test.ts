@@ -25,9 +25,13 @@ import { vi } from "vite-plus/test";
 
 const quitGuard = vi.hoisted(() => ({
   prompt: "none" as "none" | "confirmed" | "cancelled",
+  sources: [] as Array<"reported" | "read">,
 }));
 vi.mock("../scient/quitGuard/quitGuard.ts", () => ({
-  confirmQuitStopsRunningWork: () => Promise.resolve(quitGuard.prompt),
+  confirmQuitStopsRunningWork: (source: "reported" | "read") => {
+    quitGuard.sources.push(source);
+    return Promise.resolve(quitGuard.prompt);
+  },
 }));
 
 /** Background facts the lifecycle records, kept in memory. */
@@ -476,6 +480,60 @@ describe("DesktopLifecycle", () => {
           background: true,
           quit: false,
         });
+      }),
+  );
+
+  it.effect.each([
+    { platform: "win32", keepRunningInBackground: null, source: "reported" },
+    { platform: "linux", keepRunningInBackground: null, source: "reported" },
+    { platform: "win32", keepRunningInBackground: false, source: "reported" },
+    { platform: "linux", keepRunningInBackground: true, source: "read" },
+    { platform: "darwin", keepRunningInBackground: null, source: "read" },
+  ] satisfies ReadonlyArray<{
+    platform: NodeJS.Platform;
+    keepRunningInBackground: boolean | null;
+    source: "reported" | "read";
+  }>)(
+    "Quit reads running work only while background running is in effect: %o",
+    ({ platform, keepRunningInBackground, source }) =>
+      Effect.gen(function* () {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(layerElectronApp(appListeners)),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(layerElectronWindow(Effect.void, Effect.succeedSome({} as never))),
+          Layer.provideMerge(layerDesktopWindow()),
+          Layer.provideMerge(
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              platform,
+              isDevelopment: false,
+              appImagePath: Option.none(),
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+          Layer.provideMerge(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              keepRunningInBackground,
+            }),
+          ),
+        );
+        quitGuard.prompt = "cancelled";
+        quitGuard.sources.length = 0;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+            appListeners.get("before-quit")?.({ preventDefault: () => {} } as Electron.Event);
+            const settled = Promise.withResolvers<void>();
+            setImmediate(settled.resolve);
+            yield* Effect.promise(() => settled.promise);
+          }),
+        ).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.sync(() => (quitGuard.prompt = "none"))),
+        );
+        assert.deepEqual(quitGuard.sources, [source]);
       }),
   );
 

@@ -8,12 +8,26 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
-vi.mock("electron", () => ({}));
+const dialog = vi.hoisted(() => ({ asked: 0 }));
+vi.mock("electron", () => ({
+  dialog: {
+    showMessageBox: () => {
+      dialog.asked += 1;
+      return Promise.resolve({ response: 1 });
+    },
+  },
+}));
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
-import { quitPrompt, readRunningWork } from "./quitGuard.ts";
+import {
+  confirmQuitStopsRunningWork,
+  installRunningWorkReader,
+  quitPrompt,
+  readRunningWork,
+  setRunningWork,
+} from "./quitGuard.ts";
 
 const server = (
   answer: (
@@ -124,6 +138,39 @@ describe("readRunningWork", () => {
   );
 });
 
+describe("confirmQuitStopsRunningWork", () => {
+  it.effect("uses the count the app reported unless Quit must read it", () =>
+    Effect.gen(function* () {
+      // A ready WSL backend makes the count read at Quit unknown, which would ask.
+      yield* installRunningWorkReader.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(DesktopBackendPool.DesktopBackendPool, {
+              list: Effect.succeed([primary(true), instance("wsl:Ubuntu", true)]),
+            }),
+            Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+              getBearerToken: Effect.succeed("token"),
+            }),
+            server((request) =>
+              Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ count: 0 }))),
+            ),
+          ),
+        ),
+      );
+      dialog.asked = 0;
+      assert.equal(yield* Effect.promise(() => confirmQuitStopsRunningWork("reported")), "none");
+      assert.equal(dialog.asked, 0);
+      assert.equal(yield* Effect.promise(() => confirmQuitStopsRunningWork("read")), "cancelled");
+      assert.equal(dialog.asked, 1);
+      yield* setRunningWork.handler(2, {} as Electron.IpcMainInvokeEvent);
+      assert.equal(
+        yield* Effect.promise(() => confirmQuitStopsRunningWork("reported")),
+        "cancelled",
+      );
+      yield* setRunningWork.handler(0, {} as Electron.IpcMainInvokeEvent);
+    }),
+  );
+});
 describe("quitPrompt", () => {
   it("asks when work is running or unknown, and not when none is", () => {
     assert.isNull(quitPrompt(0));

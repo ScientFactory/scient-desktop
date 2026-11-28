@@ -188,7 +188,13 @@ function handleBeforeQuit(
     Effect.gen(function* () {
       const state = yield* DesktopState.DesktopState;
       if (yield* Ref.get(state.quitting)) return true;
-      const prompt = yield* Effect.promise(confirmQuitStopsRunningWork);
+      // Only running with no window needs the count read at Quit; otherwise the app reports it.
+      const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
+      const settings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
+      const source = DesktopAppSettings.keepsRunningInBackground(settings, platform)
+        ? "read"
+        : "reported";
+      const prompt = yield* Effect.promise(() => confirmQuitStopsRunningWork(source));
       yield* recordBackground((facts) => facts.quitDecided(prompt));
       return prompt !== "cancelled";
     }),
