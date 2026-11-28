@@ -135,6 +135,10 @@ const TERMINAL_ENV_BLOCKLIST = new Set([
   "PORT",
   "ELECTRON_RENDERER_PORT",
   "ELECTRON_RUN_AS_NODE",
+  // SCIENT-FORK:START — Dev Desktop launch markers are not terminal environment.
+  "SCIENT_LOCAL_DEV_APP_MANAGED",
+  "SCIENT_NEXT_DEVELOPMENT_STATE",
+  // SCIENT-FORK:END
   "TMUX",
   "TMUX_PANE",
   "STY",
