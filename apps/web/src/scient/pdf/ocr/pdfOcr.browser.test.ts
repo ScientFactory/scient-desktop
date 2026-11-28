@@ -84,10 +84,10 @@ describe("reading a scanned PDF in the reader", () => {
       runtime.viewer.currentScaleValue = "page-width";
       runtime.viewer.update();
     });
-    const detach = attachPdfOcr(runtime, session);
+    const ocrBinding = attachPdfOcr(runtime, session);
     await using _cleanup = {
       [Symbol.asyncDispose]: async () => {
-        detach();
+        ocrBinding.detach();
         session.dispose();
         await runtime.destroy();
         container.remove();

@@ -165,15 +165,23 @@ interface VisibleViewer {
   _getVisiblePages(): { readonly ids: Set<number> };
 }
 
+export interface PdfOcrBinding {
+  /** Suspends visible and search OCR demand while the reader is hidden in the shelf. */
+  readonly setParked: (parked: boolean) => void;
+  readonly detach: () => void;
+}
+
 /**
  * Connects a reader to its PDF's recognition: reports the pages it shows and its search, labels
  * pages being read, redraws a page's text layer once it has been read, except under a
  * selection, which is left alone until it moves, and adds the reading to its find results.
  */
-export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession): () => void {
+export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession): PdfOcrBinding {
   const viewer = runtime.viewer;
   const owner = {};
   const deferred = new Set<number>();
+  let parked = false;
+  let activeSearch = false;
   const view = (page: number) => viewer.getPageView(page - 1) as OcrPageView | undefined;
 
   const badge = (page: number) => {
@@ -226,6 +234,7 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
     eventBus: runtime.eventBus,
     document: runtime.document as unknown as PdfOcrDocument,
     session,
+    owner,
     staleLayer: (page) => {
       const layer = view(page)?.textLayer?.div;
       return (
@@ -242,6 +251,7 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
     badge(page);
     redraw(page);
     if (session.recognized(page)) find.recognized(page);
+    else find.evicted(page);
   };
   // A layer drawn while its page was being read is drawn again once the reading is ready.
   const onTextLayer = ({ pageNumber }: { pageNumber: number }) => {
@@ -250,15 +260,21 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
   };
   const onPageRendered = ({ pageNumber }: { pageNumber: number }) => badge(pageNumber);
   const onViewArea = () => {
+    if (parked) return;
     session.setVisible(owner, new Set((viewer as unknown as VisibleViewer)._getVisiblePages().ids));
     find.layersChanged();
   };
   // Scanned pages are read for a search only while it has a query; focus alone reads none.
   const onFind = ({ type, query }: { type?: string; query?: string | ReadonlyArray<string> }) => {
     if (type === "highlightallchange") return;
-    session.setSearch(owner, query && query.length > 0 ? viewer.currentPageNumber : null);
+    activeSearch = Boolean(query && query.length > 0);
+    if (parked) return;
+    session.setSearch(owner, activeSearch ? viewer.currentPageNumber : null);
   };
-  const onFindBarClose = () => session.setSearch(owner, null);
+  const onFindBarClose = () => {
+    activeSearch = false;
+    session.setSearch(owner, null);
+  };
   const onSelection = () => {
     for (const page of deferred) {
       const layer = view(page)?.textLayer?.div;
@@ -275,16 +291,30 @@ export function attachPdfOcr(runtime: ScientPdfRuntime, session: PdfOcrSession):
   const unsubscribe = session.subscribe(onChange);
   const ownerDocument = runtime.viewer.container.ownerDocument;
   ownerDocument.addEventListener("selectionchange", onSelection);
-  return () => {
-    unsubscribe();
-    ownerDocument.removeEventListener("selectionchange", onSelection);
-    runtime.eventBus.off("textlayerrendered", onTextLayer);
-    runtime.eventBus.off("pagerendered", onPageRendered);
-    runtime.eventBus.off("updateviewarea", onViewArea);
-    runtime.eventBus.off("pagesloaded", onViewArea);
-    runtime.eventBus.off("find", onFind);
-    runtime.eventBus.off("findbarclose", onFindBarClose);
-    find.detach();
-    session.release(owner);
+  return {
+    setParked(next) {
+      if (parked === next) return;
+      parked = next;
+      session.setParked(owner, next);
+      if (next) {
+        session.setVisible(owner, new Set());
+        session.setSearch(owner, null);
+        return;
+      }
+      onViewArea();
+      if (activeSearch) session.setSearch(owner, viewer.currentPageNumber);
+    },
+    detach() {
+      unsubscribe();
+      ownerDocument.removeEventListener("selectionchange", onSelection);
+      runtime.eventBus.off("textlayerrendered", onTextLayer);
+      runtime.eventBus.off("pagerendered", onPageRendered);
+      runtime.eventBus.off("updateviewarea", onViewArea);
+      runtime.eventBus.off("pagesloaded", onViewArea);
+      runtime.eventBus.off("find", onFind);
+      runtime.eventBus.off("findbarclose", onFindBarClose);
+      find.detach();
+      session.release(owner);
+    },
   };
 }

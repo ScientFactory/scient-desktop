@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { textContentText } from "../anchors/pdfTextLayer";
 import {
   pdfOcrTextContent,
+  textContentCharacters,
   type PdfOcrLine,
   type PdfOcrPageText,
   type PdfOcrViewport,
@@ -114,5 +115,11 @@ describe("recognized page text", () => {
     expect(Math.abs(d!)).toBeLessThan(1e-9);
     expect(item!.width).toBeCloseTo(0.2 * HEIGHT);
     expect(textContentText(content.items)).toBe("Sideways\n");
+  });
+
+  it("counts non-space characters across ASCII, Hebrew and Unicode spaces and stops at limit", () => {
+    const items = [{ str: "  ab\u00a0cd\u2003" }, { str: "שלום\t123" }, { str: "ignored" }];
+    expect(textContentCharacters(items)).toBe(18);
+    expect(textContentCharacters(items, 6)).toBe(6);
   });
 });

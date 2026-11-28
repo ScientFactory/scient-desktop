@@ -234,11 +234,24 @@ export function pdfOcrTextContent(
   };
 }
 
-/** Non-space characters in PDF.js text content items. */
-export function textContentCharacters(items: ReadonlyArray<object>): number {
+const WHITESPACE = /\s/u;
+
+/** Non-space characters in PDF.js text content items, stopping once `limit` is reached. */
+export function textContentCharacters(
+  items: ReadonlyArray<object>,
+  limit = Number.POSITIVE_INFINITY,
+): number {
   let count = 0;
   for (const item of items) {
-    if ("str" in item && typeof item.str === "string") count += item.str.replace(/\s/gu, "").length;
+    if (!("str" in item) || typeof item.str !== "string") continue;
+    const text = item.str;
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (code <= 0x20 || code === 0xa0) continue;
+      if (code >= 0x1680 && WHITESPACE.test(text[index]!)) continue;
+      count += 1;
+      if (count >= limit) return count;
+    }
   }
   return count;
 }

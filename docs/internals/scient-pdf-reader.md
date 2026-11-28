@@ -203,8 +203,8 @@ stop after a minute idle; two run at once on computers with eight or more cores.
   only the PDF's own text use `pdfNativeTextContent`.
 - **Which pages.** A page is a scan when it has fewer than 160 non-space
   characters of its own and images cover at least half of its area (from its
-  display operator list, which the viewer's rendering reuses). Other pages are
-  never recognized.
+  operator list, checked only on pages with little native text). Pure XFA forms
+  and other pages are never recognized.
 - **Find.** Find never waits for a reading. PDF.js extracts pages one after
   another and selects a match only once the page it is on is extracted, so a
   `getTextContent` that waited for a scan would hold every later page, and every
@@ -219,18 +219,21 @@ stop after a minute idle; two run at once on computers with eight or more cores.
   before, the first late match is selected. A reading is merged only once the
   page's drawn text layer shows recognized text (or none is drawn), since its
   offsets would otherwise land on a layer without those words. The merge writes
-  the controller's underscore fields of PDF.js 6.2; `pdfOcrFind.browser.test.ts`
+  the controller's underscore fields of PDF.js 6.4; `pdfOcrFind.browser.test.ts`
   runs the real controller to catch a PDF.js change.
-- **Search reading.** Opening find only extracts the PDF's own text. While a
-  reader has a query (its `find` events) and a scanned page is known, one pass
-  looks at pages from that reader's page, wrapping, at most
-  `PDF_OCR_SEARCH_AHEAD` at a time: each holds its page, classified and, if a
-  scan, queued, until read; pages read only for a search are cleaned up. Keystrokes
-  keep the pass. Demand is per reader: when the last reader clears its query,
-  closes find or closes, queued pages are dropped at once; a page being read
-  finishes, since Tesseract cannot stop mid-page, and is cached. A later search
-  starts a new pass that skips pages already known. A PDF with no scanned page is
-  never swept. The search field shows the share read so far.
+- **Search reading.** Opening find only extracts the PDF's own text. While
+  PDF.js is extracting native text, background scan sweeps wait so ordinary
+  PDFs keep full native search speed and never duplicate `getTextContent`.
+  Once extraction finishes and a reader has a query (its `find` events), one
+  pass inspects only unclassified sparse pages (or remaining pages once a scan
+  is known) from that reader's page, wrapping, at most `PDF_OCR_SEARCH_AHEAD`
+  at a time: each holds its page, classified and, if a scan, queued, until read;
+  pages read only for a search are cleaned up. Keystrokes keep the pass. Demand
+  is per reader: when the last reader clears its query, closes find or closes,
+  queued pages are dropped at once; a page being read finishes, since Tesseract
+  cannot stop mid-page, and is cached. A later search starts a new pass that
+  skips pages already known. A PDF with no scanned or sparse pages is never
+  swept. The search field shows the share read so far.
 - **Text layer.** A page is drawn with what is ready and queued for reading when
   it appears; pages in view come before pages a search waits for. When its
   reading arrives its text layer is drawn again, except under a live selection,
@@ -252,7 +255,8 @@ stop after a minute idle; two run at once on computers with eight or more cores.
   legible reading kept.
 - **Cache.** Readings are kept in IndexedDB (`scient-pdf-ocr`), keyed by the
   recognizer, intrinsic PDF rotation and SHA-256 of the rendered page image, with an alias from the
-  document cache key, page and rotation so a reopened PDF is not rendered again.
+  document cache key, page and rotation so a reopened PDF preloads its cached
+  pages in one IndexedDB read without rendering them again.
   At most 4,000 pages are kept, least recently used dropped first. This is the
   only PDF content the client persists, and it stays in this browser profile. Pages
   unlocked with a password use a cache in memory for that open document.

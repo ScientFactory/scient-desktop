@@ -19,8 +19,24 @@ type Matrix = readonly [number, number, number, number, number, number];
 const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
 function multiply(m: Matrix, n: ReadonlyArray<unknown>): Matrix {
-  const [a, b, c, d, e, f] = n.map(Number) as unknown as Matrix;
-  if (![a, b, c, d, e, f].every(Number.isFinite)) return m;
+  const a = Number(n[0]);
+  const b = Number(n[1]);
+  const c = Number(n[2]);
+  const d = Number(n[3]);
+  const e = Number(n[4]);
+  const f = Number(n[5]);
+  if (
+    !(
+      Number.isFinite(a) &&
+      Number.isFinite(b) &&
+      Number.isFinite(c) &&
+      Number.isFinite(d) &&
+      Number.isFinite(e) &&
+      Number.isFinite(f)
+    )
+  ) {
+    return m;
+  }
   return [
     m[0] * a + m[2] * b,
     m[1] * a + m[3] * b,
@@ -29,6 +45,10 @@ function multiply(m: Matrix, n: ReadonlyArray<unknown>): Matrix {
     m[0] * e + m[2] * f + m[4],
     m[1] * e + m[3] * f + m[5],
   ];
+}
+
+function unitArea(m: Matrix): number {
+  return Math.abs(m[0] * m[3] - m[1] * m[2]);
 }
 
 /**
@@ -48,7 +68,6 @@ export function pdfPageImageCoverage(
   for (let index = 0; index < operators.fnArray.length; index += 1) {
     const op = operators.fnArray[index];
     const args = (operators.argsArray[index] ?? []) as ReadonlyArray<unknown>;
-    const unitArea = () => Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]);
     switch (op) {
       case ops.save:
         saved.push(matrix);
@@ -70,14 +89,14 @@ export function pdfPageImageCoverage(
       case ops.paintInlineImageXObject:
       case ops.paintImageMaskXObject:
       case ops.paintSolidColorImageMask:
-        area += unitArea();
+        area += unitArea(matrix);
         break;
       case ops.paintImageXObjectRepeat: {
         const scaleX = Number(args[1]);
         const scaleY = Number(args[2]);
         const positions = args[3] as ArrayLike<number> | undefined;
         if (Number.isFinite(scaleX) && Number.isFinite(scaleY) && positions) {
-          area += Math.abs(scaleX * scaleY) * unitArea() * Math.floor(positions.length / 2);
+          area += Math.abs(scaleX * scaleY) * unitArea(matrix) * Math.floor(positions.length / 2);
         }
         break;
       }

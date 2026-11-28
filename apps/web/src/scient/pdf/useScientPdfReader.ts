@@ -376,13 +376,15 @@ export function useScientPdfReader(input: {
         });
         candidate = runtime;
         const displayed = () => current && runtimeRef.current === runtime;
-        const detachRecognition = attachPdfOcr(runtime, ocr);
+        const ocrBinding = attachPdfOcr(runtime, ocr);
         const unsubscribeOcr = ocr.subscribe(() => {
-          if (displayed()) setState((previous) => ({ ...previous, ocr: ocr.coverage() }));
+          if (!displayed()) return;
+          const next = ocr.coverage();
+          setState((previous) => (previous.ocr === next ? previous : { ...previous, ocr: next }));
         });
         detachOcr = () => {
           unsubscribeOcr();
-          detachRecognition();
+          ocrBinding.detach();
         };
         let preparedOutline: PDFOutline = [];
         let preparedScanned: boolean | null = null;
@@ -423,12 +425,14 @@ export function useScientPdfReader(input: {
             unkeep =
               shelfPlace?.keep({
                 hide: (evict, viewBytes) => {
+                  ocrBinding.setParked(true);
                   runtime.park();
                   return lease.park(evict, viewBytes);
                 },
                 show: () => {
                   lease.unpark();
                   runtime.unpark();
+                  ocrBinding.setParked(false);
                 },
               }) ?? null;
             container.classList.remove("scient-pdf-staging");

@@ -60,3 +60,32 @@ it("keeps a password-unlocked document's readings bounded, dropping the least re
   expect(await cache.byPage("page-1")).toEqual(text(1));
   expect(await cache.byPage("page-3")).toEqual(text(3));
 });
+
+it("keeps a hot alias when memory cache evicts the oldest alias", async () => {
+  const text = (rotation: number) => ({ recognizer: "test", rotation, lines: [] });
+  const cache = createMemoryPdfOcrCache(2);
+  // Two aliases share one image, then a third alias exceeds maxPages aliases.
+  await cache.put("shared", "page-1", text(1));
+  await cache.put("shared", "page-2", text(1));
+  expect(await cache.byPage("page-1")).toEqual(text(1));
+  await cache.put("other", "page-3", text(2));
+  expect(await cache.byPage("page-1")).toEqual(text(1));
+  expect(await cache.byPage("page-2")).toBeNull();
+  expect(await cache.byPage("page-3")).toEqual(text(2));
+});
+
+it("preloads only one document's cached pages in a single IndexedDB read", async () => {
+  const recognizer = "preload-test";
+  const text = (rotation: number) => ({ recognizer, rotation, lines: [] });
+  const cache = createIndexedDbPdfOcrCache(recognizer);
+  await cache.put("img-1", "doc\n1\n0", text(0));
+  await cache.put("img-2", "doc\n2\n90", text(90));
+  await cache.put("img-other", "doc2\n1\n0", text(180));
+
+  const loaded = await cache.forDocument!("doc");
+  expect([...loaded.entries()]).toEqual([
+    ["doc\n1\n0", text(0)],
+    ["doc\n2\n90", text(90)],
+  ]);
+  expect((await cache.forDocument!("missing")).size).toBe(0);
+});

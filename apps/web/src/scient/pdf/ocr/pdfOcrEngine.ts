@@ -18,7 +18,47 @@ interface TesseractBox {
 }
 
 const IDLE_MS = 60_000;
+const WORKER_START_TIMEOUT_MS = 30_000;
+const RECOGNIZE_TIMEOUT_MS = 60_000;
 const LSTM_ONLY = 1;
+
+function captureSpawnedWorker<T>(run: () => T): {
+  readonly result: T;
+  readonly worker: Worker | null;
+} {
+  const OriginalWorker = globalThis.Worker;
+  if (typeof OriginalWorker !== "function") return { result: run(), worker: null };
+  let spawned: Worker | null = null;
+  // Tesseract 7 leaves its Worker alive if loadLanguage/initialize rejects; track it synchronously.
+  globalThis.Worker = new Proxy(OriginalWorker, {
+    construct(target, args, newTarget) {
+      const instance = Reflect.construct(target, args, newTarget) as Worker;
+      spawned = instance;
+      return instance;
+    },
+  });
+  try {
+    return { result: run(), worker: spawned };
+  } finally {
+    globalThis.Worker = OriginalWorker;
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 /** Engine, language data and worker script ship with the app (see scripts/scientOcrAssets.ts). */
 function ocrAssetRoot(): string {
@@ -84,16 +124,45 @@ export function createTesseractOcrEngine(slots: number): PdfOcrEngine {
   const start = async (): Promise<TesseractWorker> => {
     const { createWorker } = await import("tesseract.js");
     const root = ocrAssetRoot();
-    const worker = await createWorker(["eng", "heb"], LSTM_ONLY, {
-      workerPath: `${root}worker.min.js`,
-      corePath: `${root}core`,
-      langPath: `${root}lang`,
-      cacheMethod: "none",
-      gzip: true,
-      workerBlobURL: false,
+    let rejectWorkerError: ((error: unknown) => void) | null = null;
+    const workerError = new Promise<never>((_, reject) => {
+      rejectWorkerError = reject;
     });
-    await worker.setParameters({ tessedit_pageseg_mode: "3" as never, user_defined_dpi: "300" });
-    return worker;
+    const { result: created, worker: spawned } = captureSpawnedWorker(() =>
+      createWorker(["eng", "heb"], LSTM_ONLY, {
+        workerPath: `${root}worker.min.js`,
+        corePath: `${root}core`,
+        langPath: `${root}lang`,
+        cacheMethod: "none",
+        gzip: true,
+        workerBlobURL: false,
+        errorHandler: (error: unknown) => {
+          rejectWorkerError?.(error instanceof Error ? error : new Error(String(error)));
+        },
+      }),
+    );
+    // Ensure a worker that fails or times out during startup is always terminated.
+    let timedOutOrErrored = false;
+    try {
+      const worker = await withTimeout(
+        Promise.race([created, workerError]),
+        WORKER_START_TIMEOUT_MS,
+        "Text recognition worker failed to start in time.",
+      );
+      await withTimeout(
+        worker.setParameters({ tessedit_pageseg_mode: "3" as never, user_defined_dpi: "300" }),
+        WORKER_START_TIMEOUT_MS,
+        "Text recognition worker failed to configure in time.",
+      );
+      return worker;
+    } catch (error) {
+      timedOutOrErrored = true;
+      spawned?.terminate();
+      void created.then((worker) => worker.terminate()).catch(() => undefined);
+      throw error;
+    } finally {
+      if (!timedOutOrErrored) rejectWorkerError = null;
+    }
   };
 
   const stopWhenIdle = () => {
@@ -114,7 +183,9 @@ export function createTesseractOcrEngine(slots: number): PdfOcrEngine {
     } catch (error) {
       started -= 1;
       busy -= 1;
-      stopWhenIdle();
+      const next = waiting.shift();
+      if (next) launch().then(next.resolve, next.reject);
+      else stopWhenIdle();
       throw error;
     }
   };
@@ -155,10 +226,10 @@ export function createTesseractOcrEngine(slots: number): PdfOcrEngine {
       const worker = await acquire();
       let usable: TesseractWorker | null = worker;
       try {
-        const { data } = await worker.recognize(
-          image,
-          {},
-          { blocks: true, text: false, hocr: false, tsv: false },
+        const { data } = await withTimeout(
+          worker.recognize(image, {}, { blocks: true, text: false, hocr: false, tsv: false }),
+          RECOGNIZE_TIMEOUT_MS,
+          "Text recognition timed out on this page.",
         );
         return lines(data.blocks as Parameters<typeof lines>[0], size.width, size.height);
       } catch (error) {

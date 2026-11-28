@@ -1,18 +1,21 @@
 import { AnnotationMode, OPS, getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { FindState } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
+import { EventBus, FindState, PDFFindController } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createPdfRuntime } from "../pdfRuntime";
 import { attachPdfOcr } from "./pdfOcr";
 import { createMemoryPdfOcrCache } from "./pdfOcrCache";
+import { attachPdfOcrFind } from "./pdfOcrFind";
 import { createPdfOcrQueue } from "./pdfOcrQueue";
-import { createPdfOcrSession, type PdfOcrDocument } from "./pdfOcrSession";
+import { createPdfOcrSession, type PdfOcrDocument, type PdfOcrSession } from "./pdfOcrSession";
 import { pdfTextLayerHasOcr, type PdfOcrLine } from "./pdfOcrText";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 
-/** A PDF whose pages are scans (one gray image, no text) or a line of their own text. */
-function pdfOf(pages: ReadonlyArray<"scan" | string>): Uint8Array {
+/** A PDF whose pages are scans, scans with a short native stamp, or native text. */
+function pdfOf(
+  pages: ReadonlyArray<"scan" | string | { readonly scan: true; readonly stamp: string }>,
+): Uint8Array {
   const objects = [
     "", // Pages, written once the page objects are numbered.
     "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\nw\nendstream",
@@ -21,7 +24,11 @@ function pdfOf(pages: ReadonlyArray<"scan" | string>): Uint8Array {
   const kids: string[] = [];
   for (const page of pages) {
     const content =
-      page === "scan" ? "q 612 0 0 792 0 0 cm /Im1 Do Q" : `BT /F1 14 Tf 72 700 Td (${page}) Tj ET`;
+      page === "scan"
+        ? "q 612 0 0 792 0 0 cm /Im1 Do Q"
+        : typeof page === "string"
+          ? `BT /F1 14 Tf 72 700 Td (${page}) Tj ET`
+          : `q 612 0 0 792 0 0 cm /Im1 Do Q BT /F1 14 Tf 72 700 Td (${page.stamp}) Tj ET`;
     const pageObject = objects.length + 1;
     kids.push(`${pageObject} 0 R`);
     objects.push(
@@ -58,11 +65,12 @@ const line = (text: string): PdfOcrLine[] => [
 
 /** Opens `pages` in a reader whose recognition of each page waits until the test releases it. */
 async function openReader(
-  pages: ReadonlyArray<"scan" | string>,
+  pages: ReadonlyArray<"scan" | string | { readonly scan: true; readonly stamp: string }>,
   options: {
     readonly height: number;
     readonly slots: number;
     readonly read: Record<number, string>;
+    readonly maxPages?: number;
   },
 ) {
   const task = getDocument({ data: pdfOf(pages) });
@@ -80,7 +88,7 @@ async function openReader(
       },
     }),
     queue,
-    cache: createMemoryPdfOcrCache(),
+    cache: createMemoryPdfOcrCache(options.maxPages),
     render: async (page) => ({
       blob: new Blob([String(page.pageNumber)]),
       bytes: new TextEncoder().encode(String(page.pageNumber)),
@@ -102,7 +110,7 @@ async function openReader(
     runtime.viewer.currentScaleValue = "page-width";
     runtime.viewer.update();
   });
-  const detach = attachPdfOcr(runtime, session);
+  const ocrBinding = attachPdfOcr(runtime, session);
   const found = { current: 0, total: 0, state: -1 };
   runtime.eventBus.on(
     "updatefindmatchescount",
@@ -141,6 +149,7 @@ async function openReader(
   return {
     runtime,
     session,
+    ocrBinding,
     queue,
     selected,
     asked,
@@ -150,7 +159,7 @@ async function openReader(
     layer,
     [Symbol.asyncDispose]: async () => {
       for (const resolve of waiting.values()) resolve();
-      detach();
+      ocrBinding.detach();
       session.dispose();
       await runtime.destroy();
       container.remove();
@@ -247,5 +256,205 @@ describe("finding text in a PDF with scanned pages", () => {
     // Typing again asks for it anew.
     reader.find("needle");
     await vi.waitFor(() => expect(reader.asked).toEqual([1, 4]));
+  });
+
+  it("keeps an active query and avoids double-counting when the viewer re-applies the same document", async () => {
+    await using reader = await openReader(["alpha needle", "beta needle"], {
+      height: 1_000,
+      slots: 1,
+      read: {},
+    });
+    reader.find("needle");
+    // Simulate PDFViewer calling findController.setDocument(document) again after first paint.
+    reader.runtime.findController.setDocument(reader.runtime.document);
+    await vi.waitFor(() => {
+      expect(reader.found).toMatchObject({ state: FindState.FOUND, current: 1, total: 2 });
+    });
+    expect((reader.runtime.findController.state as { query?: string } | null)?.query).toBe(
+      "needle",
+    );
+  });
+
+  it("suspends queued search OCR while parked and resumes when shown again", async () => {
+    await using reader = await openReader(["scan", "two", "three", "scan"], {
+      height: 300,
+      slots: 1,
+      read: { 1: "needle", 4: "needle" },
+    });
+    await vi.waitFor(() => expect(reader.asked).toEqual([1]));
+    reader.find("needle");
+    await vi.waitFor(() => expect(reader.session.pageState(4)).toBe("pending"));
+
+    // Parking drops queued offscreen work; unparking resumes the active query.
+    reader.ocrBinding.setParked(true);
+    await vi.waitFor(() => expect(reader.session.pageState(4)).toBe("unknown"));
+    reader.release(1);
+    await vi.waitFor(() => expect(reader.queue.size).toBe(0));
+    expect(reader.asked).toEqual([1]);
+
+    reader.ocrBinding.setParked(false);
+    await vi.waitFor(() => expect(reader.asked).toEqual([1, 4]));
+  });
+
+  it("preserves native Find matches on a mixed page when its OCR layer is evicted", async () => {
+    await using reader = await openReader([{ scan: true, stamp: "NativeStamp" }, "scan"], {
+      height: 300,
+      slots: 1,
+      maxPages: 1,
+      read: { 1: "OcrNeedle", 2: "SecondNeedle" },
+    });
+    await vi.waitFor(() => expect(reader.asked).toEqual([1]));
+    reader.release(1);
+    await vi.waitFor(() => expect(reader.session.recognized(1)).toBe(true));
+
+    // Find finds the OCR word on page 1, then triggers page 2 which evicts page 1 (maxPages=1).
+    reader.find("OcrNeedle");
+    await vi.waitFor(() => expect(reader.found.total).toBe(1));
+    await vi.waitFor(() => expect(reader.asked).toEqual([1, 2]));
+    // Scroll page 1 out of view so page 2 can evict it cleanly.
+    reader.session.setVisible({}, new Set());
+    reader.runtime.viewer.currentPageNumber = 2;
+    reader.release(2);
+    await vi.waitFor(() => expect(reader.session.recognized(2)).toBe(true));
+    await vi.waitFor(() => expect(reader.session.recognized(1)).toBe(false));
+
+    // Eviction cleared the OCR match on page 1, while native text on page 1 stays searchable.
+    await vi.waitFor(() => expect(reader.found.total).toBe(0));
+    reader.find("NativeStamp");
+    await vi.waitFor(() => expect(reader.found.total).toBe(1));
+  });
+
+  it("keeps surviving native matches counted and selected when the selected OCR hit is evicted", async () => {
+    await using reader = await openReader(["scan", "SharedNeedle in native text", "scan"], {
+      height: 300,
+      slots: 1,
+      maxPages: 1,
+      read: { 1: "SharedNeedle", 3: "OtherWord" },
+    });
+    await vi.waitFor(() => expect(reader.asked).toEqual([1]));
+    reader.release(1);
+    await vi.waitFor(() => expect(reader.session.recognized(1)).toBe(true));
+
+    // Page 1's OCR hit is selected first, with page 2's native hit as match 2 of 2.
+    reader.find("SharedNeedle");
+    await vi.waitFor(() => {
+      expect(reader.found).toMatchObject({ state: FindState.FOUND, current: 1, total: 2 });
+    });
+    expect(reader.selected()).toEqual({ pageIdx: 0, matchIdx: 0 });
+
+    // Scroll to page 3 so page 1 is eligible for eviction and page 3 finishes OCR (maxPages=1).
+    reader.session.setVisible({}, new Set());
+    reader.runtime.viewer.currentPageNumber = 3;
+    await vi.waitFor(() => expect(reader.asked).toEqual([1, 3]));
+    reader.release(3);
+    await vi.waitFor(() => expect(reader.session.recognized(3)).toBe(true));
+    await vi.waitFor(() => expect(reader.session.recognized(1)).toBe(false));
+
+    // Evicting the selected OCR match must keep page 2's native hit counted and selected.
+    await vi.waitFor(() => {
+      expect(reader.found).toMatchObject({ current: 1, total: 1 });
+      expect(reader.selected()).toEqual({ pageIdx: 1, matchIdx: 0 });
+    });
+  });
+
+  it("does not index or jump to an OCR hit evicted during initial Find text extraction", async () => {
+    const eventBus = new EventBus();
+    const pageJumps: number[] = [];
+    let currentPage = 1;
+    const linkService = {
+      pagesCount: 1,
+      get page() {
+        return currentPage;
+      },
+      set page(value: number) {
+        currentPage = value;
+        pageJumps.push(value);
+      },
+    };
+    const controller = new PDFFindController({
+      linkService: linkService as never,
+      eventBus,
+      delay: 0,
+      updateMatchesCountOnProgress: true,
+    });
+    let recognizedNow = true;
+    let findAdapter: ReturnType<typeof attachPdfOcrFind> | null = null;
+    const emptyNative = { items: [], styles: {} };
+    const ocrContent = { items: [{ str: "EvictedNeedle", hasEOL: true }], styles: {} };
+    const document: PdfOcrDocument = {
+      numPages: 1,
+      getPage: async () =>
+        ({
+          pageNumber: 1,
+          ref: { num: 1, gen: 0 },
+          getTextContent: async () => emptyNative,
+          getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+          getViewport: () => ({ width: 612, height: 792, viewBox: [0, 0, 612, 792] }),
+        }) as never,
+    };
+    const session = {
+      setFindExtracting: () => undefined,
+      recognized: () => recognizedNow,
+      nativeTextContent: async () => emptyNative,
+      findTextContent: async () => ({ native: emptyNative, recognized: ocrContent }),
+    } as unknown as PdfOcrSession;
+
+    findAdapter = attachPdfOcrFind({
+      controller,
+      eventBus: eventBus as never,
+      document,
+      session,
+      owner: {},
+      staleLayer: () => {
+        // Queue eviction right before createPagesProxy returns composed OCR text, so evicted(1)
+        // runs after complete.add(1) and before #extractText() reads textContent.items.
+        queueMicrotask(() => {
+          recognizedNow = false;
+          findAdapter?.evicted(1);
+        });
+        return false;
+      },
+    });
+    const counts: Array<{ current: number; total: number }> = [];
+    eventBus.on(
+      "updatefindmatchescount",
+      ({ matchesCount }: { matchesCount: { current: number; total: number } }) => {
+        counts.push(matchesCount);
+      },
+    );
+    eventBus.on(
+      "updatefindcontrolstate",
+      ({ matchesCount }: { matchesCount: { current: number; total: number } }) => {
+        counts.push(matchesCount);
+      },
+    );
+
+    eventBus.dispatch("find", {
+      source: controller,
+      type: "again",
+      query: "EvictedNeedle",
+      caseSensitive: false,
+      entireWord: false,
+      highlightAll: true,
+      findPrevious: false,
+      matchDiacritics: true,
+    });
+
+    const fields = controller as unknown as {
+      _extractTextPromises: Array<Promise<void> | undefined>;
+      _pageContents: string[];
+      _pageMatches: Array<number[] | undefined>;
+      _matchesCountTotal: number;
+    };
+    await vi.waitFor(() => expect(fields._extractTextPromises[0]).toBeDefined());
+    await fields._extractTextPromises[0];
+    await vi.waitFor(() => expect(fields._pageMatches[0]).toBeDefined());
+    expect(fields._pageContents[0]).toBe("");
+    expect(fields._pageMatches[0]).toEqual([]);
+    expect(fields._matchesCountTotal).toBe(0);
+    // Must never transiently report 1/1 or jump to the evicted page.
+    expect(counts.every((entry) => entry.total === 0 && entry.current === 0)).toBe(true);
+    expect(pageJumps).toEqual([]);
+    findAdapter.detach();
   });
 });

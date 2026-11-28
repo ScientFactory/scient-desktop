@@ -234,17 +234,7 @@ describe("PDF text recognition session", () => {
 
   it("reads a drawn scan only while it is in view, and when it comes back", async () => {
     const { document } = fakePdf();
-    const memory = createMemoryPdfOcrCache();
-    const lookups: Promise<unknown>[] = [];
-    const cache: PdfOcrCache = {
-      ...memory,
-      byPage: (key) => {
-        const found = memory.byPage(key);
-        lookups.push(found);
-        return found;
-      },
-    };
-    const { calls, dependencies } = setup({ cache });
+    const { calls, dependencies } = setup();
     const queued: number[] = [];
     const queue = dependencies.queue;
     const session = createPdfOcrSession(document, "doc", {
@@ -262,15 +252,13 @@ describe("PDF text recognition session", () => {
     const reader = {};
     const scan = await document.getPage(1);
 
-    // Drawn ahead of the view, then scrolled past before the drawing finished.
+    // Drawn ahead of the view, then scrolled past before classification finished.
     session.setVisible(reader, new Set([1]));
     const drawn = streamed(scan);
     session.setVisible(reader, new Set());
     expect(await drawn).toBe("Downloaded 2024\n");
-    // The drawing looks the page up, then the reading it asks for does; once that lookup
-    // answers, the reading has decided whether to queue.
-    await vi.waitFor(() => expect(lookups).toHaveLength(2));
-    await lookups[1];
+    await vi.waitFor(() => expect(session.coverage().scanned).toBe(1));
+    await Promise.resolve();
     expect(queued).toEqual([]);
     expect(session.recognized(1)).toBe(false);
 
@@ -498,5 +486,211 @@ describe("PDF text recognition session", () => {
     // A new search queues the stopped pages again.
     session.setSearch(first, 1);
     await vi.waitFor(() => expect(held.asked).toEqual([1, 2]));
+  });
+
+  it("defers background scan sweeps while Find extracts native text, then checks only sparse pages", async () => {
+    const { document, pages, fetched } = fakePdf({
+      numPages: 5,
+      scanned: (page) => page === 1 || page === 5,
+    });
+    const { dependencies, calls } = setup();
+    const session = createPdfOcrSession(document, "mixed", dependencies);
+    const reader = {};
+
+    // Page 1 (e.g. a cover image) is already recognized when Find begins extracting pages 1..5.
+    session.setVisible(reader, new Set([1]));
+    await streamed(await document.getPage(1));
+    await vi.waitFor(() => expect(session.recognized(1)).toBe(true));
+    fetched.length = 0;
+
+    session.setFindExtracting(reader, true);
+    session.setSearch(reader, 1);
+    await Promise.resolve();
+    // No background sweep competes with Find while native extraction is in progress.
+    expect(fetched).toEqual([]);
+
+    for (const number of [1, 2, 3, 4, 5]) {
+      await session.findTextContent(await document.getPage(number));
+    }
+    fetched.length = 0;
+    session.setFindExtracting(reader, false);
+
+    await vi.waitFor(() => expect(session.coverage().checked).toBe(true));
+    expect(session.recognized(5)).toBe(true);
+    expect(calls.recognitions).toBe(2);
+    // Native pages 2..4 were skipped completely during the post-extraction sweep.
+    expect(fetched).toEqual([5]);
+    expect(pages.get(2)?.operatorLists).toBe(0);
+    expect(pages.get(3)?.operatorLists).toBe(0);
+    expect(pages.get(4)?.operatorLists).toBe(0);
+  });
+
+  it("serves preloaded cached readings to Find immediately without inspecting operator lists", async () => {
+    const cache = createMemoryPdfOcrCache();
+    const first = setup({ cache });
+    const one = fakePdf({ numPages: 2, scanned: () => true });
+    createPdfOcrSession(one.document, "cached-book", first.dependencies);
+    await (await one.document.getPage(1)).getTextContent();
+    await (await one.document.getPage(2)).getTextContent();
+    expect(first.calls.recognitions).toBe(2);
+
+    const reopened = setup({ cache });
+    const two = fakePdf({ numPages: 2, scanned: () => true });
+    const session = createPdfOcrSession(two.document, "cached-book", reopened.dependencies);
+    const page1 = await session.findTextContent(await two.document.getPage(1));
+    const page2 = await session.findTextContent(await two.document.getPage(2));
+    expect(textContentText(page1.recognized!.items)).toContain("Recognized words");
+    expect(textContentText(page2.recognized!.items)).toContain("Recognized words");
+    expect(reopened.calls).toEqual({ renders: [], recognitions: 0 });
+    expect(two.pages.get(1)?.operatorLists).toBe(0);
+    expect(two.pages.get(2)?.operatorLists).toBe(0);
+  });
+
+  it("stops retrying a sparse page whose operator list fails instead of looping", async () => {
+    const { document, pages } = fakePdf({ numPages: 2, scanned: (page) => page === 2 });
+    const failing = await document.getPage(2);
+    let attempts = 0;
+    failing.getOperatorList = async () => {
+      attempts += 1;
+      throw new Error("corrupt operator list");
+    };
+    const { dependencies } = setup();
+    const session = createPdfOcrSession(document, "broken-ops", dependencies);
+    await session.findTextContent(await document.getPage(1));
+    await session.findTextContent(await document.getPage(2));
+    session.setSearch({}, 1);
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    // Flush microtasks so an accidental retry loop would advance past the first failure.
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    expect(attempts).toBe(1);
+    expect(pages.get(1)?.operatorLists).toBe(0);
+  });
+
+  it("leaves pure XFA documents untouched so their native text extraction works", async () => {
+    const xfaPage: PdfOcrPage = {
+      pageNumber: 1,
+      rotate: 0,
+      view: [0, 0, 612, 792],
+      getTextContent: async () => ({ items: [{ str: "Patient Name" }], styles: {}, lang: null }),
+      streamTextContent: () =>
+        new ReadableStream({
+          start: (controller) => {
+            controller.enqueue({ items: [], styles: {}, lang: null });
+            controller.close();
+          },
+        }),
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+      getViewport: () => ({ width: 612, height: 792, convertToPdfPoint: (x, y) => [x, 792 - y] }),
+      cleanup: () => true,
+    };
+    const xfaDocument: PdfOcrDocument = {
+      numPages: 1,
+      isPureXfa: true,
+      getPage: async () => xfaPage,
+    };
+    const { dependencies, calls } = setup();
+    const session = createPdfOcrSession(xfaDocument, "xfa", dependencies);
+    const page = await xfaDocument.getPage(1);
+    const { native, recognized } = await session.findTextContent(page);
+    expect(textContentText(native.items)).toBe("Patient Name");
+    expect(recognized).toBeNull();
+    expect(calls.recognitions).toBe(0);
+  });
+
+  it("returns Find text for both sparse and native pages without waiting on document cache preloading", async () => {
+    const { document } = fakePdf({ numPages: 2, scanned: (page) => page === 1 });
+    let releasePreload: (() => void) | null = null;
+    const baseCache = createMemoryPdfOcrCache();
+    const cache: PdfOcrCache = {
+      ...baseCache,
+      forDocument: () =>
+        new Promise((resolve) => {
+          releasePreload = () => resolve(new Map());
+        }),
+    };
+    const { dependencies } = setup({ cache });
+    const session = createPdfOcrSession(document, "native-fast", dependencies);
+    // Page 1 is a sparse cover; neither page 1 nor page 2 should wait on a pending preload.
+    const cover = await session.findTextContent(await document.getPage(1));
+    const native = await session.findTextContent(await document.getPage(2));
+    expect(cover.recognized).toBeNull();
+    expect(textContentText(native.native.items)).toContain("This page has its own text");
+    expect(native.recognized).toBeNull();
+    releasePreload!();
+  });
+
+  it("retries failed search pages once the temporary failure cooldown elapses", async () => {
+    const { document } = fakePdf({ numPages: 4, scanned: () => true });
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      let shouldFail = true;
+      const { dependencies } = setup({
+        engine: {
+          recognize: async () => {
+            if (shouldFail) throw new Error("temporary failure");
+            return readable;
+          },
+        },
+      });
+      const session = createPdfOcrSession(document, "cooldown", dependencies);
+      const reader = {};
+      session.setVisible(reader, new Set([1]));
+      await streamed(await document.getPage(1));
+      session.setSearch(reader, 1);
+      await vi.waitFor(() => expect(session.coverage().failed).toBe(4));
+
+      // Advance past the 30s cooldown and trigger Find Next without clearing the query.
+      shouldFail = false;
+      now += 31_000;
+      session.setSearch(reader, 1);
+      await vi.waitFor(() =>
+        expect(session.coverage()).toMatchObject({ recognized: 4, failed: 0 }),
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("cancels queued getTextContent OCR jobs when closing the last active reader leaves only a parked reader", async () => {
+    const { document } = fakePdf({ numPages: 2, scanned: () => true });
+    const held = heldEngine();
+    const { dependencies, queue } = setup({ engine: held.engine });
+    const session = createPdfOcrSession(document, "parked-asked", dependencies);
+    const parked = {};
+    const active = {};
+    session.setParked(parked, true);
+    session.setVisible(active, new Set([1]));
+    const page1 = await document.getPage(1);
+    const page2 = await document.getPage(2);
+    void streamed(page1);
+    await vi.waitFor(() => expect(held.asked).toEqual([1]));
+
+    // Queue page 2 via getTextContent (asked demand) behind running page 1.
+    const pendingAsk = page2.getTextContent();
+    await vi.waitFor(() => expect(queue.size).toBe(2));
+
+    // Releasing the active reader leaves only the parked reader, cancelling queued asked work.
+    session.release(active);
+    expect(queue.size).toBe(1);
+    await pendingAsk;
+    held.release(1);
+    await vi.waitFor(() => expect(queue.size).toBe(0));
+    expect(held.asked).toEqual([1]);
+  });
+
+  it("bounds retained in-memory OCR layers to the cache limit", async () => {
+    const cache = createMemoryPdfOcrCache(2);
+    const { document } = fakePdf({ numPages: 3, scanned: () => true });
+    const { dependencies } = setup({ cache });
+    const session = createPdfOcrSession(document, "bounded", dependencies);
+    await (await document.getPage(1)).getTextContent();
+    await (await document.getPage(2)).getTextContent();
+    expect(session.recognized(1)).toBe(true);
+    expect(session.recognized(2)).toBe(true);
+    await (await document.getPage(3)).getTextContent();
+    expect(session.recognized(1)).toBe(false);
+    expect(session.recognized(2)).toBe(true);
+    expect(session.recognized(3)).toBe(true);
   });
 });

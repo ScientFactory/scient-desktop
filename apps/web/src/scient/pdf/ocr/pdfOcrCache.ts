@@ -12,8 +12,12 @@ import type { PdfOcrPageText } from "./pdfOcrText";
  * PDF does not render it again.
  */
 export interface PdfOcrCache {
+  /** Maximum pages retained; sessions also bound their in-memory layers to this limit. */
+  readonly maxPages?: number;
   byImage(imageHash: string): Promise<PdfOcrPageText | null>;
   byPage(pageKey: string): Promise<PdfOcrPageText | null>;
+  /** All cached readings for one document key in one read, keyed by page key. */
+  forDocument?(documentKey: string): Promise<Map<string, PdfOcrPageText>>;
   put(imageHash: string, pageKey: string | null, text: PdfOcrPageText): Promise<void>;
 }
 
@@ -82,42 +86,124 @@ export function createIndexedDbPdfOcrCache(recognizer: string): PdfOcrCache {
     },
   });
   const key = (value: string) => `${recognizer}\n${value}`;
+  const recognizerPrefix = `${recognizer}\n`;
   const read = (imageKey: string) =>
     database.transaction(PAGES, "readonly", (transaction) =>
       request(transaction.objectStore(PAGES).get(imageKey) as IDBRequest<StoredPage | undefined>),
     );
+  const touchKeys = (imageKeys: ReadonlyArray<string>, aliasKeys: ReadonlyArray<string>) => {
+    if (imageKeys.length === 0 && aliasKeys.length === 0) return;
+    const now = Date.now();
+    const stores =
+      imageKeys.length > 0 && aliasKeys.length > 0
+        ? [PAGES, ALIASES]
+        : imageKeys.length > 0
+          ? PAGES
+          : ALIASES;
+    void database
+      .transaction(stores, "readwrite", async (transaction) => {
+        if (imageKeys.length > 0) {
+          const store = transaction.objectStore(PAGES);
+          for (const imageKey of imageKeys) {
+            // Re-read inside the write transaction so a newer put is never overwritten.
+            const current = await request(
+              store.get(imageKey) as IDBRequest<StoredPage | undefined>,
+            );
+            if (current && now - current.usedAt > TOUCH_AFTER_MS) {
+              store.put({ ...current, usedAt: now }, imageKey);
+            }
+          }
+        }
+        if (aliasKeys.length > 0) {
+          const store = transaction.objectStore(ALIASES);
+          for (const aliasKey of aliasKeys) {
+            const current = await request(
+              store.get(aliasKey) as IDBRequest<StoredAlias | undefined>,
+            );
+            if (current && now - current.usedAt > TOUCH_AFTER_MS) {
+              store.put({ ...current, usedAt: now }, aliasKey);
+            }
+          }
+        }
+        return done(transaction);
+      })
+      .catch(() => undefined);
+  };
   return {
+    maxPages: MAX_PAGES,
     async byImage(imageHash) {
-      const stored = await read(key(imageHash)).catch(() => undefined);
+      const imageKey = key(imageHash);
+      const stored = await read(imageKey).catch(() => undefined);
       if (stored?.text.recognizer !== recognizer) return null;
       // Recency only orders eviction; a day's precision spares a write per page read.
-      if (Date.now() - stored.usedAt > TOUCH_AFTER_MS) {
-        void database
-          .transaction(PAGES, "readwrite", async (transaction) => {
-            const store = transaction.objectStore(PAGES);
-            // A writer may have evicted the page since the read.
-            if ((await request(store.getKey(key(imageHash)))) !== undefined) {
-              store.put({ ...stored, usedAt: Date.now() }, key(imageHash));
-            }
-            return done(transaction);
-          })
-          .catch(() => undefined);
-      }
+      if (Date.now() - stored.usedAt > TOUCH_AFTER_MS) touchKeys([imageKey], []);
       return stored.text;
     },
     async byPage(pageKey) {
       try {
-        const alias = await database.transaction(ALIASES, "readonly", (transaction) =>
-          request(
-            transaction.objectStore(ALIASES).get(key(pageKey)) as IDBRequest<
-              StoredAlias | undefined
-            >,
-          ),
+        const aliasKey = key(pageKey);
+        const hit = await database.transaction(
+          [ALIASES, PAGES],
+          "readonly",
+          async (transaction) => {
+            const alias = await request(
+              transaction.objectStore(ALIASES).get(aliasKey) as IDBRequest<StoredAlias | undefined>,
+            );
+            if (!alias) return null;
+            const imageKey = key(alias.image);
+            const stored = await request(
+              transaction.objectStore(PAGES).get(imageKey) as IDBRequest<StoredPage | undefined>,
+            );
+            return stored ? { alias, imageKey, stored } : null;
+          },
         );
-        return alias ? await this.byImage(alias.image) : null;
+        if (!hit || hit.stored.text.recognizer !== recognizer) return null;
+        const now = Date.now();
+        touchKeys(
+          now - hit.stored.usedAt > TOUCH_AFTER_MS ? [hit.imageKey] : [],
+          now - hit.alias.usedAt > TOUCH_AFTER_MS ? [aliasKey] : [],
+        );
+        return hit.stored.text;
       } catch {
         return null;
       }
+    },
+    async forDocument(documentKey) {
+      const found = new Map<string, PdfOcrPageText>();
+      const stalePages: string[] = [];
+      const staleAliases: string[] = [];
+      try {
+        const prefix = `${key(documentKey)}\n`;
+        const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+        const now = Date.now();
+        await database.transaction([ALIASES, PAGES], "readonly", async (transaction) => {
+          const aliasStore = transaction.objectStore(ALIASES);
+          const [aliasKeys, aliases] = await Promise.all([
+            request(aliasStore.getAllKeys(range) as IDBRequest<string[]>),
+            request(aliasStore.getAll(range) as IDBRequest<StoredAlias[]>),
+          ]);
+          if (aliasKeys.length === 0) return;
+          const pageStore = transaction.objectStore(PAGES);
+          const pages = await Promise.all(
+            aliases.map((alias) =>
+              request(pageStore.get(key(alias.image)) as IDBRequest<StoredPage | undefined>),
+            ),
+          );
+          for (let index = 0; index < aliasKeys.length; index += 1) {
+            const stored = pages[index];
+            const alias = aliases[index]!;
+            if (stored?.text.recognizer !== recognizer) continue;
+            const aliasKey = aliasKeys[index]!;
+            found.set(aliasKey.slice(recognizerPrefix.length), stored.text);
+            if (now - stored.usedAt > TOUCH_AFTER_MS) stalePages.push(key(alias.image));
+            if (now - alias.usedAt > TOUCH_AFTER_MS) staleAliases.push(aliasKey);
+          }
+        });
+        touchKeys(stalePages, staleAliases);
+      } catch {
+        // Unavailable storage only costs a later recognition.
+      }
+      return found;
     },
     async put(imageHash, pageKey, text) {
       try {
@@ -159,11 +245,26 @@ export function createMemoryPdfOcrCache(maxPages = MAX_PAGES): PdfOcrCache {
     pages.set(imageHash, text);
     return text;
   };
+  const useAlias = (pageKey: string): PdfOcrPageText | null => {
+    const image = aliases.get(pageKey);
+    if (image === undefined) return null;
+    aliases.delete(pageKey);
+    aliases.set(pageKey, image);
+    return use(image);
+  };
   return {
+    maxPages,
     byImage: async (imageHash) => use(imageHash),
-    byPage: async (pageKey) => {
-      const image = aliases.get(pageKey);
-      return image === undefined ? null : use(image);
+    byPage: async (pageKey) => useAlias(pageKey),
+    forDocument: async (documentKey) => {
+      const prefix = `${documentKey}\n`;
+      const found = new Map<string, PdfOcrPageText>();
+      for (const aliasKey of Array.from(aliases.keys())) {
+        if (!aliasKey.startsWith(prefix)) continue;
+        const text = useAlias(aliasKey);
+        if (text) found.set(aliasKey, text);
+      }
+      return found;
     },
     put: async (imageHash, pageKey, text) => {
       pages.delete(imageHash);
