@@ -412,7 +412,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   }
 
   const childScope = yield* Scope.fork(parentScope);
-  let usageAccess = entry.usageAccess === "allowed";
+  // SCIENT-FORK: usage access is on unless the user turned it off.
+  let usageAccess = entry.usageAccess !== "denied";
 
   const createResult = yield* driver
     .create({
@@ -457,7 +458,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   // SCIENT-FORK:END
   const setLiveEntry = (next: ProviderInstanceConfig) => {
     setPresentation(next);
-    usageAccess = next.usageAccess === "allowed";
+    usageAccess = next.usageAccess !== "denied"; // SCIENT-FORK: on unless turned off
   };
   return {
     kind: "live" as const,

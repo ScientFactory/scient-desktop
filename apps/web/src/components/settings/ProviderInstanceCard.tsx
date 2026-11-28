@@ -1612,7 +1612,8 @@ export function ProviderInstanceCard({
               description={<UsageAccessReads driver={instance.driver} />}
               control={
                 <Switch
-                  checked={instance.usageAccess === "allowed"}
+                  // SCIENT-FORK: usage access is on unless the user turned it off.
+                  checked={instance.usageAccess !== "denied"}
                   disabled={readOnly}
                   onCheckedChange={(checked) => updateUsageAccess(Boolean(checked))}
                   aria-label={gt("Usage access for {provider}", { provider: displayName })}
