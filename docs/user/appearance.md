@@ -24,8 +24,8 @@ of the selected theme.
 ## Language
 
 On web and desktop, choose the app language under **Settings → General → Display → Language**:
-English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or
-Swedish. **System default** follows your computer's language. The desktop menus and dialogs
+English, Chinese, French, German, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish
+or Swedish. **System default** follows your computer's language. The desktop menus and dialogs
 follow the same choice.
 
 On mobile, choose it under **Settings → General → Language**. The phone saves its own choice,
