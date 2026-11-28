@@ -405,12 +405,12 @@ it.layer(testLayer)("CursorDriver", (it) => {
         beforeCatalog: {
           model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
           window: 1_000_000,
-          allowance: DEFAULT_HANDOFF_TOKEN_CAP,
+          allowance: 64_000,
         },
         catalogDefault: {
           model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
           window: 1_000_000,
-          allowance: DEFAULT_HANDOFF_TOKEN_CAP,
+          allowance: 64_000,
         },
         explicitWindow: {
           model: { id: "claude-opus-5-5", params: [{ id: "context", value: "500k" }] },

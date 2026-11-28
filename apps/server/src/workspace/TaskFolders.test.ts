@@ -467,7 +467,8 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
     Effect.gen(function* () {
       const { fileSystem, path, tmp, run, repository, worktreeCount } = yield* fixture;
       const shop = path.join(tmp, "shop");
-      const api = yield* repository("shop/api");
+      const apiName = "api\u2028tools";
+      const api = yield* repository(`shop/${apiName}`);
       const web = yield* repository("shop/web");
       // The project checks `api` out itself, copies its build cache and leaves `web` out.
       yield* fileSystem.writeFileString(
@@ -475,8 +476,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         JSON.stringify({
           worktreeLayout: {
             // A plain project's folder is no worktree, even when the command leaves a `.git` there.
-            create:
-              'mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && git init -q "$T3_WORKTREE_PROJECT_PATH" && printf %s "$T3_WORKTREE_REPOSITORIES" > "$T3_WORKTREE_PROJECT_PATH/chosen" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api" "$T3_WORKTREE_BASE"',
+            create: `mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && git init -q "$T3_WORKTREE_PROJECT_PATH" && printf %s "$T3_WORKTREE_REPOSITORIES" > "$T3_WORKTREE_PROJECT_PATH/chosen" && git -C "$T3_PROJECT_ROOT/${apiName}" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/${apiName}" "$T3_WORKTREE_BASE"`,
             // Cleanup never deletes files that exist only here, so the teardown clears its own.
             remove:
               'touch "$T3_PROJECT_ROOT/torn-down" && rm -rf "$T3_WORKTREE_PROJECT_PATH/cache" "$T3_WORKTREE_PROJECT_PATH/chosen" "$T3_WORKTREE_PROJECT_PATH/.git"',
@@ -491,7 +491,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
 
       assert.isFalse(taskFolder.projectIsWorktree);
       assert.deepEqual(taskFolder.repositories, [
-        { repositoryPath: api, worktreePath: path.join(taskFolder.root, "api"), name: "api" },
+        { repositoryPath: api, worktreePath: path.join(taskFolder.root, apiName), name: apiName },
       ]);
       assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "cache")));
       assert.equal(
@@ -499,7 +499,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         `${api}\n${web}`,
       );
       assert.equal(
-        yield* run(path.join(taskFolder.root, "api"), "symbolic-ref", "--short", "HEAD"),
+        yield* run(path.join(taskFolder.root, apiName), "symbolic-ref", "--short", "HEAD"),
         "feature",
       );
       assert.equal(yield* worktreeCount(web), 1);
@@ -591,6 +591,38 @@ it.live("keeps a checkout that gained work while its folder's remove command wai
   ),
 );
 
+// SCIENT-FORK:START — guarded storage cleanup uses the private task-folder fixture.
+it.live("keeps a recovery checkout's Git registration in a guarded storage sweep", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const shop = path.join(tmp, "shop");
+      const api = yield* repository("shop/api");
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api);
+      const { taskFolder } = yield* create("feature");
+      const checkout = taskFolder.repositories[0]!;
+      const recovery = path.join(tmp, "recovery");
+      yield* run(api, "worktree", "move", checkout.worktreePath, recovery);
+      const adminDir = yield* run(recovery, "rev-parse", "--absolute-git-dir");
+      yield* fileSystem.remove(path.join(recovery, ".git"));
+
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      yield* taskFolders.remove({
+        root: taskFolder.root,
+        force: false,
+        forget: false,
+        projectCommands: "request-not-permitted",
+        removeCheckout: () => Effect.die("The original checkout is absent"),
+      });
+
+      assert.isTrue(yield* fileSystem.exists(adminDir));
+      assert.include(yield* run(api, "worktree", "list", "--porcelain"), recovery);
+    }),
+  ),
+);
+
+// SCIENT-FORK:END
 it.live("leaves a project's layout commands out for a request that may not run them", () =>
   withState((state) =>
     Effect.gen(function* () {

@@ -460,6 +460,23 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "preview_snapshot");
   });
 
+  // SCIENT-FORK:START — Pi receives one canonical declaration for each Scient tool.
+  it("keeps a searched tool active under its canonical name on the next prompt", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      activatesOnRegistration: true,
+    });
+    const event = { systemPrompt: "" };
+    await bridge.handlers.get("session_start")!(event, discoveryContext);
+    bridge.restoreActiveTools([...bridge.getActiveTools(), "preview_snapshot"]);
+    await bridge.handlers.get("before_agent_start")!(event, discoveryContext);
+    assert.equal(bridge.getActiveTools().filter((name) => name === "preview_snapshot").length, 1);
+    assert.notInclude(bridge.getActiveTools(), "mcp__t3_code__preview_snapshot");
+    assert.notInclude(bridge.declaredTools(), "mcp__t3-code__preview_snapshot");
+  });
+  // SCIENT-FORK:END
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {

@@ -62,7 +62,9 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
           } finally {
             database.close();
           }
-          return (yield* check({ stopReason: "end_turn" }))?.failure;
+          const outcome = yield* check({ stopReason: "end_turn" });
+          assert.isObject(outcome);
+          return typeof outcome === "object" ? outcome.failure : undefined;
         });
 
       // regression: a refused connector `initialize` failed every turn as a generic error.
@@ -187,7 +189,9 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
           } finally {
             database.close();
           }
-          return (yield* check({ stopReason: "end_turn" }))?.failure;
+          const outcome = yield* check({ stopReason: "end_turn" });
+          assert.isObject(outcome);
+          return typeof outcome === "object" ? outcome.failure : undefined;
         });
 
       const scient = yield* failedServer("scient", "Scient MCP endpoint responded with HTTP 401.");

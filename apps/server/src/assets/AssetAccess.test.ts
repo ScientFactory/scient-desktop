@@ -710,6 +710,68 @@ describe("AssetAccess", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
+    "rejects draft media symlinks targeting disallowed types",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-symlink-" });
+        const secret = path.join(root, "secret.txt");
+        yield* fs.writeFileString(secret, "private bytes");
+        yield* fs.symlink(secret, path.join(root, "disguised.wav"));
+        const error = yield* issueAssetUrl({
+          resource: { _tag: "draft-workspace-file", cwd: root, path: "disguised.wav" },
+          workspaceRoot: root,
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetPreviewTypeValidationError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "serves only the target file through a folder linked in from outside the workspace",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linked-folder-" });
+        const root = path.join(directory, "workspace");
+        const outside = path.join(directory, "files");
+        yield* fs.makeDirectory(root);
+        yield* fs.makeDirectory(path.join(outside, "specs"), { recursive: true });
+        yield* fs.writeFileString(path.join(outside, "specs", "diagram.png"), "png bytes");
+        yield* fs.writeFileString(path.join(outside, "specs", "page.html"), "<p>page</p>");
+        yield* fs.writeFileString(path.join(outside, "specs", "style.css"), "p {}");
+        yield* fs.symlink(outside, path.join(root, "_files"));
+
+        for (const resource of [
+          {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: "_files/specs/diagram.png",
+          },
+          { _tag: "draft-workspace-file", cwd: root, path: "_files/specs/diagram.png" },
+          {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: "_files/specs/page.html",
+          },
+        ] as const) {
+          const result = yield* issueAssetUrl({ resource, workspaceRoot: root });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          const token = suffix.slice(0, separator);
+          const fileName = path.basename(resource.path);
+          expect(yield* resolveAsset(token, fileName)).toMatchObject({
+            kind: "file",
+            path: yield* fs.realPath(path.join(outside, "specs", fileName)),
+          });
+          // The grant covers the one file, never its neighbours.
+          expect(yield* resolveAsset(token, "style.css")).toBeNull();
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
     "preserves absolute draft previews through stable symlinks",
     () =>
       Effect.gen(function* () {

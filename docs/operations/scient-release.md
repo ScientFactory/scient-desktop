@@ -104,10 +104,13 @@ the stable scheduler and production gate.
   would compile on every launch.
 - CI calls Windows Packaging for changes affecting packaged code on pull
   requests, merge groups, and main. Successful qualification is part of the
-  existing required `Test` check; an unresolved diff runs qualification, and
-  a failed detector or an unqualified skip fails the gate. It runs the release
-  payload validator, packaged terminal/Cursor native probes, and an install/upgrade
-  from the checksum-pinned 0.6.21 installer without signing
+  required `Check` gate; an unresolved diff runs qualification, and
+  a failed detector or an unqualified skip fails the gate. It builds the slim
+  installer releases ship and runs the release payload validator and verifier,
+  packaged terminal/Cursor native probes, an install/upgrade from the
+  checksum-pinned 0.6.21 installer (full, like every release through 0.6.34)
+  that must leave no WSL runtime behind, installs into fresh, shared and linked
+  folders, and a fresh install's launch smoke and bytecode check, without signing
   secrets or publication authority. 0.6.21 downloads, verifies and installs in the
   background while the candidate builds; the candidate then installs over it. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
@@ -137,10 +140,14 @@ the stable scheduler and production gate.
   probing `wsl.exe` or the registry, starts on Windows, and keeps saved WSL
   preferences until the user chooses Switch to Windows. The release verifier runs
   with `--omit-wsl-runtime`; without it the verifier requires the WSL archive.
-  Windows Packaging builds and qualifies both the full WSL package below and the
-  slim installer (silent install and launch smoke). Shipping WSL again means
-  dropping the flag and restoring the release workflow's WSL node-pty and Linux
-  SyncTeX inputs.
+  Pull requests, merge groups and main pushes qualify only the slim installer.
+  The full WSL package below is built and qualified only by CI's nightly
+  `schedule` run and by manual runs (`workflow_dispatch` of CI or of Windows
+  Packaging): a verified build, a fresh install with launch smoke, and the Linux
+  payload check. A failure fails only that nightly or manual run, never a pull
+  request or the merge queue. Shipping WSL again means
+  dropping the flag, restoring the release workflow's WSL node-pty and Linux
+  SyncTeX inputs, and qualifying the full package on every pull request again.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
   WSL installation restores execute permissions for Cursor's Linux `rg` and

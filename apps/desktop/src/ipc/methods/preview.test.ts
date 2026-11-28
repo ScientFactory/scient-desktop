@@ -36,7 +36,12 @@ const decodeCaptureFailure = Schema.decodeUnknownEffect(PreviewCaptureFailure);
 
 describe("preview IPC methods", () => {
   const invokeCapture = (
-    method: typeof PreviewIpc.startRecording | typeof PreviewIpc.captureScreenshot,
+    method:
+      | typeof PreviewIpc.startRecording
+      | typeof PreviewIpc.captureScreenshot
+      // SCIENT-FORK:START — tab hover-card thumbnail.
+      | typeof PreviewIpc.captureTabThumbnail,
+    // SCIENT-FORK:END
     manager: Partial<PreviewManager.PreviewManager["Service"]>,
   ) =>
     Effect.scoped(
@@ -55,7 +60,12 @@ describe("preview IPC methods", () => {
         );
         yield* ipc.handle(method);
         return yield* Effect.promise(async () =>
-          structuredClone(await listener!({ sender: { id: 7 } }, { tabId: "capture-tab" })),
+          structuredClone(
+            await listener!(
+              { sender: { id: 7 } },
+              { tabId: "capture-tab", url: "https://example.com/" },
+            ),
+          ),
         );
       }).pipe(
         Effect.provideService(
@@ -109,6 +119,35 @@ describe("preview IPC methods", () => {
         for (const phrase of guidance) expect(failure.message).toContain(phrase);
       }),
   );
+
+  // SCIENT-FORK:START — the hover-card thumbnail transports a picture or plain
+  // null; a capture failure is never an error the renderer must handle.
+  effectIt.effect("transports a tab thumbnail, and null when capture fails", () =>
+    Effect.gen(function* () {
+      const picture = "data:image/jpeg;base64,QUJD";
+      const seen: Array<readonly [string, string]> = [];
+      const captured = yield* invokeCapture(PreviewIpc.captureTabThumbnail, {
+        captureTabThumbnail: (tabId, url) => {
+          seen.push([tabId, url] as const);
+          return Effect.succeed(picture);
+        },
+      });
+      expect(captured).toBe(picture);
+      expect(seen).toEqual([["capture-tab", "https://example.com/"]]);
+      const failed = yield* invokeCapture(PreviewIpc.captureTabThumbnail, {
+        captureTabThumbnail: (tabId) =>
+          Effect.fail(
+            new PreviewManager.PreviewOperationError({
+              operation: "captureTabThumbnail.capturePage",
+              tabId,
+              cause: new Error("guest gone"),
+            }),
+          ),
+      });
+      expect(failed).toBeNull();
+    }),
+  );
+  // SCIENT-FORK:END
 
   beforeEach(() => {
     fromPartition.mockClear();

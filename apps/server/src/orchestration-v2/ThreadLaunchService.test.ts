@@ -305,7 +305,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerOrchestrator,
         // SCIENT-FORK: Scient's replay harness also provides a real checkpoint store.
         layerCheckpointStore,
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
         NodeServices.layer,
         IdAllocator.layer,
         options.getLaunchSettings === undefined

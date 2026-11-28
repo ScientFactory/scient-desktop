@@ -514,7 +514,7 @@ it.live.each(
                   params: {
                     threadId: "native-source-thread",
                     cursor: null,
-                    limit: 1,
+                    limit: 2,
                     sortDirection: "desc",
                     itemsView: "summary",
                   },
@@ -529,6 +529,12 @@ it.live.each(
                     data: [
                       {
                         id: "native-source-later-turn",
+                        items: [],
+                        status: "completed",
+                        error: null,
+                      },
+                      {
+                        id: "native-source-turn",
                         items: [],
                         status: "completed",
                         error: null,
@@ -1299,7 +1305,7 @@ it.live.each(
             params: {
               threadId: "native-fork-thread",
               cursor: null,
-              limit: 1,
+              limit: 100,
               sortDirection: "desc",
               itemsView: "summary",
             },

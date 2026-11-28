@@ -877,8 +877,9 @@ jobs:
             export SCIENT_NATIVE_SERVER_COMPILE_CACHE="$RUNNER_TEMP/server-bytecode"
             # SCIENT-FORK:END
             # Releases ship a slim Windows installer without the WSL runtime archive or Linux
-            # sidecar dependencies while no user runs WSL. The app hides WSL in slim builds, and
-            # PR CI (windows-packaging.yml) keeps building and qualifying the full WSL package.
+            # sidecar dependencies while no user runs WSL. The app hides WSL in slim builds. CI
+            # (windows-packaging.yml) qualifies this slim installer whenever it runs Windows
+            # packaging, and the full WSL package only on its nightly and manual runs.
             args+=(--omit-wsl-runtime)
             if [[ "${SCIENT_WINDOWS_SIGNING_READY:-false}" == "true" ]]; then
               args+=(--signed)

@@ -350,6 +350,7 @@ describe("provider usage reporting", () => {
     expect(label("pi", "C:\\Users\\jane\\qwen-coder.gguf")).toBe("other");
     expect(label("pi", "../jane/qwen-coder.gguf")).toBe("other");
     expect(label("pi", "pi-local")).toBe("pi-local");
+    expect(label("antigravity", "gemini-4-neon-low")).toBe("gemini-4-neon");
   });
   // SCIENT-FORK:END
 

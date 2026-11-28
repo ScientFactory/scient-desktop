@@ -137,7 +137,7 @@ function simulate(files: string[], eventName = "pull_request", reused = false, b
 
 // Expand reusable workflows as well as the web/server matrices. This checks runner
 // counts against the YAML instead of treating a reusable call as one machine.
-function runnerCount(needs: Record<string, JobResult>) {
+function runnerCount(needs: Record<string, JobResult>, eventName: string) {
   const matrixSize = (job: Job, inputs: Record<string, unknown> = {}) => {
     const matrix = job.strategy?.matrix;
     if (!matrix) return 1;
@@ -157,7 +157,10 @@ function runnerCount(needs: Record<string, JobResult>) {
     const inputs = Object.fromEntries(
       Object.entries(job.with ?? {}).map(([key, expression]) => [
         key,
-        NodeVM.runInNewContext(expression.slice(3, -2), { needs }),
+        NodeVM.runInNewContext(expression.slice(3, -2), {
+          needs,
+          github: { event_name: eventName },
+        }),
       ]),
     );
     const called = YAML.parse(
@@ -480,25 +483,25 @@ describe("CI workflow decisions", () => {
 
   it.each([
     ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 36],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 42],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 40],
     ["docs PR", "docs/operations/00_development.md", "pull_request", false, 36],
-    // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 50],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 49],
-    // Full Compute adds one Intel macOS job for real Python.
+    // CI wiring runs Compute on Linux only; a push to main still runs all four. Only nightly and
+    // manual runs add the full WSL installer's Linux prerequisites and payload check.
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 48],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 47],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      54,
+      51,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 45],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 43],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 37],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 59],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 58],
+    ["main push", "docs/operations/00_development.md", "push", false, 56],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 57],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(
@@ -506,7 +509,7 @@ describe("CI workflow decisions", () => {
     (_label, file, event, reused, count) => {
       const f = simulate([file], event, reused);
       expect(f.failures).toEqual([]);
-      expect(runnerCount(f.needs)).toBe(count);
+      expect(runnerCount(f.needs, event)).toBe(count);
       if (!reused) {
         for (const id of ["test", "test_web", "test_server"]) {
           f.gateNeeds[id]!.result = "cancelled";

@@ -122,6 +122,7 @@ export const PreviewAutomationStatus = Schema.Struct({
         type: Schema.String,
         message: Schema.String,
         defaultValue: Schema.String,
+        authChallengeId: Schema.optional(Schema.String),
       }),
     ),
   ),
@@ -164,6 +165,7 @@ export const PreviewAutomationDialogInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   accept: Schema.Boolean,
   promptText: Schema.optional(Schema.String),
+  authChallengeId: Schema.optional(Schema.String),
 });
 export type PreviewAutomationDialogInput = typeof PreviewAutomationDialogInput.Type;
 

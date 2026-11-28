@@ -406,6 +406,17 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
             ),
           )
         : () => Effect.succeed(MAINTENANCE_CAPABILITIES);
+      const checkUsageLimits = auth.readApiKey.pipe(
+        Effect.orElseSucceed(() => undefined),
+        Effect.flatMap((apiKey) =>
+          readCursorUsageLimits(effectiveConfig, {
+            ...effectiveEnvironment,
+            CURSOR_API_KEY: apiKey,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
         resolveMaintenance,
@@ -415,6 +426,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
         initialSnapshot: (settings) =>
           buildInitialCursorProviderSnapshot(settings.provider).pipe(Effect.map(stampSnapshot)),
         checkProvider,
+        checkUsageLimits,
       }).pipe(
         Effect.mapError(
           (cause) =>

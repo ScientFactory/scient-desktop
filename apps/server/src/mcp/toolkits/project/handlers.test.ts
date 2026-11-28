@@ -223,6 +223,7 @@ it.effect(
           readonly title: string;
           readonly generateTitle?: boolean;
           readonly message?: string;
+          readonly outputSchema?: { readonly type: "object" };
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
@@ -283,6 +284,20 @@ it.effect(
         });
         expect(idleTitled.result).toMatchObject({ code: "invalid_request" });
         expect(idleTitled.launched).toHaveLength(0);
+      }
+
+      // Clients that fill every optional field send a blank `message`: the thread starts idle.
+      for (const message of ["", " \n "]) {
+        const idle = yield* launchWith("full-access", "full-access", { title: "Fix", message });
+        expect(idle.launched).toHaveLength(1);
+        expect(idle.launched[0]?.initialMessage).toBeUndefined();
+        const schemaWithoutAsk = yield* launchWith("full-access", "full-access", {
+          title: "Fix",
+          message,
+          outputSchema: { type: "object" },
+        });
+        expect(schemaWithoutAsk.result).toMatchObject({ code: "invalid_request" });
+        expect(schemaWithoutAsk.launched).toHaveLength(0);
       }
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
@@ -1230,11 +1245,26 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
 it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
   Effect.gen(function* () {
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const named: Array<{ readonly scripts?: readonly unknown[] }> = [];
     const dependencies = Layer.merge(
       harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        create: () => Effect.die("the project was created without its model default"),
-      }),
+      Layer.mergeAll(
+        Layer.mock(Repositories.SourceControlRepositoryService)({}),
+        Layer.mock(Project.ProjectService)({
+          create: () => Effect.die("the project was created without its model default"),
+          getById: (id) => Effect.succeedSome({ ...deletedProject(id), deletedAt: null }),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          createNamedProject: (input) =>
+            Effect.sync(() => named.push(input)).pipe(
+              Effect.as({
+                projectId: harness.projectId,
+                workspaceRoot: "/projects/client-target",
+              }),
+            ),
+        }),
+      ),
     );
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -1242,18 +1272,38 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       ),
     );
 
-    const refused = yield* toolkit
-      .handle("scient_project_create", {
-        title: "client-target",
-        workspaceRoot: "/projects/client-target",
-        defaultModelSelection: harness.modelSelection,
-      })
+    for (const workspaceRoot of ["/projects/client-target", undefined]) {
+      const refused = yield* toolkit
+        .handle("scient_project_create", {
+          title: "client-target",
+          ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+          defaultModelSelection: harness.modelSelection,
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+      expect(refused.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("scient_project_update"),
+      });
+    }
+
+    const accepted = yield* toolkit
+      .handle("scient_project_create", { title: "client-target", defaultModelSelection: null })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect(refused.at(-1)?.result).toMatchObject({
-      code: "invalid_request",
-      message: expect.stringContaining("scient_project_update"),
+    expect(accepted.at(-1)?.result).toMatchObject({
+      id: harness.projectId,
+      defaultModelSelection: null,
     });
+
+    // An empty scripts list is an override (no scripts), not a request for the defaults.
+    for (const empty of [{ scripts: [] }, { trackedFolders: [] }]) {
+      const created = yield* toolkit
+        .handle("scient_project_create", { title: "client-target", ...empty })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(created.at(-1)?.result).toMatchObject({ id: harness.projectId });
+    }
+    expect(named.slice(-2).map((input) => input.scripts)).toEqual([[], undefined]);
   }),
 );
 
@@ -1790,18 +1840,30 @@ it.effect("refuses name-only projects through the real service while the Scient 
           Effect.provide(ManagedProjectFolders.layer.pipe(Layer.provideMerge(dependencies))),
         );
 
-    const result = yield* handle({ title: "Pinball Stats" });
-    expect(result.at(-1)?.result).toMatchObject({
-      code: "orchestration_error",
-      message: "Starting a project from just a name is not available on this environment.",
-    });
+    for (const extra of [{}, { scripts: [] }, { trackedFolders: [] }]) {
+      const result = yield* handle({ title: "Pinball Stats", ...extra });
+      expect(result.at(-1)?.result).toMatchObject({
+        code: "orchestration_error",
+        message: "Starting a project from just a name is not available on this environment.",
+      });
+    }
     expect(registered).toEqual([]);
 
     yield* handle({ title: "Existing", workspaceRoot: "/work/existing" });
     expect(registered).toEqual(["/work/existing"]);
 
     for (const extra of [
-      { scripts: [] },
+      {
+        scripts: [
+          {
+            id: "setup",
+            name: "Setup",
+            command: "true",
+            icon: "configure" as const,
+            runOnWorktreeCreate: false,
+          },
+        ],
+      },
       { defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" } },
     ]) {
       const rejected = yield* handle({ title: "Configured", ...extra });

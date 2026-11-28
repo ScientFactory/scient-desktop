@@ -731,6 +731,25 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`241d46c562fa9a0e1bfc58de181a704dd43ac8f7` is recorded in
+[the 2026-11-28 241d46c562 receipt](docs/internals/t3-upstream-sync-20261128-241d46c562.md), Scient PR #1169.
+Literal merge `fee9d6734e041eb9d3838868a533b348f55d6f73` has owned base
+`f78ade1dee02d9024562aabec9919accfcf0f727` and the frozen official target as parents, retaining
+the 112 official commits after `d838e95660c`. The range adds working-copy image previews,
+more faithful OpenDocument previews, and provider, search and worktree fixes. Existing
+profiles get the updated search triggers. Release remains separate.
+
+The previous committed alignment through
+`d838e95660cb0d9f6784796385d636f4719cfabd` is recorded in
+[the 2026-11-27 ca1680bec69 receipt](docs/internals/t3-upstream-sync-20261127-ca1680bec69.md),
+Scient PR #1166. Literal merge `e5f7bd6168d0e6a570bb1978e3a95faf9aee96ae` has owned base
+`39efbc951404481454862963e51cde55591b1da7` and the frozen official target as parents, retaining
+the 248 official commits after `ca1680bec69`. The range adds file downloads,
+protected Office and EPUB previews, Jira, and provider recovery fixes. Scient
+keeps its file readers, workspace authorization, and provider ownership rules.
+Release remains separate.
+
+The previous committed alignment through
 `ca1680bec6923c9488d8533570e5320b1ef1dba7` is recorded in
 [the 2026-11-27 6d21ad2b25 receipt](docs/internals/t3-upstream-sync-20261127-6d21ad2b25.md),
 Scient PR #1158. Literal merge `baa8265691b3153a4d7310dd898c6ac47999299c` has owned base

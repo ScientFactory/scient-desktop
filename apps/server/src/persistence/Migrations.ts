@@ -171,6 +171,7 @@ import Migration0120 from "./Migrations/120_ForkHistoryMembership.ts";
 import Migration0121 from "./Migrations/121_WorkflowMailSender.ts";
 import Migration0122 from "./Migrations/122_WorkflowPools.ts";
 import Migration0123 from "./Migrations/123_WorkflowRunSubject.ts";
+import Migration0124 from "./Migrations/124_GuardMessageSearchTriggers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -336,6 +337,7 @@ export const migrationEntries = [
   [121, "WorkflowMailSender", Migration0121],
   [122, "WorkflowPools", Migration0122],
   [123, "WorkflowRunSubject", Migration0123],
+  [124, "GuardMessageSearchTriggers", Migration0124],
   // SCIENT-FORK:END
 ] as const;
 

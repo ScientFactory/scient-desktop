@@ -1,3 +1,5 @@
+import { useAtomCommand } from "../../state/use-atom-command";
+import { isSkillReloadCommand } from "@t3tools/client-runtime/providerSkills";
 import * as Equal from "effect/Equal";
 import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
@@ -123,7 +125,7 @@ import {
   previewAnnotationContextReference,
   responseContextReference,
 } from "../../lib/composerContextRecords";
-import { environmentServerConfigsAtom } from "../../state/server";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
@@ -331,6 +333,9 @@ export interface ComposerSendInput {
  * shows and comes back if the send fails.
  */
 export function useComposerSend(input: ComposerSendInput) {
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
   const {
     environmentId,
     routeThreadKey,
@@ -1118,6 +1123,7 @@ export function useComposerSend(input: ComposerSendInput) {
         }
         if (scientFeedbackCommand) {
           clearComposerDraftContent(composerDraftTarget);
+          if (replyTo) useComposerDraftStore.getState().setReplyTo(composerDraftTarget, replyTo);
           if (isCurrentRouteThread()) {
             promptRef.current = "";
             composerRef.current?.resetCursorState();
@@ -1170,6 +1176,8 @@ export function useComposerSend(input: ComposerSendInput) {
                 },
                 clearDraft: () => {
                   clearComposerDraftContent(composerDraftTarget);
+                  if (replyTo)
+                    useComposerDraftStore.getState().setReplyTo(composerDraftTarget, replyTo);
                   if (isCurrentRouteThread()) {
                     promptRef.current = "";
                     composerRef.current?.resetCursorState();
@@ -2001,6 +2009,16 @@ export function useComposerSend(input: ComposerSendInput) {
               failure = startResult;
             } else {
               turnStartSucceeded = true;
+              if (isSkillReloadCommand(trimmed)) {
+                void refreshProviders({
+                  environmentId,
+                  input: {
+                    instanceId: ctxSelectedModelSelection.instanceId,
+                    cwd: activeThread.worktreePath ?? activeProject?.workspaceRoot,
+                    fresh: true,
+                  },
+                });
+              }
               if (checkoutPullRequestUrl) {
                 linkCheckoutPullRequest(
                   scopeThreadRef(activeThread.environmentId, threadIdForSend),

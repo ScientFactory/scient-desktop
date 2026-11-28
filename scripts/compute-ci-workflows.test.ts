@@ -245,24 +245,26 @@ describe("Compute CI suite selection", () => {
       expect(leg.target, String(leg.runner)).toBe(evaluate(target, { matrix: leg }));
   });
 
-  it("finds an Intel proof whose leg is missing or listed twice, or whose step did not run", () => {
+  it("finds an Intel leg that is missing or listed twice, or a proof step that did not run", () => {
     const both = { real_kernel: true, managed_python: true, platforms: "all" };
-    const [apple, managed, python] = legsOf("macos", both);
-    const intel = all.filter((runner) => runner !== "macos-15-intel");
-    expect(runnersOf(both, [apple!, managed!])).toEqual({ ...selected(both), kernel: intel });
-    expect(runnersOf(both, [apple!, python!])).toEqual({ ...selected(both), managed: intel });
-    expect(() => runnersOf(both, [apple!, managed!, managed!, python!])).toThrow();
-    for (const [leg, role] of [
-      [managed, "managed"],
-      [python, "python"],
-    ] as const) {
+    const [apple, intel] = legsOf("macos", both);
+    const withoutIntel = all.filter((runner) => runner !== "macos-15-intel");
+    expect(runnersOf(both, [apple!])).toEqual({
+      ...selected(both),
+      managed: withoutIntel,
+      kernel: withoutIntel,
+    });
+    expect(() => runnersOf(both, [apple!, intel!, intel!])).toThrow();
+    for (const role of ["managed", "python"] as const) {
       const last = PROOFS[role]!.at(-1);
       const steps = jobs.macos!.steps.map((step) =>
         step.id === last ? { ...step, if: "${{ false }}" } : step,
       );
-      expect(runMac(both, leg!, steps).results.map(({ ran, missing }) => [ran, missing])).toEqual([
-        [false, [last]],
-      ]);
+      expect(
+        runMac(both, intel!, steps)
+          .results.filter((result) => !result.ran)
+          .map(({ role: failedRole, missing }) => [failedRole, missing]),
+      ).toEqual([[role, [last]]]);
     }
   });
 
@@ -395,8 +397,7 @@ describe("Compute CI suite selection", () => {
       legsOf("macos", inputs).map((leg) => runMac(inputs, leg).expected);
     expect(expected({ real_kernel: true, managed_python: true, platforms: "all" })).toEqual([
       ["people", "files", "kernels", "managed", "python"],
-      ["managed"],
-      ["python"],
+      ["managed", "python"],
     ]);
     expect(expected({ real_kernel: false, managed_python: true, platforms: "all" })).toEqual([
       ["managed"],

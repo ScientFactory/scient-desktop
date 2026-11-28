@@ -346,6 +346,16 @@ export function rehypeScientBidi(options: {
 
       if (node.type === "element" && node.tagName) {
         const childFlowArrowEligible = flowArrowEligible && !NON_PROSE_TAGS.has(node.tagName);
+        const authoredDir = node.properties?.dir;
+        if (
+          (options.requestedDirection === undefined || options.requestedDirection === "auto") &&
+          typeof authoredDir === "string" &&
+          /^(?:ltr|rtl)$/i.test(authoredDir)
+        ) {
+          const direction = authoredDir.toLowerCase() === "rtl" ? "rtl" : "ltr";
+          processChildren(node, direction, tableDirection, direction, childFlowArrowEligible);
+          return;
+        }
         if (LIST_TAGS.has(node.tagName)) {
           const resolvedListDirection =
             inheritedDirection ??

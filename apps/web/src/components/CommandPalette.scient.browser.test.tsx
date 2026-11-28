@@ -7,6 +7,8 @@ import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
+import "~/index.css";
+
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
   useAtomValue: (atom: unknown) =>
@@ -123,7 +125,7 @@ vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
 
-it("keeps Backspace in an emptied clone path inside the clone", async () => {
+it("keeps Backspace in the clone path and exposes the Back button to the keyboard", async () => {
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("Git URL", { exact: true }).click();
@@ -136,6 +138,14 @@ it("keeps Backspace in an emptied clone path inside the clone", async () => {
   await expect.element(input).toHaveValue("");
   await expect.element(page.getByText("Select where to clone")).toBeVisible();
   await expect.element(page.getByText("Repository", { exact: true })).toBeVisible();
+
+  const back = page.getByRole("button", { name: "Back", exact: true });
+  await expect.element(back).toBeVisible();
+  await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+  await expect.element(back).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText("Git URL", { exact: true })).toBeVisible();
+  await expect.element(input).toHaveFocus();
 });
 
 it("shows Checking… for hosted sources while Add Project's source-control discovery is pending", async () => {
