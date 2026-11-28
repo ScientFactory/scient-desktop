@@ -8,12 +8,84 @@ import {
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 
-const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  observeSource: vi.fn(),
+  dispose: vi.fn(),
+  transcribeCalls: 0,
+  transcript: null as Promise<string> | null,
+}));
+const environment = vi.hoisted(() => ({
+  environmentId: "environment",
+  serverConfig: {
+    environment: { capabilities: { voiceTranscription: true, cloudVoiceTranscription: false } },
+  },
+}));
+const preparedConnection = vi.hoisted(() => ({
+  environmentId: "environment",
+  label: "environment",
+}));
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
+  usePreparedConnection: ((environmentId: string | null) =>
+    environmentId === preparedConnection.environmentId
+      ? Option.some(preparedConnection)
+      : Option.none()) as never,
+}));
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: ((environmentId: string | null) =>
+    environmentId === environment.environmentId ? environment : null) as never,
+}));
+vi.mock(import("../../speech/runEnvironmentSpeech"), () => ({
+  runEnvironmentSpeech: Effect.runPromise as never,
+}));
+vi.mock(import("@t3tools/client-runtime/voice-input"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  getEnvironmentSpeechStatus: (() =>
+    Effect.succeed({
+      supported: true,
+      state: "ready",
+      modelId: "test-model",
+      model: "Test",
+      size: 1,
+      supportsStreaming: false,
+      supportsTranslation: false,
+      acceleration: "auto",
+      benchmarkTier: "accelerated",
+      modelUnloadTimeout: "min_15",
+      gpuDevices: [],
+    })) as never,
+}));
+vi.mock(import("../../speech/browserVoiceInput"), () => ({
+  createAppleSpeechVoiceInputPlatform: vi.fn() as never,
+  createBrowserVoiceInputPlatform: (() => ({
+    recorder: {
+      uri: "blob:recording",
+      prepareToRecordAsync: async () => {},
+      record() {},
+      stop: async () => {},
+    },
+    transcriber: {
+      prepare: async () => ({
+        locale: "en",
+        transcribe: async () => {
+          mocks.transcribeCalls += 1;
+          return mocks.transcript ?? "dictated comment";
+        },
+      }),
+    },
+    cancelRecording() {},
+    deleteRecording() {},
+  })) as never,
+}));
 vi.mock(import("./AssistantCitationSource"), async (importOriginal) => ({
   ...(await importOriginal()),
   observeAssistantCitationCommentSource: mocks.observeSource,
@@ -65,7 +137,12 @@ function mount(
       />
     );
   }
-  return render(<Composer />);
+  return render(
+    <>
+      <Composer />
+      <button type="button">Outside</button>
+    </>,
+  );
 }
 
 const textarea = () =>
@@ -116,12 +193,28 @@ describe("citation comment source disappearance", () => {
     expect(textarea()).toBeNull();
   });
 
+  it("keeps a draft open and unsaved when the cited row unmounts mid-typing", async () => {
+    using source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(source.sourceAnchor, onSave);
+    await typeComment("if it's a good bug rep");
+    await removeSource();
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(textarea()?.value).toBe("if it's a good bug rep");
+
+    await typeComment("if it's a good bug report");
+    await clickButton("Save");
+    expect(onSave).toHaveBeenCalledExactlyOnceWith("if it's a good bug report");
+  });
+
   it("preserves a rejected save and allows a later retry", async () => {
     using source = setup();
     const onSave = vi.fn(() => false);
     await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("keep this draft");
     await removeSource();
+    await clickButton("Save");
 
     expect(onSave).toHaveBeenCalledWith("keep this draft");
     expect(textarea()?.value).toBe("keep this draft");

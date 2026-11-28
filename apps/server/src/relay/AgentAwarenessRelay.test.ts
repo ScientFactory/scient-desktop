@@ -1287,7 +1287,12 @@ describe("AgentAwarenessRelay", () => {
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(SqlitePersistence.layerMemory),
+        ),
+      ),
     ),
   );
 });

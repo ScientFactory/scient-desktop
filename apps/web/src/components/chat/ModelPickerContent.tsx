@@ -83,7 +83,6 @@ import {
 } from "~/scient/modelPicker/useScientModelPickerGroups";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
-import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { Badge } from "../ui/badge";
 import {
@@ -1088,7 +1087,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   };
 
   return (
-    <TooltipProvider delay={0}>
+    <>
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
@@ -1482,6 +1481,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           </div>
         </Combobox>
       </div>
-    </TooltipProvider>
+    </>
   );
 });

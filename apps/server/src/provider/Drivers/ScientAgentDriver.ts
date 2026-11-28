@@ -53,6 +53,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
+import { prepareScientAgentDevBroker } from "../scient/ScientAgentDevBroker.ts";
 import {
   SCIENT_AGENT_CONFIG_FILES_ENV,
   hasImageGenerationAccount,
@@ -133,6 +134,8 @@ export const ScientAgentDriver: ScientProviderDriver<
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
+    const hostEnvironment = yield* HostProcess.Environment;
+    const userId = yield* HostProcess.UserId;
     const failure = (detail: string) => (cause: { readonly message?: string }) =>
       new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail, cause });
     const effectiveConfig = { ...config, enabled } satisfies ScientAgentSettings;
@@ -157,9 +160,25 @@ export const ScientAgentDriver: ScientProviderDriver<
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
+    const userHome = yield* HostProcess.HomeDirectory;
+    const brokerUrl = yield* Effect.tryPromise({
+      try: () =>
+        prepareScientAgentDevBroker({
+          platform,
+          desktop:
+            serverConfig.mode === "desktop" && serverConfig.desktopBootstrapSecret !== undefined,
+          environment: hostEnvironment,
+          home: userHome,
+          userId,
+        }),
+      catch: (cause) =>
+        failure("Could not attach Scient Agent to the shared dev ChatGPT sign-in.")(
+          cause instanceof Error ? cause : {},
+        ),
+    }).pipe(Effect.catch((error) => Effect.logWarning(error.detail).pipe(Effect.as(undefined))));
+    if (brokerUrl !== undefined) processEnv.SCIENT_AGENT_DEV_CHATGPT_BROKER_URL = brokerUrl;
     // The Codex home whose installed plugins the codex-plugins source reads. A given CODEX_HOME is
     // expanded as Codex expands its home and passed on resolved, so both read the same folder.
-    const userHome = yield* HostProcess.HomeDirectory;
     const configuredCodexHome = processEnv.CODEX_HOME?.trim();
     const codexHome = path.resolve(
       configuredCodexHome

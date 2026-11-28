@@ -73,7 +73,11 @@ const encodeNativeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.U
 
 // SCIENT-FORK: native adapters reuse the shared presentation artifacts.
 type NativeSessionPresentation =
-  | { readonly type: "system_notice"; readonly message: string }
+  | {
+      readonly type: "system_notice";
+      readonly message: string;
+      readonly level?: "info" | "warning" | "error";
+    }
   | {
       readonly type: "error";
       readonly failure: OrchestrationV2ProviderFailure;

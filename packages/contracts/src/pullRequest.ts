@@ -260,6 +260,7 @@ export const PullRequestCommit = Schema.Struct({
   committedDate: IsoDateTime,
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
   authors: Schema.optional(Schema.Array(PullRequestActor)),
 });
 export type PullRequestCommit = typeof PullRequestCommit.Type;
@@ -581,6 +582,8 @@ export type PullRequestStack = typeof PullRequestStack.Type;
 
 export const PullRequestDiffStat = Schema.Struct({
   projectId: ProjectId,
+  /** Tells apart same-named repositories one project tracks on several hosts. Absent from older servers. */
+  host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
   additions: NonNegativeInt,
@@ -1110,10 +1113,11 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
     listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(PullRequestOperationError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(PullRequestOperationError)(this, { status: 503 });
   }
 
   override get message(): string {

@@ -1,5 +1,16 @@
+import {
+  RecordingSessionType,
+  VOICE_TRANSCRIPTION_LANGUAGE_CODES,
+  VoiceLanguagePreference,
+  type ThreadId,
+  type VoiceTranscriptionLanguage,
+} from "@t3tools/contracts";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { VoiceLanguagePicker } from "../voice/VoiceLanguagePicker";
+import { useSessionTypeOptions } from "./sessionTypeOptions";
+import { useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
-import { MicIcon, PauseIcon, PlayIcon, SquareIcon } from "lucide-react";
+import { AudioLinesIcon, MicIcon, PauseIcon, PlayIcon, SquareIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { randomUUID } from "../../lib/utils";
 import { useCaptureUi } from "./recordingCaptureStore";
@@ -13,20 +24,25 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { getClientSettings } from "../../hooks/useSettings";
 import { useProjects } from "../../state/entities";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentProviders, usePrimaryEnvironmentId } from "../../state/environments";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   chooseRecordingMicrophone,
   listBrowserMicrophones,
   type BrowserMicrophone,
 } from "../../speech/browserMicrophones";
 import { requestMicrophone } from "../../speech/requestMicrophone";
-import { transcriptionCommand } from "../../rpc/transcription";
+import { startLessonTalkThread, transcriptionCommand } from "../../rpc/transcription";
+import { dictationCommand, makeDictationTranscriber } from "../voice/chatGptDictation";
 import { RecordingSelect } from "./RecordingSelect";
 import { TranscribeDialog } from "./TranscribeDialog";
 import { fileName, type Project } from "./recordingTypes";
 import { captureElapsed, recordingTime } from "./recordingPresentation";
 import { andFinally, fail } from "../../lib/compilerSafe";
+import { type LessonCaption, type LessonCaptionsTap, tapLessonCaptions } from "./lessonCaptions";
+import { LessonTalk, type LessonTalkRoute, lessonTalkAgent } from "./LessonTalk";
 
 type Session = {
   recorder: MediaRecorder;
@@ -40,33 +56,119 @@ type Session = {
   elapsed: number;
   id: string;
   project: Project;
+  language: string;
+  type: RecordingSessionType;
+  markers: number;
+  captions: LessonCaptionsTap | undefined;
+  wakeLock: WakeLockSentinel | undefined;
+  /** The thread ChatGPT's answers come from, made at the first question. */
+  talkThread: ThreadId | null;
+  /** Pieces saved so far; one that fails is retried until it is saved. */
+  failedSaves: number;
 };
+
+type Status = "idle" | "starting" | "recording" | "paused" | "talking" | "saving";
+
+/** Captions kept on screen; the saved captions file has them all. */
+const SHOWN_CAPTIONS = 6;
+const SAVE_RETRY_MS = 2_000;
+const CAPTION_SETTLE_MS = 8_000;
 
 function captureClock() {
   return performance.now();
 }
 
+const toBase64 = (bytes: Uint8Array) => {
+  let text = "";
+  for (let offset = 0; offset < bytes.length; offset += 8_192)
+    text += String.fromCharCode(...bytes.subarray(offset, offset + 8_192));
+  return btoa(text);
+};
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Keeps the screen, and so the computer, awake while a lesson records; best effort. */
+async function holdAwake() {
+  try {
+    return await navigator.wakeLock?.request("screen");
+  } catch {
+    return undefined;
+  }
+}
+
+const LAST_PROJECT_KEY = "scient:recording-project";
+/** The project the last recording went to, so the next one starts there. */
+const lastProject = () => {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+const rememberProject = (id: string) => {
+  try {
+    localStorage.setItem(LAST_PROJECT_KEY, id);
+  } catch {
+    // Remembering is a convenience; recording works without it.
+  }
+};
+
 export function RecordingCapture() {
   const gt = useGT();
+  const router = useRouter();
   const environmentId = usePrimaryEnvironmentId();
   const projects = useProjects().filter(
     (project) => !project.isScratch && project.environmentId === environmentId,
   );
+  const providers = useEnvironmentProviders();
+  const runDictation = useAtomCommand(dictationCommand, { reportFailure: false });
   const { open, projectId, setOpen } = useCaptureUi();
   const [destination, setDestination] = useState("");
+  const voice = getClientSettings();
+  const [language, setLanguage] = useLocalStorage(
+    "scient:recording-language",
+    voice.voiceExtendedLanguagePreference ?? voice.voiceLanguagePreference,
+    VoiceLanguagePreference,
+  );
+  const [sessionType, setSessionType] = useLocalStorage(
+    "scient:recording-session-type",
+    "lecture",
+    RecordingSessionType,
+  );
+  const types = useSessionTypeOptions();
+  const [markCount, setMarkCount] = useState(0);
   const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
   const [microphone, setMicrophone] = useState<string>();
-  const [status, setStatus] = useState<"idle" | "starting" | "recording" | "paused" | "saving">(
-    "idle",
-  );
-  const [error, setError] = useState<"permission" | "microphone" | "save">();
+  const [status, setStatus] = useState<Status>("idle");
+  const [error, setError] = useState<"permission" | "microphone" | "save" | "marker">();
   const [readings, setReadings] = useState({ seconds: 0, level: 0 });
   const [activeProject, setActiveProject] = useState("");
   const [saved, setSaved] = useState<{ project: Project; source: string }>();
+  const [captions, setCaptions] = useState<LessonCaption[]>([]);
+  const [captionsState, setCaptionsState] = useState<"off" | "on" | "delayed">("off");
+  const [talkRoute, setTalkRoute] = useState<LessonTalkRoute | null>(null);
+  const [talkThread, setTalkThread] = useState<ThreadId | null>(null);
+  const [talkError, setTalkError] = useState<string>();
+  const [resumeAfterTalk, setResumeAfterTalk] = useState(true);
+  /** What the question being asked needs from the recording, kept for rendering. */
+  const [talking, setTalking] = useState<{
+    environmentId: Project["environmentId"];
+    project: string;
+    id: string;
+    stream: MediaStream;
+  } | null>(null);
   const session = useRef<Session | null>(null);
+  /** The question being asked; ending one makes its late results stale. */
+  const talkAttempt = useRef(0);
+  /** Closes the question's call; set by the call while it is open. */
+  const closeTalk = useRef<(() => Promise<boolean>) | null>(null);
+  /** An End in progress; another End waits for it. */
+  const ending = useRef(false);
+  const [endingTalk, setEndingTalk] = useState(false);
   const target =
-    projects.find((project) => project.id === (destination || projectId)) ??
+    projects.find((project) => project.id === (destination || projectId || lastProject())) ??
     (projects.length === 1 ? projects[0] : undefined);
+  const chatGptAgent = environmentId ? lessonTalkAgent(providers.get(environmentId)) : null;
 
   const captureProjects = JSON.stringify(projects.map((project) => project.workspaceRoot));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- recovers unfinished microphone writes when project roots become available.
@@ -108,7 +210,8 @@ export function RecordingCapture() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- samples the live microphone and keeps the interrupted-capture lease current.
   useEffect(() => {
-    if (status !== "recording" && status !== "paused") return;
+    // The lease is kept while saving too, so a slow save is never taken for an abandoned one.
+    if (status === "idle" || status === "starting") return;
     const current = session.current;
     if (!current) return;
     const meter = setInterval(() => {
@@ -130,10 +233,85 @@ export function RecordingCapture() {
     };
   }, [status]);
 
+  /** Saves one piece, retrying until it is saved; a failure shows, and later pieces wait. */
+  const savePiece = async (current: Session, input: Record<string, unknown>) => {
+    for (;;) {
+      try {
+        await transcriptionCommand("capture-chunk", current.project.workspaceRoot, {
+          id: current.id,
+          ...(input as { format: "webm" | "m4a"; index: number; bytes: string }),
+        });
+        if (current.failedSaves > 0) {
+          current.failedSaves = 0;
+          setError((value) => (value === "save" ? undefined : value));
+        }
+        return;
+      } catch (cause) {
+        current.failedSaves += 1;
+        setError("save");
+        // The server refused the piece, as for a recording already saved: retrying can't help.
+        if (cause instanceof Error && /\(4\d\d\)/.test(cause.message)) return;
+        await wait(SAVE_RETRY_MS);
+      }
+    }
+  };
+
+  /** Starts captions on the recorder's stream; they begin with the recording, never before. */
+  const openCaptions = async (
+    current: Session,
+    engine: NonNullable<Awaited<ReturnType<typeof captureStart>>["captions"]>,
+  ) => {
+    if (!environmentId) return;
+    const transcriber = makeDictationTranscriber(runDictation, environmentId, engine);
+    const language =
+      current.language === "auto" ? undefined : (current.language as VoiceTranscriptionLanguage);
+    try {
+      return await tapLessonCaptions({
+        stream: current.stream,
+        transcribe: async (clip, signal) =>
+          (
+            await transcriber.transcribe(
+              {
+                audioBase64: clip.base64,
+                mimeType: "audio/wav",
+                sampleRateHz: clip.sampleRateHz,
+                durationMs: clip.durationMs,
+                ...(language ? { language } : {}),
+              },
+              signal,
+            )
+          ).text,
+        save: (caption) =>
+          transcriptionCommand("capture-caption", current.project.workspaceRoot, {
+            id: current.id,
+            ...caption,
+          }).then(() => undefined),
+        onCaption: (caption) => {
+          if (session.current !== current) return;
+          setCaptionsState("on");
+          setCaptions((list) => [...list, caption].slice(-SHOWN_CAPTIONS));
+        },
+        onDelayed: () => {
+          if (session.current === current) setCaptionsState("delayed");
+        },
+      });
+    } catch {
+      return undefined;
+    }
+  };
+
+  const captureStart = (project: Project, id: string) =>
+    transcriptionCommand("capture-start", project.workspaceRoot, { id, language, sessionType });
+
   const start = async () => {
     if (!target || status !== "idle") return;
+    rememberProject(target.id);
     setStatus("starting");
     setError(undefined);
+    setTalkError(undefined);
+    setCaptions([]);
+    setCaptionsState("off");
+    setTalkThread(null);
     let stream: MediaStream | undefined;
     let context: AudioContext | undefined;
     try {
@@ -145,7 +323,8 @@ export function RecordingCapture() {
       const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 64_000 });
       const id = randomUUID();
       const format = mimeType.startsWith("audio/webm") ? "webm" : "m4a";
-      await transcriptionCommand("capture-touch", target.workspaceRoot, { id });
+      const lesson = await captureStart(target, id);
+      setMarkCount(0);
       context = new AudioContext();
       const analyser = context.createAnalyser();
       analyser.fftSize = 1024;
@@ -166,6 +345,13 @@ export function RecordingCapture() {
         elapsed: 0,
         id,
         project: target,
+        language: lesson.language,
+        type: sessionType,
+        markers: 0,
+        captions: undefined,
+        wakeLock: await holdAwake(),
+        talkThread: null,
+        failedSaves: 0,
       };
       let index = 0;
       recorder.addEventListener("dataavailable", ({ data }) => {
@@ -173,23 +359,27 @@ export function RecordingCapture() {
         current.save = current.save.then(async () => {
           for (let offset = 0; offset < data.size; offset += 16_000) {
             const bytes = new Uint8Array(await data.slice(offset, offset + 16_000).arrayBuffer());
-            await transcriptionCommand("capture-chunk", current.project.workspaceRoot, {
-              id,
-              format,
-              index,
-              bytes: btoa(String.fromCharCode(...bytes)),
-            });
+            await savePiece(current, { format, index, bytes: toBase64(bytes) });
             index += 1;
           }
         });
-        void current.save.catch(() => setError("save"));
       });
       recorder.addEventListener("error", () => setError("microphone"));
+      if (lesson.captions) current.captions = await openCaptions(current, lesson.captions);
       recorder.start(1000);
+      current.started = captureClock();
       session.current = current;
       setReadings({ level: 0, seconds: 0 });
       setActiveProject(target.title);
       setStatus("recording");
+      setTalkRoute(
+        chatGptAgent
+          ? { kind: "chatgpt", instanceId: chatGptAgent }
+          : lesson.talk.openai
+            ? { kind: "openai" }
+            : null,
+      );
+      setCaptionsState(current.captions ? "on" : "off");
       void listBrowserMicrophones()
         .then(setMicrophones)
         .catch(() => undefined);
@@ -205,23 +395,103 @@ export function RecordingCapture() {
     }
   };
 
+  const pauseRecording = (current: Session) => {
+    current.recorder.requestData();
+    current.recorder.pause();
+    current.captions?.setPaused(true);
+    current.elapsed = captureElapsed(current, captureClock());
+    current.started = undefined;
+  };
+
+  const resumeRecording = (current: Session) => {
+    current.recorder.resume();
+    current.captions?.setPaused(false);
+    current.started = captureClock();
+  };
+
   const togglePause = () => {
     const current = session.current;
     if (!current) return;
-    const now = captureClock();
     if (status === "recording") {
-      current.recorder.requestData();
-      current.recorder.pause();
-      current.elapsed = captureElapsed(current, now);
-      current.started = undefined;
+      pauseRecording(current);
       setStatus("paused");
     } else if (status === "paused") {
-      current.recorder.resume();
-      current.started = now;
+      resumeRecording(current);
       setStatus("recording");
     }
   };
 
+  /** Ends the question: the call is closed before the lesson records again. */
+  const endTalk = async (message?: string) => {
+    const current = session.current;
+    if (!current || ending.current) return;
+    ending.current = true;
+    setEndingTalk(true);
+    const attempt = (talkAttempt.current += 1);
+    if (message) setTalkError(message);
+    const close = closeTalk.current;
+    closeTalk.current = null;
+    // A call that doesn't go quiet in time leaves the lesson paused rather than recording it.
+    const quiet = close ? await close().catch(() => false) : true;
+    ending.current = false;
+    setEndingTalk(false);
+    if (session.current !== current || talkAttempt.current !== attempt) return;
+    setTalking(null);
+    if (resumeAfterTalk && !message && quiet) {
+      resumeRecording(current);
+      setStatus("recording");
+    } else setStatus("paused");
+  };
+
+  /** Pauses the lesson, so neither the question nor the answer is recorded, and asks. */
+  const talk = async () => {
+    const current = session.current;
+    if (!current || !talkRoute || (status !== "recording" && status !== "paused")) return;
+    const attempt = (talkAttempt.current += 1);
+    const live = () => talkAttempt.current === attempt && session.current === current;
+    setTalkError(undefined);
+    setResumeAfterTalk(status === "recording");
+    if (status === "recording") pauseRecording(current);
+    setStatus("talking");
+    // What was said just before the question is captioned first, so the answer can use it.
+    await current.captions?.settle(CAPTION_SETTLE_MS);
+    if (talkRoute.kind === "chatgpt" && !current.talkThread) {
+      try {
+        const thread = await startLessonTalkThread(current.project.workspaceRoot, current.id);
+        if (!("threadId" in thread)) fail("No model for the conversation");
+        current.talkThread = thread.threadId as ThreadId;
+      } catch {
+        if (live()) void endTalk(gt("Could not start the conversation."));
+        return;
+      }
+    }
+    if (!live()) return;
+    setTalkThread(current.talkThread);
+    setTalking({
+      environmentId: current.project.environmentId,
+      project: current.project.workspaceRoot,
+      id: current.id,
+      stream: current.stream,
+    });
+  };
+
+  const mark = () => {
+    const current = session.current;
+    if (!current || current.markers >= 1000) return;
+    current.markers++;
+    const seconds = captureElapsed(current, captureClock()) / 1000;
+    setMarkCount(current.markers);
+    current.save = current.save.then(async () => {
+      await transcriptionCommand("capture-mark", current.project.workspaceRoot, {
+        id: current.id,
+        time: seconds,
+      }).catch(() => {
+        current.markers--;
+        setMarkCount(current.markers);
+        setError("marker");
+      });
+    });
+  };
   const stop = async () => {
     const current = session.current;
     if (!current || status === "saving") return;
@@ -229,20 +499,27 @@ export function RecordingCapture() {
     await andFinally(
       async () => {
         try {
+          current.captions?.close();
           if (current.recorder.state !== "inactive") current.recorder.stop();
           await current.stopped;
           current.stream.getTracks().forEach((track) => track.stop());
-          await current.save.catch(() => undefined);
-          const { source } = await transcriptionCommand(
+          await current.save;
+          const finished = await transcriptionCommand(
             "capture-finish",
             current.project.workspaceRoot,
-            { id: current.id },
+            { id: current.id, lesson: { language: current.language, sessionType: current.type } },
           );
+          const { source } = finished;
           if (!source) fail("No recording was saved");
           setOpen(false);
           setDestination("");
-          setSaved({ source, project: current.project });
           setError(undefined);
+          if (finished.transcription === "started" || finished.transcription === "queued") {
+            void router.navigate({
+              to: "/recordings",
+              search: { project: current.project.id, source },
+            });
+          } else setSaved({ source, project: current.project });
         } catch {
           setError("save");
           setOpen(true);
@@ -251,24 +528,33 @@ export function RecordingCapture() {
       () => {
         current.stream.getTracks().forEach((track) => track.stop());
         void current.context.close().catch(() => undefined);
+        void current.wakeLock?.release().catch(() => undefined);
         session.current = null;
+        talkAttempt.current += 1;
+        void closeTalk.current?.();
+        closeTalk.current = null;
+        setTalkThread(null);
+        setTalking(null);
         setStatus("idle");
       },
     );
   };
 
-  const active = status === "recording" || status === "paused" || status === "saving";
+  const active =
+    status === "recording" || status === "paused" || status === "talking" || status === "saving";
   return (
     <>
       {active && (
         <div className="fixed start-1/2 top-1 z-50 -translate-x-1/2 [-webkit-app-region:no-drag]">
           <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
             <MicIcon />{" "}
-            {status === "paused"
-              ? gt("Recording paused")
-              : status === "saving"
-                ? gt("Saving recording…")
-                : gt("Recording")}{" "}
+            {status === "talking"
+              ? gt("Paused · Talking")
+              : status === "paused"
+                ? gt("Recording paused")
+                : status === "saving"
+                  ? gt("Saving recording…")
+                  : gt("Recording")}{" "}
             · {recordingTime(readings.seconds)}
           </Button>
         </div>
@@ -283,27 +569,70 @@ export function RecordingCapture() {
           setOpen(next);
         }}
       >
-        <DialogPopup>
-          <DialogHeader>
-            <DialogTitle>{gt("Record audio")}</DialogTitle>
-            <DialogDescription>
-              {active ? activeProject : gt("Save a microphone recording to a project.")}
-            </DialogDescription>
+        <DialogPopup className="max-w-sm">
+          <DialogHeader size="compact">
+            <DialogTitle size="compact">{gt("Record a session")}</DialogTitle>
+            {active && <DialogDescription>{activeProject}</DialogDescription>}
           </DialogHeader>
-          <DialogPanel>
+          <DialogPanel padding="compact">
             {active ? (
-              <div className="flex items-center gap-3 py-3">
-                <span className="text-sm tabular-nums">{recordingTime(readings.seconds)}</span>
-                <meter
-                  className="w-full"
-                  min={0}
-                  max={1}
-                  value={readings.level}
-                  aria-label={gt("Microphone level")}
-                />
+              <div className="space-y-3 pb-3">
+                <div className="flex items-center gap-3 pt-3">
+                  <span className="text-sm tabular-nums">{recordingTime(readings.seconds)}</span>
+                  <meter
+                    className="w-full"
+                    min={0}
+                    max={1}
+                    value={readings.level}
+                    aria-label={gt("Microphone level")}
+                  />
+                </div>
+                {markCount > 0 && (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    {gt("{count} markers", { count: markCount })}
+                  </p>
+                )}
+                {status === "talking" && !talking ? (
+                  <p role="status" className="py-1 text-sm font-medium">
+                    {gt("Connecting…")}
+                  </p>
+                ) : status === "talking" && talking && talkRoute ? (
+                  <LessonTalk
+                    closeRef={closeTalk}
+                    route={talkRoute}
+                    environmentId={talking.environmentId}
+                    project={talking.project}
+                    captureId={talking.id}
+                    threadId={talkThread}
+                    stream={talking.stream}
+                    onEnded={(message) => void endTalk(message)}
+                  />
+                ) : captionsState !== "off" ? (
+                  <div
+                    aria-label={gt("Live captions")}
+                    aria-live="polite"
+                    className="max-h-40 space-y-1.5 overflow-y-auto text-sm"
+                  >
+                    {captions.length ? (
+                      captions.map((caption) => (
+                        <p key={caption.window}>
+                          <span className="me-2 text-xs text-muted-foreground tabular-nums">
+                            {recordingTime(caption.start)}
+                          </span>
+                          {caption.text}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground">{gt("Captions appear as you go.")}</p>
+                    )}
+                    {captionsState === "delayed" && (
+                      <p className="text-xs text-muted-foreground">{gt("Captions delayed")}</p>
+                    )}
+                  </div>
+                ) : null}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 pb-3">
                 <div className="flex items-center justify-between gap-2 text-sm">
                   {gt("Project")}
                   <RecordingSelect
@@ -316,6 +645,29 @@ export function RecordingCapture() {
                       label: project.title,
                     }))}
                     onChange={setDestination}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  {gt("Session type")}
+                  <RecordingSelect
+                    variant="outline"
+                    label={gt("Session type")}
+                    value={sessionType}
+                    options={types}
+                    onChange={(value) => {
+                      if (value === "lecture" || value === "meeting" || value === "interview")
+                        setSessionType(value);
+                    }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  {gt("Language")}
+                  <VoiceLanguagePicker
+                    label={gt("Language")}
+                    value={language}
+                    languages={VOICE_TRANSCRIPTION_LANGUAGE_CODES}
+                    special={{ value: "auto", label: gt("Automatic") }}
+                    onChange={setLanguage}
                   />
                 </div>
                 <div className="flex items-center justify-between gap-2 text-sm">
@@ -335,30 +687,54 @@ export function RecordingCapture() {
                 </div>
               </div>
             )}
-            {error && (
+            {(error || talkError) && (
               <p role="status" className="mt-2 text-sm text-muted-foreground">
-                {error === "permission"
-                  ? gt("Microphone access was denied. Allow it in system settings to record.")
-                  : error === "save"
-                    ? gt("Could not save all of the recording.")
-                    : gt("Could not open the microphone.")}
+                {talkError ??
+                  (error === "permission"
+                    ? gt("Microphone access was denied. Allow it in system settings to record.")
+                    : error === "save"
+                      ? gt("Could not save the recording. Retrying…")
+                      : error === "marker"
+                        ? gt("Could not save this marker.")
+                        : gt("Could not open the microphone."))}
               </p>
             )}
           </DialogPanel>
-          <DialogFooter>
-            {active ? (
+          <DialogFooter variant="bare" padding="compact">
+            {status === "talking" ? (
+              <Button disabled={endingTalk} onClick={() => void endTalk()}>
+                {resumeAfterTalk ? gt("End and resume") : gt("End")}
+              </Button>
+            ) : active ? (
               <>
                 <Button variant="outline" disabled={status === "saving"} onClick={togglePause}>
                   {status === "paused" ? <PlayIcon /> : <PauseIcon />}
                   {status === "paused" ? gt("Resume") : gt("Pause")}
                 </Button>
+                <Button size="sm" variant="ghost" disabled={status === "saving"} onClick={mark}>
+                  {gt("Mark")}
+                </Button>
+                {talkRoute && (
+                  <Button
+                    variant="outline"
+                    disabled={status === "saving"}
+                    onClick={() => void talk()}
+                  >
+                    <AudioLinesIcon /> {gt("Talk")}
+                  </Button>
+                )}
                 <Button disabled={status === "saving"} onClick={() => void stop()}>
                   <SquareIcon /> {gt("Stop")}
                 </Button>
               </>
             ) : (
-              <Button disabled={!target || status === "starting"} onClick={() => void start()}>
-                <MicIcon /> {gt("Start recording")}
+              <Button
+                variant="outline"
+                disabled={!target || status === "starting"}
+                onClick={() => void start()}
+              >
+                <span aria-hidden className="size-2.5 rounded-full bg-destructive" />
+                {gt("Start recording")}
               </Button>
             )}
           </DialogFooter>

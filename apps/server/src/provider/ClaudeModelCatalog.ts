@@ -192,9 +192,9 @@ export function claudeReportedModels(
     const slug = info.value.trim();
     // `default` is Claude Code's pointer at its own default model, not a model.
     if (!slug || slug === "default") continue;
-    const ids = [slug, info.resolvedModel ?? ""]
-      .map((id) => stripClaudeContextWindowSuffix(id).toLowerCase())
-      .filter((id) => id.length > 0);
+    const valueId = stripClaudeContextWindowSuffix(slug).toLowerCase();
+    const resolvedId = stripClaudeContextWindowSuffix(info.resolvedModel ?? "").toLowerCase();
+    const ids = [valueId, resolvedId].filter((id) => id.length > 0);
     if (ids.some((id) => known.has(id))) continue;
     for (const id of ids) known.add(id);
     const efforts = info.supportsEffort ? (info.supportedEffortLevels ?? []) : [];

@@ -606,4 +606,55 @@ describe("Scient analytics contract", () => {
     });
     expect(JSON.stringify(failure)).not.toContain("/private/path");
   });
+
+  it("sends startup timing as closed buckets and values only", () => {
+    const event = normalizeInheritedEvent(
+      "app.startup.timing",
+      {
+        launchKind: "first-after-update",
+        platform: "windows",
+        architecture: "x64",
+        uiReadyBucket: "15-30s",
+        backendReadyBucket: "8-15s",
+        windowShownBucket: "8-15s",
+        projectRestored: true,
+        machineName: "PRIVATE-HOST",
+      },
+      context,
+    );
+    expect(event).toEqual({
+      name: "app.startup.timing",
+      privacyLevel: "essential",
+      priority: "core",
+      properties: {
+        appVersion: "0.0.32",
+        buildChannel: "development",
+        contractRevision: ANALYTICS_CONTRACT_REVISION,
+        launchKind: "first-after-update",
+        platform: "windows",
+        architecture: "x64",
+        uiReadyBucket: "15-30s",
+        backendReadyBucket: "8-15s",
+        windowShownBucket: "8-15s",
+        projectRestored: true,
+      },
+    });
+
+    // A stage that never happened stays absent; free text and raw times never pass.
+    const sparse = normalizeInheritedEvent(
+      "app.startup.timing",
+      { launchKind: "first-ever", platform: "android", uiReadyBucket: "1.4s", uiReadyMs: 1_437 },
+      context,
+    );
+    expect(sparse?.properties).toMatchObject({
+      launchKind: "unknown",
+      platform: "unknown",
+      architecture: "unknown",
+      uiReadyBucket: "unknown",
+      projectRestored: false,
+    });
+    expect(sparse?.properties).not.toHaveProperty("uiReadyMs");
+    expect(sparse?.properties).not.toHaveProperty("backendReadyBucket");
+    expect(sparse?.properties).not.toHaveProperty("windowShownBucket");
+  });
 });

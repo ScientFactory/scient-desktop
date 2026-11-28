@@ -104,7 +104,7 @@ export function LatexVisualSourcePane(
   const [dismissedRequest, setDismissedRequest] = useState<number | null>(null);
   const navigationMarked =
     revealCurrent && !reveal.citation && dismissedRequest !== reveal.requestId;
-  const { onPostRender } = useFileLineReveal(
+  const { onPostRender: fileLineReveal } = useFileLineReveal(
     reveal.path,
     reveal.citation || navigationMarked ? line : null,
     reveal.requestId,
@@ -161,7 +161,7 @@ export function LatexVisualSourcePane(
           persistence={lease}
           relativePath={reveal.path}
           revealRequestId={reveal.requestId}
-          onPostRender={onPostRender}
+          onPostRender={fileLineReveal("virtualizer")}
           retainSelectionOnBlur
           sourceSelectionReveal={selectionReveal}
           activeLineRange={
@@ -182,7 +182,7 @@ export function LatexVisualSourcePane(
           relativePath={reveal.path}
           resolvedTheme={props.resolvedTheme}
           wordWrap={props.wordWrap}
-          onPostRender={onPostRender}
+          onPostRender={fileLineReveal("virtualizer")}
         />
       ) : (
         <div role="status" className="p-3 text-sm text-muted-foreground">

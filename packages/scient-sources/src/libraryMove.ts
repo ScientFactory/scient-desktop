@@ -64,6 +64,7 @@ import {
 import { assertScientProjectDirectory, SCIENT_ANNOTATION_FILE_MAX_BYTES } from "./projectFiles.ts";
 import {
   decodeScientProjectPinsText,
+  scientProjectPinsTextKeys,
   joinScientProjectPinsText,
   scientPinWorkFromRecord,
   scientProjectPinsText,
@@ -1608,7 +1609,7 @@ async function joinPins(
   const existing = decodeScientProjectPinsText(existingText);
   const ids = new Set(existing.map((pin) => pin.sourceId));
   const targets = new Set(existing.map((pin) => target(pin.sourceId)));
-  const taken = new Set(existing.map((pin) => citationKeyComparisonValue(pin.citationKey)));
+  const taken = new Set(scientProjectPinsTextKeys(existingText).map(citationKeyComparisonValue));
   const additions: ScientProjectPin[] = [];
   for (const pin of staged) {
     if (ids.has(pin.sourceId) || targets.has(target(pin.sourceId))) continue;

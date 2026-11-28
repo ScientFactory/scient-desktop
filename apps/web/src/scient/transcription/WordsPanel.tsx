@@ -163,6 +163,21 @@ export function RecordingWordsEditor(props: {
   );
 }
 
+/** Words for one project and for all of Scient, edited without leaving the current window. */
+export function ProjectWordsEditor(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}) {
+  return (
+    <WordsScopes
+      key={JSON.stringify([props.environmentId, props.projectId])}
+      initialScope="project"
+      project={<ScopeEditor {...props} level="project" />}
+      yours={<ScopeEditor {...props} level="global" />}
+    />
+  );
+}
+
 function RecordingPicker({
   environmentId,
   projectId,

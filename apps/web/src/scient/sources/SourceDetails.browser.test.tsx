@@ -42,6 +42,7 @@ const record: ScientSourceDetailResult = {
 };
 
 it("saves My note against the library record's revision, apart from this project's note", async () => {
+  using _clock = fakeTimers();
   const savePersonalNote = vi.fn(async (note: string | null, _expectedRevision: number) => ({
     outcome: "updated",
     record: { ...record, revision: 8, personalNote: note },
@@ -63,10 +64,13 @@ it("saves My note against the library record's revision, apart from this project
 
   await userEvent.click(page.getByRole("textbox", { name: "My note" }));
   await userEvent.keyboard("Read the methods first");
+  expect(savePersonalNote).not.toHaveBeenCalled();
   await userEvent.tab();
 
-  await vi.waitFor(() =>
-    expect(savePersonalNote).toHaveBeenCalledWith("Read the methods first", 7, expect.anything()),
+  expect(savePersonalNote).toHaveBeenCalledExactlyOnceWith(
+    "Read the methods first",
+    7,
+    expect.anything(),
   );
   expect(saveProjectNote).not.toHaveBeenCalled();
 });
@@ -213,6 +217,7 @@ it("Keep mine shows a second refused write without retrying it", async ({ signal
 });
 
 it("saves a restored earlier version as its own checkpoint, apart from this editor's autosave", async () => {
+  using _clock = fakeTimers();
   const saveProjectNote = vi.fn(
     async (
       note: string | null,
@@ -253,13 +258,15 @@ it("saves a restored earlier version as its own checkpoint, apart from this edit
 
   await userEvent.click(page.getByRole("button", { name: "Edit note for this project" }));
   await userEvent.keyboard(", typed");
+  expect(saveProjectNote).not.toHaveBeenCalled();
   await userEvent.tab();
-  await vi.waitFor(() => expect(saveProjectNote).toHaveBeenCalledTimes(1));
+  expect(saveProjectNote).toHaveBeenCalledTimes(1);
 
   await userEvent.click(page.getByRole("button", { name: "Earlier versions" }));
   await userEvent.click(page.getByRole("menuitem", { name: /The first reason/ }));
   await vi.waitFor(() => expect(saveProjectNote).toHaveBeenCalledTimes(2));
   const [typed, restored] = saveProjectNote.mock.calls;
+  expect(typed?.[0]).toBe("Why I cite this here, typed");
   expect(restored?.[0]).toBe("The first reason");
   // The same session within ten minutes would replace the typed checkpoint on the server.
   expect(restored?.[2].session).not.toBe(typed?.[2].session);

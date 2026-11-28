@@ -875,7 +875,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         });
         processesClosed = false;
         const runtime = yield* makeAntigravityAcpRuntime({
-          runtimeVersion: expectedVersion,
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
             profile,

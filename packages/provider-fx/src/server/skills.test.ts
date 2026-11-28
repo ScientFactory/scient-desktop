@@ -6,6 +6,13 @@ import * as Path from "effect/Path";
 
 import { discoverFxSkills } from "./skills.ts";
 
+// Discovery compares real paths, and macOS TMPDIR is an alias of /private/var.
+const makeHome = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fx-skills-home-" });
+  return yield* fileSystem.realPath(home);
+});
+
 describe("discoverFxSkills", () => {
   // fx 0.0.13 scans workspace roots from the workspace up to HOME, then
   // ~/.fx/skills, then home compatibility roots (src/builtins/skills.zig), and
@@ -16,7 +23,7 @@ describe("discoverFxSkills", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       // The workspace sits under the fake HOME, so the upward walk stops there.
-      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fx-skills-home-" });
+      const home = yield* makeHome;
       const parent = path.join(home, "projects");
       const workspace = path.join(parent, "app");
       const writeSkill = (root: string, name: string) =>
@@ -63,7 +70,7 @@ describe("discoverFxSkills", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fx-skills-home-" });
+      const home = yield* makeHome;
       const workspace = path.join(home, "app");
       const writeSkillFile = (folder: string, contents: string) =>
         fileSystem
@@ -168,7 +175,7 @@ describe("discoverFxSkills", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fx-skills-home-" });
+      const home = yield* makeHome;
       for (const [root, name] of [
         ["dotfiles/fx-skills", "managed"],
         [".claude/skills", "compat"],
@@ -185,8 +192,12 @@ describe("discoverFxSkills", () => {
         path.join(home, ".fx/skills"),
       );
 
+      // A real session's cwd is an existing folder; discovery canonicalizes it.
+      const workspace = path.join(home, "app");
+      yield* fileSystem.makeDirectory(workspace);
+
       const skills = yield* discoverFxSkills({
-        cwd: path.join(home, "app"),
+        cwd: workspace,
         environment: { HOME: home },
       });
 

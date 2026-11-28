@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { render } from "../../../test/render";
 import lectureVideoUrl from "../../../test/fixtures/recording-lecture.mp4?url";
 import "../../index.css";
@@ -9,6 +9,7 @@ import { scientRecordingSurface } from "../rightPanel/surfaces";
 import RecordingPanel from "./RecordingPanel";
 import { RecordingsPage } from "./RecordingsPage";
 import { TranscribeDialog } from "./TranscribeDialog";
+import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 
 const fixtures = vi.hoisted(() => {
   const job = {
@@ -18,7 +19,11 @@ const fixtures = vi.hoisted(() => {
     settings: { engine: "local", model: "local", language: "he" },
   };
   return {
+    prepared: null as object | null,
     job,
+    projects: [
+      { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
+    ],
     command: vi.fn(),
     consent: vi.fn(),
     makeNotes: vi.fn(),
@@ -30,6 +35,7 @@ const fixtures = vi.hoisted(() => {
     openPanel: vi.fn(),
     maximize: vi.fn(),
     setMaximized: vi.fn(),
+    importFile: vi.fn(),
   };
 });
 
@@ -77,7 +83,10 @@ vi.mock("../../hooks/useSettings", () => ({
     select({ contentDirection: "auto" }),
 }));
 vi.mock("../../speech/runEnvironmentSpeech", () => ({ runEnvironmentSpeech: vi.fn() }));
-vi.mock("@t3tools/client-runtime/voice-input", () => ({ downloadEnvironmentSpeechModel: vi.fn() }));
+vi.mock("@t3tools/client-runtime/voice-input", () => ({
+  downloadEnvironmentSpeechModel: vi.fn((_prepared: unknown, id: string) => ({ download: id })),
+  getEnvironmentSpeechModels: vi.fn(() => ({ list: true })),
+}));
 vi.mock("./CorrectionModelPicker", () => ({
   CorrectionModelPicker: ({
     selection,
@@ -97,11 +106,13 @@ vi.mock("./CorrectionModelPicker", () => ({
   ),
 }));
 vi.mock("./copyRecording", () => ({ copyRecording: {} }));
+vi.mock("./serverPlatform", () => ({ useRecycleBin: () => false }));
+vi.mock("../transcription/WordsPanel", () => ({
+  ProjectWordsEditor: ({ projectId }: { projectId: string }) => <p>Words of {projectId}</p>,
+}));
 vi.mock("../../state/entities", () => ({
   readThreadShell: fixtures.readThread,
-  useProjects: () => [
-    { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
-  ],
+  useProjects: () => fixtures.projects,
 }));
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => "test",
@@ -110,7 +121,7 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
-  readPreparedConnection: () => null,
+  readPreparedConnection: () => fixtures.prepared,
 }));
 vi.mock("../../state/assets", () => ({ assetEnvironment: {} }));
 vi.mock("../../state/use-atom-query-runner", () => ({
@@ -119,7 +130,7 @@ vi.mock("../../state/use-atom-query-runner", () => ({
     value: { relativeUrl: lectureVideoUrl },
   }),
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => fixtures.importFile }));
 
 function PanelHarness({ fromThread }: { fromThread?: string } = {}) {
   const [tab, setTab] = useState<{
@@ -270,13 +281,17 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
     </div>,
   );
   await expect.element(screen.getByText("Paused")).toBeVisible();
-  await expect.element(screen.getByText("Not transcribed")).toBeVisible();
+  // A recording with no transcript yet carries no status, only a quiet Transcribe action.
+  await expect.element(screen.getByText("Not transcribed")).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("button", { name: "Transcribe", exact: true }).first())
+    .toBeInTheDocument();
   await expect.element(screen.getByRole("checkbox", { name: "Select Queued.m4a" })).toBeDisabled();
   await expect.element(screen.getByText(/Hebrew/).first()).toBeVisible();
   await expect.element(screen.getByText(/Whisper Large v3/)).not.toBeInTheDocument();
   expect(
-    screen.getByText("Lecture 4.mp4", { exact: true }).element().getBoundingClientRect().left,
-  ).toBe(screen.getByText("Unstarted.m4a", { exact: true }).element().getBoundingClientRect().left);
+    screen.getByText("Lecture 4", { exact: true }).element().getBoundingClientRect().left,
+  ).toBe(screen.getByText("Unstarted", { exact: true }).element().getBoundingClientRect().left);
   await capture("recordings");
   const search = screen.getByRole("textbox", { name: "Search recordings and transcripts" });
   await search.fill("unmatched search");
@@ -377,7 +392,7 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
   expect(await attachment.file.text()).toContain(`Transcripts/${fixtures.job.id}/transcript.json`);
   await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
   await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
-  await expect.element(screen.getByRole("heading", { name: "Lecture 4.mp4" })).toBeVisible();
+  await expect.element(screen.getByRole("heading", { name: "Lecture 4" })).toBeVisible();
   await expect
     .element(screen.getByText("Lecture 4.mp4 · 0:00–0:29", { exact: true }))
     .toBeVisible();
@@ -424,7 +439,7 @@ it("opens a recording in the chat that opened its project recordings", async () 
         <PanelHarness fromThread="current-chat" />
       </div>,
     );
-    await screen.getByRole("button", { name: /Lecture 4\.mp4/ }).click();
+    await screen.getByRole("button", { name: /Lecture 4/ }).click();
     await expect
       .poll(() => fixtures.openPanel.mock.calls.at(-1)?.[0].threadId)
       .toBe("current-chat");
@@ -434,6 +449,100 @@ it("opens a recording in the chat that opened its project recordings", async () 
     expect(fixtures.newThread).not.toHaveBeenCalled();
   } finally {
     fixtures.readThread.mockReset();
+  }
+});
+
+it("opens a recording without a transcript from anywhere on its row", async () => {
+  fixtures.command.mockImplementation(async (action: string) => {
+    if (action === "media-list")
+      return {
+        media: [
+          { source: "/class/Unstarted.m4a", size: 16384, created: 1795382400000, duration: 5412 },
+        ],
+      };
+    if (action === "list") return [];
+    return { segments: [] };
+  });
+  await using screen = await render(
+    <div className="h-screen">
+      <PanelHarness />
+    </div>,
+  );
+  await screen.getByText(/1:30:12/).click();
+  await expect.element(screen.getByRole("heading", { name: "Unstarted" })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Transcribe…" })).toBeVisible();
+});
+
+it("downloads several models one after another without blocking the list", async () => {
+  fixtures.command.mockReset().mockImplementation(async (action: string) => {
+    if (action === "inventory")
+      return {
+        local: [
+          {
+            id: "local",
+            name: "Whisper turbo",
+            installed: true,
+            size: 1600000000,
+            secondsPer30s: { accelerated: 1 },
+          },
+          {
+            id: "medium",
+            name: "Whisper medium",
+            installed: false,
+            size: 1000,
+            secondsPer30s: { accelerated: 1 },
+          },
+          {
+            id: "small",
+            name: "Whisper small",
+            installed: false,
+            size: 500,
+            secondsPer30s: { accelerated: 1 },
+          },
+        ],
+        chatgpt: { enabled: false, signedIn: true },
+        cloud: [],
+        recommendations: {},
+      };
+    if (action === "sample-language") return { detectedLanguage: "en" };
+    if (action === "discover-subtitles") return { duration: 60, tracks: [], sidecars: [] };
+    if (action === "words-list") return [];
+    return {};
+  });
+  const started: string[] = [];
+  const finish = new Map<string, () => void>();
+  fixtures.prepared = {};
+  vi.mocked(runEnvironmentSpeech).mockImplementation(async (effect: unknown) => {
+    const request = effect as { download?: string; list?: true };
+    if (request.list) return { models: [{ id: started.at(-1), size: 1000, downloaded: 420 }] };
+    started.push(request.download!);
+    return new Promise<void>((resolve) => finish.set(request.download!, resolve));
+  });
+  try {
+    await using _screen = await render(
+      <TranscribeDialog
+        project="/class"
+        source={fixtures.job.source}
+        title="Talk.mp4"
+        onClose={() => {}}
+        onStart={() => {}}
+      />,
+    );
+    await page.getByRole("button", { name: "More engines" }).click();
+    await page.getByRole("button", { name: "Download Whisper medium" }).click();
+    await page.getByRole("button", { name: "Download Whisper small" }).click();
+    const row = (name: string) =>
+      page.getByRole("button", { name: `Download ${name}` }).element().textContent;
+    await expect.poll(() => row("Whisper medium")).toMatch(/42%/);
+    await expect.poll(() => row("Whisper small")).toMatch(/Waiting/);
+    await capture("model-downloads");
+    expect(started).toEqual(["medium"]);
+    finish.get("medium")!();
+    await expect.poll(() => started).toEqual(["medium", "small"]);
+    finish.get("small")!();
+  } finally {
+    fixtures.prepared = null;
+    vi.mocked(runEnvironmentSpeech).mockReset();
   }
 });
 
@@ -529,22 +638,33 @@ it("starts with the recommended installed engine and preserves the server correc
   await expect.element(page.getByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
   await capture("transcribe");
   await page.getByRole("button", { name: "More engines" }).click();
-  await expect.element(page.getByRole("radio", { name: "Parakeet v3" })).toBeVisible();
-  await expect.element(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Parakeet v3/ })).toBeVisible();
+  await expect.element(page.getByRole("link", { name: "Sign in to ChatGPT" })).toBeVisible();
   await capture("transcribe-options");
+  // Choosing from the list selects that engine and closes the list.
+  await page.getByRole("button", { name: /Parakeet v3/ }).click();
+  await expect.element(page.getByRole("radio", { name: "Parakeet v3" })).toBeChecked();
+  // Words open beside the link and the dialog stays.
+  await page.getByRole("button", { name: "Edit Words" }).click();
+  await expect.element(page.getByText("Words of class")).toBeVisible();
+  await expect.element(page.getByRole("radio", { name: /ivrit.ai/ })).toBeVisible();
+  await capture("transcribe-words");
+  await page.getByRole("button", { name: "Edit Words" }).click();
 
   await page.getByRole("radio", { name: /gpt-transcribe/ }).click();
   await expect
     .element(page.getByText(/0\.27 per audio hour.*0\.41 for this recording/).first())
     .toBeVisible();
-  await expect
-    .element(page.getByText("Cost unknown for this provider", { exact: false }).first())
-    .toBeVisible();
-  await expect.element(page.getByText("Uses your speech.example.test:8443 key")).toBeVisible();
-  await expect.element(page.getByText("Uses your Legacy endpoint key")).toBeVisible();
-  await expect.element(page.getByText("Retiring Feb 2027", { exact: true })).toBeVisible();
   await expect.element(page.getByText(/Time estimate unavailable/)).not.toBeInTheDocument();
   await capture("transcribe-cloud");
+  await page.getByRole("button", { name: "More engines" }).click();
+  await expect
+    .element(page.getByRole("button", { name: /speech\.example\.test:8443 key · Cost unknown/ }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: /Legacy endpoint key.*Retiring Feb 2027/ }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "More engines" }).click();
   await page.getByRole("radio", { name: /ivrit.ai/ }).click();
   await page.getByRole("button", { name: "Transcribe", exact: true }).click();
   expect(fixtures.command).toHaveBeenCalledWith("start", "/class", {
@@ -657,6 +777,182 @@ it("queues two selected recordings with one engine choice", async () => {
     model: "local",
     language: "auto",
   });
+});
+
+it("transcribes recordings selected in two projects with one choice", async () => {
+  const lab = { id: "lab", environmentId: "test", workspaceRoot: "/lab", title: "Lab meetings" };
+  fixtures.projects.push(lab);
+  try {
+    fixtures.command.mockReset().mockImplementation(async (action: string, project: string) => {
+      if (action === "list") return [];
+      if (action === "media-list")
+        return project === "/lab"
+          ? { media: [{ source: "/lab/Standup.m4a", size: 16000, created: 2 }] }
+          : { media: [{ source: "/class/First.m4a", size: 16000, created: 1 }] };
+      if (action === "inventory")
+        return {
+          local: [
+            { id: "local", name: "Whisper", installed: true, secondsPer30s: { accelerated: 1 } },
+          ],
+          chatgpt: { enabled: false, signedIn: false },
+          cloud: [],
+          recommendations: { auto: { id: "local", installed: true } },
+        };
+      if (action === "start") return {};
+      throw new Error(`Unexpected request ${action}`);
+    });
+    await using screen = await render(
+      <div className="h-screen">
+        <PanelHarness />
+      </div>,
+    );
+    await screen.getByRole("checkbox", { name: "Select First.m4a" }).click();
+    await screen.getByRole("checkbox", { name: "Select Standup.m4a" }).click();
+    await screen.getByRole("button", { name: "Transcribe selected" }).click();
+    await page.getByRole("button", { name: "Transcribe", exact: true }).click();
+    for (const [project, source] of [
+      ["/class", "/class/First.m4a"],
+      ["/lab", "/lab/Standup.m4a"],
+    ])
+      expect(fixtures.command).toHaveBeenCalledWith("start", project, {
+        source,
+        engine: "local",
+        model: "local",
+        language: "auto",
+      });
+  } finally {
+    fixtures.projects.pop();
+  }
+});
+
+it("adds files found in the projects from their own view", async () => {
+  const found = ["/class/clips/Board.mp4", "/class/Week 1.m4a"];
+  const added: string[] = [];
+  fixtures.command
+    .mockReset()
+    .mockImplementation(async (action: string, _project: string, input: unknown) => {
+      if (action === "list") return [];
+      if (action === "media-list") {
+        const media = (input as { found?: true }).found
+          ? found.filter((source) => !added.includes(source))
+          : added;
+        return { media: media.map((source) => ({ source, size: 16000, created: 1 })) };
+      }
+      if (action === "media-register") {
+        const { source } = input as { source: string };
+        added.push(source);
+        return { media: [{ source, size: 16000, created: 1 }] };
+      }
+      if (action === "inventory")
+        return {
+          local: [],
+          chatgpt: { enabled: false, signedIn: false },
+          cloud: [],
+          recommendations: {},
+        };
+      return {};
+    });
+  await using screen = await render(
+    <div className="h-screen">
+      <PanelHarness />
+    </div>,
+  );
+  await expect.element(screen.getByText("No recordings yet")).toBeVisible();
+  await screen.getByRole("button", { name: "From your projects" }).click();
+  await expect.element(screen.getByText("Board.mp4")).toBeVisible();
+  // A click on the box or anywhere on the row selects it once.
+  await screen.getByRole("checkbox", { name: "Select Board.mp4" }).click();
+  await screen.getByText("Week 1.m4a").click();
+  await expect.element(screen.getByText("2 selected")).toBeVisible();
+  await screen.getByRole("button", { name: "Add", exact: true }).click();
+  await expect.poll(() => added.toSorted()).toEqual(found.toSorted());
+});
+
+it("renames a recording in its row, shows its info and moves it to the Trash", async () => {
+  const source = "/class/Recording 2026-11-26T08-36-24-088Z 71650286.weba";
+  let title: string | undefined;
+  fixtures.command.mockReset().mockImplementation(async (action: string, _project, input) => {
+    if (action === "list") return [];
+    if (action === "media-list")
+      return title === "gone"
+        ? { media: [] }
+        : { media: [{ source, size: 140_000, created: 1, duration: 17, title }] };
+    if (action === "recording-rename") {
+      title = (input as { title: string }).title;
+      return { media: [] };
+    }
+    if (action === "recording-trash") {
+      title = "gone";
+      return { trashed: true };
+    }
+    return {};
+  });
+  await using screen = await render(
+    <div className="h-screen">
+      <PanelHarness />
+    </div>,
+  );
+  await screen.getByRole("button", { name: "Recording actions" }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const name = screen.getByRole("textbox", { name: "Name" });
+  // A recording Scient made is named by the time it started, not by its file name.
+  expect((name.element() as HTMLInputElement).value).toMatch(/^Recording \d/);
+  await name.fill("Week 3");
+  await userEvent.keyboard("{Enter}");
+  expect(fixtures.command).toHaveBeenCalledWith("recording-rename", "/class", {
+    source,
+    title: "Week 3",
+  });
+  await expect.element(screen.getByText("Week 3", { exact: true })).toBeVisible();
+
+  await screen.getByRole("button", { name: "Recording actions" }).click();
+  await page.getByRole("menuitem", { name: "Info" }).click();
+  await expect.element(page.getByText("137 KB")).toBeVisible();
+  await expect.element(page.getByText("WEBA")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+
+  await screen.getByRole("button", { name: "Recording actions" }).click();
+  await page.getByRole("menuitem", { name: "Move to Trash" }).click();
+  expect(fixtures.command).toHaveBeenCalledWith("recording-trash", "/class", { source });
+  await expect.element(screen.getByText("Week 3", { exact: true })).not.toBeInTheDocument();
+});
+
+it("adds a file already in the project where it is, without copying it", async () => {
+  const source = "/class/Downloads/Talk.mp4";
+  vi.stubGlobal("desktopBridge", {
+    getPathForFile: () => source,
+    getLocalEnvironmentBootstraps: () => [],
+  });
+  fixtures.importFile.mockReset();
+  fixtures.command.mockReset().mockImplementation(async (action: string) => {
+    if (action === "list") return [];
+    if (action === "media-list") return { media: [] };
+    if (action === "media-register") return { media: [{ source, size: 5, created: 1 }] };
+    if (action === "inventory")
+      return {
+        local: [],
+        chatgpt: { enabled: false, signedIn: false },
+        cloud: [],
+        recommendations: {},
+      };
+    return { detectedLanguage: null };
+  });
+  try {
+    await using screen = await render(<RecordingsPage lockedProject="class" />);
+    const picker = screen.container.querySelector<HTMLInputElement>('input[accept^="audio/"]')!;
+    const files = new DataTransfer();
+    files.items.add(new File(["video"], "Talk.mp4", { type: "video/mp4" }));
+    picker.files = files.files;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(fixtures.command).toHaveBeenCalledWith("media-register", "/class", {
+      source,
+      onlyInProject: true,
+    });
+    expect(fixtures.importFile).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it("groups independent runs of the same source and opens the newest version with older versions available", async () => {
@@ -827,4 +1123,97 @@ it("blocks transcription and explains setup when the server has no FFmpeg", asyn
   await expect.element(screen.getByText(/Install FFmpeg/)).toBeVisible();
   await expect.element(screen.getByRole("button", { name: "Transcribe" })).toBeDisabled();
   await capture("transcribe-ffmpeg-required");
+});
+
+it("combines selected recordings and seeks to the second part in the same panel", async () => {
+  const sources = [fixtures.job.source, "/class/Part two.mp4"];
+  const firstId = "00000000-0000-4000-8000-000000000001";
+  const secondId = "00000000-0000-4000-8000-000000000002";
+  const sessionId = "00000000-0000-4000-8000-000000000003";
+  const jobs = sources.map((source, index) => ({
+    ...fixtures.job,
+    source,
+    id: index === 0 ? fixtures.job.id : "2026-11-22-part-two-12345678",
+  }));
+  const parts = jobs.map(({ source, id }, index) => ({
+    id: index === 0 ? firstId : secondId,
+    recordingId: index === 0 ? firstId : secondId,
+    source,
+    duration: 30,
+    revision: id,
+  }));
+  const combined = {
+    id: sessionId,
+    title: "Quantum lecture",
+    type: "lecture",
+    version: 1,
+    timelineRevision: 1,
+    created: 1,
+    parts,
+    material: [],
+    markers: [],
+  };
+  let sessions: (typeof combined)[] = [];
+  fixtures.command.mockImplementation(
+    async (
+      action: string,
+      _project: string,
+      input: {
+        command?: { kind: string };
+        id?: string;
+      },
+    ) => {
+      if (action === "session") {
+        if (input.command?.kind === "combine") {
+          sessions = [combined];
+          return { sessions, session: combined };
+        }
+        return { sessions };
+      }
+      if (action === "list")
+        return jobs.map((job) => ({
+          job,
+          state: { stage: "completed", completed: 1 },
+          duration: 30,
+        }));
+      if (action === "media-list") return { media: [] };
+      if (action === "revision")
+        return {
+          segments: [
+            {
+              id: "cue",
+              start: 2,
+              end: 4,
+              text:
+                input.id === jobs[0]!.id ? "Let x be the variable." : "The substitution gives −2.",
+            },
+          ],
+        };
+      return {};
+    },
+  );
+
+  await page.viewport(1120, 900);
+  await using screen = await render(
+    <main className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
+      <PanelHarness />
+    </main>,
+  );
+  await expect.element(screen.getByRole("heading", { name: /^Sessions/ })).toBeVisible();
+  const first = screen.getByRole("checkbox", { name: "Select Lecture 4" });
+  await expect.element(first).toBeVisible();
+  await capture("sessions-list");
+  await first.click();
+  await screen.getByRole("checkbox", { name: "Select Part two" }).click();
+  await screen.getByRole("button", { name: "Combine", exact: true }).click();
+  await expect.element(screen.getByRole("heading", { name: "Quantum lecture" })).toBeVisible();
+  await expect.element(screen.getByText("The substitution gives −2.")).toBeVisible();
+  await screen.getByRole("button", { name: "Part 2", exact: true }).click();
+  await expect.element(screen.getByRole("slider", { name: "Session timeline" })).toHaveValue("30");
+  await capture("session-timeline");
+  await screen.getByRole("button", { name: "Material", exact: true }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Project-relative file path" }))
+    .toBeVisible();
+  await capture("session-material");
 });

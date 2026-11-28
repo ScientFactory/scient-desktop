@@ -1,4 +1,12 @@
-import type { ModelSelection, ThreadId, TranscriptionWord } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  RecordingSessionCommand,
+  RecordingSessionResult,
+  RecordingSessionType,
+  ProviderInstanceId,
+  ThreadId,
+  TranscriptionWord,
+} from "@t3tools/contracts";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
 
@@ -65,8 +73,11 @@ type RecordingSource = {
   created: number;
   queued?: boolean;
   duration?: number;
+  /** The name the person gave it. */
+  title?: string;
 };
 type Commands = {
+  session: { command: RecordingSessionCommand; response: RecordingSessionResult };
   inventory: {
     language: string;
     details?: boolean;
@@ -186,11 +197,45 @@ type Commands = {
   };
   "capture-recover": { response: object };
   "capture-touch": { id: string; response: object };
-  "capture-finish": { id: string; response: { source?: string } };
-  "media-register": { source: string; response: { media: RecordingSource[] } };
-  "media-list": { response: { media: RecordingSource[] } };
+  "capture-mark": { id: string; time: number; response: object };
+  "capture-start": {
+    id: string;
+    language?: string;
+    sessionType?: RecordingSessionType;
+    response: {
+      language: string;
+      /** The engine live captions use: the recording default for the language. */
+      captions?: LessonCaptionEngine;
+      /** No engine transcribes the lesson when it ends. */
+      transcription?: "unavailable";
+      /** Whether a spoken question can go to OpenAI with the user's own key. */
+      talk: { openai: boolean };
+    };
+  };
+  "capture-caption": {
+    id: string;
+    window: number;
+    start: number;
+    end: number;
+    text: string;
+    response: object;
+  };
+  "capture-talk": { id: string; sdpOffer: string; response: { sdpAnswer: string } };
+  "capture-finish": {
+    id: string;
+    lesson?: { language: string; sessionType?: RecordingSessionType };
+    response: { source?: string; transcription?: "started" | "queued" | "unavailable" };
+  };
+  "media-register": {
+    source: string;
+    onlyInProject?: true;
+    response: { media: RecordingSource[] };
+  };
+  "media-list": { found?: true; response: { media: RecordingSource[] } };
+  "recording-rename": { source: string; title: string; response: { media: RecordingSource[] } };
+  "recording-trash": { source: string; response: { trashed: true } };
   pause: { id: string; response: RecordingStatus };
-  list: { includeCreated: true; query?: string; response: RecordingStatus[] };
+  list: { includeCreated: true; query?: string; source?: string; response: RecordingStatus[] };
   status: { id: string; response: RecordingStatus };
   revision: {
     id: string;
@@ -253,7 +298,44 @@ async function postTranscription(
   return response.json();
 }
 
-export type RecordingNoteRecipe = "summary" | "study-notes" | "action-items";
+export type LessonCaptionEngine =
+  | { kind: "local"; modelId: string }
+  | { kind: "cloud"; engineId: string }
+  | { kind: "chatgpt"; instanceId: ProviderInstanceId };
+
+export type RecordingNoteRecipe =
+  | "summary"
+  | "study-notes"
+  | "action-items"
+  | "lesson"
+  | "meeting"
+  | "interview";
+
+export function listSessionNotes(project: string, id: string, signal: AbortSignal) {
+  return postTranscription(
+    "/api/transcription/notes",
+    { action: "session-list", project, id },
+    signal,
+  ) as Promise<RecordingNote[]>;
+}
+
+export function makeSessionNotes(project: string, id: string, version: number) {
+  return postTranscription("/api/transcription/notes", {
+    action: "session-make",
+    project,
+    id,
+    version,
+  }) as Promise<{ threadId: string } | { needsModel: true }>;
+}
+
+/** A thread for spoken questions during a lesson, which knows where its live captions are. */
+export function startLessonTalkThread(project: string, capture: string) {
+  return postTranscription("/api/transcription/notes", {
+    action: "lesson-talk",
+    project,
+    capture,
+  }) as Promise<{ needsModel: true } | { threadId: string }>;
+}
 export type RecordingNote = {
   threadId: string;
   path: string;

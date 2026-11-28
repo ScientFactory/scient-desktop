@@ -1,6 +1,6 @@
 # Devices
 
-The Device panel shows a live iOS Simulator or Android Emulator next to a
+The Device panel shows a live iOS Simulator or Android device next to a
 thread, so you can watch an agent verify mobile work and tap the device
 yourself. Agents get the same device through `device_*` tools and the
 `agent-device` command line, which Scient sets up for them.
@@ -34,6 +34,15 @@ Studio's Device Manager. Scient detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing SDK tools, restart the environment server and refresh devices.
 
+Physical Android devices connected to the machine that hosts the environment
+server need only SDK Platform-Tools. Turn on **USB debugging** in the phone's
+Developer options, connect it over USB, and approve the prompt on the phone. For
+wireless debugging, turn on **Wireless debugging** instead. Once, choose **Pair
+device with pairing code** and run `adb pair <address>:<pairing port>` on that
+machine with the code it shows. Then run `adb connect <address>:<port>` with the
+address and port shown on the **Wireless debugging** screen, which differ from
+the pairing ones. Refresh devices afterward.
+
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If
 opening an emulator reports an ffmpeg problem, install or fix the executable
@@ -44,7 +53,8 @@ devices and iOS do not need ffmpeg.
 
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
-iOS, and power off. Close the tab to stop watching; the device keeps running
+iOS, and power off. Some Xiaomi phones ignore touch and keys until **USB
+debugging (Security settings)** is on in Developer options. Close the tab to stop watching; the device keeps running
 unless you power it off. Closed tabs stay closed after a reload. To watch the
 device again, choose it from **+ → Device**.
 
@@ -114,8 +124,9 @@ machine, run Scient on that machine and connect to its environment.
 Node 22.12 or newer and npm must be available to non-interactive SSH commands.
 Scient checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and `ANDROID_HOME` or `ANDROID_SDK_ROOT` on the host.
-Android on an SSH host needs the same SDK tools as a local environment; adb on
-the PATH alone does not enable it. Android emulator video needs
+Android on an SSH host needs the SDK Platform-Tools, Android Emulator, and
+Command-line Tools (latest), even for physical devices; adb on the PATH alone
+does not enable it. Android emulator video needs
 `ffmpeg` with libx264 on that host; physical Android devices use scrcpy and do
 not need ffmpeg.
 
@@ -149,12 +160,12 @@ leases devices and reaches only its own leases, but commands on a leased device
 run on its worker, so treat it like shell access to your workers. Scient sends it
 with every request, so use an HTTPS gateway URL, or plain HTTP only over an
 encrypted network such as Tailscale. The gateway
-and workers need `capabilities.stream.enabled` and `capabilities.input.enabled`
+and workers need Simlock 0.9.0 or later with `capabilities.stream.enabled` and `capabilities.input.enabled`
 for the live screen and for input.
 
 The picker lists the models your workers can make. Opening one takes a lease;
-closing it with **Return device to the pool**, or removing the host, returns it
-wiped. The panel keeps a watched device leased up to the host's lease limit.
+closing it with **Return device to the pool**, or removing the host, returns the lease.
+Simulators and emulators are wiped. The panel keeps a watched device leased up to the host's lease limit.
 You can tap, swipe, type, and press Home, and Back and Recents on Android.
 Rotation, appearance, text size, device tools, and screenshots are not offered
 for Simlock devices; agents can still do them through `device_open`. On iOS 27
@@ -164,6 +175,14 @@ version as Scient (see Device tool updates), and agent-device accepts app instal
 for a lease only from the folder it was opened from, which `device_open`
 names. A device cannot reach development servers on your machine through
 localhost; use an address its worker can reach.
+
+### Enrolled phones and tablets
+
+The enrolled phones and tablets that are ready on a connected, undrained worker appear in the list next to its simulators and emulators, marked **Physical**, one entry per model and OS version. Worker setup is covered in Simlock's [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone).
+
+- A phone is not wiped when its lease ends. Simlock removes apps that weren't on the phone when it was enrolled, except App Store and TestFlight apps on an iPhone; settings, files, accounts, keychain items, and the data of every other app stay for whoever leases it next.
+- A leased phone has no stop button in the device list. Open it and choose **Return device to the pool**.
+- An iPhone's screen needs iOS 27 or later and a worker on Xcode 27 or later, and it takes no clicks or typing from the panel. Agents can still drive it.
 
 ## Device tool updates
 

@@ -72,6 +72,7 @@ import {
 import {
   copyPngToClipboard,
   getAppBranding,
+  getDatabaseMigrationProgress,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
   installRelayTelemetryEnabled,
@@ -158,10 +159,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
   yield* ipc.handle(RestartReadinessIpc.getToken);
   yield* ipc.handle(RestartReadinessIpc.reportReady);
+  yield* ipc.handle(RestartReadinessIpc.reportSettled);
   yield* ipc.handle(UpdateSaveIpc.complete);
   // SCIENT-FORK:END
 
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handle(getDatabaseMigrationProgress);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);

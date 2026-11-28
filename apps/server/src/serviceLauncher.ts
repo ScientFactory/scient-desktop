@@ -734,6 +734,52 @@ async function replaceFileDurably(filePath: string, contents: string | Uint8Arra
   }
 }
 
+async function readStateContents(statePath: string): Promise<string | undefined> {
+  return NodeFSP.readFile(statePath, "utf8").catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === "ENOENT") return undefined;
+    throw cause;
+  });
+}
+
+/**
+ * The only complete runtime. Scient's units name no version (the boot plan starts the stable
+ * launcher), so a unit cannot prove which of several bundles is the attempt; the launcher refuses.
+ */
+async function installedRuntimeVersion(baseDir: string): Promise<string | undefined> {
+  const entries = await NodeFSP.readdir(NodePath.join(baseDir, "runtime", "versions")).catch(
+    () => [],
+  );
+  const complete: Array<string> = [];
+  for (const version of entries) {
+    if (isExactServiceVersion(version) && (await runtimeExists(baseDir, version))) {
+      complete.push(version);
+    }
+  }
+  if (complete.length > 1) {
+    throw new Error(
+      `Service state is missing and ${complete.length} installed runtimes were found; the launcher will not choose one.`,
+    );
+  }
+  return complete[0];
+}
+
+// Without the state file every start would fail; select the installed runtime again.
+async function recoverServiceState(baseDir: string, statePath: string): Promise<string> {
+  const release = await acquireServiceSelectionLock(statePath);
+  try {
+    const written = await readStateContents(statePath);
+    if (written !== undefined) return written;
+    const activeVersion = await installedRuntimeVersion(baseDir);
+    if (activeVersion === undefined) {
+      throw new Error("Service state is missing and no installed runtime was found.");
+    }
+    await writeServiceState(statePath, { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion });
+    return NodeFSP.readFile(statePath, "utf8");
+  } finally {
+    release();
+  }
+}
+
 async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
   const paths = runtimePaths(baseDir, version);
   try {
@@ -1390,10 +1436,12 @@ export class Launcher {
     };
     await this.#selectState(next);
     child.role = "active";
-    await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
+    // The commit is already durable, so answer before the cleanup: the trial waits only
+    // 30 seconds for this reply, and dropping the backup can take longer than that.
     try {
       await sendMessage(child.process, { type: "committed", updateId: committed.id });
     } finally {
+      await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
       await this.#repointServiceUnit(committed.targetVersion);
     }
   }
@@ -1604,7 +1652,9 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     };
     const environment = await readServiceEnvironment(baseDir, managerEnvironment);
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
-    const contents = await NodeFSP.readFile(statePath, "utf8");
+    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
+    const contents =
+      (await readStateContents(statePath)) ?? (await recoverServiceState(baseDir, statePath));
     let state = parseServiceState(contents);
     if (state === undefined) {
       state = adoptLegacyServiceState(contents);
@@ -1613,7 +1663,6 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
         throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
       }
     }
-    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
     const logPath = await serviceLogPath(options, serviceUnit);
     if (logPath !== undefined) {
       await boundServiceLog(logPath);

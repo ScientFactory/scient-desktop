@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This test proves disabled mode creates no local state.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
@@ -172,5 +173,37 @@ it.layer(NodeServices.layer)("ScientAnalytics", (it) => {
         assert.isFalse(NodeFS.existsSync(NodePath.join(serverConfig.stateDir, "analytics")));
       }).pipe(Effect.provide(analyticsLayer));
     }),
+  );
+
+  it.effect("stays inert under DO_NOT_TRACK at launch, even when explicitly enabled on CI", () =>
+    Effect.gen(function* () {
+      const analyticsLayer = ScientAnalytics.layer.pipe(
+        Layer.provideMerge(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "scient-analytics-dnt-" }),
+        ),
+        Layer.provideMerge(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                SCIENT_ANALYTICS_ENABLED: "true",
+                SCIENT_ANALYTICS_TEST_ENDPOINT: "http://127.0.0.1:9/v1/events",
+              },
+            }),
+          ),
+        ),
+        Layer.provideMerge(ManagedPolicy.layerTest()),
+      );
+
+      yield* Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const analytics = yield* AnalyticsService;
+        assert.isFalse((yield* ScientAnalytics.ScientAnalyticsAvailability).available);
+        assert.isFalse(yield* analytics.record("server.boot.heartbeat", { threadCount: 1 }));
+        yield* analytics.flush;
+
+        // No outbox means no app.session.started was queued either.
+        assert.isFalse(NodeFS.existsSync(NodePath.join(serverConfig.stateDir, "analytics")));
+      }).pipe(Effect.provide(analyticsLayer));
+    }).pipe(Effect.provideService(HostProcess.Environment, { CI: "true", DO_NOT_TRACK: "1" })),
   );
 });

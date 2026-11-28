@@ -171,6 +171,19 @@ export async function restoreLegacyQueueEditStash(
 }
 
 let offered = false;
+let waitingForRoom = false;
+
+/** A full Stash refuses an offer; offer the rest once a prompt leaves it. */
+function offerAgainWhenStashHasRoom() {
+  if (waitingForRoom) return;
+  waitingForRoom = true;
+  const unsubscribe = usePromptStashStore.subscribe((state, previous) => {
+    if (state.entries.length >= previous.entries.length) return;
+    unsubscribe();
+    waitingForRoom = false;
+    void offerLegacyQueueEditJournals().catch(() => {});
+  });
+}
 
 /**
  * A queued-message edit that was still open when Scient updated left its draft in the journal,
@@ -199,7 +212,7 @@ export async function offerLegacyQueueEditJournals() {
     const edited = session.edited;
     if (edited.prompt.trim() === "" && edited.images.length === 0 && edited.files.length === 0)
       continue;
-    stash.stashEntry({
+    const offer = stash.stashEntry({
       id: `queue-stash-${session.journalKey}-edited`,
       queueEditKey: session.journalKey,
       queueEditSide: "edited",
@@ -209,5 +222,10 @@ export async function offerLegacyQueueEditJournals() {
       droppedImageNames: [],
       unreadableImageNames: [],
     });
+    if (offer.full) {
+      offered = false;
+      offerAgainWhenStashHasRoom();
+      return;
+    }
   }
 }

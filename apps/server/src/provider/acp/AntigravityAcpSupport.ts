@@ -11,6 +11,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
@@ -32,6 +33,7 @@ import {
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
+import { TOOL_CALL, TOOL_SEARCH } from "../../mcp/McpToolExposure.ts";
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
@@ -60,7 +62,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  const match = /^(?:v|agy_acp_server_)?(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
   return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
@@ -229,6 +231,21 @@ const ANTIGRAVITY_T3_MCP_TITLE = /^Run mcp_scient_(?<tool>[A-Za-z0-9_]+)\??$/;
 // rawInput is the tool's own arguments.
 const ANTIGRAVITY_PROXIED_MCP_TITLE = /^MCP Tool (?<tool>[A-Za-z0-9_]+)\??$/;
 
+const isAntigravityT3McpTool = (
+  tool: string,
+  toolArgs: Record<string, unknown> | undefined,
+): boolean => {
+  // SCIENT-FORK: tool_call has a display label, but its target decides admission.
+  if (tool !== TOOL_CALL) return T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH;
+  const target = typeof toolArgs?.name === "string" ? toolArgs.name.trim() : "";
+  return (
+    target.length > 0 &&
+    target !== TOOL_CALL &&
+    target !== TOOL_SEARCH &&
+    T3_MCP_TOOL_NAMES.has(target)
+  );
+};
+
 function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
   const title = request.toolCall.title?.trim() ?? "";
   const rawInput = unknownRecord(request.toolCall.rawInput);
@@ -238,12 +255,12 @@ function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionReq
       // SCIENT-FORK: Scient's server name.
       rawInput?.ServerName === ANTIGRAVITY_SCIENT_MCP_SERVER &&
       rawInput.ToolName === proxiedTool &&
-      T3_MCP_TOOL_NAMES.has(proxiedTool)
+      isAntigravityT3McpTool(proxiedTool, unknownRecord(rawInput.Arguments))
     );
   }
   if (typeof rawInput?.CommandLine === "string") return false;
   const tool = ANTIGRAVITY_T3_MCP_TITLE.exec(title)?.groups?.tool;
-  return tool !== undefined && T3_MCP_TOOL_NAMES.has(tool);
+  return tool !== undefined && isAntigravityT3McpTool(tool, rawInput);
 }
 
 export function antigravityPermissionDisposition(
@@ -595,19 +612,15 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
           : bytes[0] === 0xfe && bytes[1] === 0xff
             ? "UTF-16BE"
             : "UTF-8";
-      const decoded = yield* Effect.try({
-        try: () => new TextDecoder(encoding, { fatal: true }).decode(bytes),
-        catch: () =>
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Attachment '${attachment.name}' is not a ${encoding} text file.`,
-          ),
-      });
-      if (decoded.includes("\0")) {
-        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-          `Attachment '${attachment.name}' contains binary data.`,
-        );
+      const decoded = Option.liftThrowable((data: Uint8Array) =>
+        new TextDecoder(encoding, { fatal: true }).decode(data),
+      )(bytes);
+      // Other encodings and binary data stay path-only so the agent reads them with its own tools.
+      if (Option.isNone(decoded) || decoded.value.includes("\0")) {
+        totalBytes -= bytes.length;
+        continue;
       }
-      blocks.push({ type: "resource", resource: { uri, mimeType, text: decoded } });
+      blocks.push({ type: "resource", resource: { uri, mimeType, text: decoded.value } });
     }
   }
   if (blocks.length === 0) {

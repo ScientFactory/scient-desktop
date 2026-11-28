@@ -14,6 +14,8 @@ import {
   hubRoutes,
   instanceHubs,
   type LimitPoolWindow,
+  // SCIENT-FORK: shared account identity for the hub pool.
+  providersReadingAccounts,
 } from "@t3tools/shared/usageLimits";
 import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
@@ -102,15 +104,28 @@ function hubPool(
     .filter((account) => limitsNotice(account.usageLimits) === null);
   if (readable.length === 0) return null;
   // A signed-in login joins the pool only as a fresher reading of an account the hub routes to.
-  const signedIn = providers.filter((provider) =>
-    readable.some(
-      (account) =>
-        account.driver === provider.driver &&
-        account.workspaceId === provider.auth.workspaceId &&
-        account.email !== undefined &&
-        account.email.toLowerCase() === provider.auth.email?.toLowerCase(),
-    ),
-  );
+  // SCIENT-FORK:START — matched like the Usage page, so Antigravity's credential fingerprint counts
+  // too. A local reading keeps only the quotas this model spends, like the hub's, and joins only
+  // when one is left.
+  const signedIn = providersReadingAccounts(
+    providers,
+    readable,
+    routed.flatMap((source) => source.accounts),
+  ).flatMap((provider) => {
+    if (provider.driver !== "antigravity" || !provider.usageLimits) return [provider];
+    // An older account's local reading meters Claude and GPT apart ("claude-quota", "gpt-weekly").
+    const base = model?.slice(model.lastIndexOf("/") + 1);
+    const windows = provider.usageLimits.windows.filter((window) => {
+      const vendor = window.id.match(/^(claude|gpt)-(quota|weekly)$/)?.[1];
+      return vendor !== undefined && base !== undefined && /^(claude|gpt)/.test(base)
+        ? base.startsWith(vendor)
+        : antigravityWindowLimitsModel(window, model);
+    });
+    return windows.length === 0
+      ? []
+      : [{ ...provider, usageLimits: { ...provider.usageLimits, windows } }];
+  });
+  // SCIENT-FORK:END
   const presentations = new Map([
     [
       CARD_ENVIRONMENT,

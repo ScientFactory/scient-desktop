@@ -15,6 +15,7 @@ export * from "./desktopAppActivation.ts";
 export * from "./remoteAccess.ts";
 export * from "./ipc.ts";
 export * from "./voice.ts";
+export * from "./recordingSession.ts";
 export * from "./terminal.ts";
 export * from "./provider.ts";
 export * from "./providerInstance.ts";

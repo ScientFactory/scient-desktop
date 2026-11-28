@@ -61,6 +61,55 @@ To change models later, open **Settings → Voice & Transcription**. The page sh
 is recommended for your language, which model is in use, download
 progress, and removal controls.
 
+## Record a session
+
+Choose **Record a lesson** from a project's menu in the sidebar, or **Record**
+on the **Sessions** page. Pick the project, session type, language and
+microphone, then choose **Start recording**. Scient remembers the type and
+language for next time. Choose Hebrew explicitly for a Hebrew lesson.
+
+- Live captions use the recording engine for the selected language. They are a preview.
+- Scient saves the audio to the project every second and recovers it after an interruption.
+- **Mark** saves the current timestamp. **Pause** and **Resume** control the recording.
+- **Stop** saves the recording and starts transcription with the default engine. Lecture notes
+  include concepts, derivations and open questions. Meeting notes include decisions and
+  action items. Interview notes include themes and candidate quotes.
+
+### Ask a question out loud
+
+Select **Talk** to ask about the lesson while it records. Recording pauses for
+the whole conversation, so neither your question nor the answer is recorded.
+**End and resume** goes back to recording. Use headphones, so the answer is not
+heard by the microphone.
+
+- With Scient Agent signed in to ChatGPT, ChatGPT answers. Your questions go to
+  a **Lesson questions** thread in the project, which reads the live captions.
+- Otherwise, if you added an OpenAI speech engine under **Cloud engines** and
+  allowed audio uploads, OpenAI's realtime model answers with your own key. It
+  hears the most recent part of the lesson's captions.
+
+Talk is hidden when neither is set up.
+
+## Manage sessions
+
+**Sessions** shows recordings you made or added and transcripts you imported.
+Use **Add → From your projects…** to find audio and video already in a project.
+**Add → Audio or video files…** can also copy a file from outside the project.
+
+- Select recordings in one project and choose **Combine** to play them in order
+  on one timeline. Use the part menus to reorder or remove a part, or choose
+  **Split into sessions** to restore the earlier sessions.
+- **Transcript** shows each part's text and markers. Open a part's recording to
+  transcribe it, review corrections or export its transcript.
+- **Material** links files and Library sources, with optional pages and a recording moment.
+  A check mark includes an item when making notes or asking in chat.
+- **Notes → Make notes** uses the session type. Earlier versions remain available.
+- **Ask in chat** attaches the chosen transcript versions, saved session and
+  recording notes, and selected material.
+  Timestamp links from that context continue to use the saved transcript after reorder or split.
+- **Move to Trash** puts the session's files in its project's recoverable session Trash.
+  **Sessions → Trash → Restore** puts the files back. Linked material stays in its original location.
+
 ## Recordings defaults
 
 To transcribe a recording, [install FFmpeg](https://ffmpeg.org/download.html)

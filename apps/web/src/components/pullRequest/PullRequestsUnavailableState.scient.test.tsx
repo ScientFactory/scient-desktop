@@ -1,4 +1,3 @@
-import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -16,7 +15,11 @@ describe("PullRequestsUnavailableState", () => {
       <PullRequestsUnavailableState
         error="GitHub did not answer."
         onRetry={() => {}}
-        host={{ url: "https://github.com/pingdotgg/t3code/pull/42", openLabel: "Open on GitHub" }}
+        host={{
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          openLabel: "Open on GitHub",
+          threadRef: null,
+        }}
       />,
     );
 
@@ -29,12 +32,12 @@ describe("PullRequestsUnavailableState", () => {
 
   // regression: cad2c93616 feat: multi-provider pull requests page with in-app reviews (#4849)
   it("can explain an unsupported environment without offering a futile retry", () => {
-    const text = textOf(
-      PullRequestsUnavailableState({
-        title: "Pull requests unavailable",
-        error: "Update this environment's Scient server to browse pull requests.",
-      }),
-    );
+    const text = renderToStaticMarkup(
+      <PullRequestsUnavailableState
+        title="Pull requests unavailable"
+        error="Update this environment's Scient server to browse pull requests."
+      />,
+    ).replaceAll("&#x27;", "'");
 
     expect(text).toContain("Pull requests unavailable");
     expect(text).toContain("Update this environment's Scient server");
@@ -45,7 +48,11 @@ describe("PullRequestsUnavailableState", () => {
     const html = renderToStaticMarkup(
       <PullRequestsUnavailableState
         error="This server cannot read the pull request."
-        host={{ url: "https://github.com/pingdotgg/t3code/pull/9", openLabel: "Open on GitHub" }}
+        host={{
+          url: "https://github.com/pingdotgg/t3code/pull/9",
+          openLabel: "Open on GitHub",
+          threadRef: null,
+        }}
       />,
     );
 
@@ -71,10 +78,3 @@ describe("PullRequestsUnavailableState", () => {
     expect(html).not.toContain("href=");
   });
 });
-
-function textOf(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join(" ");
-  if (!isValidElement(node)) return "";
-  return textOf((node as ReactElement<{ children?: ReactNode }>).props.children);
-}

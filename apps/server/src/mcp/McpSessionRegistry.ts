@@ -17,6 +17,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 // SCIENT-FORK:START — type-only: the registry builds configs, it calls no session helper.
 import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 // SCIENT-FORK:END
+import { routineSpan } from "@t3tools/shared/observability";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
@@ -252,50 +253,50 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     },
   );
 
-  const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve")(
-    function* (rawToken) {
-      if (rawToken.length === 0) return undefined;
-      const tokenHash = yield* hashToken(rawToken);
-      const alive = yield* currentAliveMark;
-      // SCIENT-FORK: expiry is a credential exit, not just a failed lookup.
-      let expired: string | undefined;
-      const resolved = yield* SynchronizedRef.modify(state, ({ records }) => {
-        const record = records.get(tokenHash);
-        if (!record || record.expired) return [undefined, { records }] as const;
-        if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
-          // SCIENT-FORK: the session's secrets are released below; touch can still revive the record.
-          expired = record.scope.thread.providerSessionId;
-          const next = new Map(records);
-          next.set(tokenHash, { ...record, expired: true });
-          return [undefined, { records: next }] as const;
-        }
+  const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve", {
+    attributes: routineSpan,
+  })(function* (rawToken) {
+    if (rawToken.length === 0) return undefined;
+    const tokenHash = yield* hashToken(rawToken);
+    const alive = yield* currentAliveMark;
+    // SCIENT-FORK: expiry is a credential exit, not just a failed lookup.
+    let expired: string | undefined;
+    const resolved = yield* SynchronizedRef.modify(state, ({ records }) => {
+      const record = records.get(tokenHash);
+      if (!record || record.expired) return [undefined, { records }] as const;
+      if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
+        // SCIENT-FORK: the session's secrets are released below; touch can still revive the record.
+        expired = record.scope.thread.providerSessionId;
         const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAlive: alive });
-        // SCIENT-FORK:START — callers receive copies of the authorization record, Scient
-        // Extensions connector ids and skill scope included.
-        return [
-          {
-            ...record.scope,
-            capabilities: new Set(record.scope.capabilities),
-            connectorIds: new Set(record.scope.connectorIds),
-            ...(record.scope.skillScope
-              ? {
-                  skillScope: {
-                    ...copySkillScope(record.scope.skillScope),
-                  },
-                }
-              : {}),
-          },
-          { records: next },
-        ] as const;
-        // SCIENT-FORK:END
-      });
-      // SCIENT-FORK:START — release session-scoped key material before returning an expired lookup.
-      if (expired) yield* notifyRevoked([expired], "expired");
-      return resolved;
+        next.set(tokenHash, { ...record, expired: true });
+        return [undefined, { records: next }] as const;
+      }
+      const next = new Map(records);
+      next.set(tokenHash, { ...record, lastAlive: alive });
+      // SCIENT-FORK:START — callers receive copies of the authorization record, Scient
+      // Extensions connector ids and skill scope included.
+      return [
+        {
+          ...record.scope,
+          capabilities: new Set(record.scope.capabilities),
+          connectorIds: new Set(record.scope.connectorIds),
+          ...(record.scope.skillScope
+            ? {
+                skillScope: {
+                  ...copySkillScope(record.scope.skillScope),
+                },
+              }
+            : {}),
+        },
+        { records: next },
+      ] as const;
       // SCIENT-FORK:END
-    },
-  );
+    });
+    // SCIENT-FORK:START — release session-scoped key material before returning an expired lookup.
+    if (expired) yield* notifyRevoked([expired], "expired");
+    return resolved;
+    // SCIENT-FORK:END
+  });
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {

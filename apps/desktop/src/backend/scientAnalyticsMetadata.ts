@@ -1,3 +1,5 @@
+import { isCiEnvironment, isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
+
 /** Packaged availability and release attribution. User consent remains server-owned. */
 export const SCIENT_ANALYTICS_METADATA_ENV_NAMES = [
   "SCIENT_ANALYTICS_APP_VERSION",
@@ -11,7 +13,7 @@ export function scientAnalyticsMetadata(
     readonly isDevelopment: boolean;
     readonly isPackaged: boolean;
   },
-  enabledOverride?: string,
+  env: Readonly<Record<string, string | undefined>> = {},
 ): Record<(typeof SCIENT_ANALYTICS_METADATA_ENV_NAMES)[number], string> {
   const version = input.isPackaged && !input.isDevelopment ? input.appVersion : "unknown";
   const channel = input.isDevelopment
@@ -23,12 +25,14 @@ export function scientAnalyticsMetadata(
         : /^\d+\.\d+\.\d+-(beta|rc)\./.test(version)
           ? "beta"
           : "unknown";
+  const enabledOverride = env.SCIENT_ANALYTICS_ENABLED;
   return {
     SCIENT_ANALYTICS_APP_VERSION: version,
     SCIENT_ANALYTICS_BUILD_CHANNEL: channel,
-    SCIENT_ANALYTICS_ENABLED:
-      enabledOverride === undefined
-        ? input.isPackaged && !input.isDevelopment && channel !== "unknown"
+    SCIENT_ANALYTICS_ENABLED: isDoNotTrackSet(env)
+      ? "false"
+      : enabledOverride === undefined
+        ? input.isPackaged && !input.isDevelopment && channel !== "unknown" && !isCiEnvironment(env)
           ? "true"
           : "false"
         : enabledOverride === "true"

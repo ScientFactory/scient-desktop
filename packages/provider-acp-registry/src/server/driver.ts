@@ -640,6 +640,7 @@ export function makeAcpRegistryDriver(
     driverKind: DRIVER_KIND,
     metadata: {
       displayName: "ACP Registry",
+      snapshotOmitsDisplayName: true,
       supportsMultipleInstances: true,
       hasDefaultInstance: false,
     },

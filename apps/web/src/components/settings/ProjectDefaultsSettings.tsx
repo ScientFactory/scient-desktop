@@ -210,6 +210,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             />
             {!mixedModel && !presentation.providerNote && !effortDisabledReason && activeEntry ? (
               <TraitsPicker
+                // SCIENT-FORK:START — this model starts chats, where Cyber Access applies.
+                forChat
+                // SCIENT-FORK:END
                 provider={activeEntry.driverKind}
                 models={activeEntry.models}
                 model={selection.model}
@@ -334,6 +337,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             />
             {settings.fallbackModelSelection !== null && fallbackEntry && !mixedFallback ? (
               <TraitsPicker
+                // SCIENT-FORK:START — this model starts chats, where Cyber Access applies.
+                forChat
+                // SCIENT-FORK:END
                 provider={fallbackEntry.driverKind}
                 models={fallbackEntry.models}
                 model={fallbackSelection.model}

@@ -244,10 +244,6 @@ export class LocalComputeStore extends Context.Service<
       sessionId: ComputeSessionId,
       executionId: ComputeExecutionId,
     ) => Effect.Effect<void, LocalComputeStoreError>;
-    readonly removeDisposableSessionData: (
-      record: ComputeSessionRecord,
-      removedAt: string,
-    ) => Effect.Effect<ComputeSessionRecord, LocalComputeStoreError>;
     /** A new, empty folder a fresh script run writes its linked results into. */
     readonly prepareResultsFolder: (
       projectId: ComputeProjectId,
@@ -1110,74 +1106,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Reclaim output bytes while preserving session/journal/request/result history and an explicit
-   * unavailable-figures state. Do not schedule trimming here: retention timing requires a separate
-   * policy decision.
-   */
-  const removeDisposableSessionData = (record: ComputeSessionRecord, removedAt: string) =>
-    writeLock.withPermits(1)(
-      Effect.gen(function* () {
-        const directory = yield* sessionDirectory(record.projectId, record.sessionId);
-        const measured = yield* measureSessionStorage(record.projectId, record.sessionId);
-        const updated = {
-          ...record,
-          storage: {
-            status: "metadata-only" as const,
-            outputBytes: 0,
-            imageBytes: 0,
-            totalBytes: 0,
-            removedAt,
-          },
-        } satisfies ComputeSessionRecord;
-        const filePath = path.join(directory, "session.json");
-        const contents = yield* encodeSession(updated).pipe(
-          mapStoreError("encode-session", filePath),
-        );
-        // The record is rewritten first. A crash between the two leaves data on
-        // disk that the record calls gone, which is a wasted byte; the reverse
-        // leaves a record promising data that is not there, which is a lie.
-        yield* atomicWrite(filePath, contents);
-        yield* Effect.tryPromise({
-          try: async () => {
-            const executionsRoot = `${directory}/executions`;
-            await NodeFSP.rm(`${directory}/output.ndjson`, { force: true });
-            await NodeFSP.rm(`${directory}/outputs`, { force: true, recursive: true });
-            let entries: ReadonlyArray<string> = [];
-            try {
-              entries = await NodeFSP.readdir(executionsRoot);
-            } catch (cause) {
-              if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-            }
-            for (const entry of entries) {
-              if (!isSafeSegment(entry)) continue;
-              await NodeFSP.rm(`${executionsRoot}/${entry}/output.ndjson`, { force: true });
-              await NodeFSP.rm(`${executionsRoot}/${entry}/outputs`, {
-                force: true,
-                recursive: true,
-              });
-            }
-          },
-          catch: (cause) => storeError("remove-disposable-session-data", directory, cause),
-        });
-        // Said in the journal, not only in the log: "the figures are gone" is
-        // exactly the kind of state the journal exists to explain, and a reader
-        // a month later has the journal and not the log.
-        const journal = yield* loadJournal(record.projectId, record.sessionId).pipe(
-          Effect.orElseSucceed((): ReadonlyArray<ComputeSessionJournalEntry> => []),
-        );
-        yield* appendJournalEntry(record.projectId, record.sessionId, {
-          sequence: (journal.at(-1)?.sequence ?? -1) + 1,
-          observedAt: removedAt,
-          event: "storage-trimmed",
-          generation: record.generation,
-          executionId: null,
-          detail: `Reclaimed ${String(measured.totalBytes)} bytes of output and images. What ran and how it ended was kept.`,
-        });
-        return updated;
-      }),
-    );
-
   const prepareResultsFolder = Effect.fn("LocalComputeStore.prepareResultsFolder")(function* (
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
@@ -1226,7 +1154,6 @@ const make = Effect.gen(function* () {
     resolveOutputResource,
     measureSessionStorage,
     removeExecutionOutputs,
-    removeDisposableSessionData,
   });
 });
 

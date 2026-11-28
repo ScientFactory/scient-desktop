@@ -83,21 +83,22 @@ describe("prompt stash across app windows", () => {
     expect(storedIds(storage)).toEqual([]);
   });
 
-  it("evicts the oldest stored entry when two windows stash into a full stash", async () => {
+  it("refuses a stash from a second window once another window filled the stash", async () => {
     const storage = sharedLocalStorage();
     using first = await openStashWindow(storage);
-    for (let minute = 0; minute < MAX_STASH_ENTRIES; minute++) {
+    for (let minute = 0; minute < MAX_STASH_ENTRIES - 1; minute++) {
       const createdAt = `2026-10-30T11:${String(minute).padStart(2, "0")}:00.000Z`;
       first.store.getState().stashEntry(entry(`older-${minute}`, createdAt));
     }
     using second = await openStashWindow(storage);
 
     const fromFirst = entry("from-first", "2026-10-30T12:00:00.000Z");
-    expect(first.store.getState().stashEntry(fromFirst).evicted?.id).toBe("older-0");
+    expect(first.store.getState().stashEntry(fromFirst).written).toBe(true);
     const fromSecond = entry("from-second", "2026-10-30T12:01:00.000Z");
-    expect(second.store.getState().stashEntry(fromSecond).evicted?.id).toBe("older-1");
+    expect(second.store.getState().stashEntry(fromSecond).full).toBe(true);
 
     expect(storedIds(storage)).toHaveLength(MAX_STASH_ENTRIES);
-    expect(storedIds(storage).slice(0, 2)).toEqual(["from-second", "from-first"]);
+    expect(storedIds(storage)).toContain("older-0");
+    expect(storedIds(storage)).not.toContain("from-second");
   });
 });

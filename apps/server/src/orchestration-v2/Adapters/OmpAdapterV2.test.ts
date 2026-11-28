@@ -4852,6 +4852,12 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
             message: "Conversation is not being saved",
           },
           {
+            type: "notice",
+            level: "info",
+            source: "compaction",
+            message: "Compaction dead-end recovery: dropped 2 attached images",
+          },
+          {
             type: "extension_ui_request",
             method: "notify",
             message: "Extension status",
@@ -4892,9 +4898,18 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
               item.status === "failed",
           ),
         );
+        const notices = items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
+        );
+        // Info is shown plain, never dropped and never orange; the fallback stays a warning.
+        assert.deepInclude(notices, { message: "Extension status", level: "info" });
+        assert.deepInclude(notices, {
+          message: "compaction: Compaction dead-end recovery: dropped 2 attached images",
+          level: "info",
+        });
         assert.isTrue(
-          items.some(
-            (item) => item.type === "system_notice" && item.message === "Extension status",
+          notices.some(
+            (notice) => notice.message.includes("vendor/fallback") && notice.level === "warning",
           ),
         );
         assert.isFalse(items.some((item) => item.type === "dynamic_tool"));

@@ -1,6 +1,7 @@
-import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import type * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -54,11 +56,12 @@ import type { ProviderNativeInventory } from "../ScientProviderInstanceSeams.ts"
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   createClaudeAdapterV2,
+  resolveClaudeModeAvailability,
   type ClaudeAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { claudeUsageReader } from "./claudeUsage.ts";
-import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
+import { makeClaudeScopedLimitNames, recordClaudeUsageResponse } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
@@ -147,6 +150,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const host = yield* ProviderHost.ProviderHost;
     // Instance-level probes are not tied to a project, so they run in the
     // server's own state dir. The server cwd is $HOME in packaged desktop
     // builds, and `claude` wrappers that scope themselves to their cwd refuse
@@ -171,13 +175,11 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       spawner,
       managedInstallationAllowed: serverConfig.mode === "desktop",
     });
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const effectiveConfig = {
       ...config,
       enabled,
-      binaryPath: expandHomePath(
-        managedRuntime.effectiveBinaryPath,
-        yield* HostProcess.HomeDirectory,
-      ),
+      binaryPath: expandHomePath(managedRuntime.effectiveBinaryPath, homeDirectory),
     } satisfies ClaudeSettings;
     const effectiveProcessEnv = managedRuntime.usesManagedPath
       ? { ...processEnv, DISABLE_UPDATES: "1" }
@@ -196,6 +198,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       : yield* makeClaudeMaintenanceResolution({
           binaryPath: effectiveConfig.binaryPath,
           env: effectiveProcessEnv,
+          npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -497,6 +500,71 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       Effect.provideService(Path.Path, path),
     );
 
+    let readCurrentSnapshot: Effect.Effect<ServerProvider | undefined> = Effect.undefined;
+    const checkUsageLimits = Effect.gen(function* () {
+      if (!effectiveConfig.enabled) return undefined;
+      const current = yield* readCurrentSnapshot;
+      const version = current?.version ?? undefined;
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      const probed = yield* probeClaudeCapabilities(
+        effectiveConfig,
+        effectiveProcessEnv,
+        serverConfig.stateDir,
+        "usageOnly",
+      ).pipe(Effect.result);
+      if (probed._tag === "Failure") {
+        return makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" });
+      }
+      const capabilities = probed.success;
+      const usesSavedOAuth =
+        Boolean(capabilities.subscriptionType) &&
+        !capabilities.apiKeySource &&
+        !effectiveProcessEnv.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+      const workspaceId = usesSavedOAuth
+        ? yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)
+        : undefined;
+      const auth =
+        capabilities.email || workspaceId
+          ? {
+              ...(capabilities.email ? { email: capabilities.email } : {}),
+              ...(workspaceId ? { workspaceId } : {}),
+            }
+          : undefined;
+      const switchedAccount =
+        (capabilities.email !== undefined &&
+          current?.auth.email !== undefined &&
+          capabilities.email.toLowerCase() !== current.auth.email.toLowerCase()) ||
+        (workspaceId !== undefined &&
+          current?.auth.workspaceId !== undefined &&
+          workspaceId !== current.auth.workspaceId);
+      if (switchedAccount) {
+        yield* Ref.set(lastGoodCapabilities, undefined);
+        yield* Cache.invalidateAll(capabilitiesProbeCache);
+      }
+      if (!capabilities.usage) {
+        return {
+          usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }),
+          ...(auth ? { auth } : {}),
+        };
+      }
+      const usageLimits = yield* recordClaudeUsageResponse(scopedLimitNames, {
+        response: capabilities.usage,
+        checkedAt: capabilities.usageCheckedAt ?? checkedAt,
+      });
+      const resetCredits =
+        usesSavedOAuth && !usageLimits.unavailable && version
+          ? yield* ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+          : undefined;
+      return {
+        usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+        ...(auth ? { auth } : {}),
+      };
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
       resolveMaintenance,
@@ -509,6 +577,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
           Effect.map(stampIdentity),
         ),
       checkProvider,
+      checkUsageLimits,
       invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
@@ -539,6 +608,8 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
           }),
       ),
     );
+    readCurrentSnapshot = snapshot.getSnapshot;
+
     const skillActions = {
       setEnabled: (skill: {
         readonly name: string;
@@ -640,6 +711,24 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
+      // Unreadable settings report no limit; the thread's own notice covers a refused mode.
+      runtimeModeLimitsForCwd: (cwd: string) =>
+        resolveClaudeModeAvailability({
+          settings: effectiveConfig,
+          homePath: configDir,
+          customHome,
+          cwd,
+          fileSystem,
+          path,
+        }).pipe(
+          Effect.map((availability) =>
+            availability.autoDisabledBy === undefined
+              ? []
+              : [{ mode: "auto" as const, reason: availability.autoDisabledBy }],
+          ),
+          Effect.orElseSucceed(() => []),
+          Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+        ),
       snapshotForCwd: (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

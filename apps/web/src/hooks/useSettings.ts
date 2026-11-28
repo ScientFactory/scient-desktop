@@ -237,6 +237,14 @@ export function persistClientSettingsPatch(
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
+  let deferred = deferPatch;
+  // SCIENT-FORK:START — a failed cross-window read can skip the step below, so release here too.
+  const releaseDeferred = () => {
+    if (!deferred) return;
+    deferred = false;
+    deferredClientSettingsPatchCount -= 1;
+  };
+  // SCIENT-FORK:END
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
@@ -252,7 +260,7 @@ export function persistClientSettingsPatch(
           await hydrateClientSettings();
         }
       } finally {
-        deferredClientSettingsPatchCount -= 1;
+        releaseDeferred();
       }
     }
     // Also reapplies an optimistic patch that a refresh from another tab replaced.
@@ -264,6 +272,7 @@ export function persistClientSettingsPatch(
     }
     await persist(getClientSettingsSnapshot());
   }).catch((error) => {
+    releaseDeferred();
     console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
       operation: "persist",
       ...safeErrorLogAttributes(error),

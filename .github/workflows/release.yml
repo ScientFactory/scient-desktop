@@ -355,40 +355,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  build_wsl_node_pty:
-    name: Build WSL node-pty
-    needs: preflight
-    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-      - name: Build Linux x64 node-pty for WSL
-        shell: bash
-        env:
-          PREVIEW: ${{ inputs.channel == 'preview' }}
-        run: |
-          set -euo pipefail
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
-          pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp@12.3.0 rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
-          if-no-files-found: error
-
   build_synctex_runtime:
     name: Build native prerequisites / ${{ matrix.label }}
     needs: preflight
@@ -737,17 +703,6 @@ jobs:
           set -euo pipefail
           wait_for() { bash .github/scripts/wait-for-job.sh "$@"; }
           wait_for "Build native prerequisites / ${{ matrix.label }}" "synctex-runtime-${{ matrix.resource_key }}"
-          if [[ "${{ matrix.platform }}" == "win" ]]; then
-            wait_for "Build WSL node-pty" wsl-node-pty-x64
-            wait_for "Build native prerequisites / Linux x64" synctex-runtime-linux-x64
-          fi
-
-      - name: Download WSL native dependency
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild
 
       - name: Download target SyncTeX runtime
         if: matrix.platform != 'mac'
@@ -755,13 +710,7 @@ jobs:
         with:
           name: synctex-runtime-${{ matrix.resource_key }}
           path: synctex-runtime/current
-
-      - name: Download WSL SyncTeX runtime
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: synctex-runtime-linux-x64
-          path: synctex-runtime/wsl
+          github-token: ${{ github.token }}
 
       - name: Download Windows native prerequisites
         if: matrix.platform == 'win'
@@ -769,6 +718,7 @@ jobs:
         with:
           name: windows-native-${{ matrix.arch }}
           path: windows-native
+          github-token: ${{ github.token }}
 
       - name: Prepare Azure Trusted Signing
         if: matrix.platform == 'win'
@@ -810,6 +760,56 @@ jobs:
           chmod +x "$dir/jsign"
           echo "T3CODE_JSIGN=$dir/jsign" >> "$GITHUB_ENV"
           echo "SCIENT_WINDOWS_SIGNING_READY=true" >> "$GITHUB_ENV"
+
+      # SCIENT-FORK:START — Only Windows can run the Windows engine that generates server
+      # bytecode. An unsigned staged app from this build goes to the Windows verifier, which
+      # generates the bytecode with it; the signed package below reuses this build and installs
+      # that bytecode only for the same Electron and server module bytes.
+      - name: Stage the Windows app for native server bytecode
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.repository }}
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
+          SCIENT_WINDOWS_NATIVE_RESOURCES: ${{ github.workspace }}/windows-native
+        run: |
+          set -euo pipefail
+          vp run dist:desktop:artifact --platform win --target dir --arch "$RELEASE_ARCH" \
+            --build-version "$RELEASE_VERSION" --omit-wsl-runtime --verbose \
+            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current" \
+            --output-dir "$RUNNER_TEMP/server-bytecode-input"
+          tar -C "$RUNNER_TEMP/server-bytecode-input" -cf "$RUNNER_TEMP/server-bytecode-input.tar" win-unpacked
+
+      - name: Upload the staged Windows app
+        if: matrix.platform == 'win'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-bytecode-input-win-${{ matrix.arch }}
+          path: ${{ runner.temp }}/server-bytecode-input.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          overwrite: true
+
+      - name: Wait for the native server bytecode
+        id: server_bytecode
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Verify exact Windows native payload" "server-bytecode-win-${{ matrix.arch }}" --uploaded
+
+      - name: Download the native server bytecode
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.server_bytecode.outputs.artifact-id }}
+          path: ${{ runner.temp }}/server-bytecode
+          github-token: ${{ github.token }}
+      # SCIENT-FORK:END
 
       - name: Build desktop artifact
         shell: bash
@@ -871,8 +871,16 @@ jobs:
             fi
           elif [[ "$RELEASE_PLATFORM" == "win" ]]; then
             args+=(--keep-stage)
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
-            args+=(--wsl-synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/wsl")
+            # SCIENT-FORK:START — the staged app's bundles, whose server modules the native
+            # bytecode was made from.
+            args+=(--skip-build)
+            export SCIENT_NATIVE_SERVER_COMPILE_CACHE="$RUNNER_TEMP/server-bytecode"
+            # SCIENT-FORK:END
+            # Releases ship a slim Windows installer without the WSL runtime archive or Linux
+            # sidecar dependencies while no user runs WSL. The app hides WSL in slim builds. CI
+            # (windows-packaging.yml) qualifies this slim installer whenever it runs Windows
+            # packaging, and the full WSL package only on its nightly and manual runs.
+            args+=(--omit-wsl-runtime)
             if [[ "${SCIENT_WINDOWS_SIGNING_READY:-false}" == "true" ]]; then
               args+=(--signed)
               signed=true
@@ -1024,7 +1032,9 @@ jobs:
           # Installers and updater archives are already compressed.
           compression-level: 0
 
-  # Starts with the release and waits only for the Windows package, not the slowest Mac.
+  # Starts with the release and waits only for the Windows package, not the slowest Mac. First it
+  # generates the package's server bytecode, which only a Windows host can run. Assembly accepts
+  # only the installer whose SHA-256 this job reports after every check.
   verify_windows_desktop:
     name: Verify exact Windows native payload
     needs: preflight
@@ -1032,6 +1042,10 @@ jobs:
     runs-on: windows-2025
     # Like the server asset, outlasts a queued producer; the wait has no deadline of its own.
     timeout-minutes: 240
+    # SCIENT-FORK:START — the installer these checks passed, for assembly to compare.
+    outputs:
+      installer_sha256: ${{ steps.checked_installer.outputs.sha256 }}
+    # SCIENT-FORK:END
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -1040,15 +1054,44 @@ jobs:
         with:
           node-version-file: package.json
           run-install: false
+      # SCIENT-FORK:START — generate the package's server bytecode with its own Windows engine.
+      - name: Wait for the staged Windows app
+        id: staged_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Package Windows x64" server-bytecode-input-win-x64 --uploaded
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.staged_app.outputs.artifact-id }}
+          path: server-bytecode-input
+          github-token: ${{ github.token }}
+      - name: Generate server bytecode with the staged app's engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C server-bytecode-input -xf server-bytecode-input/server-bytecode-input.tar
+          node scripts/native-server-compile-cache.mjs generate \
+            "$(cygpath -w "$PWD/server-bytecode-input/win-unpacked")" Scient.exe server-bytecode
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-bytecode-win-x64
+          path: server-bytecode/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      # SCIENT-FORK:END
       - name: Wait for the Windows package
+        id: package
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/wait-for-job.sh "Package Windows x64" verify-win-x64
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: verify-win-x64
+          artifact-ids: ${{ steps.package.outputs.artifact-id }}
           path: verify
+          github-token: ${{ github.token }}
       - name: Verify packaged natives
         shell: bash
         env:
@@ -1058,7 +1101,12 @@ jobs:
           tar -C verify -xf verify/unpacked.tar
           node verify/verify-windows-desktop-artifact.mjs \
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
-            --arch x64 --build-version "$RELEASE_VERSION" --verbose
+            --arch x64 --build-version "$RELEASE_VERSION" --omit-wsl-runtime --verbose
+      # SCIENT-FORK:START — the shipped backend must accept its prepared server bytecode.
+      - name: Require the packaged engine to accept its server bytecode
+        shell: bash
+        run: node scripts/native-server-compile-cache.mjs check "$(cygpath -w "$PWD/verify/win-unpacked")" Scient.exe
+      # SCIENT-FORK:END
       - name: Cache verified speech probe inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1112,6 +1160,22 @@ jobs:
           } elseif ($pinned.Count -gt 0) {
             throw "An unsigned Windows build must not pin publisher '$($pinned -join "', '")'"
           }
+      # SCIENT-FORK:START — the installed app, not only the unpacked stage, must accept its prepared
+      # server bytecode; then assembly gets the SHA-256 of the installer every check above passed.
+      - name: Require the installed app to accept its server bytecode
+        shell: pwsh
+        run: |
+          $installDir = 'C:\scient-verify-install'
+          $installer = (Resolve-Path verify/installer.exe).Path
+          $process = Start-Process $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer failed with exit $($process.ExitCode)" }
+          node scripts/native-server-compile-cache.mjs check "$installDir" Scient.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The installed app did not accept its server bytecode' }
+      - name: Report the checked installer
+        id: checked_installer
+        shell: bash
+        run: echo "sha256=$(sha256sum verify/installer.exe | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      # SCIENT-FORK:END
 
   # Needs every target's resource monitor and SyncTeX runtime, not their installers.
   build_server_asset:
@@ -1175,10 +1239,12 @@ jobs:
         with:
           pattern: resource-monitor-*
           path: resource-monitors
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: synctex-runtime-*
           path: synctex-runtimes
+          github-token: ${{ github.token }}
       - name: Add native monitors and create tarball
         shell: bash
         env:
@@ -1285,14 +1351,19 @@ jobs:
           cp release-assets/signing-win-x64.json "$RUNNER_TEMP/signing-win-x64.json"
           rm -f release-assets/signing-*.json
           rm -f release-assets/builder-debug.yml
+      # SCIENT-FORK:START — the Windows installer must be the one the native verifier checked; a
+      # rerun package job alone does not rerun that verifier.
       - name: Verify complete updater and server artifact set
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          WINDOWS_INSTALLER_SHA256: ${{ needs.verify_windows_desktop.outputs.installer_sha256 }}
         run: |
           node scripts/verify-scient-release-assets.ts \
             --assets-dir release-assets \
             --version "$RELEASE_VERSION" \
-            --channel "$RELEASE_CHANNEL"
+            --channel "$RELEASE_CHANNEL" \
+            --windows-installer-sha256 "$WINDOWS_INSTALLER_SHA256"
+      # SCIENT-FORK:END
       - name: Rehearse Beta updater discovery and downloads
         if: needs.preflight.outputs.channel == 'beta'
         run: node apps/desktop/scripts/qualify-update-channels.cjs

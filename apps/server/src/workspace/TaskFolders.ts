@@ -520,8 +520,11 @@ const make = Effect.gen(function* () {
     const pointer = yield* fileSystem
       .readFileString(path.join(folder, ".git"))
       .pipe(Effect.orElseSucceed(() => ""));
-    const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer)?.[1];
-    return gitDir === undefined ? null : path.resolve(folder, gitDir);
+    const prefix = "gitdir: ";
+    const gitDir = pointer.startsWith(prefix)
+      ? pointer.slice(prefix.length).replace(/[\r\n]+$/u, "")
+      : "";
+    return gitDir === "" ? null : path.resolve(folder, gitDir);
   });
   // A repository that is itself a linked worktree registers worktrees under the Git dir it shares.
   const commonGitDir = Effect.fnUntraced(function* (repositoryPath: string) {
@@ -978,9 +981,14 @@ const make = Effect.gen(function* () {
     }
     const removeOne = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
       if (!(yield* exists(checkout.worktreePath))) {
-        yield* git
-          .pruneWorktrees({ cwd: checkout.repositoryPath })
-          .pipe(Effect.ignoreCause({ log: true }));
+        // SCIENT-FORK:START — a storage sweep can leave an isolated checkout for recovery.
+        // Repository-wide prune would discard its registration if its gitfile was lost.
+        if (input.removeCheckout === undefined) {
+          yield* git
+            .pruneWorktrees({ cwd: checkout.repositoryPath })
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
+        // SCIENT-FORK:END
         return true;
       }
       const { keep, force } = yield* verdict(checkout);

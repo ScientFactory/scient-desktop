@@ -97,6 +97,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverImportAcpRegistrySession]: "server",
   [WS_METHODS.serverDeleteAcpRegistrySession]: "server",
   [WS_METHODS.serverListAcpRegistryProviders]: "server",
+  [WS_METHODS.serverGetProviderRuntimeModeLimits]: "server",
   [WS_METHODS.serverSetAcpRegistryProvider]: "server",
   [WS_METHODS.serverDisableAcpRegistryProvider]: "server",
   [WS_METHODS.serverLogoutAcpRegistry]: "server",
@@ -118,6 +119,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.workflowsSubscribe]: "workflows",
   [WS_METHODS.workflowsCounts]: "workflows",
   [WS_METHODS.workflowsGet]: "workflows",
+  [WS_METHODS.workflowsAbout]: "workflows",
   [WS_METHODS.workflowsAnswer]: "workflows",
   [WS_METHODS.workflowsResume]: "workflows",
   [WS_METHODS.workflowsCancel]: "workflows",
@@ -401,6 +403,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerSkillsSetEnabled]: "providerSkills",
   // SCIENT-FORK:START — Scient Accounts: instrument sensitive account RPCs without payloads.
   [WS_METHODS.accountsSnapshot]: "accounts",
+  [WS_METHODS.accountsExternalIdentities]: "accounts",
   [WS_METHODS.accountsSubscribeChanges]: "subscribe",
   [WS_METHODS.accountsSave]: "accounts",
   [WS_METHODS.accountsRemove]: "accounts",

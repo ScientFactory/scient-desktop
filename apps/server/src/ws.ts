@@ -2887,13 +2887,31 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAbout]: (input) =>
+          workflows.about(input).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
-          workflows
-            .answer(input.runId, input.name, {
-              choice: input.choice,
-              ...(input.reason === undefined ? {} : { reason: input.reason }),
-            })
-            .pipe(Effect.mapError(toWorkflowRequestError)),
+          serverAuth.listClientSessions(currentSessionId).pipe(
+            Effect.map((sessions) =>
+              EnvironmentAuth.clientSessionLabel(
+                sessions.find((session) => session.current)?.client,
+              ),
+            ),
+            Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
+            // The label names it to others; the session tells its own client the answer is its own.
+            Effect.map((label) => ({ label, sessionId: currentSessionId })),
+            Effect.flatMap((answeredBy) =>
+              workflows.answer(
+                input.runId,
+                input.name,
+                {
+                  choice: input.choice,
+                  ...(input.reason === undefined ? {} : { reason: input.reason }),
+                },
+                answeredBy,
+              ),
+            ),
+            Effect.mapError(toWorkflowRequestError),
+          ),
         [WS_METHODS.workflowsResume]: (input) =>
           workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsCancel]: (input) =>
@@ -2999,6 +3017,14 @@ export const layerWsRpc = (
             "provider.instance_id": input.instanceId,
             "project.id": input.projectId,
           }).pipe(Effect.andThen(listAcpRegistryProviders(input))),
+        [WS_METHODS.serverGetProviderRuntimeModeLimits]: Effect.fnUntraced(function* (input) {
+          return {
+            limits: yield* providerRegistry.runtimeModeLimits({
+              instanceId: input.instanceId,
+              scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
+            }),
+          };
+        }),
         [WS_METHODS.serverSetAcpRegistryProvider]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
@@ -3086,6 +3112,16 @@ export const layerWsRpc = (
               // SCIENT-FORK: returns at once; the reload publishes when it finishes.
               yield* providerModelFreshness.refreshStale;
               yield* providerRegistry.refreshModelCatalog;
+              return { providers: [] };
+            }
+            if (input.limitsOnly === true) {
+              yield* Effect.all(
+                [
+                  input.instanceId === undefined ? usageLimitSources.refresh : Effect.void,
+                  providerRegistry.refreshUsageLimits(input.instanceId),
+                ],
+                { concurrency: "unbounded", discard: true },
+              );
               return { providers: [] };
             }
             if (input.refreshModels) {

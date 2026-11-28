@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { render } from "../../../test/render";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
@@ -119,7 +120,7 @@ describe("ExpandedImageDialog", () => {
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 
-  it("scrolling pans the image while Ctrl+wheel zooms around the pointer", async () => {
+  it("scrolling pans the image while Ctrl+wheel zooms around the pointer", async ({ signal }) => {
     const canvas = document.createElement("canvas");
     canvas.width = 1600;
     canvas.height = 1200;
@@ -136,9 +137,13 @@ describe("ExpandedImageDialog", () => {
     const image = screen.getByRole("img", { name: "large.png" }).element() as HTMLElement;
     await vi.waitFor(() => expect(image.style.width).not.toBe(""));
     const fitWidth = image.getBoundingClientRect().width;
-    const wheels: { ctrlKey: boolean; canceled: boolean }[] = [];
+    const wheels: { ctrlKey: boolean; canceled: boolean; trusted: boolean }[] = [];
     const recordWheel = (event: WheelEvent) =>
-      wheels.push({ ctrlKey: event.ctrlKey, canceled: event.defaultPrevented });
+      wheels.push({
+        ctrlKey: event.ctrlKey,
+        canceled: event.defaultPrevented,
+        trusted: event.isTrusted,
+      });
     document.addEventListener("wheel", recordWheel);
     using _wheelListener = {
       [Symbol.dispose]: () => document.removeEventListener("wheel", recordWheel),
@@ -152,33 +157,46 @@ describe("ExpandedImageDialog", () => {
         y: (viewportBounds.top + viewportBounds.height / 2 - imageBounds.top) / imageBounds.height,
       };
     };
-    const ctrlWheel = async (deltaY: number) => {
-      await userEvent.keyboard("{Control>}");
-      await userEvent.wheel(viewportLocator, { delta: { y: deltaY } });
-      await userEvent.keyboard("{/Control}");
+    const wheel = async (delta: { x?: number; y: number }, ctrlKey = false) => {
+      const count = wheels.length;
+      await userEvent.wheel(viewportLocator, { delta });
+      expect(wheels.slice(count)).toEqual([{ ctrlKey, canceled: ctrlKey, trusted: true }]);
     };
-
-    await userEvent.wheel(viewportLocator, { delta: { y: 120 } });
-    expect(wheels.at(-1)).toEqual({ ctrlKey: false, canceled: false });
-    expect(image.getBoundingClientRect().width).toBe(fitWidth);
+    const scrollToEnd = async (scroll: () => Promise<void>) => {
+      const scrolled = Promise.withResolvers<void>();
+      const onScrollEnd = () => scrolled.resolve();
+      viewport.addEventListener("scrollend", onScrollEnd, { once: true });
+      using _scrollListener = {
+        [Symbol.dispose]: () => viewport.removeEventListener("scrollend", onScrollEnd),
+      };
+      await scroll();
+      await waitForTestReceipt(signal, scrolled.promise);
+    };
+    const ctrlWheel = (deltaY: number) =>
+      scrollToEnd(async () => {
+        await userEvent.keyboard("{Control>}");
+        try {
+          await wheel({ y: deltaY }, true);
+        } finally {
+          await userEvent.keyboard("{/Control}");
+        }
+      });
 
     await ctrlWheel(-100);
-    expect(wheels.at(-1)).toEqual({ ctrlKey: true, canceled: true });
     const zoomedWidth = image.getBoundingClientRect().width;
     expect(zoomedWidth).toBeCloseTo(fitWidth * Math.E, 0);
 
     const pan = async (delta: { x: number; y: number }) => {
       const { scrollLeft, scrollTop } = viewport;
-      await userEvent.wheel(viewportLocator, { delta });
-      await vi.waitFor(() => {
-        expect(Math.sign(viewport.scrollLeft - scrollLeft)).toBe(Math.sign(delta.x));
-        expect(Math.sign(viewport.scrollTop - scrollTop)).toBe(Math.sign(delta.y));
-      });
+      await scrollToEnd(() => wheel(delta));
+      expect(Math.sign(viewport.scrollLeft - scrollLeft), "horizontal pan").toBe(
+        Math.sign(delta.x),
+      );
+      expect(Math.sign(viewport.scrollTop - scrollTop), "vertical pan").toBe(Math.sign(delta.y));
     };
     await pan({ x: 60, y: 0 });
     await pan({ x: 0, y: 60 });
     await pan({ x: -40, y: -40 });
-    expect(wheels.filter((wheel) => !wheel.ctrlKey).every((wheel) => !wheel.canceled)).toBe(true);
     expect(image.getBoundingClientRect().width).toBe(zoomedWidth);
 
     const anchor = pointerFraction();
@@ -186,5 +204,11 @@ describe("ExpandedImageDialog", () => {
     expect(image.getBoundingClientRect().width).toBeGreaterThan(zoomedWidth);
     expect(pointerFraction().x).toBeCloseTo(anchor.x, 2);
     expect(pointerFraction().y).toBeCloseTo(anchor.y, 2);
+
+    // Chromium can apply the fitted wheel's native scroll after the image gains overflow.
+    await ctrlWheel(200);
+    expect(image.getBoundingClientRect().width).toBe(fitWidth);
+    await wheel({ y: 120 });
+    expect(image.getBoundingClientRect().width).toBe(fitWidth);
   });
 });

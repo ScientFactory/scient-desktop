@@ -44,7 +44,14 @@ const loudness = (
   return Math.min(1, Math.sqrt(sum / buffer.length) * 4);
 };
 
-export async function openLiveVoicePeer(microphone: MediaStream): Promise<LiveVoicePeer> {
+/**
+ * `onEvent` receives the call's own events, for a call nobody else signals: one placed directly
+ * with OpenAI, whose events arrive only on this channel.
+ */
+export async function openLiveVoicePeer(
+  microphone: MediaStream,
+  onEvent?: (event: unknown) => void,
+): Promise<LiveVoicePeer> {
   const peer = new RTCPeerConnection();
   const audio = new Audio();
   audio.autoplay = true;
@@ -61,7 +68,16 @@ export async function openLiveVoicePeer(microphone: MediaStream): Promise<LiveVo
 
   try {
     for (const track of microphone.getAudioTracks()) peer.addTrack(track, microphone);
-    peer.createDataChannel(EVENTS_CHANNEL);
+    const events = peer.createDataChannel(EVENTS_CHANNEL);
+    if (onEvent)
+      events.addEventListener("message", (message: MessageEvent) => {
+        if (typeof message.data !== "string") return;
+        try {
+          onEvent(JSON.parse(message.data));
+        } catch {
+          // Not an event.
+        }
+      });
     peer.addEventListener("track", (event) => {
       const stream = event.streams[0] ?? new MediaStream([event.track]);
       audio.srcObject = stream;

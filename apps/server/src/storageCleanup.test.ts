@@ -10,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
@@ -41,6 +42,7 @@ import { layerTaskFoldersWithGit } from "./workspace/TaskFolders.testkit.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as Settings from "./serverSettings.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -397,6 +399,7 @@ const cleanupFixture = (
     let ignoredBeforeIsolation: string | undefined;
     let recreateOriginal = false;
     let isolatedPath: string | undefined;
+    let pendingSettleThreadIds: ReadonlyArray<string> = [];
     let openSessionCwd: string | null = null;
     let sessionLive = true;
     // SCIENT-FORK:START retiring-session-worktree-retention
@@ -649,6 +652,10 @@ const cleanupFixture = (
             return () => {};
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
+      Effect.provideService(PendingSettleScripts.PendingSettleScripts, {
+        has: (threadId) => pendingSettleThreadIds.includes(threadId),
+        track: () => (effect) => effect,
+      }),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
       Effect.provideService(TaskFolders.TaskFolders, {
         find: (target: string) => taskFolders.find(target),
@@ -671,6 +678,9 @@ const cleanupFixture = (
         recreateOriginal = obstructRollback;
       },
       isolatedPath: () => isolatedPath,
+      setPendingSettleScripts: (threadIds: ReadonlyArray<string>) => {
+        pendingSettleThreadIds = threadIds;
+      },
       fs,
       path,
       worktree,
@@ -3524,6 +3534,21 @@ describe("orphan worktree reports", () => {
       ),
   );
 
+  it.live("keeps a worktree while its thread's settle script is queued", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setPendingSettleScripts([shell().id]);
+        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Settle script is queued",
+        });
+        fixture.setPendingSettleScripts([]);
+        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+
   it.live.each(["win32", "linux"] as const)(
     "matches a provider session at the worktree root with host casing rules (%s)",
     (platform) =>
@@ -4909,6 +4934,60 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  // SCIENT-FORK:START — isolated recovery uses the private storage cleanup fixture.
+  it.live.each(["linked", "lost gitfile"] as const)(
+    "keeps a partially removed checkout and its metadata for recovery (%s)",
+    (failure) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const isolatedGitFile = (target: string) =>
+            target.includes(".scient-cleanup-") && target.endsWith(path.join("checkout", ".git"));
+          const permissionDenied = (target: string, method: string) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method,
+                pathOrDescriptor: target,
+              }),
+            );
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              remove: (target, options) =>
+                (
+                  failure === "linked"
+                    ? isolatedGitFile(target)
+                    : target.includes(".scient-cleanup-") && path.basename(target) === "checkout"
+                )
+                  ? permissionDenied(target, "remove")
+                  : fs.remove(target, options),
+              writeFileString: (target, value, options) =>
+                failure === "lost gitfile" && isolatedGitFile(target)
+                  ? permissionDenied(target, "writeFileString")
+                  : fs.writeFileString(target, value, options),
+            }),
+          );
+          const adminDir = (yield* fixture.command(fixture.worktree, [
+            "rev-parse",
+            "--absolute-git-dir",
+          ])).stdout.trim();
+
+          const report = yield* fixture.service.runNow;
+          const isolated = fixture.isolatedPath()!;
+          expect(report.entries[0]).toMatchObject({ outcome: "failed", path: fixture.worktree });
+          expect(report.entries[0]?.reason).toContain(isolated);
+          expect(yield* fs.exists(fixture.worktree)).toBe(false);
+          expect(yield* fs.exists(fixture.path.join(isolated, "tracked.txt"))).toBe(false);
+          expect(yield* fs.exists(fixture.path.join(isolated, ".git"))).toBe(failure === "linked");
+          yield* fixture.service.runNow;
+          expect(yield* fs.exists(adminDir)).toBe(true);
+        }),
+      ),
+  );
+  // SCIENT-FORK:END
   it.live("removes a clean isolated worktree and its empty private container", () =>
     runCleanupTest(
       Effect.gen(function* () {

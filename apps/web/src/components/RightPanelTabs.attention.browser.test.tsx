@@ -50,6 +50,7 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
     terminalLabelsById: new Map(),
     onActivate,
     onCloseSurface: noop,
+    onCloseSelectedSurfaces: noop,
     onCloseOtherSurfaces: noop,
     onCloseSurfacesToRight: noop,
     onCloseAllSurfaces: noop,

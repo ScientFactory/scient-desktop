@@ -140,13 +140,14 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
       to: number;
       requestId: number;
     }>();
-    const { onPostRender } = useFileLineReveal(
+    const { onPostRender: fileLineReveal } = useFileLineReveal(
       `${name}.txt`,
       reveal ? source.slice(0, reveal.from).split("\n").length : null,
       reveal?.requestId ?? -1,
       undefined,
       false,
     );
+    const onPostRender = fileLineReveal("virtualizer");
     return (
       <>
         <div className="scient-latex-pane" style={{ width: 500, height: 840, display: "flex" }}>

@@ -43,6 +43,7 @@ export const CLI_COMMAND_INSTALL_CHANNEL = "desktop:cli-command-install";
 export const CLI_COMMAND_UNINSTALL_CHANNEL = "desktop:cli-command-uninstall";
 export const CLI_COMMAND_ADD_TO_PATH_CHANNEL = "desktop:cli-command-add-to-path";
 export const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
+export const GET_DATABASE_MIGRATION_PROGRESS_CHANNEL = "desktop:get-database-migration-progress";
 export const GET_RELAY_TELEMETRY_ENABLED_CHANNEL = "desktop:get-relay-telemetry-enabled";
 export const GET_SYSTEM_LOCALE_CHANNEL = "desktop:get-system-locale";
 export const GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL = "desktop:get-preferred-system-languages";
@@ -152,8 +153,10 @@ export const VOICE_HAD_LEGACY_SELECTION_CHANNEL = "desktop:voice-had-legacy-sele
 export const VOICE_HAS_LEGACY_MODELS_CHANNEL = "desktop:voice-has-legacy-models";
 export const VOICE_REMOVE_LEGACY_MODELS_CHANNEL = "desktop:voice-remove-legacy-models";
 
-// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
+// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources),
+// and a tab thumbnail for the hover card.
 export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";
+export const PREVIEW_TAB_THUMBNAIL_CHANNEL = "scient:preview:tab-thumbnail";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
@@ -200,6 +203,7 @@ export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
 // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
 export const GET_RESTART_READINESS_TOKEN_CHANNEL = "scient:restart:readiness-token";
 export const REPORT_WORKSPACE_READY_CHANNEL = "scient:restart:workspace-ready";
+export const REPORT_WORKSPACE_SETTLED_CHANNEL = "scient:restart:workspace-settled";
 export const PREPARE_UPDATE_SAVE_CHANNEL = "scient:update:prepare-save";
 export const COMPLETE_UPDATE_SAVE_CHANNEL = "scient:update:complete-save";
 export const RELEASE_UPDATE_SAVE_CHANNEL = "scient:update:release-save";

@@ -1,3 +1,4 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { msg, T, useGT } from "gt-react";
@@ -44,6 +45,7 @@ function prepareOfficeFile(
   src: string,
   kind: Extract<OfficePreviewKind, "docx" | "xlsx" | "pptx">,
   signal: AbortSignal,
+  requestPassword: (incorrect: boolean, unlock: (password: string) => void) => void,
 ) {
   return new Promise<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>((resolve, reject) => {
     const controller = new AbortController();
@@ -52,6 +54,7 @@ function prepareOfficeFile(
     });
     const finish = () => {
       clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
       controller.abort();
       worker.terminate();
     };
@@ -60,16 +63,17 @@ function prepareOfficeFile(
       finish();
       reject(cause);
     };
-    const timer = setTimeout(
-      () =>
-        failure(
-          new Error(m(msg("This document took too long to preview. Open it in another app."))),
-        ),
-      30000,
-    );
-    signal.addEventListener("abort", () => failure(new DOMException("Aborted", "AbortError")), {
-      once: true,
-    });
+    const startTimeout = () =>
+      setTimeout(
+        () =>
+          failure(
+            new Error(m(msg("This document took too long to preview. Open it in another app."))),
+          ),
+        30_000,
+      );
+    let timer = startTimeout();
+    const onAbort = () => failure(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
     worker.addEventListener("error", () =>
       failure(new Error(m(msg("Could not load the Office viewer.")))),
     );
@@ -78,7 +82,14 @@ function prepareOfficeFile(
     );
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
-      if (event.data.type === "error") failure(new Error(previewFailureText(event.data)));
+      clearTimeout(timer);
+      if (event.data.type === "password") {
+        requestPassword(event.data.incorrect, (password) => {
+          if (controller.signal.aborted) return;
+          timer = startTimeout();
+          worker.postMessage({ type: "unlock", password }, []);
+        });
+      } else if (event.data.type === "error") failure(new Error(previewFailureText(event.data)));
       else if ("bytes" in event.data) {
         finish();
         resolve(event.data);
@@ -100,6 +111,10 @@ export default function OfficeViewer(props: {
   readonly sizeBytes?: number;
 }) {
   const gt = useGT();
+  const [passwordPrompt, setPasswordPrompt] = useState<{
+    incorrect: boolean;
+    unlock: (password: string) => void;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // SCIENT-FORK:START — the prepared document, with its engine session, comes from the window's
   // document cache when this file was open recently (scient/office/officeDocuments.ts).
@@ -130,9 +145,14 @@ export default function OfficeViewer(props: {
     }
     // SCIENT-FORK:START
     let current = true;
+    // An unlocked file is available only to the viewer that received the password.
+    let protectedFile = false;
     failed.current = false;
     const acquired = acquireOfficeDocument(cacheKey, (signal) =>
-      prepareOfficeFile(props.src, props.kind, signal),
+      prepareOfficeFile(props.src, props.kind, signal, (incorrect, unlock) => {
+        protectedFile = true;
+        if (current) setPasswordPrompt({ incorrect, unlock });
+      }),
     );
     lease.current = acquired;
     let unkeep: (() => void) | null = null;
@@ -142,7 +162,7 @@ export default function OfficeViewer(props: {
         setOpened(document);
         // Hidden but kept (documentShelf), unless it failed: its drawn pages count as kept.
         unkeep =
-          shelfPlace?.keep({
+          (protectedFile ? undefined : shelfPlace)?.keep({
             hide: (evict, viewBytes) => !failed.current && acquired.park(evict, viewBytes),
             show: acquired.unpark,
           }) ?? null;
@@ -154,7 +174,7 @@ export default function OfficeViewer(props: {
     return () => {
       current = false;
       unkeep?.();
-      acquired.release({ discard: failed.current });
+      acquired.release({ discard: failed.current || protectedFile });
       if (lease.current === acquired) lease.current = null;
     };
     // SCIENT-FORK:END
@@ -172,6 +192,16 @@ export default function OfficeViewer(props: {
           {gt("{error} Save it or open it in another app.", { error })}
         </p>
       </div>
+    );
+  if (passwordPrompt !== null)
+    return (
+      <FilePasswordPrompt
+        incorrect={passwordPrompt.incorrect}
+        onSubmit={(password) => {
+          setPasswordPrompt(null);
+          passwordPrompt.unlock(password);
+        }}
+      />
     );
   if (!opened) return <FileSurfaceLoading />;
   const prepared = opened.prepared; // SCIENT-FORK

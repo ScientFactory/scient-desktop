@@ -534,3 +534,151 @@ it.effect("answers discovery without waiting on a hosting API that stalls", () =
     assert.strictEqual(items.find((item) => item.kind === "gitlab")?.status, "available");
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
+
+// SCIENT-FORK:START
+it.effect(
+  "discovers one forge without spawning others and re-asks unknown remotes after its sign-in",
+  () =>
+    Effect.gen(function* () {
+      let signedIn = false;
+      const versionProbes: Array<string> = [];
+      const registry = yield* makeRegistry({
+        remotes: [],
+        discovery: [
+          {
+            ...claimingCli("gitlab"),
+            parseAuth: () => ({
+              status: signedIn ? "authenticated" : "unauthenticated",
+              account: Option.none(),
+              host: Option.none(),
+              detail: Option.none(),
+            }),
+          },
+          claimingCli("forgejo"),
+        ],
+        run: ({ command, args }) => {
+          if (args.includes("--version")) versionProbes.push(command);
+          return Effect.succeed(
+            TestSourceControlHost.processOutput(
+              signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+            ),
+          );
+        },
+      });
+      const gitlab = yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual(Option.getOrUndefined(gitlab)?.kind, "gitlab");
+      assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+      yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
+
+      signedIn = true;
+      yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "gitlab");
+      assert.deepStrictEqual(versionProbes, ["gitlab-cli", "gitlab-cli", "gitlab-cli"]);
+    }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
+it.effect(
+  "re-asks unknown remotes when single-forge discovery sees a sign-in aggregate discovery missed",
+  () =>
+    Effect.gen(function* () {
+      let signedIn = false;
+      const registry = yield* makeRegistry({
+        remotes: [],
+        discovery: [
+          {
+            ...claimingCli("gitlab"),
+            parseAuth: () => ({
+              status: signedIn ? "authenticated" : "unauthenticated",
+              account: Option.none(),
+              host: Option.none(),
+              detail: Option.none(),
+            }),
+          },
+        ],
+        run: () =>
+          Effect.succeed(
+            TestSourceControlHost.processOutput(
+              signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+            ),
+          ),
+      });
+      yield* registry.discover;
+      assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+
+      signedIn = true;
+      yield* registry.discoverProvider(kind("gitlab"));
+      assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
+    }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
+it.effect("keeps a newer single-forge observation over a slower aggregate discovery", () =>
+  Effect.gen(function* () {
+    let signedIn = true;
+    const aggregateAskedGitlab = yield* Deferred.make<void>();
+    const forgejoAnswers = yield* Deferred.make<void>();
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        {
+          ...claimingCli("gitlab"),
+          parseAuth: ({ stdout }) => ({
+            status: stdout.includes("Logged in") ? "authenticated" : "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+        claimingCli("forgejo"),
+      ],
+      run: ({ command, args }) => {
+        const output = TestSourceControlHost.processOutput(
+          signedIn && command === "gitlab-cli"
+            ? "  ✓ Logged in to git.example.internal as user\n"
+            : "",
+        );
+        if (command === "forgejo-cli" && args.includes("--version")) {
+          return Deferred.await(forgejoAnswers).pipe(Effect.as(output));
+        }
+        if (command === "gitlab-cli" && !args.includes("--version")) {
+          return Deferred.succeed(aggregateAskedGitlab, undefined).pipe(Effect.as(output));
+        }
+        return Effect.succeed(output);
+      },
+    });
+    // The aggregate sees gitlab signed in, then waits on forgejo.
+    const aggregate = yield* registry.discover.pipe(Effect.forkChild);
+    yield* Deferred.await(aggregateAskedGitlab);
+
+    signedIn = false;
+    yield* registry.discoverProvider(kind("gitlab"));
+    yield* Deferred.succeed(forgejoAnswers, undefined);
+    yield* Fiber.join(aggregate);
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+
+    signedIn = true;
+    yield* registry.discoverProvider(kind("gitlab"));
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
+it.effect("re-asks unknown remotes cached before a forge's first discovery", () =>
+  Effect.gen(function* () {
+    let signedIn = false;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      run: () =>
+        Effect.succeed(
+          TestSourceControlHost.processOutput(
+            signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+          ),
+        ),
+    });
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+
+    signedIn = true;
+    yield* registry.discoverProvider(kind("gitlab"));
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "gitlab");
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+// SCIENT-FORK:END

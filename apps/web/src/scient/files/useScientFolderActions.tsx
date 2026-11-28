@@ -9,6 +9,8 @@ import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 import type { NewDocumentChoice } from "~/scient/documents/NewDocumentMenuItems";
 import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
 import { useOverleafConnectDialog } from "~/scient/overleaf/useOverleafFolderConnect";
+import { isTranscribablePath, useTranscribeFile } from "~/scient/recordings/useTranscribeFile";
+import { joinHostPath } from "~/components/files/filePath";
 
 import { ConnectFolderButton, NewDocumentButton } from "./FileBrowserToolbarActions";
 
@@ -19,7 +21,8 @@ const NEW_DOCUMENT_CHOICES: Readonly<Record<string, NewDocumentFormat>> = {
 
 /** Folder actions for the Files bar and folder menus: a new document (opened in its editor,
  * LaTeX in Visual) or an Overleaf connection. They act on the last selected folder, else the
- * last selected file's folder; a read-only host folder offers none. */
+ * last selected file's folder; a read-only host folder offers none. An audio or video file's
+ * menu offers Transcribe. */
 export function useScientFolderActions(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -38,6 +41,7 @@ export function useScientFolderActions(input: {
     environmentId: input.environmentId,
     cwd: input.cwd,
   });
+  const transcribe = useTranscribeFile({ environmentId: input.environmentId, cwd: input.cwd });
   const isDirectory = (path: string) => input.entryKinds.current.get(path) === "directory";
 
   const selectionBase = () => {
@@ -71,12 +75,21 @@ export function useScientFolderActions(input: {
         />
       </>
     ),
-    /** The Connect to Overleaf dialog, rendered once by the Files panel. */
-    dialog: overleafConnect.dialog,
+    /** The Connect to Overleaf and Transcribe dialogs, rendered once by the Files panel. */
+    dialog: (
+      <>
+        {overleafConnect.dialog}
+        {transcribe.dialog}
+      </>
+    ),
     /** Right-click items for a tree entry; `path` ends with "/" for a folder. */
     menuItems: (path: string): ContextMenuItem[] => {
       const relativePath = path.replace(/\/$/, "");
-      if (input.hostFolder || !(path.endsWith("/") || isDirectory(relativePath))) return [];
+      if (input.hostFolder) return [];
+      if (!(path.endsWith("/") || isDirectory(relativePath)))
+        return transcribe.available && isTranscribablePath(relativePath)
+          ? [{ id: "transcribe", label: m(msg("Transcribe…")) }]
+          : [];
       return [
         {
           id: "new-document",
@@ -96,6 +109,10 @@ export function useScientFolderActions(input: {
     },
     /** Acts on a choice from `menuItems`; false when the choice is not one of them. */
     handleMenuChoice: (clicked: string, relativePath: string) => {
+      if (clicked === "transcribe") {
+        transcribe.transcribe(joinHostPath(input.cwd, relativePath));
+        return true;
+      }
       if (clicked === "connect:overleaf") {
         overleafConnect.openConnect(relativePath);
         return true;

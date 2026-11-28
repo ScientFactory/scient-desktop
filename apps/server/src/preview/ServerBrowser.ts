@@ -102,7 +102,6 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   BrowserContext,
   CDPSession,
-  Dialog,
   Download,
   FileChooser,
   Frame,
@@ -200,6 +199,96 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
   return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
 }`;
+// Larger selects keep the real press: their options would not fit the 8 MB viewer socket bound.
+const SELECT_MENU_OPTION_LIMIT = 10_000;
+const SELECT_MENU_LABEL_LIMIT = 150;
+/**
+ * Guards the dropdown select at a viewport point so the trusted press that follows runs page
+ * handlers, then is cancelled after them; `pressed` records whether the page cancelled it first.
+ * Returns null where the native popup should open, including selects in frames.
+ */
+const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
+  let element = document.elementFromPoint(x, y);
+  while (element && element.shadowRoot) {
+    const inner = element.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === element) break;
+    element = inner;
+  }
+  if (element && element.tagName === "OPTION") element = element.closest("select");
+  if (!element || element.tagName !== "SELECT") return null;
+  if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
+  // A customizable select draws its picker in the page, where the stream already shows it.
+  if (
+    getComputedStyle(element).appearance === "base-select" &&
+    getComputedStyle(element, "::picker(select)").appearance === "base-select"
+  )
+    return null;
+  if (element.options.length > optionLimit) return null;
+  const state = { select: element, pressed: false, cancelled: false };
+  let settled = false;
+  const settle = (event) => {
+    if (settled || !event.composedPath().includes(element)) return;
+    settled = true;
+    state.pressed = !event.defaultPrevented;
+    Event.prototype.preventDefault.call(event);
+    if (state.pressed) element.focus({ preventScroll: true });
+  };
+  // A page that stops the press keeps it from the bubbling guard, so stopping it settles it;
+  // the page may still cancel it afterwards, which cancelled records.
+  const watch = (event) => {
+    event.preventDefault = function () {
+      if (this.composedPath().includes(element)) state.cancelled = true;
+      return Event.prototype.preventDefault.call(this);
+    };
+    for (const name of ["stopPropagation", "stopImmediatePropagation"]) {
+      const stop = event[name];
+      event[name] = function () {
+        settle(this);
+        return stop.call(this);
+      };
+    }
+  };
+  addEventListener("mousedown", watch, true);
+  addEventListener("mousedown", settle);
+  state.stop = () => {
+    removeEventListener("mousedown", watch, true);
+    removeEventListener("mousedown", settle);
+  };
+  return state;
+}`;
+/** Describes a pressed select in viewport CSS px and keeps the offered options. */
+const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
+  const select = this.select;
+  // Page handlers ran in between: they may have added options or removed the select.
+  if (!this.pressed || this.cancelled || !select.isConnected || !select.ownerDocument.defaultView) return null;
+  if (select.options.length > optionLimit) return null;
+  const { left, top, width, height } = select.getBoundingClientRect();
+  const view = select.ownerDocument.defaultView;
+  const shown = (element) => !element.hidden && view.getComputedStyle(element).display !== "none";
+  this.offered = Array.from(select.options).filter(
+    (option) => shown(option) && (option.parentElement.tagName !== "OPTGROUP" || shown(option.parentElement)),
+  );
+  return {
+    options: this.offered.map((option) => ({
+      label: option.label.slice(0, labelLimit),
+      disabled: option.matches(":disabled"),
+    })),
+    selectedIndex: this.offered.indexOf(select.options[select.selectedIndex]),
+    x: left,
+    y: top,
+    width,
+    height,
+  };
+}`;
+const CHOOSE_SELECT_OPTION_SCRIPT = `function (index) {
+  const { select, offered } = this;
+  const option = offered && offered[index];
+  if (!option || !option.isConnected || !select.ownerDocument.defaultView || option.closest("select") !== select) return;
+  if (option.matches(":disabled") || select.matches(":disabled") || option.selected) return;
+  option.selected = true;
+  select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
 // Status reads run in the renderer; a busy page must not hold a status past the broker's grace.
@@ -286,6 +375,17 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
+  | {
+      readonly _tag: "selectMenu";
+      readonly id: string;
+      readonly options: ReadonlyArray<{ readonly label: string; readonly disabled: boolean }>;
+      readonly selectedIndex: number;
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly _tag: "selectMenuClosed"; readonly id: string }
   | { readonly _tag: "popup"; readonly tabId: string }
   | {
       readonly _tag: "download";
@@ -358,6 +458,14 @@ interface ViewerState {
   readonly canOperate: boolean;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
+  /** Handle for the guarded select under a held left press; its release offers the menu. */
+  selectPress: string | null;
+  /** Handle for the select and options this viewer was last offered; only that offer answers. */
+  selectMenu: {
+    readonly id: string;
+    readonly objectId: string;
+    readonly session: CDPSession;
+  } | null;
   readonly push: (output: ServerBrowserViewerOutput) => void;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
@@ -381,6 +489,23 @@ interface Recording {
   readonly session: CDPSession;
   readonly startedAt: string;
   readonly framesInFlight: Set<Promise<void>>;
+}
+
+interface DialogResponse {
+  readonly accept: boolean;
+  readonly promptText?: string | undefined;
+  readonly authChallengeId?: string | undefined;
+  readonly username?: string;
+  readonly password?: string;
+}
+
+interface PendingDialog {
+  readonly authChallengeId?: string;
+  readonly type: string;
+  readonly message: string;
+  readonly defaultValue: string;
+  readonly accept: (input: DialogResponse) => Promise<void>;
+  readonly dismiss: () => Promise<void>;
 }
 
 interface ServerTab {
@@ -418,7 +543,9 @@ interface ServerTab {
     readonly accept: string;
     readonly offeredTo: string | null;
   } | null;
-  dialog: Dialog | null;
+  dialog: PendingDialog | null;
+  /** Released when an HTTP auth challenge holds a navigation until it is answered. */
+  readonly authWaiters: Set<() => void>;
   setting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
@@ -741,9 +868,10 @@ const make = Effect.gen(function* () {
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
-          type: tab.dialog.type(),
-          message: tab.dialog.message().slice(0, 4000),
-          defaultValue: tab.dialog.defaultValue().slice(0, 4000),
+          type: tab.dialog.type,
+          message: tab.dialog.message.slice(0, 4000),
+          defaultValue: tab.dialog.defaultValue.slice(0, 4000),
+          ...(tab.dialog.authChallengeId ? { authChallengeId: tab.dialog.authChallengeId } : {}),
         }
       : null;
 
@@ -781,14 +909,73 @@ const make = Effect.gen(function* () {
       });
   };
 
-  const resolveDialog = async (tab: ServerTab, input: PreviewAutomationDialogInput) => {
+  const resolveDialog = async (tab: ServerTab, input: DialogResponse) => {
     const dialog = tab.dialog;
     if (!dialog) throw new Error("No dialog is pending.");
-    if (input.accept) await dialog.accept(input.promptText);
-    else await dialog.dismiss();
-    if (tab.dialog === dialog) tab.dialog = null;
-    ServerBrowserPage.invalidateRefs(tab.page);
+    if (dialog.authChallengeId !== input.authChallengeId) {
+      throw new Error("The browser dialog has changed. Read its current status before responding.");
+    }
+    // A wrong password is challenged again at once, and an abandoned request cannot be answered.
+    if (dialog.type === "auth") tab.dialog = null;
+    try {
+      if (input.accept) await dialog.accept(input);
+      else await dialog.dismiss();
+      if (tab.dialog === dialog) tab.dialog = null;
+    } finally {
+      if (tab.dialog !== dialog) {
+        ServerBrowserPage.invalidateRefs(tab.page);
+        broadcastControl(tab);
+      }
+    }
+  };
+
+  /** Credentials go straight to Chromium; they are never stored or reported in status. */
+  const requestAuth = (
+    tab: ServerTab,
+    requestId: string,
+    challenge: { readonly source?: string; readonly origin: string; readonly realm: string },
+  ) => {
+    const respond = (
+      authChallengeResponse:
+        | { response: "CancelAuth" }
+        | { response: "ProvideCredentials"; username: string; password: string },
+    ) =>
+      tab.cdp.send("Fetch.continueWithAuth", { requestId, authChallengeResponse }).then(constVoid);
+    // Only one dialog can be answered at a time.
+    if (tab.closing || tab.dialog) {
+      void respond({ response: "CancelAuth" }).catch(constVoid);
+      return;
+    }
+    tab.dialog = {
+      type: "auth",
+      authChallengeId: NodeCrypto.randomUUID(),
+      message: `${challenge.source === "Proxy" ? "The proxy " : ""}${challenge.origin} asks you to sign in.${challenge.realm ? ` It says: ${challenge.realm}` : ""}`,
+      defaultValue: "",
+      accept: (input) =>
+        respond({
+          response: "ProvideCredentials",
+          username: input.username ?? "",
+          password: input.password ?? "",
+        }),
+      dismiss: () => respond({ response: "CancelAuth" }),
+    };
     broadcastControl(tab);
+    for (const release of tab.authWaiters) release();
+  };
+
+  /** A sign-in prompt holds its navigation, so waiting for one ends when the prompt shows. */
+  const settleOnAuth = (tab: ServerTab, start: () => Promise<unknown>): Promise<void> => {
+    let release = constVoid;
+    const challenged = new Promise<void>((resolve) => {
+      release = resolve;
+      tab.authWaiters.add(resolve);
+    });
+    return Promise.race([
+      start()
+        .then(constVoid)
+        .finally(() => tab.authWaiters.delete(release)),
+      challenged,
+    ]);
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
@@ -1215,11 +1402,6 @@ const make = Effect.gen(function* () {
     // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
     await networkStudyOf(page).watch(cdp);
     // SCIENT-FORK:END
-    await installPdfDocumentNavigation(cdp);
-    // The desktop's page is already a normal browser. A popup's first request
-    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
-    if (!desktop) await presentAsChrome(cdp, host);
-    if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -1256,6 +1438,7 @@ const make = Effect.gen(function* () {
       downloads: [],
       fileChooser: null,
       dialog: null,
+      authWaiters: new Set(),
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
@@ -1294,6 +1477,16 @@ const make = Effect.gen(function* () {
       captureLock: Promise.resolve(),
       capturing: 0,
     };
+    if (!desktop)
+      cdp.on("Fetch.authRequired", (event) =>
+        requestAuth(tab, event.requestId, event.authChallenge),
+      );
+    // Desktop tabs keep the desktop shell's own handling of HTTP auth.
+    await installPdfDocumentNavigation(cdp, { handleAuthRequests: !desktop });
+    // The desktop's page is already a normal browser. A popup's first request
+    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
+    if (!desktop) await presentAsChrome(cdp, host);
+    if (!desktop) await recordCopies(cdp);
     if (!desktop) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
@@ -1358,6 +1551,12 @@ const make = Effect.gen(function* () {
       tab.pendingInitialRequestUrl = null;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
+      // A new navigation abandons a pending sign-in; release its paused request.
+      if (tab.dialog?.type === "auth") {
+        void tab.dialog.dismiss().catch(constVoid);
+        tab.dialog = null;
+        broadcastControl(tab);
+      }
       tab.loading = true;
       tab.loadError = undefined;
       tab.crash = undefined;
@@ -1377,6 +1576,10 @@ const make = Effect.gen(function* () {
       tab.pendingInitialRequestUrl = null;
       tab.loading = false;
       void reportLoaded(tab);
+    });
+    // frameNavigated is cross-document only; a select's handle dies with its document.
+    cdp.on("Page.frameNavigated", ({ frame }) => {
+      if (!frame.parentId) for (const viewer of tab.viewers) withdrawSelectMenu(viewer);
     });
     page.on("framenavigated", (frame) => {
       const open = tab.fileChooser;
@@ -1469,7 +1672,14 @@ const make = Effect.gen(function* () {
         void dialog.accept().catch(constVoid);
         return;
       }
-      tab.dialog = dialog;
+      if (tab.dialog?.type === "auth") void tab.dialog.dismiss().catch(constVoid);
+      tab.dialog = {
+        type: dialog.type(),
+        message: dialog.message(),
+        defaultValue: dialog.defaultValue(),
+        accept: (input) => dialog.accept(input.promptText),
+        dismiss: () => dialog.dismiss(),
+      };
       broadcastControl(tab);
     });
     page.on("download", (download) => void saveDownload(tab, download));
@@ -1501,13 +1711,15 @@ const make = Effect.gen(function* () {
       if (initialUrl) initialUrl.hash = "";
       tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
-      tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+      const url = snapshot.navStatus.url;
+      tab.initialNavigation = settleOnAuth(tab, () =>
+        ((desktop || adopted) && page.url() === url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
-      ).then(constVoid, (cause: unknown) => {
-        throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
-      });
+          : page.goto(url, options)
+        ).catch((cause: unknown) => {
+          throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
+        }),
+      );
 
       if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
       else void tab.initialNavigation.catch(constVoid);
@@ -2316,7 +2528,9 @@ const make = Effect.gen(function* () {
     const startedAt = performance.now();
     const remaining = () => Math.max(1, timeout - (performance.now() - startedAt));
     await leaveBusyPage(tab, tab.cdp, timeout / 2);
-    const navigation = tab.page.goto(url, { timeout: remaining(), waitUntil: "commit" });
+    const navigation = settleOnAuth(tab, () =>
+      tab.page.goto(url, { timeout: remaining(), waitUntil: "commit" }),
+    );
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
@@ -2330,26 +2544,30 @@ const make = Effect.gen(function* () {
         .catch((cause: unknown) => {
           if (!(cause instanceof Error && cause.name === "TimeoutError")) throw cause;
         });
-    await navigation.then(ready).catch((cause: unknown) => {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      if (message.includes("Download is starting")) {
-        throw new ServerBrowserPage.ServerBrowserOperationError({
-          tag: "PreviewAutomationExecutionError",
-          message: `${url} is a file this browser cannot show, so it was downloaded instead. preview_status lists it under downloads.`,
-          // SCIENT-FORK: a fixed reason analytics keep.
-          detail: { failureClass: "navigation_download" },
-        });
-      }
-      if (/ERR_[A-Z_]+/.test(message)) {
-        throw new ServerBrowserPage.ServerBrowserOperationError({
-          tag: "PreviewAutomationExecutionError",
-          message: `Navigation to ${url} failed: ${ServerBrowserPage.parseNetError(message).description}`,
-          // SCIENT-FORK: a fixed reason analytics keep.
-          detail: { failureClass: "navigation_network" },
-        });
-      }
-      throw ServerBrowserPage.toOperationError(cause, timeout);
-    });
+    await navigation
+      .then(() => {
+        if (tab.dialog?.type !== "auth") return settleOnAuth(tab, ready);
+      })
+      .catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (message.includes("Download is starting")) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: `${url} is a file this browser cannot show, so it was downloaded instead. preview_status lists it under downloads.`,
+            // SCIENT-FORK: a fixed reason analytics keep.
+            detail: { failureClass: "navigation_download" },
+          });
+        }
+        if (/ERR_[A-Z_]+/.test(message)) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: `Navigation to ${url} failed: ${ServerBrowserPage.parseNetError(message).description}`,
+            // SCIENT-FORK: a fixed reason analytics keep.
+            detail: { failureClass: "navigation_network" },
+          });
+        }
+        throw ServerBrowserPage.toOperationError(cause, timeout);
+      });
     assertNavigationSucceeded(tab);
   };
 
@@ -2766,7 +2984,8 @@ const make = Effect.gen(function* () {
         return tab.control.agent(
           request.agentSessionId,
           async () => {
-            if (tab.dialog)
+            // A new tab's first page may already be asking for sign-in; report it.
+            if (tab.dialog && (existing || tab.dialog.type !== "auth"))
               throw new BrowserControlInterrupted({
                 message:
                   "A browser dialog is pending. Read preview_status and use preview_dialog first.",
@@ -2778,10 +2997,10 @@ const make = Effect.gen(function* () {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await Promise.resolve(tab.initialNavigation)
                 .then(async () => {
-                  if (url) {
-                    await tab.page
-                      .waitForLoadState("load", { timeout: navigationTimeout })
-                      .catch(constVoid);
+                  if (url && tab.dialog?.type !== "auth") {
+                    await settleOnAuth(tab, () =>
+                      tab.page.waitForLoadState("load", { timeout: navigationTimeout }),
+                    ).catch(constVoid);
                   }
                   assertNavigationSucceeded(tab);
                 })
@@ -2885,7 +3104,14 @@ const make = Effect.gen(function* () {
           message: "A human controls this tab.",
           reason: "humanControl",
         });
-      await resolveDialog(tab, input as PreviewAutomationDialogInput);
+      const response = input as PreviewAutomationDialogInput;
+      if (tab.dialog?.type === "auth" && response.accept)
+        throw new BrowserControlInterrupted({
+          message: "Enter HTTP sign-in credentials in the Browser panel.",
+          reason: "dialogPending",
+        });
+      const { accept, promptText, authChallengeId } = response;
+      await resolveDialog(tab, { accept, promptText, authChallengeId });
       return statusWithTitle(tab, request.agentSessionId);
     }
     const agentSessionId = request.agentSessionId!;
@@ -3203,7 +3429,54 @@ const make = Effect.gen(function* () {
         .catch(constVoid);
     }
     viewer.pressedButtons.clear();
+    const press = viewer.selectPress;
+    viewer.selectPress = null;
+    if (press) releaseSelectHandle(viewer, session, press);
+    withdrawSelectMenu(viewer);
     viewer.requestedSize = null;
+  };
+
+  const releaseSelectHandle = (viewer: ViewerState, session: CDPSession, objectId: string) => {
+    if (objectId === viewer.selectPress || objectId === viewer.selectMenu?.objectId) return;
+    void session.send("Runtime.releaseObject", { objectId }).catch(constVoid);
+  };
+
+  const withdrawSelectMenu = (viewer: ViewerState) => {
+    const offer = viewer.selectMenu;
+    if (!offer) return;
+    viewer.selectMenu = null;
+    viewer.push({ _tag: "selectMenuClosed", id: offer.id });
+    releaseSelectHandle(viewer, offer.session, offer.objectId);
+  };
+
+  // Chromium draws a select's popup outside the page, where the screencast never sees it, and on
+  // a desktop host it is a native menu CDP cannot dismiss, so the press must not open it.
+  const guardSelectPress = async (session: CDPSession, x: number, y: number) => {
+    const { result } = await session.send("Runtime.evaluate", {
+      expression: `(${GUARD_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${SELECT_MENU_OPTION_LIMIT})`,
+    });
+    return result.objectId ?? null;
+  };
+
+  // Offered after the release, so options a page adds or replaces on mousedown or click count.
+  const offerSelectMenu = async (session: CDPSession, viewer: ViewerState, objectId: string) => {
+    const described = await session
+      .send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: OFFER_SELECT_MENU_SCRIPT,
+        arguments: [{ value: SELECT_MENU_LABEL_LIMIT }, { value: SELECT_MENU_OPTION_LIMIT }],
+        returnByValue: true,
+      })
+      .catch(() => null);
+    const menu = described?.result.value as Omit<
+      Extract<ServerBrowserViewerOutput, { _tag: "selectMenu" }>,
+      "_tag" | "id"
+    > | null;
+    if (!menu) return;
+    const previous = viewer.selectMenu;
+    viewer.selectMenu = { id: NodeCrypto.randomUUID(), objectId, session };
+    if (previous) releaseSelectHandle(viewer, previous.session, previous.objectId);
+    viewer.push({ _tag: "selectMenu", id: viewer.selectMenu.id, ...menu });
   };
 
   const dispatchViewerInput = async (
@@ -3218,24 +3491,55 @@ const make = Effect.gen(function* () {
     switch (message.type) {
       case "mouse": {
         const action = message.action;
+        const left = message.button === "left";
+        if (left && action === "down") {
+          const stale = viewer.selectPress;
+          viewer.selectPress = null;
+          if (stale) releaseSelectHandle(viewer, session, stale);
+          if (!tab.dialog) {
+            viewer.selectPress = await guardSelectPress(
+              session,
+              num(message.x),
+              num(message.y),
+            ).catch(() => null);
+          }
+        }
+        const guarded = left && action === "down" ? viewer.selectPress : null;
         const type =
           action === "down" ? "mousePressed" : action === "up" ? "mouseReleased" : "mouseMoved";
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
           ? (message.button as "none" | "left" | "middle" | "right")
           : "none";
-        await session.send("Input.dispatchMouseEvent", {
-          type,
-          x: num(message.x),
-          y: num(message.y),
-          button,
-          buttons: num(message.buttons),
-          clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
-          modifiers,
-        });
+        try {
+          await session.send("Input.dispatchMouseEvent", {
+            type,
+            x: num(message.x),
+            y: num(message.y),
+            button,
+            buttons: num(message.buttons),
+            clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
+            modifiers,
+          });
+        } finally {
+          if (guarded) {
+            await session
+              .send("Runtime.callFunctionOn", {
+                objectId: guarded,
+                functionDeclaration: "function () { this.stop(); }",
+              })
+              .catch(constVoid);
+          }
+        }
         if (button !== "none") {
           if (action === "down")
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });
           else if (action === "up") viewer.pressedButtons.delete(button);
+        }
+        const press = left && action === "up" ? viewer.selectPress : null;
+        if (press) {
+          viewer.selectPress = null;
+          await offerSelectMenu(session, viewer, press);
+          releaseSelectHandle(viewer, session, press);
         }
         return;
       }
@@ -3324,16 +3628,20 @@ const make = Effect.gen(function* () {
           const url = normalizePreviewUrl(message.url);
           tab.pendingInitialRequestUrl = null;
           await leaveBusyPage(tab, session);
-          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
+          tab.control.trackUntilHandoff(
+            settleOnAuth(tab, () => tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS)),
+          );
         }
         return;
       case "history":
         tab.pendingInitialRequestUrl = null;
         await leaveBusyPage(tab, session);
         tab.control.trackUntilHandoff(
-          num(message.delta) < 0
-            ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
-            : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+          settleOnAuth(tab, () =>
+            num(message.delta) < 0
+              ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
+              : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+          ),
         );
         return;
       case "stopLoading": {
@@ -3357,8 +3665,25 @@ const make = Effect.gen(function* () {
           await session.send("Page.reload", { ignoreCache: true });
           return;
         }
-        tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
+        tab.control.trackUntilHandoff(
+          settleOnAuth(tab, () => tab.page.reload(VIEWER_NAVIGATION_OPTIONS)),
+        );
         return;
+      case "selectMenu": {
+        const offer = viewer.selectMenu;
+        if (!offer || message.id !== offer.id || typeof message.index !== "number") return;
+        viewer.selectMenu = null;
+        await session
+          .send("Runtime.callFunctionOn", {
+            objectId: offer.objectId,
+            functionDeclaration: CHOOSE_SELECT_OPTION_SCRIPT,
+            arguments: [{ value: message.index }],
+            userGesture: true,
+          })
+          .catch(constVoid);
+        releaseSelectHandle(viewer, session, offer.objectId);
+        return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);
@@ -3423,13 +3748,25 @@ const make = Effect.gen(function* () {
       canOperate: input.canOperate,
       pressedKeys: new Map(),
       pressedButtons: new Map(),
+      selectPress: null,
+      selectMenu: null,
       push: (next) => {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
-        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          [
+            "gone",
+            "reconnect",
+            "control",
+            "viewport",
+            "fileChooser",
+            "selectMenu",
+            "selectMenuClosed",
+          ].includes(next._tag)
+        ) {
           const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
@@ -3577,6 +3914,11 @@ const make = Effect.gen(function* () {
                 ...(typeof message.promptText === "string"
                   ? { promptText: message.promptText }
                   : {}),
+                ...(typeof message.authChallengeId === "string"
+                  ? { authChallengeId: message.authChallengeId }
+                  : {}),
+                ...(typeof message.username === "string" ? { username: message.username } : {}),
+                ...(typeof message.password === "string" ? { password: message.password } : {}),
               });
             } else {
               const dispatch = async (input: Record<string, unknown>) => {

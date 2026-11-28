@@ -44,6 +44,7 @@ import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
+  draftRuntimeModeLimitsInstance,
   draftSupportedRuntimeModes,
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -53,7 +54,11 @@ import {
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  type PastedComposerClipboard,
+  readPastedComposerClipboard,
+} from "../composerInlineTokenPaste";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -316,6 +321,7 @@ import {
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
@@ -334,6 +340,11 @@ import {
 } from "./ComposerCommandMenuLayer";
 import { useRestingComposerControlsLayout } from "./useRestingComposerControlsLayout";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
+import {
+  RuntimeModeLimitsTargetContext,
+  runtimeModeLimitsTarget,
+  useProviderRuntimeModeLimits,
+} from "../../state/runtimeModeLimits";
 import { useComposerProviderModel } from "./useComposerProviderModel";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
@@ -371,9 +382,12 @@ export interface ChatComposerHandle {
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
-    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
+    options?: { ensureLeadingBoundary?: boolean; clipboardPaste?: PastedComposerClipboard },
   ) => boolean;
-  pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  pasteTextAtEnd: (
+    clipboardData: DataTransfer,
+    options: { bypassAutoAttachment: boolean },
+  ) => boolean;
   // SCIENT-FORK: optional for handles that only append; puts text before the draft.
   insertTextAtStart?: (text: string) => boolean;
   citeAssistantText: (
@@ -1090,6 +1104,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Called before the derivation below: a hook between it and its uses stops React Compiler
   // from caching the mode options, and the footer then re-renders on every keystroke.
   const managedPolicy = useManagedPolicy(environmentId);
+  const runtimeModeLimitsFor = runtimeModeLimitsTarget(
+    environmentId,
+    draftRuntimeModeLimitsInstance(selectedProviderEntry?.instanceId, multipleModelSelections),
+    gitCwd,
+  );
+  const runtimeModeLimits = useProviderRuntimeModeLimits(runtimeModeLimitsFor);
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
@@ -1099,11 +1119,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         providerStatuses,
       ),
     );
-  // Modes above an administrator's ceiling stay listed, disabled with the reason.
+  // Modes above an administrator's ceiling, or that the provider cannot run in this folder,
+  // stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
     compatibleRuntimeModes,
     managedPolicy,
     m,
+    runtimeModeLimits,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
   const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, compatibleRuntimeMode, m);
@@ -1694,13 +1716,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerDraftTarget,
     attachmentDraftTarget,
     attachmentTargetKey,
-    attachmentTargetKeyRef,
     questionAttachmentTarget,
     pendingUserInputs,
     composerContextRecords,
     composerImages,
-    composerFilesRef,
-    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
     removedQueuedAttachments: activeRemovedEditingQueuedAttachments,
@@ -2902,78 +2921,85 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   // SCIENT-FORK:END
   const composerControls = scientProviderOnboardingPicker ?? (
-    <ComposerControlsBar
-      voiceBusy={voiceBusy}
-      modelPickerOverrides={scientModelPickerProps}
-      supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
-      environmentId={environmentId}
-      workspaceCwd={gitCwd}
-      routeKind={typeof composerDraftTarget === "string" ? "draft" : routeKind}
-      routeThreadRef={routeThreadRef}
-      draftId={typeof composerDraftTarget === "string" ? composerDraftTarget : draftId}
-      selectedProvider={selectedProvider}
-      selectedInstanceId={selectedInstanceId}
-      selectedModel={selectedModel}
-      selectedProviderModels={selectedProviderModels}
-      composerModelOptions={composerModelOptions}
-      reportedModelSelection={reportedModelSelection}
-      promptUltrathink={promptUltrathink}
-      onPromptEdit={editPromptFromTraitsStable}
-      compatibleRuntimeMode={compatibleRuntimeMode}
-      defaultRuntimeMode={props.defaultRuntimeMode}
-      compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
-      handleRuntimeModeChange={handleRuntimeModeChange}
-      composerControlsCollapsed={composerControlsCollapsed}
-      effortDisplay={settings.effortDisplay}
-      permissionsShownInStrip={props.permissionsShownInStrip}
-      composerControlsHidden={composerMenusClosed}
-      restingHiddenBlockCount={restingHiddenBlockCount}
-      iconOnlyBlockCount={iconOnlyBlockCount}
-      // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
-      modelNameHidden={modelNameHidden}
-      // SCIENT-FORK:END
-      showProviderUnavailable={showProviderUnavailable}
-      providerSetupInstanceId={selectedInstanceId}
-      onOpenProviderSetup={onOpenProviderSetup}
-      providerCatalogPending={providerCatalogPending}
-      isSendBusy={isSendBusy}
-      multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
-      multipleModelSelections={multipleModelSelections}
-      onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
-      selectedModelSelection={selectedModelSelection}
-      onProviderModelSelect={onProviderModelSelect}
-      activeThreadModelSelection={activeThreadModelSelection}
-      selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
-      lockedProvider={lockedProvider}
-      lockedContinuationGroupKey={lockedContinuationGroupKey}
-      providerInstanceEntries={providerInstanceEntries}
-      keybindings={keybindings}
-      modelOptionsByInstance={modelOptionsByInstance}
-      terminalOpen={terminalOpen}
-      modelPickerOpen={isComposerModelPickerOpen}
-      onModelPickerOpenChange={setIsComposerModelPickerOpen}
-      modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
-      getModelDisabledReason={getComposerModelDisabledReason}
-    />
+    <RuntimeModeLimitsTargetContext value={runtimeModeLimitsFor}>
+      <ComposerControlsBar
+        voiceBusy={voiceBusy}
+        modelPickerOverrides={scientModelPickerProps}
+        supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
+        environmentId={environmentId}
+        workspaceCwd={gitCwd}
+        routeKind={typeof composerDraftTarget === "string" ? "draft" : routeKind}
+        routeThreadRef={routeThreadRef}
+        draftId={typeof composerDraftTarget === "string" ? composerDraftTarget : draftId}
+        selectedProvider={selectedProvider}
+        selectedInstanceId={selectedInstanceId}
+        selectedModel={selectedModel}
+        selectedProviderModels={selectedProviderModels}
+        composerModelOptions={composerModelOptions}
+        reportedModelSelection={reportedModelSelection}
+        promptUltrathink={promptUltrathink}
+        onPromptEdit={editPromptFromTraitsStable}
+        compatibleRuntimeMode={compatibleRuntimeMode}
+        defaultRuntimeMode={props.defaultRuntimeMode}
+        compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
+        handleRuntimeModeChange={handleRuntimeModeChange}
+        composerControlsCollapsed={composerControlsCollapsed}
+        effortDisplay={settings.effortDisplay}
+        permissionsShownInStrip={props.permissionsShownInStrip}
+        composerControlsHidden={composerMenusClosed}
+        restingHiddenBlockCount={restingHiddenBlockCount}
+        iconOnlyBlockCount={iconOnlyBlockCount}
+        // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+        modelNameHidden={modelNameHidden}
+        // SCIENT-FORK:END
+        showProviderUnavailable={showProviderUnavailable}
+        providerSetupInstanceId={selectedInstanceId}
+        onOpenProviderSetup={onOpenProviderSetup}
+        providerCatalogPending={providerCatalogPending}
+        isSendBusy={isSendBusy}
+        multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
+        multipleModelSelections={multipleModelSelections}
+        onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
+        selectedModelSelection={selectedModelSelection}
+        onProviderModelSelect={onProviderModelSelect}
+        activeThreadModelSelection={activeThreadModelSelection}
+        selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
+        lockedProvider={lockedProvider}
+        lockedContinuationGroupKey={lockedContinuationGroupKey}
+        providerInstanceEntries={providerInstanceEntries}
+        keybindings={keybindings}
+        modelOptionsByInstance={modelOptionsByInstance}
+        terminalOpen={terminalOpen}
+        modelPickerOpen={isComposerModelPickerOpen}
+        onModelPickerOpenChange={setIsComposerModelPickerOpen}
+        modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
+        getModelDisabledReason={getComposerModelDisabledReason}
+      />
+    </RuntimeModeLimitsTargetContext>
   );
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const replyTo = composerDraft?.replyTo ?? null;
-  const draftRunsLocally = composerRunsDraftLocally({
+  const holdsNoAttachedContext =
+    composerImages.length + composerFiles.length === 0 &&
+    composerSendState.sendableTerminalContexts.length === 0 &&
+    composerPreviewAnnotations.length === 0 &&
+    composerReviewComments.length === 0 &&
+    composerThreadContexts.length === 0 &&
+    composerEnvironmentContexts.length === 0;
+  const codexFeedbackOffered = selectedProvider === "codex" && multipleModelSelections === null;
+  const commandRunsLocally = composerRunsDraftLocally({
     text: prompt,
-    holdsOnlyText:
-      composerImages.length + composerFiles.length === 0 &&
-      composerSendState.sendableTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0 &&
-      replyTo === null,
+    holdsOnlyText: holdsNoAttachedContext && replyTo === null,
     sideChat: props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null,
     usageLimits: props.onUsageLimitsCommand !== undefined,
-    codexFeedback: selectedProvider === "codex" && multipleModelSelections === null,
+    codexFeedback: codexFeedbackOffered,
     freshSession: props.onFreshSession !== undefined,
   });
+  // `/feedback` runs with a pending reply too, which then stays in the bar.
+  const feedbackRunsLocally =
+    codexFeedbackOffered && holdsNoAttachedContext && parseCodexFeedbackCommand(prompt) !== null;
+  const draftRunsLocally = commandRunsLocally || feedbackRunsLocally;
   const replyBannerItems: readonly ComposerBannerStackItem[] = replyTo
     ? [
         {
@@ -3043,6 +3069,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const canInsertComposerText =
+    !activePendingIsResponding &&
+    !isChoiceOnlyPendingQuestion &&
+    (pendingUserInputs.length === 0 || Boolean(activePendingProgress?.activeQuestion)) &&
+    !projectSelectionRequired &&
+    // SCIENT-FORK: dictation owns the composer while it records or transcribes.
+    !voiceBusy;
+
   const insertComposerText = (
     text: string,
     // SCIENT-FORK: "start" leads the draft with a surface's fixed instruction.
@@ -3050,20 +3084,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     options?: {
       ensureLeadingBoundary?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
-      clipboardData?: DataTransfer;
+      clipboardPaste?: PastedComposerClipboard;
     },
   ): boolean => {
     if (
       text.length === 0 ||
-      activePendingIsResponding ||
-      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
-      projectSelectionRequired ||
+      !canInsertComposerText ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
       return false;
     }
-    if (options?.clipboardData) {
-      text = importPastedComposerText(options.clipboardData, importContextFragment);
+    if (options?.clipboardPaste) {
+      text = importPastedComposerText(options.clipboardPaste, importContextFragment);
     }
     const prompt = promptRef.current;
     const cursor =
@@ -3200,7 +3232,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         phase !== "connecting" &&
         pendingApprovals.length === 0 &&
         pendingUserInputs.length === 0 &&
-        !voiceBusyRef.current &&
+        !voiceBusy &&
         countPreparingComposerImages(attachmentTargetKey) === 0 &&
         !pendingDraftWork.has(attachmentTargetKey) &&
         readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
@@ -3283,13 +3315,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
-  const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
+  const onComposerPaste = (
+    event: React.ClipboardEvent<HTMLElement>,
+    readClipboard: (plainTextOnly: boolean) => PastedComposerClipboard,
+  ) => {
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-    const pastedContext =
-      !isLiteralPendingAnswer &&
-      (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
+    const paste = readClipboard(bypassAutoAttachment);
+    const pastedContext = Boolean(paste.context?.records.length);
     const canAttachFiles = !pastedContext && activeThreadId !== null && files.length > 0;
     const htmlImageContent =
       canAttachFiles && plainText.length > 0
@@ -3322,7 +3356,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       htmlHasImageAndText: htmlImageContent === "image-and-text",
     });
     if (imagesBesideText.length > 0) void addComposerAttachments(imagesBesideText);
-    if (!foldPastedText(plainText, bypassAutoAttachment)) {
+    if (!foldPastedText(paste.text, bypassAutoAttachment)) {
       return;
     }
 
@@ -3609,20 +3643,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       insertTextAtStart: insertComposerTextAtStartStable,
       // SCIENT-FORK: this handle checks the live target, draft and send availability.
       sendMessageIfIdle: sendMessageIfIdleStable,
-      pasteTextAtEnd: (text: string, options) => {
+      pasteTextAtEnd: (clipboardData, options) => {
+        if (!canInsertComposerText) return false;
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        const bypassAutoAttachment = options.bypassAutoAttachment || shortcutArmed;
+        if (composerEditorRef.current?.pasteAtCodeBlockEnd(clipboardData)) return true;
+        const paste = readPastedComposerClipboard(
+          clipboardData,
+          bypassAutoAttachment || isLiteralPendingAnswer,
+        );
+        if (paste.context?.records.length) {
+          return insertComposerTextAtEndStable(paste.text, { clipboardPaste: paste });
+        }
         const promptLength = promptRef.current.length;
         if (
-          !foldPastedText(text, bypassAutoAttachment, {
+          foldPastedText(paste.text, bypassAutoAttachment, {
             start: promptLength,
             end: promptLength,
           })
         ) {
-          return false;
+          focusComposer();
+          return true;
         }
-        focusComposer();
-        return true;
+        return insertComposerTextAtEndStable(paste.text);
       },
       citeAssistantText: (citation, sourceAnchor) => citeTextStable(citation, sourceAnchor),
       citeText: citeTextStable,
@@ -3818,6 +3861,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerAttachments,
       citeTextStable,
       addComposerFoldersStable,
+      canInsertComposerText,
       foldPastedText,
       composerDraftTarget,
       composerModelOptions,
@@ -4277,11 +4321,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   : // SCIENT-FORK:START — busy-state placeholder while the agent works.
                                     (offeredPromptSuggestion ??
                                     composerWorkingPlaceholder ??
-                                    (composerFiles.some(
-                                      (file) => file.source?._tag === "recording-transcript",
-                                    )
-                                      ? gt("Ask about this recording…")
-                                      : m(DEFAULT_COMPOSER_PLACEHOLDER)))
+                                    (composerFiles.some((file) => file.source?._tag === "session")
+                                      ? gt("Ask about this session…")
+                                      : composerFiles.some(
+                                            (file) => file.source?._tag === "recording-transcript",
+                                          )
+                                        ? gt("Ask about this recording…")
+                                        : m(DEFAULT_COMPOSER_PLACEHOLDER)))
                       // SCIENT-FORK:END
                     }
                     placeholderSuffix={

@@ -2060,10 +2060,17 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         })),
       );
     const responses = yield* Queue.unbounded<unknown>();
+    const sourcesStarted = yield* Deferred.make<void>();
+    const providersStarted = yield* Deferred.make<void>();
+    const releaseLimits = yield* Deferred.make<void>();
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.mock(ProviderRegistry.ProviderRegistry)({
         getProviders: Effect.succeed([provider]),
+        refreshUsageLimits: () =>
+          Deferred.succeed(providersStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLimits)),
+          ),
         refreshWorkspaceSnapshot: (input) =>
           Effect.map(scan(input.scanCwd ?? input.cwd), (snapshot) => [
             { ...provider, workspaceSnapshots: [{ ...snapshot, cwd: input.cwd }] },
@@ -2106,7 +2113,12 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
           ),
         ),
       ),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({ current: Effect.succeed([]) }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed([]),
+        refresh: Deferred.succeed(sourcesStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseLimits)),
+        ),
+      }),
       Layer.mock(ExternalLauncher.ExternalLauncher)({}),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
       Layer.mock(DirectEndpoints.DirectEndpoints)({}),
@@ -2164,6 +2176,18 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ["finalize"],
       "the thread's removed worktree should list the project's skills",
     );
+
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("limits-only"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { limitsOnly: true },
+      headers: Headers.empty,
+    });
+    yield* Deferred.await(sourcesStarted);
+    yield* Deferred.await(providersStarted);
+    yield* Deferred.succeed(releaseLimits, undefined);
+    assert.deepEqual(yield* Queue.take(responses), { providers: [] });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -2864,9 +2888,10 @@ const acpSessionRpcs = WsRpcGroup.omit(
     > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
   ),
 );
-const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const acpStores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer)),
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const seedAcpThread = Effect.fn(function* (
   sessionId: string,
@@ -3193,14 +3218,21 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
     Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
     Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-    Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      // Another client's session beside this one: the answer names only the one that sent it.
+      listClientSessions: () =>
+        Effect.succeed([
+          { current: false, client: { label: "Desktop", deviceType: "desktop" } },
+          { current: true, client: { label: "Pixel 9", deviceType: "mobile" } },
+        ] as never),
+    }),
     Layer.mock(Workflows.Workflows)({
       get: (runId) =>
         runId === workflowRun.runId
           ? Effect.succeed({ run: workflowRun, steps: [workflowStep], references: [] })
           : Effect.fail(new Workflows.WorkflowRunNotFoundError({ runId })),
-      answer: (runId, name, value) =>
-        Effect.sync(() => calls.push({ answer: [runId, name], value })),
+      answer: (runId, name, value, answeredBy) =>
+        Effect.sync(() => calls.push({ answer: [runId, name], value, answeredBy })),
       resume: (runId) => Effect.sync(() => calls.push({ resume: runId })),
       cancel: (runId, reason) => Effect.sync(() => calls.push({ cancel: runId, reason })),
     }),
@@ -3380,8 +3412,16 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
     yield* client[WS_METHODS.workflowsCancel]({ runId: "run-1", reason: "Wrong branch" });
 
     assert.deepEqual(calls, [
-      { answer: ["run-1", "approve"], value: { choice: "yes", reason: "Looks good" } },
-      { answer: ["run-1", "approve"], value: { choice: "no" } },
+      {
+        answer: ["run-1", "approve"],
+        value: { choice: "yes", reason: "Looks good" },
+        answeredBy: { label: "Pixel 9", sessionId: "workflow-test" },
+      },
+      {
+        answer: ["run-1", "approve"],
+        value: { choice: "no" },
+        answeredBy: { label: "Pixel 9", sessionId: "workflow-test" },
+      },
       { resume: "run-1" },
       { cancel: "run-1", reason: undefined },
       { cancel: "run-1", reason: "Wrong branch" },

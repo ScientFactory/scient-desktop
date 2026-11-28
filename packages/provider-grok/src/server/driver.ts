@@ -264,6 +264,7 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
         resolveProviderMaintenanceCapabilitiesEffect(maintenanceResolver, {
           binaryPath: effectiveConfig.binaryPath,
           env: effectiveEnvironment,
+          npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -319,6 +320,16 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
+      const checkUsageLimits = readGrokAccount(effectiveEnvironment).pipe(
+        Effect.map(({ email, usageLimits }) => ({
+          usageLimits,
+          ...(email ? { auth: { email } } : {}),
+        })),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
         resolveMaintenance,
@@ -331,6 +342,7 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
         initialSnapshot: (settings) =>
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(decorateSnapshot)),
         checkProvider,
+        checkUsageLimits,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>

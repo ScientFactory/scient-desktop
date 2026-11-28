@@ -245,15 +245,24 @@ export const makeDiscovery = Effect.gen(function* () {
       const saved = yield* Effect.result(
         requireSettingsSecretLiteral(settings.tokens["github.com"], current?.secretProviders ?? {}),
       );
+      // SCIENT-FORK: preserve an unknown CLI auth probe when a token or app sign-in overrides auth.status.
+      // A failed version probe of an installed gh reports "missing" with a detail and is unknown too.
+      const cliAuthUnknown =
+        cli.auth.status === "unknown" && (cli.status === "available" || Option.isSome(cli.detail))
+          ? ({ cliAuthStatus: "unknown" as const } as const)
+          : {};
       if (Result.isFailure(saved) && settings.hosts["github.com"]?.enabled !== false) {
         return offerAppSignIn({
           ...cli,
           status: "available" as const,
-          auth: providerAuth({
-            status: "unauthenticated",
-            host: "github.com",
-            detail: saved.failure.message,
-          }),
+          auth: {
+            ...providerAuth({
+              status: "unauthenticated",
+              host: "github.com",
+              detail: saved.failure.message,
+            }),
+            ...cliAuthUnknown,
+          },
         });
       }
       const savedToken = Result.isSuccess(saved) && saved.success.trim() !== "";
@@ -307,6 +316,7 @@ export const makeDiscovery = Effect.gen(function* () {
                       : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
                 })),
           ...accounts,
+          ...cliAuthUnknown,
         },
       } satisfies SourceControlProviderDiscoveryItem);
     }),

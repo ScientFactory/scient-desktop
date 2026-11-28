@@ -396,4 +396,104 @@ describe("pinned citations travel with the project", () => {
       expect(await managedFiles(elsewhere)).toEqual(written);
     },
   );
+
+  it("keeps entries listing every author while only a cut copy of the list is here", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pinned-citations-")),
+    );
+    fixtures.push(base);
+    const original = await computer(base, "author");
+    const projectRoot = NodePath.join(base, "project");
+    await NodeFSP.mkdir(projectRoot);
+    await initializeScientProject({ root: projectRoot });
+    const members = Array.from({ length: 7_992 }, (_, index) => person(`Member${index + 1}`));
+    const record = await add(original, { ...works[0]!, creators: members });
+    await pinScientLibrarySource({
+      projectRoot,
+      library: original,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot, library: original });
+    expect((await readScientProjectPins(projectRoot))[0]?.work.creators).toHaveLength(256);
+    await syncPinnedBibliography({
+      root: projectRoot,
+      library: original,
+      access: "write",
+      actor: "user",
+    });
+    const written = await managedFiles(projectRoot);
+    expect(written.bib).toContain("Member7992");
+
+    const offline = await syncPinnedBibliography({
+      root: projectRoot,
+      library: null,
+      access: "read",
+      actor: "user",
+    });
+    expect(await managedFiles(projectRoot)).toEqual(written);
+    expect(offline.keptEntries).toHaveLength(1);
+
+    const collaborator = await computer(base, "collaborator");
+    await syncPinnedBibliography({
+      root: projectRoot,
+      library: collaborator,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(projectRoot)).toEqual(written);
+
+    // A record still marked et al. with more names than the pin keeps, but far fewer than all.
+    const partial = await computer(base, "partial");
+    await add(partial, {
+      ...works[0]!,
+      creators: members.slice(0, 500),
+      incompleteCreatorRoles: ["author"],
+    });
+    await syncPinnedBibliography({
+      root: projectRoot,
+      library: partial,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(projectRoot)).toEqual(written);
+  });
+
+  it("keeps the entries of a pin this version cannot read", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pinned-citations-")),
+    );
+    fixtures.push(base);
+    const original = await computer(base, "author");
+    const projectRoot = NodePath.join(base, "project");
+    await NodeFSP.mkdir(projectRoot);
+    await initializeScientProject({ root: projectRoot });
+    for (const work of works) {
+      const record = await add(original, work);
+      await pinScientLibrarySource({
+        projectRoot,
+        library: original,
+        sourceId: record.sourceId,
+        actor: "user",
+      });
+    }
+    const sync = () =>
+      syncPinnedBibliography({
+        root: projectRoot,
+        library: original,
+        access: "write",
+        actor: "user",
+      });
+    await sync();
+    const written = await managedFiles(projectRoot);
+
+    const pinsPath = NodePath.join(projectRoot, ".scient", "library", "pins.json");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
+    file.pins[1].work.creators = [{ creatorType: "" }];
+    await NodeFSP.writeFile(pinsPath, `${JSON.stringify(file, null, 2)}\n`);
+
+    const status = await sync();
+    expect(await managedFiles(projectRoot)).toEqual(written);
+    expect(status.keptEntries).toEqual([file.pins[1].citationKey]);
+  });
 });

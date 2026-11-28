@@ -31,6 +31,13 @@ export interface RestartReadinessToken {
   readonly launchId: string;
 }
 
+/** What the restored workspace let the user reach, as its renderer observed it. */
+export interface WorkspaceInteraction {
+  readonly projectControlsVisible: boolean;
+  readonly composerUsable: boolean;
+  readonly windowUnlocked: boolean;
+}
+
 export type RestartTimingEvent = {
   readonly event:
     | "confirmed"
@@ -39,6 +46,7 @@ export type RestartTimingEvent = {
     | "launched"
     | "backend-ready"
     | "workspace-ready"
+    | "workspace-settled"
     | "abandoned";
   readonly attemptId: string;
   readonly fromVersion: string;
@@ -53,6 +61,10 @@ export type RestartTimingEvent = {
   readonly launchToBackendMs?: number;
   readonly launchToReadyMs?: number;
   readonly projectRestored?: boolean;
+  readonly projectControlsVisible?: boolean;
+  readonly composerUsable?: boolean;
+  readonly windowUnlocked?: boolean;
+  readonly settledAfterReadyMs?: number;
 };
 
 export interface RestartTiming {
@@ -64,7 +76,14 @@ export interface RestartTiming {
   readonly backendReady: Effect.Effect<void>;
   readonly readinessToken: Effect.Effect<RestartReadinessToken | null>;
   readonly workspaceReady: (
-    input: RestartReadinessToken & { readonly projectRestored: boolean },
+    input: RestartReadinessToken & {
+      readonly projectRestored: boolean;
+      readonly interaction?: WorkspaceInteraction;
+    },
+  ) => Effect.Effect<boolean>;
+  /** The workspace that completed this launch's restart, observed again once it has settled. */
+  readonly workspaceSettled: (
+    input: RestartReadinessToken & { readonly interaction: WorkspaceInteraction },
   ) => Effect.Effect<boolean>;
 }
 
@@ -97,6 +116,7 @@ export const makeRestartTiming = Effect.fn("desktop.restartTiming.make")(functio
   let confirmedMonotonic: number | null = null;
   let launched = false;
   let backendAfterLaunch: number | undefined;
+  let settling: { readonly attempt: Attempt; readonly readyMonotonic: number } | null = null;
   const emit = Effect.fn("desktop.restartTiming.emit")(function* (
     event: RestartTimingEvent["event"],
     fields: Omit<RestartTimingEvent, "event" | "attemptId" | "fromVersion" | "targetVersion"> = {},
@@ -159,6 +179,7 @@ export const makeRestartTiming = Effect.fn("desktop.restartTiming.make")(functio
           confirmedMonotonic = now.monotonic;
           launched = false;
           backendAfterLaunch = undefined;
+          settling = null;
           if (!(yield* persist())) return yield* abandon("persistence-failed");
           yield* emit("confirmed");
         }),
@@ -221,7 +242,12 @@ export const makeRestartTiming = Effect.fn("desktop.restartTiming.make")(functio
       ),
     ),
     workspaceReady: Effect.fn("DesktopRestartTiming.workspaceReady")(
-      (ack: RestartReadinessToken & { readonly projectRestored: boolean }) =>
+      (
+        ack: RestartReadinessToken & {
+          readonly projectRestored: boolean;
+          readonly interaction?: WorkspaceInteraction;
+        },
+      ) =>
         mutex.withPermits(1)(
           Effect.gen(function* () {
             if (
@@ -242,10 +268,39 @@ export const makeRestartTiming = Effect.fn("desktop.restartTiming.make")(functio
               launchToReadyMs: Math.max(0, now.monotonic),
               launchToBackendMs: backendAfterLaunch,
               projectRestored: ack.projectRestored,
+              ...ack.interaction,
             });
+            settling = { attempt, readyMonotonic: now.monotonic };
             attempt = null;
             launched = false;
             yield* input.remove;
+            return true;
+          }),
+        ),
+    ),
+    workspaceSettled: Effect.fn("DesktopRestartTiming.workspaceSettled")(
+      (ack: RestartReadinessToken & { readonly interaction: WorkspaceInteraction }) =>
+        mutex.withPermits(1)(
+          Effect.gen(function* () {
+            const ready = settling;
+            if (
+              ready === null ||
+              ack.attemptId !== ready.attempt.attemptId ||
+              ack.launchId !== input.launchId
+            )
+              return false;
+            settling = null;
+            const now = yield* input.now;
+            yield* input.emit({
+              event: "workspace-settled",
+              attemptId: ready.attempt.attemptId,
+              fromVersion: ready.attempt.fromVersion,
+              targetVersion: ready.attempt.targetVersion,
+              launchId: input.launchId,
+              processId: input.processId,
+              settledAfterReadyMs: Math.max(0, now.monotonic - ready.readyMonotonic),
+              ...ack.interaction,
+            });
             return true;
           }),
         ),

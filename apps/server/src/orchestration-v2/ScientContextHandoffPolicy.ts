@@ -27,7 +27,7 @@ export class ContextHandoffPolicyOverride extends Context.Reference<"byte" | und
 
 export const genericContextHandoffPolicy = handoffTokenCapConfig.pipe(
   Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
-  Effect.map((tokenCap) => ({ tokenCap, bytesPerToken: 1, byteCap: 64_000 })),
+  Effect.map((tokenCap) => ({ tokenCap })),
 );
 
 /** A Scient preset's allowance policy: estimated tokens, without the generic byte clamp. */

@@ -685,6 +685,17 @@ sources in `<project>/.scient/library/pins.json`:
   note it drops. The detail (`projectNoteHistory`) and the agent's
   `scient_sources_get` return the versions; restoring is an ordinary checked
   write of an earlier text.
+- Built from a record, a pin's `work` and a review's record snapshot keep the
+  first 256 creators, identifiers and tags with the whole `creatorCount`; a pin
+  marks the cut roles incomplete ("et al."). No list is capped on read: a longer
+  one an older Scient wrote stays whole until a record holds it, and a copy keeps
+  its fuller list over a shortened record that begins the same. A longer list is
+  written as its first 256 (cut roles marked "et al.") plus an `overflow` field,
+  so older Scient versions still read the file; `overflow` joins back only onto
+  the exact list it was written after. A package import rewrites a review
+  snapshot an older Scient wrote with longer lists into that form. Records keep every author. A pin or entry this version cannot read is left out of view and
+  written back as it was; a pin's key stays reserved and its managed entries
+  stay. An unusable `creatorCount` is ignored.
 - `work` snapshots every citation input the formatter reads (type, title,
   creators with roles and incompleteness, issued year, identifiers, container
   title, and the optional `customType`, `issuedRaw`, `publisher`, `volume`,

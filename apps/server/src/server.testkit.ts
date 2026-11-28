@@ -173,6 +173,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -871,7 +872,8 @@ export const buildAppUnderTest = (options?: {
       listLocalBranchNames: () => Effect.succeed([]),
       // Status refreshes read refs first; no snapshot always rereads local status.
       readRefSnapshot: () => Effect.succeed(null),
-      readLocalStatusRefSnapshot: () => Effect.succeed(null),
+      readStatusRefreshRefs: () => Effect.succeed(null),
+      readStatusPoll: () => Effect.succeed(null),
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
@@ -1031,9 +1033,9 @@ export const buildAppUnderTest = (options?: {
                     );
                     launch = Context.get(controlled, ThreadLaunchV2.ThreadLaunchService);
                   }
-                  const cleanupContext = yield* Layer.build(StorageCleanup.layer).pipe(
-                    Effect.provide(context),
-                  );
+                  const cleanupContext = yield* Layer.build(
+                    StorageCleanup.layer.pipe(Layer.provide(PendingSettleScripts.layer)),
+                  ).pipe(Effect.provide(context));
                   context = Context.add(
                     context,
                     ThreadLaunchV2.ThreadLaunchService,
@@ -1565,6 +1567,7 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(ThreadCommandExecutor.layer),
         Layer.provide(VcsProcess.layer),
         Layer.provideMerge(McpProviderSessions.layer),
+        Layer.provideMerge(ProjectionStoreV2.layer),
         Layer.provideMerge(
           options?.layers?.providerLatestVersions === undefined
             ? ProviderLatestVersions.layer

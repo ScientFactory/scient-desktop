@@ -10,6 +10,8 @@ import {
   type AnalyticsRuntime,
   type RecordedAnalyticsEvent,
 } from "@scientfactory/analytics";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeSea from "node:sea";
@@ -136,7 +138,9 @@ export const make = Effect.gen(function* () {
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
-  if (!analyticsConfig.enabled || !policyAllows) return disabled;
+  // Decided at launch: desktop shell discovery later patches this environment in place.
+  const doNotTrack = isDoNotTrackSet(yield* HostProcess.Environment);
+  if (!analyticsConfig.enabled || doNotTrack || !policyAllows) return disabled;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
   // Like T3, analytics is on for everyone; SCIENT_ANALYTICS_ENABLED=false is the off switch.

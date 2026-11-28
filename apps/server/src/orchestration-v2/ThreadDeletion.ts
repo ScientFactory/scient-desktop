@@ -237,5 +237,11 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     request: { type: "scient.release-thread-files" },
   });
   // SCIENT-FORK:END
+  effects.push({
+    id: `effect:${command.commandId}:thread-content.purge`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "thread-content.purge" },
+  });
   return { events, effects };
 });

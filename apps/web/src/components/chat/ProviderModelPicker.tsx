@@ -40,6 +40,7 @@ import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
 import { MODEL_NAME_HIDDEN_TRIGGER_CLASS_NAME } from "../../scient/modelPicker/modelNameFit";
 // SCIENT-FORK:END
@@ -538,12 +539,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   {props.isComposerOwned ? (
                     <span {...triggerTextProps}>{triggerText}</span>
                   ) : (
-                    <Tooltip>
-                      <TooltipTrigger render={<span {...triggerTextProps} />}>
-                        {triggerText}
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-                    </Tooltip>
+                    <SharedTooltipTrigger
+                      render={<span {...triggerTextProps} />}
+                      label={triggerTooltipContent}
+                    >
+                      {triggerText}
+                    </SharedTooltipTrigger>
                   )}
                   {!props.statusLabel && selectedModel?.providerCostLabel ? (
                     <Tooltip>

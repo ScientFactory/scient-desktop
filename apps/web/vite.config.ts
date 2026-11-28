@@ -1,6 +1,4 @@
 import * as NodeURL from "node:url";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
-import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
@@ -144,6 +142,12 @@ const browserTestProject = {
       "@pierre/diffs/ssr",
       "effect/testing",
       "saxes",
+      "@noble/ciphers/aes.js",
+      "@noble/hashes/hmac.js",
+      "@noble/hashes/legacy.js",
+      "@noble/hashes/pbkdf2.js",
+      "@noble/hashes/sha2.js",
+      "@noble/hashes/utils.js",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",
       "@betteroffice/docx/layout/render",
@@ -153,6 +157,7 @@ const browserTestProject = {
       "@betteroffice/xlsx",
       "@betteroffice/xlsx/headless",
       "fast-xml-parser",
+      "parse5",
       "entities",
       "dompurify",
       "heic-to/csp",
@@ -208,34 +213,6 @@ const browserTestProject = {
         // SCIENT-FORK:START — SCIENT_TEST_CPU_THROTTLE (test/scientCpuThrottle.ts).
         applyCpuThrottle,
         // SCIENT-FORK:END
-      },
-    },
-  },
-} satisfies TestProjectInlineConfiguration;
-
-// Render scenarios count React commits; they run only through scripts/render-metrics.ts,
-// which reads the per-scenario reports this command writes.
-const renderScenariosProject = {
-  ...browserTestProject,
-  test: {
-    ...browserTestProject.test,
-    name: "renders",
-    include: ["test/*.renders.tsx"],
-    // App scenarios mount the whole app per test, which outlasts 15s on a loaded machine.
-    hookTimeout: 60_000,
-    testTimeout: 60_000,
-    setupFiles: ["./test/renderCounter.ts", ...browserTestProject.test.setupFiles],
-    browser: {
-      ...browserTestProject.test.browser,
-      // Vitest names each instance in place, so a shared array would clash with the browser project.
-      instances: [{ browser: "chromium" }],
-      commands: {
-        ...browserTestProject.test.browser.commands,
-        writeRenderReport: async (_context, scenario: string, json: string) => {
-          const directory = process.env.T3CODE_RENDER_REPORT_DIR;
-          if (!directory) throw new Error("T3CODE_RENDER_REPORT_DIR is not set");
-          await NodeFSP.writeFile(`${directory}/${scenario}.json`, json);
-        },
       },
     },
   },
@@ -425,6 +402,7 @@ export default defineConfig(({ command, mode }) => {
         "@pierre/diffs/react",
         "@pierre/diffs/worker",
         "@pierre/diffs/worker/worker.js",
+        "@t3tools/client-runtime > @zip.js/zip.js/index-native.cjs",
         "effect/Array",
         "effect/Order",
         "react-dom/client",
@@ -561,6 +539,7 @@ export default defineConfig(({ command, mode }) => {
       rolldownOptions: {
         input: {
           main: NodeURL.fileURLToPath(new URL("./index.html", import.meta.url)),
+          "epub-preview": NodeURL.fileURLToPath(new URL("./epub-preview.html", import.meta.url)),
           "scient-document": NodeURL.fileURLToPath(
             new URL("./scient-document.html", import.meta.url),
           ),
@@ -577,11 +556,7 @@ export default defineConfig(({ command, mode }) => {
     },
     worker: { format: "es" },
     test: {
-      projects: [
-        defineProject(unitTestProject),
-        defineProject(browserTestProject),
-        defineProject(renderScenariosProject),
-      ],
+      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
       // SCIENT-FORK:START — balance both test projects by recorded duration.
       sequence: { sequencer: WeightedShardSequencer },
       // SCIENT-FORK:END

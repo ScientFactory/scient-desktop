@@ -622,7 +622,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 processLossDescription = client.redaction.text(
                   `${target.name} process lost. ${detail}`,
                 );
-                yield* notice(processLossDescription, true, "native-process-loss");
+                yield* notice(processLossDescription, "error", "native-process-loss");
               }),
             ),
             Effect.andThen(publish),
@@ -702,24 +702,26 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         let retryProgress:
           | { attempt: number; maxAttempts: number | null; retryDelayMs: number | null }
           | undefined;
+        // An "info" notice renders as a neutral row; "warning" as a warning; "error" as a failure.
         const notice = (
           message: string,
-          error = false,
+          level: "info" | "warning" | "error" = "warning",
           id = `native-notice-${++nextWarningOrdinal}`,
         ) =>
           onUpdate({
             type: "item",
             id,
-            status: error ? "failed" : "completed",
-            item: error
-              ? {
-                  type: "error",
-                  failure: makeProviderFailure({
-                    message: client.redaction.text(message),
-                    class: "provider_error",
-                  }),
-                }
-              : { type: "system_notice", message: client.redaction.text(message) },
+            status: level === "error" ? "failed" : "completed",
+            item:
+              level === "error"
+                ? {
+                    type: "error",
+                    failure: makeProviderFailure({
+                      message: client.redaction.text(message),
+                      class: "provider_error",
+                    }),
+                  }
+                : { type: "system_notice", level, message: client.redaction.text(message) },
           });
 
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
@@ -1027,11 +1029,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 event.type === "notice" ? scientAgentSignedOutNotice(event) : undefined;
               if (signedOut !== undefined)
                 return Effect.andThen(options.onAccountSignedOut ?? Effect.void, notice(signedOut));
-              if (event.type === "notice" || event.method === "notify")
+              // SCIENT-FORK: as in Pi, only a warning or error notice is shown as a warning.
+              if (event.type === "notice" || event.method === "notify") {
+                const level = event.type === "notice" ? event.level : event.notifyType;
                 return notice(
                   `${event.source ? `${event.source}: ` : ""}${event.message ?? `${target.name} notification.`}`,
-                  event.level === "error" || event.notifyType === "error",
+                  level === "warning" || level === "error" ? level : "info",
                 );
+              }
               return Effect.void;
             }
             case "assistant-delta":
@@ -1284,7 +1289,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 Effect.andThen(closeSession(Exit.void).pipe(Effect.forkDetach, Effect.asVoid)),
               );
             case "error":
-              return notice(update.message, true);
+              return notice(update.message, "error");
             case "warning":
               return notice(update.message);
             case "subagent":
@@ -1846,7 +1851,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             (effect, nativeTaskId) =>
               effect.pipe(
                 Effect.tapError((cause) =>
-                  notice(cause.detail, false, `subagent-stop:${nativeTaskId}`),
+                  notice(cause.detail, "warning", `subagent-stop:${nativeTaskId}`),
                 ),
               ),
           ),
@@ -1891,7 +1896,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               ),
             );
             yield* onUpdate({ type: "accepted", nativeTurnId });
-            if (typeof response === "string") yield* notice(response);
+            if (typeof response === "string") yield* notice(response, "info");
             else yield* publishCompaction(response.data);
             yield* onUpdate({ type: "terminal", status: "completed" });
           }),
@@ -2161,7 +2166,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   nativeTurnId,
                   runtime,
                   onUpdate,
-                  notice: (message) => notice(message),
+                  notice: (message) => notice(message, "info"),
                   redact: (text) => client.redaction.text(text),
                 }).pipe(
                   Effect.mapError(
@@ -2182,7 +2187,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   nativeTurnId,
                   runtime,
                   onUpdate,
-                  notice: (message) => notice(message),
+                  notice: (message) => notice(message, "info"),
                   redact: (text) => client.redaction.text(text),
                 }).pipe(
                   Effect.mapError(

@@ -381,6 +381,10 @@ the current prompt and its attachments for later. Wait for uploads to finish fir
 With an empty composer, the same shortcut restores a single stash or opens the
 stash menu when there are several.
 
+The stash holds up to 100 prompts, and images take up most of its browser
+storage. When it is full, stashing leaves the composer as it is; restore or
+delete a stash to make room. Stashes are never discarded automatically.
+
 Stashes containing uploaded files must be restored in their original environment.
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
@@ -595,6 +599,8 @@ other document formats such as Word or Pages open in the device's own viewer whe
 If nothing on the device can show a format, save or share it to open it elsewhere. A ZIP up to
 50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
 save, or add it to chat.
+
+When a preview asks for a file password, enter it and select **Unlock**. Scient uses the password on your device. Web and desktop can unlock supported PDF, ZIP, Office, and OpenDocument files. The mobile app can unlock ZIP attachments, and Android can unlock PDFs. Ebooks protected by DRM need a compatible reader.
 
 ## Images and videos in messages
 

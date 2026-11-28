@@ -34,6 +34,8 @@ function keyLabel(part: string, mac: boolean): string {
     space: "Space",
     esc: "Esc",
   };
+  // Function keys read as F6, not f6.
+  if (/^f\d{1,2}$/u.test(part)) return part.toUpperCase();
   return named[part.toLowerCase()] ?? (part.length === 1 ? part.toUpperCase() : part);
 }
 

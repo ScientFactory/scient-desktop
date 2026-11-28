@@ -54,7 +54,8 @@ function resolveCanonicalModel(
 }
 
 function windowAppliesToModel(
-  provider: Pick<ServerProvider, "driver" | "models"> | undefined,
+  // SCIENT-FORK: usageLimits tells Antigravity's per-family Gemini quotas from one shared quota.
+  provider: Pick<ServerProvider, "driver" | "models" | "usageLimits"> | undefined,
   window: ServerProviderUsageWindow,
   model: string | null | undefined,
 ): boolean {
@@ -74,8 +75,20 @@ function windowAppliesToModel(
       }
       return true;
     case "antigravity": {
-      const family = canonical.match(/^(gemini|claude|gpt)-/)?.[1];
+      // SCIENT-FORK:START — a hub can prefix model ids, such as "ag/gemini-3.1-pro". Argon and
+      // Carbon have their own quotas when the account reports them; older accounts report one
+      // Gemini quota that covers every Gemini model.
+      const base = canonical.slice(canonical.lastIndexOf("/") + 1);
+      const family = base.match(/^(gemini|claude|gpt)-/)?.[1];
       const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+      if (
+        pool === "gemini" &&
+        family === "gemini" &&
+        provider?.usageLimits?.windows.some((entry) => /^gemini-(argon|carbon)-/.test(entry.id))
+      ) {
+        return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
+      }
+      // SCIENT-FORK:END
       return (
         pool === undefined ||
         family === undefined ||
@@ -554,6 +567,27 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
   };
 }
 
+// SCIENT-FORK:START — thread details pool signed-in logins with hub accounts by the same identity
+// as the Usage page, so a Google credential fingerprint matches as well as an e-mail.
+/** The signed-in logins that read the same account as one of these hub accounts. */
+export function providersReadingAccounts(
+  providers: readonly ServerProvider[],
+  accounts: readonly UsageLimitSourceAccount[],
+  /** Every account the hub lists, readable or not, so a login's workspace resolves as in the pool. */
+  knownAccounts: readonly UsageLimitSourceAccount[] = accounts,
+): ServerProvider[] {
+  const resolveKey = accountKeyResolver([
+    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...knownAccounts,
+  ]);
+  const keys = new Set(accounts.flatMap((account) => resolveKey(account) ?? []));
+  return providers.filter((provider) => {
+    const key = resolveKey(nativeReport(provider));
+    return key !== null && keys.has(key);
+  });
+}
+// SCIENT-FORK:END
+
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
 function limitAccountKeyResolver(presentations: LimitPresentations) {
@@ -815,6 +849,7 @@ export interface LimitPoolWindow {
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
+  readonly paceRemainingPercent: number | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -1063,6 +1098,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      paceRemainingPercent: meanElapsed === null ? null : Math.round((1 - meanElapsed) * 100),
       resets,
     };
   });
@@ -1155,6 +1191,11 @@ export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
 }
 
+// A hub that could not be read may route any driver. An HTTP quota source never lists accounts
+// here, so its failure says nothing about which providers have limits.
+const unreadableHub = (source: UsageLimitSourceSnapshots[number]) =>
+  source.kind === "cliproxy" && source.error !== undefined && source.accounts.length === 0;
+
 export function hasProviderUsageLimits(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
@@ -1164,8 +1205,7 @@ export function hasProviderUsageLimits(
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
     sources.some(
       (source) =>
-        source.accounts.some((account) => account.driver === driver) ||
-        (source.error !== undefined && source.accounts.length === 0),
+        source.accounts.some((account) => account.driver === driver) || unreadableHub(source),
     )
   );
 }
@@ -1177,9 +1217,7 @@ export function sameUsageLimitCommandCoverage(
   const coverage = (sources: UsageLimitSourceSnapshots) =>
     new Set(
       sources.flatMap((source) =>
-        source.error !== undefined && source.accounts.length === 0
-          ? ["*"]
-          : source.accounts.map((account) => String(account.driver)),
+        unreadableHub(source) ? ["*"] : source.accounts.map((account) => String(account.driver)),
       ),
     );
   const before = coverage(previous);
@@ -1196,9 +1234,7 @@ export function withUsageLimitsCommands(
     ...providersWithLimits(providers).map((provider) => provider.driver),
     ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
   ]);
-  const unreadableSource = sources.some(
-    (source) => source.error !== undefined && source.accounts.length === 0,
-  );
+  const unreadableSource = sources.some(unreadableHub);
   return providers.map((provider) => {
     if (!unreadableSource && !supportedDrivers.has(provider.driver)) return provider;
     const commands = (items: readonly ServerProviderSlashCommand[]) => [

@@ -4578,22 +4578,6 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
   });
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-  it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
-    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "auto",
-        interactionMode: "default",
-        cwd: "/workspace",
-      }),
-    );
-
-    assert.deepEqual(queryPolicy, {
-      permissionMode: "auto",
-      installPermissionCallback: false,
-    });
-  });
-  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
   it("installs the permission callback for approval-required plan mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapterV2RuntimePolicy.make({

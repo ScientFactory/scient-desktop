@@ -6,12 +6,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DatabaseMigrationProgress,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopClerk from "../app/DesktopClerk.ts";
@@ -46,6 +51,9 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
+// SCIENT-FORK:START — startup timing, reported through the consented analytics path.
+import * as DesktopStartupTiming from "../scient/startupTiming/DesktopStartupTiming.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — near-full default size and one-time size updates for older profiles.
 import { applyOneTimeMainWindowSizing, nearFullMainWindowSize } from "./scientMainWindowSizing.ts";
 export {
@@ -307,12 +315,18 @@ export function resolveInitialMainWindowBounds(
   // SCIENT-FORK:END
 }
 
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
+function buildConnectingSplashDataUrl(
+  shouldUseDarkColors: boolean,
+  progress: DatabaseMigrationProgress | null,
+): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
+  const message = progress
+    ? `Upgrading database (${progress.current} of ${progress.total})`
+    : "Connecting to WSL…";
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${message}</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -442,6 +456,9 @@ export const make = Effect.gen(function* () {
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const telemetry = yield* Effect.serviceOption(DesktopTelemetryPublisher);
   const restartTiming = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
+  // SCIENT-FORK:START — startup timing, reported through the consented analytics path.
+  const startupTiming = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
+  // SCIENT-FORK:END
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
   let mainClosedDuringStartup = false;
@@ -730,6 +747,8 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
+      // The guest always runs the app's own preload, whatever the element asked for.
+      webPreferences.preload = environment.previewPickPreloadPath;
       webPreferences.sandbox = true;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
@@ -1152,6 +1171,9 @@ export const make = Effect.gen(function* () {
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
+      // SCIENT-FORK:START — a startup sub-phase; only the first window shown in this process counts.
+      if (Option.isSome(startupTiming)) yield* startupTiming.value.windowShown;
+      // SCIENT-FORK:END
       yield* dismissConnectingSplash;
     });
     pendingMainReveals.set(window, revealWhenReady);
@@ -1282,15 +1304,34 @@ export const make = Effect.gen(function* () {
     }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
+    let renderedUrl: string | undefined;
+    const progressFiber = runFork(
+      Effect.gen(function* () {
+        if (splash.isDestroyed() || (yield* Ref.get(desktopState.quitting))) return;
+        const progress = yield* Ref.get(desktopState.databaseMigrationProgress);
+        const url = buildConnectingSplashDataUrl(shouldUseDarkColors, progress);
+        if (url === renderedUrl) return;
+        const loaded = yield* Effect.promise(() =>
+          splash.loadURL(url).then(
+            () => true,
+            () => false,
+          ),
+        );
+        if (loaded) renderedUrl = url;
+      }).pipe(Effect.repeat(Schedule.spaced("1 second"))),
+    );
     splash.once("closed", () => {
-      void runPromise(Ref.set(splashWindowRef, Option.none()));
+      runFork(
+        Fiber.interrupt(progressFiber).pipe(
+          Effect.andThen(Ref.set(splashWindowRef, Option.none())),
+        ),
+      );
     });
     splash.once("ready-to-show", () => {
       if (!splash.isDestroyed()) {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     Effect.catch((error) =>
@@ -1363,6 +1404,9 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       if (Option.isSome(restartTiming)) yield* restartTiming.value.backendReady;
+      // SCIENT-FORK:START — a startup sub-phase for this launch's startup timing.
+      if (Option.isSome(startupTiming)) yield* startupTiming.value.backendReady;
+      // SCIENT-FORK:END
       if (!mainClosedDuringStartup) yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(

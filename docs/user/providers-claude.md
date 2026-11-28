@@ -204,6 +204,12 @@ To show Claude task lists in the web and desktop apps, add
 row in the thread; open it to see every step. Unfinished tasks also stay in a bar
 above the composer until they are done, the session changes, or you dismiss them.
 
+## Auto mode
+
+**Auto** on a Claude thread is Claude Code's own auto mode. `disableAutoMode` in Claude's managed,
+user, or project settings turns it off: Scient then shows **Auto** as unavailable in that project,
+and a thread already set to it asks about each action. See [Permission modes](permission-modes.md).
+
 ## Sign in to an MCP server
 
 When an MCP server you added to Claude needs you to sign in, the thread's plug button at the top

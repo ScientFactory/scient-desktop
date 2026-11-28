@@ -14,7 +14,7 @@ import { CommandPaletteTitleIcon } from "./CommandPaletteResults";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export function remoteProjectSourceIcon(
   source: AddProjectRemoteSource,
@@ -44,31 +44,29 @@ export function CommandPaletteSubmitButton(props: {
   readonly onSubmit: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            id={props.id}
-            variant="outline"
-            size="xs"
-            className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-            aria-label={props.ariaLabel}
-            disabled={props.disabled}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={props.onSubmit}
-          />
-        }
-      >
-        <span>{props.label}</span>
-        {/* SCIENT-FORK: the key sits level with the button's top and bottom gaps. */}
-        <KbdGroup className="pointer-events-none -me-1.5">
-          <Kbd>{props.shortcutLabel}</Kbd>
-        </KbdGroup>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          id={props.id}
+          variant="outline"
+          size="xs"
+          className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+          aria-label={props.ariaLabel}
+          disabled={props.disabled}
+          onMouseDown={(event) => {
+            event.preventDefault();
+          }}
+          onClick={props.onSubmit}
+        />
+      }
+      label={props.tooltip}
+    >
+      <span>{props.label}</span>
+      {/* SCIENT-FORK: the key sits level with the button's top and bottom gaps. */}
+      <KbdGroup className="pointer-events-none -me-1.5">
+        <Kbd>{props.shortcutLabel}</Kbd>
+      </KbdGroup>
+    </SharedTooltipTrigger>
   );
 }
 

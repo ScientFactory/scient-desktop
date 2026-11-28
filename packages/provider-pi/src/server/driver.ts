@@ -210,6 +210,7 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
             ? {}
             : { binaryPath: effectiveConfig.binaryPath }),
           env: effectiveEnvironment,
+          npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),

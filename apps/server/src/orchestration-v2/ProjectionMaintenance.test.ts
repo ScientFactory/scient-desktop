@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  MessageId,
   NodeId,
   PlanId,
   type OrchestrationV2AppThread,
@@ -9,6 +10,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -382,4 +384,376 @@ it.effect("keeps an anchor that a row appended during the pass borrows from", ()
       );
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+function messageUpdated(threadId: ThreadId, now: DateTime.Utc, text: string) {
+  return {
+    id: EventId.make(`event:purge:${threadId}:message`),
+    type: "message.updated",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: MessageId.make(`message:${threadId}`),
+      threadId,
+      runId: null,
+      nodeId: null,
+      role: "user",
+      text,
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+  } satisfies OrchestrationV2DomainEvent;
+}
+
+const writeThread = (thread: OrchestrationV2AppThread, now: DateTime.Utc) =>
+  Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+    Effect.gen(function* () {
+      yield* sink.write({
+        events: [{ ...threadCreated(thread, now), id: EventId.make(`event:purge:${thread.id}`) }],
+      });
+      yield* sink.write({ events: [messageUpdated(thread.id, now, `secret in ${thread.id}`)] });
+      yield* sink.write({
+        events: [itemEvent(thread.id, now, itemSpecs[0], 0, `event:purge:${thread.id}:item`)],
+      });
+    }),
+  );
+
+const deleteThread = (thread: OrchestrationV2AppThread, now: DateTime.Utc) =>
+  Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+    sink.write({
+      events: [
+        {
+          id: EventId.make(`event:purge:${thread.id}:deleted`),
+          type: "thread.deleted",
+          threadId: thread.id,
+          providerInstanceId,
+          occurredAt: now,
+          payload: { ...thread, deletedAt: now, updatedAt: now },
+        },
+      ],
+    }),
+  );
+
+const contentRowCount = (threadId: ThreadId) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    Effect.forEach(ProjectionMaintenance.DELETED_THREAD_CONTENT_TABLES, (table) =>
+      sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM ${sql(table)} WHERE thread_id = ${threadId}
+        `.pipe(Effect.map((rows) => rows[0]?.count ?? 0)),
+    ),
+  ).pipe(Effect.map((counts) => counts.reduce((sum, count) => sum + count, 0)));
+
+const searchMatches = (text: string) =>
+  Effect.flatMap(
+    SqlClient.SqlClient,
+    (sql) => sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_v2_message_search
+      WHERE orchestration_v2_message_search MATCH ${`"${text}"`}
+    `,
+  ).pipe(Effect.map((rows) => rows[0]?.count ?? 0));
+
+it.effect("a deleted thread keeps only its tombstone", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const deleted = makeThread(ThreadId.make("thread:purge-deleted"), now);
+    const live = makeThread(ThreadId.make("thread:purge-live"), now);
+    yield* writeThread(deleted, now);
+    yield* writeThread(live, now);
+    const liveProjection = yield* projections.getThreadProjection(live.id);
+    assert.equal(yield* searchMatches("secret in thread:purge-deleted"), 1);
+
+    yield* deleteThread(deleted, now);
+    assert.isAbove(yield* maintenance.purgeDeletedThread(deleted.id), 0);
+
+    assert.equal(yield* contentRowCount(deleted.id), 0);
+    assert.equal(yield* searchMatches("secret in thread:purge-deleted"), 0);
+    assert.deepEqual(yield* remainingEventIds(deleted.id), [
+      "event:purge:thread:purge-deleted",
+      "event:purge:thread:purge-deleted:deleted",
+    ]);
+    const tombstone = yield* Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ readonly deleted_at: string | null; readonly title: string }>`
+        SELECT deleted_at, title FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${deleted.id}
+      `,
+    );
+    assert.isNotNull(tombstone[0]?.deleted_at ?? null);
+    assert.equal(tombstone[0]?.title, ProjectionMaintenance.DELETED_THREAD_TITLE);
+    const leaked = yield* Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ readonly count: number }>`
+        SELECT
+          (SELECT COUNT(*) FROM orchestration_events
+            WHERE stream_id = ${deleted.id} AND payload_json LIKE ${`%${deleted.title}%`})
+          + (SELECT COUNT(*) FROM orchestration_v2_projection_threads
+            WHERE thread_id = ${deleted.id} AND payload_json LIKE ${`%${deleted.title}%`})
+          AS count
+      `,
+    );
+    assert.equal(leaked[0]?.count, 0);
+    assert.deepEqual(yield* projections.getThreadProjection(live.id), liveProjection);
+    assert.equal(yield* maintenance.purgeDeletedThread(deleted.id), 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a deleted run-fork source stays until its last live fork is deleted", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const source = makeThread(ThreadId.make("thread:purge-source"), now);
+    const fork: OrchestrationV2AppThread = {
+      ...makeThread(ThreadId.make("thread:purge-fork"), now),
+      forkedFrom: { type: "run", threadId: source.id, runId: RunId.make("run:purge-source") },
+    };
+    yield* writeThread(source, now);
+    yield* writeThread(fork, now);
+
+    yield* deleteThread(source, now);
+    assert.equal(yield* maintenance.purgeDeletedThread(source.id), 0);
+    assert.isAbove(yield* contentRowCount(source.id), 0);
+
+    yield* deleteThread(fork, now);
+    yield* maintenance.purgeDeletedThread(fork.id);
+    assert.equal(yield* contentRowCount(source.id), 0);
+    assert.equal(yield* contentRowCount(fork.id), 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// SCIENT-FORK:START — Scient forks and handoffs show their sources' rows by reference.
+it.effect("a deleted source a Scient fork shows stays until that fork is deleted", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const source = makeThread(ThreadId.make("thread:purge-scient-source"), now);
+    const fork = makeThread(ThreadId.make("thread:purge-scient-fork"), now);
+    yield* writeThread(source, now);
+    yield* writeThread(fork, now);
+    yield* sql`
+      INSERT INTO scient_fork_history
+        (thread_id, position, source_thread_id, source_item_id, item_type, message_id, turn_start, user_turn)
+      VALUES (${fork.id}, 0, ${source.id}, 'item:shown', 'user_message', NULL, 1, 1)
+    `;
+    yield* sql`
+      INSERT INTO scient_fork_frozen_items (thread_id, position, item_json, message_json)
+      VALUES (${fork.id}, 0, '{"text":"frozen secret"}', NULL)
+    `;
+
+    yield* deleteThread(source, now);
+    assert.equal(yield* maintenance.purgeDeletedThread(source.id), 0);
+    assert.isAbove(yield* contentRowCount(source.id), 0);
+
+    yield* deleteThread(fork, now);
+    yield* maintenance.purgeDeletedThread(fork.id);
+    assert.equal(yield* contentRowCount(source.id), 0);
+    assert.equal(yield* contentRowCount(fork.id), 0);
+    assert.deepStrictEqual(
+      yield* sql`SELECT thread_id FROM scient_fork_frozen_items WHERE thread_id = ${fork.id}`,
+      [],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a deleted thread a handoff reads by reference keeps its content", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const source = makeThread(ThreadId.make("thread:purge-handoff-source"), now);
+    yield* writeThread(source, now);
+    yield* sql`
+      INSERT INTO scient_handoff_history
+        (source_id, position, view_thread_id, source_thread_id, source_item_id, fork_position, run_status, body_id)
+      VALUES ('handoff-source:purge', 0, ${source.id}, ${source.id}, 'item:handed-off', NULL, NULL, NULL)
+    `;
+
+    yield* deleteThread(source, now);
+    assert.equal(yield* maintenance.purgeDeletedThread(source.id), 0);
+    assert.isAbove(yield* contentRowCount(source.id), 0);
+
+    yield* sql`UPDATE scient_handoff_history SET body_id = 'body:frozen' WHERE source_id = 'handoff-source:purge'`;
+    yield* maintenance.purgeDeletedThread(source.id);
+    assert.equal(yield* contentRowCount(source.id), 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a handoff range keeps its deleted fork view and the source that view shows", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const source = makeThread(ThreadId.make("thread:purge-range-source"), now);
+    const fork = makeThread(ThreadId.make("thread:purge-range-fork"), now);
+    yield* writeThread(source, now);
+    yield* writeThread(fork, now);
+    yield* sql`
+      INSERT INTO scient_fork_history
+        (thread_id, position, source_thread_id, source_item_id, item_type, message_id, turn_start, user_turn)
+      VALUES (${fork.id}, 0, ${source.id}, 'item:ranged', 'user_message', NULL, 1, 1)
+    `;
+    yield* sql`
+      INSERT INTO scient_fork_frozen_items (thread_id, position, item_json, message_json)
+      VALUES (${fork.id}, 0, '{"text":"frozen view"}', NULL)
+    `;
+    yield* sql`
+      INSERT INTO scient_handoff_history_ranges
+        (source_id, position, item_count, view_thread_id, fork_position)
+      VALUES ('handoff-source:range', 0, 1, ${fork.id}, 0)
+    `;
+
+    yield* deleteThread(fork, now);
+    yield* deleteThread(source, now);
+    assert.equal(yield* maintenance.purgeDeletedThread(fork.id), 0);
+    assert.equal(yield* maintenance.purgeDeletedThread(source.id), 0);
+    assert.isAbove(yield* contentRowCount(source.id), 0);
+    assert.equal(
+      (yield* sql`SELECT thread_id FROM scient_fork_frozen_items WHERE thread_id = ${fork.id}`)
+        .length,
+      1,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+// SCIENT-FORK:END
+
+it.effect("the maintenance pass purges threads deleted before purging existed", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const deleted = makeThread(ThreadId.make("thread:purge-backfill"), now);
+    // Renamed to the placeholder before deletion; its first title is still on record.
+    const renamed = makeThread(ThreadId.make("thread:purge-renamed"), now);
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+      sink.write({
+        events: [{ ...threadCreated(renamed, now), id: EventId.make("event:purge:renamed") }],
+      }),
+    );
+    yield* deleteThread({ ...renamed, title: ProjectionMaintenance.DELETED_THREAD_TITLE }, now);
+    yield* writeThread(deleted, now);
+    yield* deleteThread(deleted, now);
+    // A late transcript import leaves a content event as the stream head.
+    const sink = yield* EventSink.EventSinkV2;
+    yield* sink.write({
+      events: [itemEvent(deleted.id, now, itemSpecs[1], 0, "event:purge:late-item")],
+    });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_effect_outbox (
+        effect_id, command_id, thread_id, effect_type, payload_json, status,
+        available_at, created_at, updated_at
+      ) VALUES (
+        'effect:purge-backfill', 'command:purge-backfill', ${deleted.id}, 'terminal.cleanup',
+        '{"type":"terminal.cleanup"}', 'pending', '2026-11-01T00:00:00.000Z',
+        '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+      )
+    `;
+
+    // An earlier effect still reads the thread, so the pass waits for it.
+    yield* maintenance.pruneEventStore();
+    assert.isAbove(yield* contentRowCount(deleted.id), 0);
+    yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+
+    assert.isAbove((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
+    assert.equal(yield* contentRowCount(deleted.id), 0);
+    assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+    const stream = yield* EventStore.EventStoreV2.pipe(
+      Effect.flatMap((store) => store.read({ threadId: deleted.id }).pipe(Stream.runCollect)),
+    );
+    assert.deepEqual(
+      Array.from(stream, (stored) => stored.event.type),
+      ["thread.created", "thread.deleted", "thread.deleted"],
+    );
+    const leaked = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_events
+      WHERE stream_id = ${deleted.id}
+        AND (payload_json LIKE '%reasoning:0%' OR payload_json LIKE ${`%${deleted.title}%`})
+    `;
+    assert.equal(leaked[0]?.count, 0);
+    const renamedLeaks = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_events
+      WHERE stream_id = ${renamed.id} AND payload_json LIKE ${`%${renamed.title}%`}
+    `;
+    assert.equal(renamedLeaks[0]?.count, 0);
+    assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a deleted thread's leftover settled request is purged", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const thread = {
+      ...makeThread(ThreadId.make("thread:purge-placeholder"), now),
+      title: ProjectionMaintenance.DELETED_THREAD_TITLE,
+    };
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+      sink.write({
+        events: [{ ...threadCreated(thread, now), id: EventId.make("event:purge:placeholder") }],
+      }),
+    );
+    // A rename in between left its private title in a settled request.
+    yield* sql`
+      INSERT INTO orchestration_v2_effect_outbox (
+        effect_id, command_id, thread_id, effect_type, payload_json, status,
+        available_at, created_at, updated_at
+      ) VALUES (
+        'effect:purge-placeholder', 'command:purge-placeholder', ${thread.id},
+        'provider-session.apply-thread-title',
+        '{"type":"provider-session.apply-thread-title","title":"private rename"}', 'succeeded',
+        '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+      )
+    `;
+    yield* deleteThread(thread, now);
+
+    // The sweep alone finds the leftover request too.
+    yield* maintenance.pruneEventStore();
+    assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+
+    // A pass interrupted after the content rows went still leaves a content event.
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+      sink.write({ events: [itemEvent(thread.id, now, itemSpecs[0], 0, "event:purge:stray")] }),
+    );
+    yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${thread.id}`;
+    yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${thread.id}`;
+    yield* maintenance.pruneEventStore();
+    // It is the stream head, so its row stays as the tombstone.
+    assert.deepEqual(
+      yield* sql`SELECT event_type FROM orchestration_events WHERE event_id = 'event:purge:stray'`,
+      [{ event_type: "thread.deleted" }],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("an interrupted purge leaves a stream that still decodes", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const thread = makeThread(ThreadId.make("thread:purge-interrupted"), now);
+    yield* sink.write({ events: [{ ...threadCreated(thread, now), id: EventId.make("event:i") }] });
+    yield* sink.write({ events: subagentEvents(thread.id, now, 0, "anchor") });
+    yield* deleteThread(thread, now);
+    // A late update borrows the anchor's prompt and becomes the stream head.
+    yield* sink.write({ events: subagentEvents(thread.id, now, 0, "borrower") });
+
+    const failAfterEvents: Statement.Transformer = (statement) =>
+      statement.compile()[0].includes("DELETE FROM orchestration_v2_effect_outbox")
+        ? Effect.die("interrupted")
+        : Effect.succeed(statement);
+    const exit = yield* maintenance
+      .purgeDeletedThread(thread.id)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, failAfterEvents), Effect.exit);
+    assert.isTrue(exit._tag === "Failure");
+
+    const stream = yield* eventStore.read({ threadId: thread.id }).pipe(Stream.runCollect);
+    assert.equal(Array.from(stream).at(-1)?.event.type, "thread.deleted");
+  }).pipe(Effect.provide(layerTest)),
 );

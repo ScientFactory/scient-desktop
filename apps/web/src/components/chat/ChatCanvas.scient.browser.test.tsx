@@ -35,6 +35,7 @@ function find(_fixture: _Fixture, open: boolean, previewX = 1548) {
     >
       <ChatCanvas
         store={_fixture.store}
+        rightPanelOpen={false}
         threadRef={null}
         preview={{
           key: "browser:one",

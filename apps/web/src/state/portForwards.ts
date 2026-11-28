@@ -140,22 +140,37 @@ export const findPortForward = (
     (forward) => forward.environmentId === environmentId && forward.remotePort === remotePort,
   );
 
+// SCIENT-FORK:START — callers may open the original URL on a confirmed same-machine route.
+export class PortForwardSameMachineError extends Schema.TaggedError<PortForwardSameMachineError>()(
+  "PortForwardSameMachineError",
+  { port: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return m(
+      msg("This environment runs on this computer, so localhost:{port} already reaches it.", {
+        port: this.port,
+      }),
+    );
+  }
+}
+// SCIENT-FORK:END
+
 export function forwardPort(environmentId: EnvironmentId, remotePort: number) {
   const bridge = previewBridge();
   if (!bridge) return Promise.reject(new Error(m(msg("Port forwarding needs the desktop app."))));
   return bridge.forwardPort(environmentId, remotePort).catch((error: unknown) => {
     // Electron flattens main-process errors into "Error invoking remote method '…': Tag: text".
     const raw = error instanceof Error ? error.message : String(error);
+    // SCIENT-FORK:START — preserve the confirmed locality after Electron serializes the error.
+    const ipcError = raw.replace(/^Error invoking remote method '[^']*':\s*/u, "");
+    if (ipcError.startsWith("LoopbackTunnelSameMachineError:")) {
+      throw new PortForwardSameMachineError({ port: remotePort, cause: error });
+    }
+    // SCIENT-FORK:END
     throw new Error(
-      raw.includes("LoopbackTunnelSameMachineError")
-        ? m(
-            msg("This environment runs on this computer, so localhost:{port} already reaches it.", {
-              port: remotePort,
-            }),
-          )
-        : raw.includes("LoopbackTunnelUnavailableError")
-          ? m(msg("This environment can't be reached right now. Try again once it reconnects."))
-          : raw.replace(/^Error invoking remote method '[^']*':\s*(\w+Error:\s*)?/u, ""),
+      ipcError.startsWith("LoopbackTunnelUnavailableError:")
+        ? m(msg("This environment can't be reached right now. Try again once it reconnects."))
+        : ipcError.replace(/^\w+Error:\s*/u, ""),
       { cause: error },
     );
   });

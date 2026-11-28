@@ -464,6 +464,16 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Resize or hide the sidebar
+
+On web and desktop, drag the sidebar's right edge to resize it. Continue left past its minimum
+width to preview hiding it, then release to keep it hidden. Dragging back right before releasing
+shows it again and continues resizing.
+
+Move the mouse to the middle of the left window edge to find a handle. Drag it right or click
+it to show the sidebar again. Dragging back to the edge before releasing hides the preview
+and leaves it hidden. The sidebar toggle and shortcut still keep it open.
+
 ## Panel motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Under
@@ -498,7 +508,9 @@ connected environments by title, branch, pull request, or project. Threads you o
 recently rank higher, and for three weeks the thread you last picked for a query ranks higher when
 you type that query again. Threads whose messages contain all your words appear below, under **In
 messages**, and open at the matching message. Message search needs at least one word of three or
-more letters, or two for Chinese, Japanese, and Korean. On mobile, the thread list search also
+more letters, or two for Chinese, Japanese, and Korean. Put a search in double quotes, such as
+`"missing position files"`, to find only titles and messages that hold those words together,
+exactly as typed. On mobile, the thread list search also
 lists message matches and opens them at the matching message; on an iPad with a keyboard, `Cmd+K`
 opens the same palette.
 

@@ -25,6 +25,9 @@ import {
   DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
+  // SCIENT-FORK:START — tab hover-card thumbnail.
+  DesktopPreviewTabThumbnailInputSchema,
+  // SCIENT-FORK:END
   DesktopPreviewTunnelAccessResolutionInputSchema,
   DesktopPortForwardInputSchema,
   DesktopPortForwardSchema,
@@ -42,6 +45,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
@@ -371,6 +375,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }) {
     const manager = yield* PreviewManager.PreviewManager;
     const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
     const session = yield* manager.getBrowserSession(scope, persistent, namespace);
@@ -379,7 +384,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
+      preloadUrl: NodeURL.pathToFileURL(environment.previewPickPreloadPath).href,
     };
   }),
 });
@@ -521,6 +526,19 @@ export const captureScreenshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// SCIENT-FORK:START — tab hover-card thumbnail. Any failure is simply "no
+// thumbnail": the card falls back to title and site, so nothing to surface.
+export const captureTabThumbnail = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_TAB_THUMBNAIL_CHANNEL,
+  payload: DesktopPreviewTabThumbnailInputSchema,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.preview.captureTabThumbnail")(function* ({ tabId, url }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.captureTabThumbnail(tabId, url).pipe(Effect.orElseSucceed(() => null));
+  }),
+});
+// SCIENT-FORK:END
+
 const exportPdf = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
@@ -607,6 +625,9 @@ export const methods = [
   pickElement,
   cancelPickElement,
   captureScreenshot,
+  // SCIENT-FORK:START — tab hover-card thumbnail.
+  captureTabThumbnail,
+  // SCIENT-FORK:END
   exportPdf,
   renderHtmlPdf,
   revealArtifact,

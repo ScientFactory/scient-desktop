@@ -22,11 +22,13 @@ const CONSEQUENCES = [
   },
 ];
 // A quarantined failure in `job` is accepted only beside a successful `witness` job whose `step`
-// passed. The WSL payload job runs after the installer job, so a waived late installer failure
-// must not hide a payload that was never exercised.
+// passed, so a waived late installer failure cannot hide an unexercised WSL payload. A run that
+// skipped the `payload` step and the witness job (no WSL build: pull requests, queue, main) has
+// nothing to exercise.
 const WITNESSES = [
   {
     job: "windows_packaging / Windows packaging / Installer and native runtime",
+    payload: "Record the uploaded WSL payload",
     witness: "windows_packaging / Windows packaging / Packaged WSL Linux runtime",
     step: "Exercise the exact Linux payload from the Windows package",
   },
@@ -34,12 +36,22 @@ const WITNESSES = [
 // Steps that may be skipped after a quarantined failure: GitHub's post steps, cache saves and
 // artifact uploads. Any other skipped step after it is a check that never ran, so it blocks.
 const AFTER_FAILURE = /^(Post |Save |Upload |Run actions\/(upload-artifact|cache)@)/;
-// Steps whose `if` starts with `!cancelled()` or `always()` in ci.yml: they run after an earlier
-// failure, so when one is skipped its own condition (such as its matrix part) was false.
+// Steps whose `if` starts with `!cancelled()` or `always()` in ci.yml or windows-packaging.yml:
+// they run after an earlier failure, so when one is skipped its own condition (such as its matrix
+// part, or a run without the WSL installer) was false.
 const RUN_DESPITE_FAILURE = [
   "Verify SVG and PNG exports in Chromium",
   "Explain Google's sign-in refusal in Electron's browser",
   "Publish transfer budget report",
+  "Wait for the Linux prerequisites",
+  "Download the Linux prerequisites",
+  "Build and validate the full WSL installer",
+  "Collect the packaged WSL runtime",
+  "Write the WSL install script for the qualification",
+  "Record the uploaded WSL payload",
+  "Install the full WSL installer into a fresh folder",
+  "Launch the installed full WSL app",
+  "Require the full WSL app to accept its server bytecode",
 ];
 const GATE = "Check";
 // ci-check.cjs ADVISORY jobs: evidence and upkeep beside the gate, which never block.
@@ -362,9 +374,13 @@ function evaluate({ jobs, logs, register, now = new Date() }) {
     )
       blocked.push(`${job.name}: not only a consequence of quarantined failures`);
   }
-  for (const { job: name, witness, step: witnessStep } of WITNESSES) {
+  for (const { job: name, payload, witness, step: witnessStep } of WITNESSES) {
     if (!explained.has(name)) continue;
     const proof = jobs.find((job) => job.name === witness);
+    const uploaded = jobs
+      .find((job) => job.name === name)
+      ?.steps?.some((step) => step.name === payload && step.conclusion !== "skipped");
+    if (proof?.conclusion === "skipped" && !uploaded) continue;
     const ran = proof?.steps?.find((step) => step.name === witnessStep);
     if (proof?.conclusion !== "success" || ran?.conclusion !== "success")
       blocked.push(`${name}: quarantined only beside a passing ${witness} › ${witnessStep}`);

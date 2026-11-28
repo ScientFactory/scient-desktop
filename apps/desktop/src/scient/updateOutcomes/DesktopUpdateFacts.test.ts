@@ -48,10 +48,10 @@ function journalLayer(home: string) {
   );
 }
 
-/** One desktop process: its journal service, with analytics on or off for that launch. */
+/** One desktop process: its journal service, with analytics on, off, or this launch environment. */
 function inLaunch<A>(
   home: string,
-  analytics: "true" | "false",
+  analytics: "true" | "false" | Readonly<Record<string, string>>,
   program: (
     facts: DesktopUpdateFacts.DesktopUpdateFacts["Service"],
   ) => Effect.Effect<A, never, Scope.Scope>,
@@ -62,7 +62,10 @@ function inLaunch<A>(
     }),
   ).pipe(
     Effect.provide(journalLayer(home)),
-    Effect.provideService(HostProcess.Environment, { SCIENT_ANALYTICS_ENABLED: analytics }),
+    Effect.provideService(
+      HostProcess.Environment,
+      typeof analytics === "string" ? { SCIENT_ANALYTICS_ENABLED: analytics } : analytics,
+    ),
   );
 }
 
@@ -188,6 +191,21 @@ describe("DesktopUpdateFacts", () => {
         offered.map((fact) => fact.name),
         ["app.update.summary"],
       );
+    }),
+  );
+
+  it.effect("treats a launch with DO_NOT_TRACK as off, even with analytics explicitly on", () =>
+    Effect.gen(function* () {
+      const home = temporaryHome();
+      yield* inLaunch(home, "true", (facts) =>
+        facts.record("app.update.outcome", { step: "apply", outcome: "not-applied" }),
+      );
+      assert.isTrue(NodeFS.existsSync(journalFile(home)));
+
+      yield* inLaunch(home, { SCIENT_ANALYTICS_ENABLED: "true", DO_NOT_TRACK: "1" }, (facts) =>
+        facts.record("app.update.outcome", { step: "install", outcome: "handoff-attempted" }),
+      );
+      assert.isFalse(NodeFS.existsSync(journalFile(home)));
     }),
   );
 

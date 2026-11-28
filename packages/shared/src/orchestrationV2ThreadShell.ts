@@ -73,6 +73,14 @@ export function threadShellFromProjection(
     );
   const latestUserAuthoredMessageAt =
     userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null;
+  const latestCompletedRunRequestedAt = runs.reduce<DateTime.Utc | null>(
+    (latest, run) =>
+      run.status === "completed" &&
+      (latest === null || DateTime.isGreaterThan(run.requestedAt, latest))
+        ? run.requestedAt
+        : latest,
+    null,
+  );
   const pendingRuntimeRequest =
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
@@ -88,7 +96,12 @@ export function threadShellFromProjection(
             .filter(
               (item) =>
                 item.status === "waiting" &&
-                waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+                waitsOnUser(
+                  item,
+                  liveRunIds,
+                  latestUserAuthoredMessageAt,
+                  latestCompletedRunRequestedAt,
+                ),
             )
             .sort(
               (left, right) =>
@@ -434,8 +447,11 @@ const waitsOnUser = (
   item: OrchestrationV2ThreadProjection["turnItems"][number],
   liveRunIds: ReadonlySet<RunId>,
   latestUserAuthoredMessageAt: DateTime.Utc | null,
+  latestCompletedRunRequestedAt: DateTime.Utc | null,
 ) =>
-  (item.type === "link_request" && linkCardStillAsks(item, latestUserAuthoredMessageAt)) ||
+  (item.type === "link_request" &&
+    linkCardStillAsks(item, latestUserAuthoredMessageAt) &&
+    linkCardStillAsks(item, latestCompletedRunRequestedAt)) ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
 export const linkCardStillAsks = (

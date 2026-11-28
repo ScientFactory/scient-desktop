@@ -1,3 +1,4 @@
+import { RecordingSessionId } from "./recordingSession.ts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -158,7 +159,7 @@ export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 export const PastedTextAttachmentSource = Schema.TaggedStruct("pasted-text", {});
 export type PastedTextAttachmentSource = typeof PastedTextAttachmentSource.Type;
 
-export const ChatFileAttachmentSource = Schema.Union([
+export const AgentFileAttachmentSource = Schema.Union([
   PastedTextAttachmentSource,
   Schema.TaggedStruct("recording-transcript", {
     name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
@@ -166,6 +167,16 @@ export const ChatFileAttachmentSource = Schema.Union([
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
     start: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
     end: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+]);
+
+export const ChatFileAttachmentSource = Schema.Union([
+  ...AgentFileAttachmentSource.members,
+  Schema.TaggedStruct("session", {
+    sessionId: RecordingSessionId,
+    contextRevision: RecordingSessionId,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   }),
 ]);
 

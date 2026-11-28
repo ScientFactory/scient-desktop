@@ -7,7 +7,15 @@ disabled. When available, analytics is on for everyone at `diagnostic` (usage,
 reliability and delivery counters), like T3: there is no in-app switch, and a
 preference saved by an older build no longer applies.
 Native and WSL backend configuration receive the same bounded release metadata.
-An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch.
+An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch. `DO_NOT_TRACK`
+(T3's `isDoNotTrackSet`) turns analytics off even over an explicit
+`SCIENT_ANALYTICS_ENABLED=true`, in the desktop's backend metadata, its update facts and
+the server itself (so headless launches too). On a recognized CI runner (T3's
+`isCiEnvironment`) a packaged build stays off unless explicitly enabled. Each process
+decides once when it starts: update facts from the desktop's launch environment, a
+backend from the environment the desktop starts it with (which can already hold a
+`DO_NOT_TRACK` that T3's shell discovery imported). Nothing waits for or follows later
+shell-profile changes.
 For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can turn analytics on
 in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
@@ -923,8 +931,9 @@ Installs run with every backend stopped and an apply outcome is known before any
 so both events wait in a persisted journal in the desktop process
 ([`DesktopUpdateFacts.ts`](../../apps/desktop/src/scient/updateOutcomes/DesktopUpdateFacts.ts):
 at most 64 facts and 14 days; drops are counted into the next summary). It records nothing while
-analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, or a managed
-policy without telemetry) and deletes what an earlier launch kept. Facts travel on the telemetry
+analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, `DO_NOT_TRACK`, a
+CI runner without explicit opt-in, or a managed policy without telemetry) and deletes what an
+earlier launch kept. Facts travel on the telemetry
 pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else the first ready
 one; two backends have two installation identities). That backend's `ScientRecordedAnalyticsIngest`
 queues them with their own event ids and times, through the normal shape checks, and the desktop
@@ -936,6 +945,46 @@ primary started without the telemetry pipes (WSL-only) takes them over authentic
 pipes and only to the desktop's own bootstrap session), polled every 30 seconds
 while facts are pending; its response lists the ids the outbox holds, as the pipe's acknowledgement
 does.
+
+## Desktop startup timing
+
+`app.startup.timing` says how long a launch took to show a usable workspace, so slow first opens
+(for example on Windows) show up in real users' data. It is an Essential event, fully closed like
+the update events, recorded once per desktop process by
+[`DesktopStartupTiming.ts`](../../apps/desktop/src/scient/startupTiming/DesktopStartupTiming.ts)
+into the update-facts journal above, so it follows the same gate (nothing is journaled while
+analytics is off for that launch) and the same delivery to one backend.
+
+- `uiReadyBucket`: from the desktop process's start to the first time a renderer reports the
+  existing workspace readiness (local primary connected, settings hydrated, live snapshot, not
+  navigating; the same signal an update restart's measurement ends on) on a chat, the no-project
+  screen or Getting Started, where a first launch opens. Getting Started reports startup only: it
+  never fetches an update restart's token, which the restored chat or no-project screen spends.
+  The desktop takes the restart's ready time before startup timing writes its journal.
+- `backendReadyBucket` and `windowShownBucket`: the primary backend's first readiness and the
+  first main window shown; a stage the launch never reached is absent.
+- `launchKind`: `first-after-install`, `first-after-update`, `later` or `unknown`, from the version
+  startup recovery records in `desktop-last-started-version` once a launch's primary backend is
+  ready (whether or not analytics is on), read before this launch overwrites it. With no record and
+  no earlier state the launch is first after install. With no record but an existing local
+  environment id or desktop settings, the kind is `unknown`: that state comes from a build older
+  than the record or from a first launch that stopped before its backend was ready (the server
+  writes its environment id while starting), and nothing local tells them apart.
+- `platform`, `architecture` and the envelope's `appVersion`/`buildChannel`, as on
+  `app.session.started`, and `projectRestored` (a project opened rather than the no-project screen).
+
+Times reach the journal, and leave the computer, only as buckets: `under-2s`, `2-4s`, `4-8s`,
+`8-15s`, `15-30s`, `30-60s`, `over-60s`. The desktop buckets them (`startupBucket` in
+`DesktopStartupTiming.ts`) and the contract accepts only those values. Steps roughly double, so each
+is equally coarse relative to the time; a warm launch lands under 2 s, while a first open that the
+operating system scans or reads from a cold disk can take a minute, so the slow end keeps its own
+steps. The event is sent with its time floored to the hour (`exportedOccurredAtMs` in the contract):
+it shares a session with `app.session.started`, whose exact time would otherwise give a
+millisecond interval. A launch that never reaches readiness (quit or crashed first, a remote-only
+primary, or a first screen such as Settings) records nothing, so this event does not count
+launches. Neither does `app.session.started`: it marks each backend analytics session
+(`ScientAnalytics.ts`), so a desktop process that exits before its backend starts analytics adds
+none, and a backend restart within one launch adds another.
 
 ## Privacy invariants
 

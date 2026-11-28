@@ -25,6 +25,21 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
     electronPlatformName !== process.platform ||
     (targetArch !== process.arch && !runsWithRosetta)
   ) {
+    // SCIENT-FORK:START — release Windows packages are built on Linux. A Windows job generates
+    // bytecode from this build's staged app; install it only for the same engine and modules.
+    if (process.env.SCIENT_NATIVE_SERVER_COMPILE_CACHE) {
+      // An ES module with top-level await, which CommonJS can only import asynchronously.
+      const { installNativeServerCompileCache } = await import("./native-server-compile-cache.mjs");
+      await installNativeServerCompileCache({
+        appOutDir,
+        platform: electronPlatformName,
+        arch: targetArch,
+        electronVersion: packager.info.framework.version,
+        source: process.env.SCIENT_NATIVE_SERVER_COMPILE_CACHE,
+      });
+      return;
+    }
+    // SCIENT-FORK:END
     console.log(
       `[server-compile-cache] Skipping unexecutable target ${electronPlatformName}/${targetArch}`,
     );

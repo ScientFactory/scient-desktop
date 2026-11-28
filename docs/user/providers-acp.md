@@ -126,8 +126,8 @@ so use its sandbox and permission controls when that matters.
 
 When a registry agent asks for approval, Scient answers by the thread's
 [permission mode](./permission-modes.md): **Supervised** shows the request in the conversation,
-**Auto-accept edits** approves edits and shows the rest, and **Auto** and **Full access** approve
-automatically. File reads and searches never wait for approval.
+**Auto-accept edits** approves edits inside the thread's folders and shows the rest, and **Auto**
+and **Full access** approve automatically. File reads and searches never wait for approval.
 
 Devin runs its commands through Scient's terminals, and those commands follow the thread's
 permission mode. For other agents, Scient shows the command, output, and exit status the agent

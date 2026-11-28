@@ -86,7 +86,14 @@ page's wider local history stays on your computer.
 ## Turning it off
 
 There is no setting for this in the app. To stop sending usage data, set
-`SCIENT_ANALYTICS_ENABLED=false` in the environment before starting Scient.
+`SCIENT_ANALYTICS_ENABLED=false` or `DO_NOT_TRACK=1` in the environment Scient
+is launched with. `DO_NOT_TRACK=1` wins over `SCIENT_ANALYTICS_ENABLED=true`.
+Scient reads both only when it starts: a value set afterwards, or one that only
+your shell profile (for example `~/.zshrc`) sets while you open Scient from the
+Dock, Finder or Start menu, is not guaranteed to apply to that launch.
+
+On a CI runner a packaged desktop build sends usage data only if you launch it
+with `SCIENT_ANALYTICS_ENABLED=true` and leave Do Not Track off.
 
 An administrator can turn it off for every user on a machine with a
 [managed policy](./managed-policy.md#other-capabilities).

@@ -5,17 +5,24 @@ import {
   EnvironmentId,
   ThreadId,
   type DataProfileEvent,
+  type DataTableQuery,
   type DataViewMaterializeInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { PreviewPositionKey, previewPositionKey } from "~/components/files/previewPosition";
+import { act, render } from "../../../test/render";
 import type { ProfileTarget } from "./dataTableState";
 
 const { exported, sources } = vi.hoisted(() => ({
-  sources: { revision: "view-revision-1", pending: null as Promise<string> | null },
+  sources: {
+    revision: "view-revision-1",
+    fileRevision: "r1",
+    assetWaiting: false,
+    pending: null as Promise<string> | null,
+  },
   exported: vi.fn<
     (request: {
       input: DataViewMaterializeInput;
@@ -30,28 +37,35 @@ const { exported, sources } = vi.hoisted(() => ({
 }));
 
 vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Success", fileRevision: "r1" }),
+  useAssetUrlState: () => ({
+    _tag: "Success",
+    fileRevision: sources.fileRevision,
+    waiting: sources.assetWaiting,
+  }),
 }));
 
 vi.mock("~/state/use-atom-query-runner", () => ({
   useAtomQueryRunner:
     (family: string | undefined) =>
-    async ({ input }: { input: { path: string; revision?: string } }) => {
+    async ({ input }: { input: { path: string; revision?: string; query?: DataTableQuery } }) => {
       if (family === "view-revision")
         return { _tag: "Success", value: await (sources.pending ?? sources.revision) };
-      const rowCount = input.path.endsWith(".sql") ? 4 : 10;
+      const largeCsv = input.path.endsWith("/measurements.csv");
+      const rowCount = input.path.endsWith(".sql") ? 4 : largeCsv ? 1_000_000 : 10;
+      const matchCount = largeCsv && input.query?.search ? rowCount / 10 : rowCount;
+      const { offset = 0, limit = rowCount } = input.query ?? {};
       return {
         _tag: "Success",
         value: {
           columns: [{ name: "score", type: "number", label: "double" }],
           columnCount: 1,
           rowCount,
-          matchCount: rowCount,
+          matchCount,
           truncated: false,
-          offset: 0,
+          offset,
           sheets: [],
-          rows: Array.from({ length: rowCount }, (_, index) => ({
-            label: String(index + 1),
+          rows: Array.from({ length: Math.min(limit, matchCount - offset) }, (_, index) => ({
+            label: String(offset + index + 1),
             cells: [input.revision === "view-revision-3" ? "0.77" : "0.95"],
           })),
         },
@@ -151,6 +165,7 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
 
     exported.mockClear();
     sources.revision = "view-revision-1";
+    sources.fileRevision = "r1";
     sources.pending = null;
     const showSql = vi.fn();
     const open = vi.fn();
@@ -321,3 +336,83 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
     await expect.element(page.getByRole("menuitem", { name: "Save as view…" })).toBeEnabled();
   },
 );
+
+it("restores the last CSV rows after switching previews within the same file scope and revision", async () => {
+  sources.fileRevision = "csv-r1";
+  sources.assetWaiting = false;
+  const environmentId = EnvironmentId.make("csv-environment");
+  const threadId = ThreadId.make("csv-thread");
+  const cwd = "/project";
+  const path = "measurements.csv";
+  const onOpenPath = vi.fn();
+  const table = (thread = threadId, reloadKey = "0") => (
+    <div style={{ height: 384, width: 384, display: "flex", flexDirection: "column" }}>
+      <PreviewPositionKey value={previewPositionKey(environmentId, thread, cwd, path)}>
+        <DataFileTable
+          environmentId={environmentId}
+          absolutePath={`${cwd}/${path}`}
+          name={path}
+          threadId={thread}
+          workspace={{ cwd, path, onOpenPath }}
+          refreshToken={sources.fileRevision}
+          reloadKey={reloadKey}
+        />
+      </PreviewPositionKey>
+    </div>
+  );
+  const documentPreview = () => <p>Document preview</p>;
+  await using screen = await render(
+    table(),
+    { router: false }, // This fixture stays inside the Files surface.
+  );
+  const grid = screen.getByRole("grid", { name: path });
+  const row = (number: string) => grid.getByRole("rowheader", { name: number, exact: true });
+  const scrollToBottom = () =>
+    act(() => {
+      const node = grid.element();
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll"));
+    });
+  await expect.element(row("1")).toBeVisible();
+
+  sources.assetWaiting = true;
+  await screen.rerender(table());
+  await scrollToBottom();
+  await expect.element(row("1000000")).toBeVisible();
+  await screen.rerender(documentPreview());
+  await expect.element(grid).not.toBeInTheDocument();
+  sources.assetWaiting = false;
+  await screen.rerender(table(ThreadId.make("another-thread")));
+  await expect.element(row("1")).toBeVisible();
+
+  await screen.rerender(documentPreview());
+  // Reloading the other preview changed the counter. Recheck the unchanged file before restoring.
+  sources.assetWaiting = true;
+  await screen.rerender(table(threadId, "1"));
+  await expect.element(row("1")).toBeVisible();
+  sources.assetWaiting = false;
+  await screen.rerender(table(threadId, "1"));
+  await expect.element(row("1000000")).toBeVisible();
+
+  await screen.getByRole("searchbox").fill("matching");
+  await expect.element(grid).toHaveAttribute("aria-rowcount", "100001");
+  await expect.element(row("1")).toBeVisible();
+  await scrollToBottom();
+  await expect.element(row("100000")).toBeVisible();
+  await screen.rerender(documentPreview());
+  await screen.rerender(table());
+  await expect.element(row("1")).toBeVisible();
+
+  await scrollToBottom();
+  await expect.element(row("1000000")).toBeVisible();
+  await screen.rerender(documentPreview());
+  sources.fileRevision = "csv-r2";
+  await screen.rerender(table());
+  await expect.element(row("1")).toBeVisible();
+
+  await scrollToBottom();
+  await expect.element(row("1000000")).toBeVisible();
+  sources.fileRevision = "csv-r3";
+  await screen.rerender(table());
+  await expect.element(row("1000000")).toBeVisible();
+});

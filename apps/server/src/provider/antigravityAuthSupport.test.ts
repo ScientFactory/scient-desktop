@@ -105,7 +105,7 @@ describe("Antigravity process environment", () => {
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
         ANTIGRAVITY_HARNESS_PATH: "/release/harness",
-        AGY_CLI_DISABLE_AUTO_UPDATE: "1",
+        AGY_CLI_DISABLE_AUTO_UPDATE: "true",
         BROWSER: profile.browserCommand,
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",

@@ -76,6 +76,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1538,6 +1539,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
+          forgetLoadedProviderThread: () => Effect.void,
           get: () =>
             Effect.succeed(
               input.previousTurn?.liveSession === false
@@ -1653,6 +1655,7 @@ function layerStartEffectWorker(
         // SCIENT-FORK: the executor also runs Scient's cleanup and fork effects.
         Layer.mock(ResourceCleanup.ResourceCleanupService)({}),
         Layer.mock(ConversationForkService)({}),
+        Layer.mock(ProjectionMaintenance.ProjectionMaintenanceV2)({}),
         ServerConfig.layerTest(process.cwd(), { prefix: "start-effect-worker-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -3690,9 +3693,14 @@ effectIt.effect(
       // The typed store failure stays retryable until the worker's final attempt.
       expect(error._tag).toBe("ProviderTurnStartError");
       expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
-      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
-      expect(harness.events).toEqual([]);
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      // The failed native owner is retired; no run or handoff transition was committed.
+      expect(harness.events).toHaveLength(1);
+      expect(harness.events[0]).toMatchObject({
+        type: "provider-thread.updated",
+        payload: { status: "error" },
+      });
     }),
 );
 
@@ -3826,6 +3834,7 @@ effectIt.effect("a stale outbox start cannot execute the newer retry attempt", (
           Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(ConversationForkService)({}),
+          Layer.mock(ProjectionMaintenance.ProjectionMaintenanceV2)({}),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getConversationFork: () => Effect.succeed(null),
           }),

@@ -27,10 +27,13 @@ const state = vi.hoisted(() => ({
   openFile: vi.fn(),
   userActionRevisions: new Map<string, number>(),
   openExternal: vi.fn(),
+  forwardPort: vi.fn(),
+  forwardLocality: "remote" as "remote" | "pending",
   copy: vi.fn(),
   // SCIENT-FORK:START
   toast: vi.fn(),
   // SCIENT-FORK:END
+  download: vi.fn(),
   pullRequests: [] as ThreadPullRequestLink[],
 }));
 
@@ -102,7 +105,31 @@ vi.mock(import("../localApi"), async (original) => ({
       shell: { openExternal: state.openExternal },
     }) as never,
 }));
+vi.mock(import("../hooks/useFileMetadata"), async (original) => ({
+  ...(await original()),
+  useFileMetadata: ((_id: unknown, path: string) =>
+    path.includes("user.ts")
+      ? null
+      : { kind: path.includes("src") ? "directory" : "file" }) as never,
+}));
+vi.mock(import("./files/useFileDownload"), () => ({ useFileDownload: () => state.download }));
 vi.mock(import("../env"), async (original) => ({ ...(await original()), isElectron: true }));
+// Desktop can forward this environment's ports: it runs on another machine.
+vi.mock(import("../state/portForwards"), async (original) => ({
+  ...(await original()),
+  canForwardPorts: () => true,
+  useForwardLocality: () => state.forwardLocality,
+  usePortForwards: () => [],
+  forwardPort: state.forwardPort,
+}));
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironment: (() => ({
+    connection: { phase: "connected" },
+    entry: { target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" } },
+    serverConfig: null,
+  })) as never,
+}));
 vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
@@ -114,6 +141,7 @@ vi.mock(import("./ui/toast"), async (original) => ({
   toastManager: { ...(await original()).toastManager, add: state.toast },
 }));
 
+import { PortForwardSameMachineError } from "../state/portForwards";
 import ChatMarkdown from "./ChatMarkdown";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 
@@ -158,7 +186,14 @@ function setup() {
     state.userActionRevisions.set(key, (state.userActionRevisions.get(key) ?? 0) + 1);
   });
   state.openExternal.mockReset().mockResolvedValue(undefined);
+  state.forwardLocality = "remote";
+  state.forwardPort.mockReset().mockImplementation(async (environmentId, remotePort) => ({
+    environmentId,
+    remotePort,
+    localPort: 45000,
+  }));
   state.copy.mockReset().mockResolvedValue(undefined);
+  state.download.mockReset();
   const { openFile, getUserActionRevision } = useRightPanelStore.getState();
   useRightPanelStore.setState({
     openFile: state.openFile,
@@ -211,16 +246,31 @@ it("removes host actions after revocation while keeping file preview and copying
   using _setup = setup();
   await using screen = await renderMarkdown("[Readme](docs/readme.md)");
   await screen.openContextMenu();
-  expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
+  expect(offeredActions()).toEqual(["open", "reveal", "download", "copy-relative", "copy-full"]);
   await setAllowed(false);
+  state.choose.mockResolvedValue("download");
+  await screen.openContextMenu();
+  expect(offeredActions()).toEqual(["download", "copy-relative", "copy-full"]);
+  expect(state.download).toHaveBeenCalledWith("/work", expect.any(Promise));
+  await expect(state.download.mock.lastCall![1]).resolves.toBe("/work/docs/readme.md");
   state.choose.mockResolvedValue("copy-full");
   await screen.openContextMenu();
-  expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
   await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md"));
   await act(async () => screen.anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
   expect(state.userActionRevisions.get(scopedThreadKey(threadRef))).toBe(1);
+});
+
+it("offers download unless the link is a known folder", async () => {
+  using _setup = setup();
+  await using folder = await renderMarkdown("[Source](./src)");
+  await folder.openContextMenu();
+  expect(offeredActions()).not.toContain("download");
+  // A bare name the workspace lookup resolves elsewhere has no metadata at its literal path.
+  await using basename = await renderMarkdown("[user.ts](user.ts)");
+  await basename.openContextMenu();
+  expect(offeredActions()).toContain("download");
 });
 
 it.each(["[Docs](https://example.com/docs)", "[Readme](docs/readme.md)"])(
@@ -387,3 +437,40 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
   }
   expect(state.openExternal).toHaveBeenCalledTimes(2);
 });
+
+it.each(["remote", "pending-local", "remote-error"] as const)(
+  "opens an environment's localhost link in the system browser when the route is %s",
+  async (route) => {
+    using _setup = setup();
+    const url = "http://localhost:3000/docs?x=1#top";
+    const forwarded = "http://localhost:45000/docs?x=1#top";
+    if (route === "pending-local") {
+      state.forwardLocality = "pending";
+      state.forwardPort.mockRejectedValue(
+        new PortForwardSameMachineError({ port: 3000, cause: new Error("Same machine") }),
+      );
+    }
+    if (route === "remote-error") {
+      state.forwardPort.mockRejectedValue(new Error("The other machine could not be reached"));
+    }
+    await using screen = await renderMarkdown(`[App](${url})`);
+    // Keeps the test page from following the link; React's handlers run before this.
+    const stopNavigation = (event: Event) => event.preventDefault();
+    window.addEventListener("click", stopNavigation);
+    try {
+      await userEvent.click(screen.anchor(), { modifiers: ["ControlOrMeta"] });
+    } finally {
+      window.removeEventListener("click", stopNavigation);
+    }
+    if (route === "remote-error") {
+      await vi.waitFor(() => expect(state.toast).toHaveBeenCalled());
+      expect(state.openExternal).not.toHaveBeenCalled();
+    } else {
+      await vi.waitFor(() =>
+        expect(state.openExternal).toHaveBeenCalledExactlyOnceWith(
+          route === "remote" ? forwarded : url,
+        ),
+      );
+    }
+  },
+);

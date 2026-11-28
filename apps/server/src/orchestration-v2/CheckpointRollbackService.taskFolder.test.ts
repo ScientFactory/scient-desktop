@@ -64,6 +64,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 // SCIENT-FORK:END task-folder-rewind
 
 const threadId = ThreadId.make("thread:task-folder-rewind");
@@ -118,6 +119,7 @@ const layerFor = (state: State, options: Options) => {
   );
   const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(Layer.provide(layerGit));
   const layerProjections = ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
   const layerProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -999,6 +1001,7 @@ const layerRollbackExecutor = (dispatched: Array<string>) =>
             }),
         }),
         Layer.mock(ConversationForkService)({}),
+        Layer.mock(ProjectionMaintenance.ProjectionMaintenanceV2)({}),
         ServerSettings.layerTest(),
       ),
     ),

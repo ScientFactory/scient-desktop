@@ -14,7 +14,10 @@ import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
-import { draftSupportedRuntimeModes } from "./chat/runtimeModeConfig";
+import {
+  draftRuntimeModeLimitsInstance,
+  draftSupportedRuntimeModes,
+} from "./chat/runtimeModeConfig";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -221,6 +224,7 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type SetStateAction,
   use,
@@ -292,7 +296,11 @@ import {
   ThreadPreviewMiniPlayer,
   useThreadPreviewCanvasSource,
 } from "./preview/ThreadPreviewMiniPlayer";
-import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
+import {
+  createChatCanvasStore,
+  resolveChatCanvasModel,
+  selectCanvasMeasurements,
+} from "./chat/canvasStore";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
@@ -499,6 +507,7 @@ import { observeResize } from "~/lib/observeResize";
 
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import type { RightPanelTabsHandle } from "./RightPanelTabs";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -700,6 +709,7 @@ function ChatViewContent(props: ChatViewProps) {
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
+    currentRouteThreadKeyRef,
     threadDraftTarget: baseComposerDraftTarget,
     activeThreadId: serverThread !== null || draftThread !== null ? threadId : null,
     serverProjection,
@@ -2399,13 +2409,13 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   // A plain folder holding tracked repositories has turn diffs without being a Git repository.
   const diffAvailable =
-    // SCIENT-FORK:START — diffs need a project and a server thread.
+    // SCIENT-FORK:START — branch changes use the draft's checkout; turn diffs need a server thread.
     hasProjectWorkspace &&
-    isServerThread &&
-    // SCIENT-FORK:END
-    (isGitRepo ||
-      (activeProject?.trackedFolders?.length ?? 0) > 0 ||
-      turnDiffSummaries.some((summary) => summary.repositories !== undefined));
+    ((gitStatusCwd !== null && isGitRepo) ||
+      (isServerThread &&
+        ((activeProject?.trackedFolders?.length ?? 0) > 0 ||
+          turnDiffSummaries.some((summary) => summary.repositories !== undefined))));
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — fork baseline and new-worktree availability.
   const {
     hasForkBaseline,
@@ -2690,7 +2700,7 @@ function ChatViewContent(props: ChatViewProps) {
     chatCanvasStore,
     (state) =>
       resolveChatCanvasModel({
-        measurements: state.measurements,
+        measurements: selectCanvasMeasurements(state, rightPanelOpen),
         detailsCardMeasurement: state.detailsCardMeasurement,
         threadRef: activeThreadRef,
         preview: canvasPreview,
@@ -2819,6 +2829,7 @@ function ChatViewContent(props: ChatViewProps) {
     closeOtherSurfaces: closeOtherRightPanelSurfacesNow,
     closeSurfacesToRight: closeRightPanelSurfacesToRightNow,
     closeAllSurfaces: closeAllRightPanelSurfacesNow,
+    closeSelectedSurfaces: closeSelectedRightPanelSurfacesNow,
   } = useRightPanelSurfaceClose({
     threadRef: activeThreadRef,
     terminalLabelsById: activeTerminalLabelsById,
@@ -2830,6 +2841,13 @@ function ChatViewContent(props: ChatViewProps) {
   const closeRightPanelSurface = (surface: RightPanelSurface) =>
     runAfterPendingSurfaceSave([surface.id], () => closeRightPanelSurfaceNow(surface));
   const closeRightPanelSurfaceStable = useStableCallback(closeRightPanelSurface);
+  const closeSelectedRightPanelSurfaces = useStableCallback(
+    (surfaces: readonly RightPanelSurface[]) =>
+      runAfterPendingSurfaceSave(
+        surfaces.map((surface) => surface.id),
+        () => closeSelectedRightPanelSurfacesNow(surfaces),
+      ),
+  );
   const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) =>
     runAfterPendingSurfaceSave(
       rightPanelState.surfaces.filter((entry) => entry.id !== surface.id).map((entry) => entry.id),
@@ -3264,7 +3282,7 @@ function ChatViewContent(props: ChatViewProps) {
     copyRightPanelFilePathStable,
     createBrowserSurface,
     createBrowserSurfaceStable,
-    moveRightPanelSurfaceStable,
+    moveRightPanelSurfacesStable,
     onOpenToolDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
@@ -3295,7 +3313,6 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPullRequests,
     pullRequestsSurfaceAvailable: linkedItemsSurfaceAvailable,
     onDiffPanelOpen,
-    closeRightPanelSurface,
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const {
@@ -3382,7 +3399,6 @@ function ChatViewContent(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
-    isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
     isPreparingWorktree ||
@@ -3390,7 +3406,8 @@ function ChatViewContent(props: ChatViewProps) {
     feedbackUploading ||
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
-  const compactDisabled = compactThreadUnavailable || composerHasDraftContent;
+  // A typed /compact queues behind a running turn, so only the immediate compaction waits for idle.
+  const compactDisabled = compactThreadUnavailable || composerHasDraftContent || isWorking;
   const freshSessionAvailable =
     activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
   const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
@@ -3726,6 +3743,12 @@ function ChatViewContent(props: ChatViewProps) {
     addTerminal: addTerminalSurfaceStable,
   });
   // SCIENT-FORK:END
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
+  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
+    if (rightPanelTabsRef.current?.closeSelectedTabs()) return;
+    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
+  });
+
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
@@ -3744,6 +3767,10 @@ function ChatViewContent(props: ChatViewProps) {
       ...terminalShortcuts,
       ...rightPanelShortcuts,
       ...threadLifecycleShortcuts,
+      "rightPanel.close": ({ event }) => {
+        if (!activeRightPanelSurface) return false;
+        if (!event.repeat) closeActiveRightPanelSurfaceStable();
+      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
@@ -3789,10 +3816,6 @@ function ChatViewContent(props: ChatViewProps) {
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       return script ? () => void runProjectScriptStable(script) : undefined;
     },
-  });
-
-  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
-    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
   });
 
   // A focused desktop browser page forwards these chords as menu actions.
@@ -4429,6 +4452,7 @@ function ChatViewContent(props: ChatViewProps) {
           (!isServerThread || serverProjection !== null)
         }
         projectRestored={activeProject !== null}
+        projectId={activeProject?.id ?? null}
       />
       {/* SCIENT-FORK:END */}
       <ThreadAnswerAcknowledgement threadRef={routeThreadDetailRef} />
@@ -4447,6 +4471,11 @@ function ChatViewContent(props: ChatViewProps) {
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
         data-chat-column
+        style={
+          {
+            "--chat-header-height": embedded ? "0px" : "var(--workspace-topbar-height)",
+          } as CSSProperties
+        }
         inert={rightPanelMaximized}
         onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
@@ -4509,6 +4538,7 @@ function ChatViewContent(props: ChatViewProps) {
               enabled: threadFindEnabled,
             }}
             store={chatCanvasStore}
+            rightPanelOpen={rightPanelOpen}
             threadRef={activeThreadRef}
             preview={canvasPreview}
             detailsCardTopInset={isThreadFindActive ? THREAD_FIND_BAR_RESERVED_HEIGHT : 0}
@@ -4751,7 +4781,7 @@ function ChatViewContent(props: ChatViewProps) {
               data-chat-composer-overlay="true"
               className={
                 isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"
+                  ? "pointer-events-none absolute inset-0 z-20 flex flex-col before:basis-[max(0px,calc(50%-5rem))] *:shrink-0 [@media(max-height:34rem)]:before:basis-[max(0px,calc(100%-12rem))]"
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
@@ -5084,6 +5114,11 @@ function ChatViewContent(props: ChatViewProps) {
                                               multipleModelSelections,
                                               providerStatuses,
                                             )}
+                                            instanceId={draftRuntimeModeLimitsInstance(
+                                              activeProviderStatus?.instanceId,
+                                              multipleModelSelections,
+                                            )}
+                                            cwd={gitCwd}
                                             onRuntimeModeChange={handleRuntimeModeChangeStable}
                                           />
                                           // SCIENT-FORK:END
@@ -5097,8 +5132,7 @@ function ChatViewContent(props: ChatViewProps) {
                       </ComposerSurface.Shell>
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.
-                        // Short windows pin the composer to the bottom, where an out-of-flow notice
-                        // would fall off-screen, so there it takes space and lifts the composer.
+                        // Short windows keep the notice in flow so it can use the space above.
                         <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4 [@media(max-height:34rem)]:static">
                           <ComposerBannerStack items={composerBannerItems} detached />
                         </div>
@@ -5201,9 +5235,7 @@ function ChatViewContent(props: ChatViewProps) {
                     ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                     : {})}
                   onComposerFocusRequest={scheduleComposerFocusStable}
-                  {...(isServerThread && isGitRepo
-                    ? { onOpenChanges: openChangesFromThreadPanelStable }
-                    : {})}
+                  {...(isGitRepo ? { onOpenChanges: openChangesFromThreadPanelStable } : {})}
                   onRunProjectScript={runProjectScriptStable}
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
@@ -5247,6 +5279,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       {rightPanelPresent && activeThreadRef && !embedded ? (
         <ChatRightPanel
+          ref={rightPanelTabsRef}
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
@@ -5268,6 +5301,7 @@ function ChatViewContent(props: ChatViewProps) {
             ) : null
           }
           surfaces={renderedRightPanelSurfaces}
+          selectionScope={activeThreadKey}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={genericPendingFileSurfaceIds}
@@ -5278,6 +5312,7 @@ function ChatViewContent(props: ChatViewProps) {
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurfaceStable}
           onCloseSurface={closeRightPanelSurfaceStable}
+          onCloseSelectedSurfaces={closeSelectedRightPanelSurfaces}
           onOpenInMainView={openSurfaceInMainView}
           onRenameDevice={(surfaceId, title) => {
             if (activeThreadRef)
@@ -5286,7 +5321,7 @@ function ChatViewContent(props: ChatViewProps) {
           onCloseOtherSurfaces={closeOtherRightPanelSurfacesStable}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRightStable}
           onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
-          onMoveSurface={moveRightPanelSurfaceStable}
+          onMoveSurfaces={moveRightPanelSurfacesStable}
           onCopyFilePath={copyRightPanelFilePathStable}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurfaceStable}

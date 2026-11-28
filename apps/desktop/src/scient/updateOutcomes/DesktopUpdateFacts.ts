@@ -1,6 +1,7 @@
 /**
  * DesktopUpdateFacts - persisted update facts, kept until one backend's analytics outbox holds
- * them: installs run with every backend stopped, and apply outcomes precede any backend.
+ * them: installs run with every backend stopped, and apply outcomes precede any backend. Each
+ * launch's startup timing travels the same way, under the same analytics gate.
  * @module DesktopUpdateFacts
  */
 import {
@@ -96,7 +97,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
   const env = yield* HostProcess.Environment;
-  const metadata = scientAnalyticsMetadata(environment, env.SCIENT_ANALYTICS_ENABLED);
+  const metadata = scientAnalyticsMetadata(environment, env);
   // Read once and shared with the updater's policy; a policy that cannot be used counts as off.
   const telemetryAllowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => found?.document?.limits?.telemetry !== false),

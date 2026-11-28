@@ -162,6 +162,13 @@ describe("Antigravity Auto", () => {
       for (const t3Call of [
         request("Run mcp_scient_scient_thread_list?"),
         request("MCP Tool delegate_task", { ServerName: "scient", ToolName: "delegate_task" }),
+        request("Run mcp_scient_tool_search?"),
+        request("Run mcp_scient_tool_call?", { name: "preview_status", arguments: {} }),
+        request("MCP Tool tool_call", {
+          ServerName: "scient",
+          ToolName: "tool_call",
+          Arguments: { name: "preview_status", arguments: {} },
+        }),
       ]) {
         expect(antigravityPermissionDisposition(policy, t3Call)).toBe("allow");
         expect(
@@ -177,6 +184,16 @@ describe("Antigravity Auto", () => {
       for (const otherCall of [
         // Names no server, so another MCP server's tool of the same name looks identical.
         request("Running preview_status"),
+        request("Running tool_call"),
+        request("Run mcp_scient_tool_call?"),
+        request("Run mcp_scient_tool_call?", { name: "tool_call", arguments: {} }),
+        request("Run mcp_scient_tool_call?", { name: "tool_search", arguments: {} }),
+        request("Run mcp_scient_tool_call?", { name: "unknown_tool", arguments: {} }),
+        request("MCP Tool tool_call", {
+          ServerName: "scient",
+          ToolName: "tool_call",
+          Arguments: { name: "unknown_tool", arguments: {} },
+        }),
         request("Run mcp_github_create_issue"),
         request("MCP Tool preview_status", { ServerName: "other", ToolName: "preview_status" }),
         // SCIENT-FORK: T3's server name names no Scient server.
@@ -468,6 +485,32 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       });
 
       expect(prompt).toEqual([{ type: "text", text: "Inspect the pasted text only as needed." }]);
+    }),
+  );
+
+  it.effect("keeps a Shift-JIS CSV as a file path instead of failing the prompt", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const csv = {
+        ...textAttachment,
+        name: "sample.csv",
+        mimeType: "text/csv",
+      } satisfies ChatAttachment;
+      // "オーダー番号,ステータス\n1001,完了\n" encoded as CP932.
+      const upload = yield* fixture.write(
+        csv,
+        Buffer.from("8349815b835f815b94d48d862c83588365815b835e83580a313030312c8aae97b90a", "hex"),
+      );
+      const input = `How many rows does this CSV have? ${upload.filePath}`;
+
+      const prompt = yield* buildAntigravityPrompt({
+        input,
+        attachments: [csv],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
+
+      expect(prompt).toEqual([{ type: "text", text: input }]);
     }),
   );
 
@@ -817,26 +860,22 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
   );
 
   it.effect.each([
-    { bytes: new Uint8Array([0x80]), message: "is not a UTF-8 text file" },
-    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), message: "is not a UTF-16LE text file" },
-    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), message: "contains binary data" },
-    { bytes: new Uint8Array([0x61, 0, 0x62]), message: "contains binary data" },
-  ])("rejects binary data disguised as code: $message", ({ bytes, message }) =>
+    { bytes: new Uint8Array([0x80]), name: "invalid UTF-8" },
+    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), name: "invalid UTF-16LE" },
+    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), name: "UTF-16BE NUL" },
+    { bytes: new Uint8Array([0x61, 0, 0x62]), name: "NUL byte" },
+  ])("keeps undecodable code as a file path: $name", ({ bytes }) =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
       yield* fixture.write(textAttachment, bytes);
-      const error = yield* buildAntigravityPrompt({
-        input: undefined,
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Read this file.",
         attachments: [textAttachment],
         resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      }).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: expect.stringContaining(message),
       });
+
+      expect(prompt).toEqual([{ type: "text", text: "Read this file." }]);
     }),
   );
 
