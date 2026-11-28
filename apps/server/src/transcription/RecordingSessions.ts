@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { atomicWrite, type Segment } from "./ledger.ts";
+import { listRecordingNoteFiles } from "./RecordingNoteFiles.ts";
 
 const TrashJournal = Schema.Struct({
   id: Schema.String.check(Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/)),
@@ -54,7 +55,10 @@ interface SessionProject {
     id: string,
   ) => Promise<readonly string[]>;
   readonly recording: (source: string) => Promise<SessionRecording>;
-  readonly revision: (source: string, revision: string) => Promise<string>;
+  readonly revision: (
+    source: string,
+    revision: string,
+  ) => Promise<{ transcript: string; recording: string }>;
 }
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
@@ -348,14 +352,16 @@ export function makeRecordingSessions() {
       try {
         const parts: RecordingSessionPart[] = [];
         const evidence: object[] = [];
+        const recordings = new Set<string>();
         for (const part of current.parts) {
           const recording = part.revision ? undefined : await context.recording(part.source);
           const revision = part.revision ?? recording?.revision;
           if (!revision)
             throw invalidSession("Transcribe each part before asking about the session.");
           const filename = `${part.id}.json`;
-          const source = await context.revision(part.source, revision);
-          await NodeFSP.copyFile(source, NodePath.join(snapshotDirectory, filename));
+          const { transcript, recording: lineage } = await context.revision(part.source, revision);
+          recordings.add(lineage);
+          await NodeFSP.copyFile(transcript, NodePath.join(snapshotDirectory, filename));
           parts.push({ ...part, revision });
           evidence.push({
             recordingId: part.recordingId,
@@ -363,28 +369,20 @@ export function makeRecordingSessions() {
             path: `${relative}/${filename}`,
           });
         }
+        const previousSessions = current.parts.flatMap(({ previousSessionId }) =>
+          previousSessionId ? [previousSessionId] : [],
+        );
+        const notesDirectories = new Set([
+          ...[current.id, ...previousSessions].map((id) => `Transcripts/sessions/notes-${id}`),
+          ...[...recordings].map((id) => `Transcripts/${id}`),
+        ]);
         const notes: string[] = [];
-        const notesDirectory = NodePath.join(directory, `notes-${current.id}`);
-        const originalNotes = await NodeFSP.lstat(notesDirectory).catch((error: unknown) => {
-          if (!missing(error)) throw error;
-        });
-        if (originalNotes?.isDirectory()) {
-          const latest = (await NodeFSP.readdir(notesDirectory, { withFileTypes: true })).filter(
-            (entry) => entry.isFile() && /^notes-[a-f0-9-]{36}\.md$/.test(entry.name),
-          );
-          const candidates = await Promise.all(
-            latest.map(async ({ name }) => ({
-              name,
-              time: (await NodeFSP.lstat(NodePath.join(notesDirectory, name))).mtimeMs,
-            })),
-          );
-          candidates.sort((a, b) => b.time - a.time);
-          if (candidates[0]) {
-            const source = NodePath.join(notesDirectory, candidates[0].name);
-            if ((await NodeFSP.lstat(source)).isFile()) {
-              await NodeFSP.copyFile(source, NodePath.join(snapshotDirectory, "notes.md"));
-              notes.push(`${relative}/notes.md`);
-            }
+        for (const directory of notesDirectories) {
+          for (const note of await listRecordingNoteFiles(context.project, directory)) {
+            if (note.text === null) continue;
+            const file = `notes-${notes.length + 1}.md`;
+            await NodeFSP.writeFile(NodePath.join(snapshotDirectory, file), note.text);
+            notes.push(`${relative}/${file}`);
           }
         }
         const snapshot = {

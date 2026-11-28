@@ -1411,7 +1411,7 @@ const make = Effect.gen(function* () {
               throw invalid("The recording must live in the project.");
             return source;
           };
-          const revisionFile = async (source: string, id: string) => {
+          const revisionEvidence = async (source: string, id: string) => {
             await checkedSource(source);
             if (!revision.test(id)) throw invalid("Select a valid transcript revision.");
             const info = await status(id);
@@ -1420,7 +1420,9 @@ const make = Effect.gen(function* () {
             const file = NodePath.join(root, id, "transcript.json");
             if (!(await NodeFSP.lstat(file)).isFile())
               throw invalid("This transcript is unavailable.");
-            return file;
+            const recording = info.job.recording ?? info.job.id;
+            if (!revision.test(recording)) throw invalid("Invalid recording lineage.");
+            return { transcript: file, recording };
           };
           const runSessions = () =>
             recordingSessions(
@@ -1470,7 +1472,7 @@ const make = Effect.gen(function* () {
                   }
                   return [...files];
                 },
-                revision: revisionFile,
+                revision: revisionEvidence,
                 recording: async (requested) => {
                   await checkedSource(requested);
                   const resolved = await NodeFSP.realpath(requested).catch((error: unknown) => {

@@ -104,7 +104,8 @@ Use **Add → From your projects…** to find audio and video already in a proje
 - **Material** links files and Library sources, with optional pages and a recording moment.
   A check mark includes an item when making notes or asking in chat.
 - **Notes → Make notes** uses the session type. Earlier versions remain available.
-- **Ask in chat** attaches the chosen transcript versions and selected material.
+- **Ask in chat** attaches the chosen transcript versions, saved session and
+  recording notes, and selected material.
   Timestamp links from that context continue to use the saved transcript after reorder or split.
 - **Move to Trash** puts the session's files in its project's recoverable session Trash.
   **Sessions → Trash → Restore** puts the files back. Linked material stays in its original location.

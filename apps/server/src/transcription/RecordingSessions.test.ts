@@ -17,10 +17,31 @@ it("combines recordings atomically and keeps the cited transcript through reorde
     const ids = sources.map(() => NodeCrypto.randomUUID());
     const revision = "2026-11-27-Lesson-abcdef01";
     const transcript = NodePath.join(root, "fixture.json");
+    const noteDirectories = sources.map((_, index) => `2026-11-27-Lesson-abcdef0${index + 2}`);
+    const writeNote = async (relativeDirectory: string, text: string) => {
+      const directory = NodePath.join(project, relativeDirectory);
+      const name = `notes-${NodeCrypto.randomUUID()}`;
+      await NodeFSP.mkdir(directory, { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(directory, `${name}.json`),
+        JSON.stringify({ threadId: "notes-thread", recipe: "lesson" }),
+      );
+      await NodeFSP.writeFile(NodePath.join(directory, `${name}.md`), text);
+    };
+    const snapshotNotes = async (snapshotPath: string) => {
+      const { notes } = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(project, snapshotPath), "utf8"),
+      ) as { notes: string[] };
+      return Promise.all(
+        notes.map((file) => NodeFSP.readFile(NodePath.join(project, file), "utf8")),
+      );
+    };
     const published = (text: string) =>
       JSON.stringify({ segments: [{ id: "a", start: 1, end: 4, text }] });
     await NodeFSP.writeFile(transcript, published("x = −2"));
     await Promise.all(sources.map((source) => NodeFSP.writeFile(source, "audio")));
+    await writeNote(`Transcripts/${noteDirectories[0]}`, "Monday recording notes");
+    await writeNote(`Transcripts/${noteDirectories[1]}`, "Tuesday recording notes");
     const context = {
       project,
       root,
@@ -39,7 +60,10 @@ it("combines recordings atomically and keeps the cited transcript through reorde
           contentHash: await recordingContentHash(source),
         };
       },
-      revision: async () => transcript,
+      revision: async (source: string) => ({
+        transcript,
+        recording: noteDirectories[sources.indexOf(source)]!,
+      }),
     };
     const execute = makeRecordingSessions();
     const { session: original } = await execute(context, { kind: "ensure", source: sources[0]! });
@@ -49,6 +73,13 @@ it("combines recordings atomically and keeps the cited transcript through reorde
       version: original!.version,
       title: "The substitution",
     });
+    const { snapshot: single } = await execute(context, {
+      kind: "snapshot",
+      id: renamed!.id,
+      version: renamed!.version,
+    });
+    expect(await snapshotNotes(single!.path)).toEqual(["Monday recording notes"]);
+    await writeNote(`Transcripts/sessions/notes-${renamed!.id}`, "Monday session notes");
     const { session: combined } = await execute(context, {
       kind: "combine",
       selection: [{ source: sources[1]! }, { id: renamed!.id, version: renamed!.version }],
@@ -59,6 +90,18 @@ it("combines recordings atomically and keeps the cited transcript through reorde
       id: combined!.id,
       version: combined!.version,
     });
+    await writeNote(`Transcripts/sessions/notes-${combined!.id}`, "Combined session notes");
+    const { snapshot: withSessionNotes } = await execute(context, {
+      kind: "snapshot",
+      id: combined!.id,
+      version: combined!.version,
+    });
+    expect(await snapshotNotes(withSessionNotes!.path)).toEqual([
+      "Combined session notes",
+      "Monday session notes",
+      "Monday recording notes",
+      "Tuesday recording notes",
+    ]);
     const { session: reordered } = await execute(context, {
       kind: "reorder",
       id: combined!.id,

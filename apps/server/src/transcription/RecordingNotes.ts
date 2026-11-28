@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - Notes and their manifests live alongside the project transcript.
-import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
@@ -31,16 +30,9 @@ import * as Providers from "../provider/ProviderInstanceRegistry.ts";
 import * as Projects from "../project/ProjectService.ts";
 import * as Settings from "../serverSettings.ts";
 import { atomicWrite } from "./ledger.ts";
+import { listRecordingNoteFiles, readNotesFile, Recipe } from "./RecordingNoteFiles.ts";
 import * as Jobs from "./TranscriptionJobs.ts";
 
-const Recipe = Schema.Literals([
-  "summary",
-  "study-notes",
-  "action-items",
-  "lesson",
-  "meeting",
-  "interview",
-]);
 const captureId = Schema.String.check(
   Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/),
 );
@@ -80,10 +72,7 @@ export const Request = Schema.Union([
   }),
 ]);
 
-const Manifest = Schema.Struct({ threadId: ThreadId, recipe: Recipe });
 const isRevisionId = Schema.is(Jobs.RevisionId);
-const decodeManifest = Schema.decodeUnknownSync(Manifest);
-const manifestName = /^notes-[a-f0-9-]{36}\.json$/;
 const recipes = {
   summary: "Write a concise summary with key decisions and supporting time ranges.",
   "study-notes":
@@ -104,26 +93,11 @@ const LESSON_COVERAGE =
 
 const io = () =>
   new Jobs.TranscriptionError({ code: "io", detail: "Could not access recording notes." });
-const isMissing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
-
 const unavailable = () =>
   new Jobs.TranscriptionError({
     code: "invalid-input",
     detail: "Recording notes are unavailable for this project or revision.",
   });
-
-async function readNotesFile(path: string, limit: number) {
-  const handle = await NodeFSP.open(path, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW);
-  try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > limit) throw new Error("Invalid notes file");
-    const buffer = Buffer.alloc(stat.size);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.toString("utf8", 0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-}
 
 export function resolveRecordingNotesModel(
   settings: ServerSettings,
@@ -239,41 +213,11 @@ export const execute = Effect.fn("RecordingNotes.execute")(function* (input: typ
     if (!session) return yield* unavailable();
     const relative = NodePath.posix.join("Transcripts", "sessions", `notes-${session.id}`);
     const directory = NodePath.join(owner.workspaceRoot, relative);
-    const list = Effect.tryPromise({
-      catch: io,
-      try: async () => {
-        const stat = await NodeFSP.lstat(directory).catch((error: unknown) => {
-          if (isMissing(error)) return undefined;
-          throw error;
-        });
-        if (!stat) return [];
-        if (!stat.isDirectory()) throw new Error("Invalid session notes directory.");
-        const entries = await NodeFSP.readdir(directory, { withFileTypes: true });
-        const notes = await Promise.all(
-          entries
-            .filter((entry) => entry.isFile() && manifestName.test(entry.name))
-            .map(async ({ name }) => {
-              const manifest = decodeManifest(
-                JSON.parse(await readNotesFile(NodePath.join(directory, name), 4096)),
-              );
-              const file = name.replace(/\.json$/, ".md");
-              const path = NodePath.join(directory, file);
-              const info = await NodeFSP.lstat(path).catch((error: unknown) => {
-                if (isMissing(error)) return undefined;
-                throw error;
-              });
-              return {
-                ...manifest,
-                path: NodePath.posix.join(relative, file),
-                text: info?.isFile() ? await readNotesFile(path, 1024 * 1024) : null,
-                created: info?.mtimeMs ?? 0,
-              };
-            }),
-        );
-        return notes.sort((a, b) => b.created - a.created);
-      },
-    });
-    if (input.action === "session-list") return yield* list;
+    if (input.action === "session-list")
+      return yield* Effect.tryPromise({
+        catch: io,
+        try: () => listRecordingNoteFiles(owner.workspaceRoot, relative),
+      });
     const snapshot = sessionResult.snapshot;
     if (!snapshot) return yield* unavailable();
     const configured = yield* settings.getSettings;
@@ -379,40 +323,15 @@ export const execute = Effect.fn("RecordingNotes.execute")(function* (input: typ
     });
     return { threadId: input.threadId };
   }
-  if (input.action === "list") {
+  if (input.action === "list")
     return yield* Effect.tryPromise({
       catch: io,
-      try: async () => {
-        const entries = await NodeFSP.readdir(directory, { withFileTypes: true });
-        const notes = await Promise.all(
-          entries
-            .filter((entry) => entry.isFile() && manifestName.test(entry.name))
-            .map(async (entry) => {
-              const manifest = decodeManifest(
-                JSON.parse(await readNotesFile(NodePath.join(directory, entry.name), 4096)),
-              );
-              const name = entry.name.replace(/\.json$/, ".md");
-              const path = NodePath.join(directory, name);
-              const info = await NodeFSP.lstat(path).catch((error: unknown) => {
-                if (isMissing(error)) return undefined;
-                throw error;
-              });
-              const text =
-                info?.isFile() && info.size <= 1024 * 1024
-                  ? await readNotesFile(path, 1024 * 1024)
-                  : null;
-              return {
-                ...manifest,
-                path: NodePath.posix.join("Transcripts", recording, name),
-                text,
-                created: info?.mtimeMs ?? 0,
-              };
-            }),
-        );
-        return notes.sort((left, right) => right.created - left.created);
-      },
+      try: () =>
+        listRecordingNoteFiles(
+          project.value.workspaceRoot,
+          NodePath.posix.join("Transcripts", recording),
+        ),
     });
-  }
   if (revision.state.stage !== "completed") return yield* unavailable();
   const configured = yield* settings.getSettings;
   const defaults = resolveProjectSettings(configured, project.value.id, project.value).settings;
