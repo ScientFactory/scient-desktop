@@ -357,6 +357,29 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
 - `SCIENT_DEV_IDENTITY=off pnpm dev:app:start` starts a candidate with only its
   own accounts. `pnpm dev:identity status` shows the home.
 
+### Optional shared ChatGPT sign-in for Scient Agent
+
+This is separate from the Codex provider and from connector sign-ins. On macOS,
+the owner can start a dedicated Scient Agent auth broker on `127.0.0.1:8765`
+with `SCIENT_AGENT_ROOT` set to a private `~/.local/share/scient-dev-chatgpt`
+directory. Sign in once with `scient-agent auth-broker login openai-codex`
+using the same root. Keep that broker dedicated to this dev account.
+
+After checking the setup, the owner can enable managed dev apps to use it by
+creating a private `share-with-dev-apps` file in that directory. The next
+managed desktop launch on code that supports this feature links to the broker's
+private bearer file rather than copying any OAuth refresh token or sharing the
+agent database. This also applies to the managed Stable review app on a
+supporting ref. Installed apps and headless servers do not opt in. Existing
+per-app broker bearer files are not replaced.
+
+Every enabled dev app can use the account and its quota. Manage the account at
+the broker; signing out of a shared account from a client affects other clients.
+Remove `share-with-dev-apps` and restart the dev app to disable automatic
+discovery. For a clean sign-in test, use fresh app state and
+`SCIENT_DEV_IDENTITY=off`; disabling discovery does not clear a profile or
+remove a broker the profile was explicitly configured to use.
+
 ## State And Project Safety
 
 - Never point `SCIENT_NEXT_HOME`, `--home-dir`, or `--base-dir` at `.t3`, the
