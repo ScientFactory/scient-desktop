@@ -1,3 +1,5 @@
+import { normalizeLanguageTag } from "../../window/SpellCheckerLanguages.ts";
+
 /**
  * Windows and Linux check only the languages the app enables: the system's, the language of any
  * alphabet written that no system language uses, and the user's choices, which win. Alphabets,
@@ -96,12 +98,35 @@ export function makeDocumentSpelling(
   savedChoices: LanguageChoices,
 ): DocumentSpelling {
   const available = session.availableSpellCheckerLanguages;
+  // Linux reports POSIX tags such as en_GB.UTF-8.
+  const locales = preferredLocales.map(normalizeLanguageTag);
+  const exactMatches = locales.map((locale) =>
+    locale.includes("-")
+      ? available.find((dictionary) => dictionary.toLowerCase() === locale)
+      : undefined,
+  );
+  // GLib follows en_GB with a generated "en", and Chromium's "en" is the en-US dictionary, so a
+  // language with a regional dictionary of the user's own gets no fallback, and any other gets one
+  // fallback, at its first tag so it keeps its priority under the cap.
+  const settledBases = new Set(
+    locales.filter((_, index) => exactMatches[index] !== undefined).map(baseOf),
+  );
+  const dictionaries: string[] = [];
+  locales.forEach((locale, index) => {
+    const exact = exactMatches[index];
+    const base = baseOf(locale);
+    if (exact !== undefined) {
+      dictionaries.push(exact);
+    } else if (!settledBases.has(base)) {
+      settledBases.add(base);
+      const fallback = dictionaryFor(locale, available, locales);
+      if (fallback !== null) dictionaries.push(fallback);
+    }
+  });
   // Every regional dictionary the user lists stays enabled, such as both British and American English.
-  const system = unique(
-    preferredLocales.flatMap((locale) => dictionaryFor(locale, available, preferredLocales) ?? []),
-  ).slice(0, MAX_SYSTEM_LANGUAGES);
+  const system = unique(dictionaries).slice(0, MAX_SYSTEM_LANGUAGES);
   // A system language without a dictionary, such as Japanese, still covers its own alphabet.
-  const systemScripts = new Set(preferredLocales.map(scriptOf));
+  const systemScripts = new Set(locales.map(scriptOf));
   const isAvailable = (code: string) => available.includes(code);
 
   const languagesOf = ({ fromAlphabets, choices }: State): SpellingLanguage[] => {
@@ -138,7 +163,7 @@ export function makeDocumentSpelling(
       const found = ALPHABETS.filter(
         (alphabet) => !systemScripts.has(alphabet.script) && alphabet.word.test(sample),
       )
-        .flatMap(({ language }) => dictionaryFor(language, available, preferredLocales) ?? [])
+        .flatMap(({ language }) => dictionaryFor(language, available, locales) ?? [])
         .filter((code) => !system.includes(code) && !state.fromAlphabets.includes(code));
       if (found.length === 0) return false;
       return commit({ ...state, fromAlphabets: [...state.fromAlphabets, ...found] });

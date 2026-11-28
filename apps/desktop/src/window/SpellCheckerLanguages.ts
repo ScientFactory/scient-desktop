@@ -4,6 +4,10 @@ const PACKAGED_DEFAULT_LANGUAGE = "en-US";
 const normalizeLanguageTag = (tag: string): string =>
   tag.split(/[.@]/)[0]!.replace(/_/g, "-").toLowerCase();
 
+// SCIENT-FORK:START spelling-locale-tags — Scient's system spellcheck languages read OS locales too.
+export { normalizeLanguageTag };
+// SCIENT-FORK:END spelling-locale-tags
+
 const baseLanguage = (tag: string): string => tag.toLowerCase().split("-")[0]!;
 
 const findExactLanguage = (tag: string, available: ReadonlyArray<string>): string | undefined =>
