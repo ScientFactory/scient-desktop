@@ -221,8 +221,10 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   .annotate(Tool.Destructive, true);
 
 const RequestSecretTool = Tool.make("request_secret", {
+  // SCIENT-FORK:START — Scient Accounts: keys and passwords to keep go to Accounts.
   description:
-    'Ask for secrets in a private card, one value per single-line input; never combine values in one. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
+    'Ask for secrets in a private card, one value per single-line input; never combine values in one. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Keys and passwords to keep: `scient_account_add`. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
+  // SCIENT-FORK:END
   parameters: OrchestratorMcpRequestSecretInput,
   success: OrchestratorMcpRequestSecretResult,
   failure: OrchestratorMcpFailure,

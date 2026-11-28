@@ -39,3 +39,20 @@ it("signs out of exactly one site, including its subdomains", () => {
     { url: "https://moodle.huji.ac.il/my", name: "session" },
   ]);
 });
+
+it("signs a vendor's host out alone, never its siblings or their shared parent", () => {
+  expect(
+    siteCookieRemovals(
+      [
+        { domain: "proxy.library-vendor.com", path: "/", name: "ezproxy", secure: true },
+        { domain: ".cdn.proxy.library-vendor.com", path: "/", name: "edge", secure: true },
+        { domain: "portal.library-vendor.com", path: "/", name: "other", secure: true },
+        { domain: ".library-vendor.com", path: "/", name: "shared", secure: true },
+      ],
+      "proxy.library-vendor.com",
+    ),
+  ).toEqual([
+    { url: "https://proxy.library-vendor.com/", name: "ezproxy" },
+    { url: "https://cdn.proxy.library-vendor.com/", name: "edge" },
+  ]);
+});

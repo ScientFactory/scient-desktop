@@ -3,13 +3,19 @@
  * Agents make and fix local connectors in the chat's own folder; Scient checks and installs them.
  * The tools stay thin: they find the chat's folder and call the connector runtime.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
 import {
+  AccountId,
   AccountsError,
   type ConnectorToolFailureClass,
   type ExtensionsError,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
@@ -33,7 +39,8 @@ import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey, askInCard, cardEndedNote, withCardAllowance } from "./accountAdd.ts";
+import { askForAccountKey, askInCard, cardEndedNote } from "./accountAdd.ts";
+import { personTimeLeft, withCardAllowance } from "./cardAllowance.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -160,8 +167,7 @@ const addAsks = Effect.gen(function* () {
             sites: [request.site],
             ...(request.header === undefined ? {} : { header: request.header }),
           });
-          if (asked.status === "saved" || asked.status === "exists")
-            return { secretRef: accountTokenRef(asked.accountId) };
+          if (asked.status === "saved") return { secretRef: accountTokenRef(asked.accountId) };
           return {
             problem:
               asked.status === "turned_off"
@@ -188,6 +194,8 @@ const addAsks = Effect.gen(function* () {
             notKept,
           });
           if (id.status !== "saved") return { problem: cardProblem(id.status) };
+          // The connector keeps these as it adds itself; the card's value is in its hands now.
+          yield* (yield* AccountsService).recordCard(id.requestId, "saved");
           const secret = yield* askInCard(scope, {
             label: `${request.name} client secret`,
             reason: `Skip this if the app has no client secret.`,
@@ -196,6 +204,8 @@ const addAsks = Effect.gen(function* () {
           // Declining is the user's "no secret"; a card that timed out or closed is no answer.
           if (secret.status === "timed_out" || secret.status === "cancelled")
             return { problem: cardProblem(secret.status) };
+          if (secret.status === "saved")
+            yield* (yield* AccountsService).recordCard(secret.requestId, "saved");
           return {
             clientId: id.value,
             ...(secret.status === "saved" ? { clientSecret: secret.value } : {}),
@@ -224,13 +234,69 @@ export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
 export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url: string) {
   const invocation = yield* AgentInvocationContext;
   const previews = yield* Effect.serviceOption(PreviewManager);
-  if (!invocation.capabilities.has("preview") || Option.isNone(previews)) return false;
+  if (!invocation.capabilities.has("preview") || Option.isNone(previews)) return undefined;
   return yield* previews.value
     .open({ threadId: invocation.threadId, url, runtime: "server", reveal: true })
     .pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
+      Effect.map((snapshot) => snapshot.tabId),
+      Effect.orElseSucceed(() => undefined),
     );
+});
+
+const SIGN_IN_LOOK_MS = 2_000;
+
+/**
+ * The person's sign-in to a connector in the hand-off card on its tab, waited on for the call's
+ * time: signed in or failed as that sign-in's own callback says, cancelled from the card, or
+ * timed out.
+ */
+const waitForConnectorSignIn = Effect.fn("AccountsAgent.connectorSignInWait")(function* (
+  connector: string,
+  tabId: string,
+  url: string,
+  ended: Fiber.Fiber<"connected" | "failed">,
+) {
+  const accounts = yield* AccountsService;
+  const invocation = yield* AgentInvocationContext;
+  const previews = yield* Effect.serviceOption(PreviewManager);
+  const left = yield* personTimeLeft;
+  const startedAt = yield* Clock.currentTimeMillis;
+  const handoffId = `connector-${NodeCrypto.randomUUID()}`;
+  yield* accounts.setHandoff(
+    {
+      handoffId,
+      threadId: invocation.threadId,
+      accountId: AccountId.make(
+        `acc_connector-${NodeCrypto.createHash("sha256").update(connector).digest("hex").slice(0, 32)}`,
+      ),
+      accountName: connector,
+      site: URL.canParse(url) ? new URL(url).host : connector,
+      tabId,
+      kind: "other",
+      reason: `Sign in to ${connector} here.`,
+      startedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt)),
+      expiresAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt + Math.max(left, 0))),
+    },
+    // "Open browser" shows the sign-in's own tab.
+    Option.isSome(previews)
+      ? previews.value
+          .requestReveal({ threadId: invocation.threadId, tabId, force: true })
+          .pipe(Effect.ignore)
+      : Effect.void,
+  );
+  return yield* Effect.gen(function* () {
+    while ((yield* Clock.currentTimeMillis) - startedAt < left) {
+      if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
+      const done = ended.pollUnsafe();
+      if (done !== undefined && Exit.isSuccess(done))
+        return done.value === "connected" ? ("signed-in" as const) : ("failed" as const);
+      yield* Effect.sleep(SIGN_IN_LOOK_MS);
+    }
+    return "timed_out" as const;
+  }).pipe(
+    Effect.ensuring(accounts.removeHandoff(handoffId)),
+    Effect.ensuring(Fiber.interrupt(ended)),
+  );
 });
 
 /**
@@ -299,12 +365,49 @@ export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(func
     if (agentServer !== undefined) return agentServer;
   }
   const context = yield* Effect.context<AgentInvocationContext>();
-  return yield* controlFor(
+  let opened: { readonly tabId: string; readonly url: string } | undefined;
+  const controlled = yield* controlFor(
     input,
-    (url) => openForUser(url).pipe(Effect.provide(context)),
+    (url) =>
+      openForUser(url).pipe(
+        Effect.provide(context),
+        Effect.map((tabId) => {
+          if (tabId !== undefined) opened = { tabId, url };
+          return tabId !== undefined;
+        }),
+      ),
     yield* callerLocation,
   ).pipe(Effect.mapError(toAccountsError));
-});
+  // This flow alone, by the OAuth state its address carries: another chat's sign-in of the same
+  // connector, or one from Settings, ends its own card.
+  const state =
+    opened !== undefined && URL.canParse(opened.url)
+      ? new URL(opened.url).searchParams.get("state")
+      : null;
+  const connectors = yield* runtime.pipe(Effect.option);
+  if (opened === undefined || state === null || Option.isNone(connectors)) return controlled;
+  const signInEnded = connectors.value.signInEnded;
+  if (signInEnded === undefined) return controlled;
+  const ended = yield* Effect.forkChild(signInEnded(state));
+  const outcome = yield* waitForConnectorSignIn(input.connector, opened.tabId, opened.url, ended);
+  return {
+    ...controlled,
+    // The status this flow left, not the one before the sign-in.
+    ...(outcome === "signed-in"
+      ? { status: "ready" as const }
+      : outcome === "failed"
+        ? { status: "needs-sign-in" as const }
+        : {}),
+    message:
+      outcome === "signed-in"
+        ? `Signed in to ${input.connector}. scient_connector_check {"connector":"${input.connector}"} lists its tools.`
+        : outcome === "failed"
+          ? `The sign-in to ${input.connector} didn't go through. Tell the user in one short sentence.`
+          : outcome === "cancelled"
+            ? `The user cancelled the sign-in to ${input.connector}. Don't open it again this turn unless they ask.`
+            : `The sign-in to ${input.connector} is still open for the user, but this call's time ran out. Ask them to finish it, then scient_connector_check {"connector":"${input.connector}"}.`,
+  };
+}, withCardAllowance);
 
 export const checkConnector = Effect.fn("AccountsAgent.connectorCheck")(function* (
   input: Input<"scient_connector_check">,

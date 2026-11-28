@@ -6,7 +6,7 @@ import {
   type ProfileSendLog,
   type ProfileSharedWith,
 } from "@t3tools/contracts";
-import { shareable, unitSites } from "@t3tools/shared/scientSessionCookies";
+import { isHostUnit, shareable, unitSites } from "@t3tools/shared/scientSessionCookies";
 
 import { effectiveProfile } from "./AccountDecisions.ts";
 
@@ -25,7 +25,11 @@ const isNewerAction = (before: AccountSummary | undefined, after: AccountSummary
   return previous === undefined || Date.parse(signIn.at) > Date.parse(previous);
 };
 
-const unitKey = (sites: ReadonlyArray<string>) => [...unitSites(sites)].sort().join(" ");
+/** A unit's place in the log: its sites, or a host delete's exact hosts, so siblings stay apart. */
+const unitKey = (sites: ReadonlyArray<string>) =>
+  isHostUnit(sites)
+    ? `host ${[...sites].sort().join(" ")}`
+    : [...unitSites(sites)].sort().join(" ");
 
 /** The next revision for one unit; a full log falls back to a whole-jar revision. */
 export function issueUnit(
@@ -120,9 +124,13 @@ export function withSendLog<S extends State>(before: S, next: S): S {
   for (const profile of next.profiles) {
     // Merged into Main: its copies elsewhere stay as they are, neither sent to nor taken back.
     if (profile.retired) continue;
-    const was = shareable(profile.profileId, effectiveProfile(before.profiles, profile.profileId));
-    const is = shareable(profile.profileId, profile);
-    if (was === is) continue;
+    const previous = effectiveProfile(before.profiles, profile.profileId);
+    // Removed: taken back from the other computers too; its Undo sends it again.
+    const was = shareable(profile.profileId, previous) && !previous.removed;
+    const is = shareable(profile.profileId, profile) && !profile.removed;
+    // Cleared or brought back to its earlier data: the whole jar goes again, as it is now.
+    const regenerated = is && was && (previous.generation ?? 0) !== (profile.generation ?? 0);
+    if (was === is && !regenerated) continue;
     const current = record(profile.profileId);
     changed.set(profile.profileId, {
       ...current,

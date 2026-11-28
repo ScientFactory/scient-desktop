@@ -31,6 +31,8 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { dictationCommand, makeDictationTranscriber } from "./chatGptDictation";
 import { andFinally } from "../../lib/compilerSafe";
+import { accountEditorLink } from "../accounts/accountsLink";
+import { voiceEngineTarget } from "../accounts/keyUses";
 
 const listChoices = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:voice:cloud-choices",
@@ -72,7 +74,7 @@ function SpeechKeyAccountDialog({
       snapshot={accounts.data}
       account={null}
       canWrite={accounts.canWrite}
-      initialApiKey={{ name, sites: [origin], speechOnly: true }}
+      initialApiKey={{ name, sites: [origin] }}
       onClose={close}
       onSaved={saved}
     />
@@ -115,7 +117,12 @@ function AddCloudEngine({
         : ""
       : spec.origin;
   const available = candidates.filter((candidate) => candidate.origin === origin);
-  const chosen = available.find(({ kind, id }) => kind + ":" + id === account);
+  // A new engine starts on the connection's key; an edit never re-points by itself.
+  const chosen =
+    available.find(({ kind, id }) => kind + ":" + id === account) ??
+    (!editing && account === ""
+      ? available.find(({ kind }) => kind === "custom-model")
+      : undefined);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh an owner-scoped list when the form's destination changes
   useEffect(() => {
     if (!open || !origin || addingKey) return;
@@ -231,12 +238,12 @@ function AddCloudEngine({
               />
             </label>
             <label className="grid gap-1 text-sm">
-              {gt("Speech account")}
+              {gt("Key")}
               <TranscriptionSelect
-                label={gt("Speech account")}
+                label={gt("Key")}
                 value={chosen ? chosen.kind + ":" + chosen.id : ""}
                 options={[
-                  { value: "", label: gt("Choose a speech account") },
+                  { value: "", label: gt("Choose a key") },
                   ...available.map(({ id, kind, label, hint }) => ({
                     value: kind + ":" + id,
                     label:
@@ -373,6 +380,7 @@ export function CloudDictationSettings({
           return (
             <SettingsRow
               key={choice.id}
+              {...(manage ? { id: voiceEngineTarget(choice.id) } : {})}
               title={
                 manage && choice.provider
                   ? [
@@ -443,13 +451,22 @@ export function CloudDictationSettings({
                         <MenuPopup align="end">
                           <MenuItem
                             render={
-                              <Link
-                                to={
-                                  choice.customModelConnectionId
-                                    ? "/settings/custom-models"
-                                    : "/settings/accounts"
-                                }
-                              />
+                              choice.accountId ? (
+                                <Link
+                                  {...accountEditorLink(
+                                    environmentId,
+                                    AccountId.make(choice.accountId),
+                                  )}
+                                />
+                              ) : (
+                                <Link
+                                  to={
+                                    choice.customModelConnectionId
+                                      ? "/settings/custom-models"
+                                      : "/settings/accounts"
+                                  }
+                                />
+                              )
                             }
                           >
                             {gt("Manage key…")}

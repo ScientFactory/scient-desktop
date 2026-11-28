@@ -12,6 +12,8 @@ export class CloudResponseError extends Schema.TaggedError<CloudResponseError>()
       "provider-response-too-large",
       "recognition-failed",
     ]),
+    /** The provider's status; only a 401 says the key itself was refused. */
+    status: Schema.optional(Schema.Number),
   },
 ) {}
 
@@ -160,7 +162,7 @@ export function openCloudEngine(
 
         void response.body?.cancel().catch(() => undefined);
         if ([401, 403].includes(response.status))
-          throw new CloudResponseError({ code: "provider-key-rejected" });
+          throw new CloudResponseError({ code: "provider-key-rejected", status: response.status });
         if (response.status === 429) {
           const delay = retryDelay(response.headers.get("retry-after"));
           if (attempt === 2 || delay === undefined) throw new RateLimited();

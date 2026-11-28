@@ -16,6 +16,7 @@ import * as Redacted from "effect/Redacted";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { SECRET_REDACTED, providerSettingsSecretFields } from "../../settingsSecrets.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
+import { reachesEveryProject } from "./keyLinks.ts";
 import type { RemovedAgent } from "./removedAgentKeys.ts";
 
 const FIELD = "config.";
@@ -48,8 +49,10 @@ const settingLabel = (setting: string) =>
         .replace(/^\w/u, (letter) => letter.toUpperCase())
     : setting;
 
-const failure = (reason: "not-found" | "invalid-input" | "unavailable", message: string) =>
-  new AccountsError({ reason, message });
+const failure = (
+  reason: "not-found" | "invalid-input" | "unavailable" | "denied",
+  message: string,
+) => new AccountsError({ reason, message });
 
 /**
  * Keys typed into an agent's settings live in that agent's settings, which removing the agent
@@ -116,6 +119,10 @@ export const makeKeptAgentKeys = Effect.fn("KeptAgentKeys.make")(function* (
       const from = account?.details.kind === "api-key" ? account.details.keptFrom : undefined;
       if (from?.agent !== agent)
         return yield* failure("invalid-input", "This key wasn't kept from this kind of agent.");
+      // The agent serves every project, so the key must still reach every project, as a followed
+      // variable's does.
+      if (!reachesEveryProject(yield* accounts.snapshot, accountId))
+        return yield* failure("denied", "This key isn't for agents in every project.");
       const { token } = yield* accounts.resolveSecrets(accountId, ["token"]);
       if (!token) return yield* failure("not-found", "This account has no key to use.");
       if (from.setting.startsWith(FIELD)) {

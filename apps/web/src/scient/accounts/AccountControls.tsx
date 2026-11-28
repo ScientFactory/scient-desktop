@@ -31,14 +31,19 @@ export function AccessChip({
   target,
   access,
   disabled,
+  copies,
 }: {
   environmentId: EnvironmentId;
   target: AccountTarget;
-  access: AccountAccess;
+  /** `mixed`: the copies of one login differ. */
+  access: AccountAccess | "mixed";
   disabled: boolean;
+  /** Every copy of a login; a choice applies to each. */
+  copies?: ReadonlyArray<AccountTarget>;
 }) {
   const update = useAccountCommand(accountsState.setControls, environmentId);
   const messages = useMessages();
+  const gt = useGT();
   return (
     <Menu>
       <MenuTrigger
@@ -51,7 +56,9 @@ export function AccessChip({
           />
         }
       >
-        {messages(ACCESS_LABELS[access])}
+        {access === "mixed"
+          ? gt("Mixed", { $context: "copies of one login have different agent access" })
+          : messages(ACCESS_LABELS[access])}
         <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="end">
@@ -59,7 +66,7 @@ export function AccessChip({
           value={access}
           onValueChange={(next) => {
             if (next === "allowed" || next === "ask" || next === "off")
-              void update({ target, access: next });
+              for (const each of copies ?? [target]) void update({ target: each, access: next });
           }}
         >
           {(["allowed", "ask", "off"] as const).map((value) => (

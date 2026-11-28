@@ -205,3 +205,32 @@ it("bounds upstream response bodies and closes an exchange after refusal", async
   expect(refused).toBe(true);
   expect(closed).toBe(true);
 });
+
+it("sends nothing more once the use is stopped, even on a same-site redirect", async () => {
+  const fetched: Array<string> = [];
+  let checks = 0;
+  const refused = await accountRequest(
+    { method: "GET", url: "https://api.example.com/first" },
+    ["example.com"],
+    false,
+    { type: "bearer" },
+    "synthetic-token",
+    undefined,
+    {
+      close: async () => {},
+      fetch: async (url) => {
+        fetched.push(String(url));
+        return new Response(null, { status: 302, headers: { location: "/second" } });
+      },
+    },
+    // The account went Off between the first answer and its redirect.
+    async () => {
+      if (checks++ > 0) throw new Error("Access to this account changed.");
+    },
+  ).then(
+    () => false,
+    () => true,
+  );
+  expect(refused).toBe(true);
+  expect(fetched).toEqual(["https://api.example.com/first"]);
+});

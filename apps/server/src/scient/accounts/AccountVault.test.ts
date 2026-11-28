@@ -1,7 +1,27 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Redacted } from "effect";
-import { decryptBlob, encryptBlob, makeAccountVault } from "./AccountVault.ts";
-import { memoryStore, noKeychain, syntheticValue } from "./Accounts.testkit.ts";
+import { AuthSessionId, RpcClientId, type HostPowerSnapshot } from "@t3tools/contracts";
+import { DateTime, Deferred, Effect, Fiber, Layer, Redacted, Stream } from "effect";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import * as BackgroundPolicyModule from "../../background/BackgroundPolicy.ts";
+import { ClientActivityLeases, vouchedClientKind } from "./clientLeases.ts";
+import { HostPowerMonitor } from "../../background/HostPowerMonitor.ts";
+import { ServerConfig } from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import {
+  AccountVault,
+  decryptBlob,
+  encryptBlob,
+  layerWith,
+  makeAccountVault,
+} from "./AccountVault.ts";
+import { ACCOUNTS_AWAIT_PERSON } from "./awaitPerson.ts";
+import {
+  memoryStore,
+  noKeychain,
+  recordingKeychain,
+  syntheticValue,
+  windowLeases,
+} from "./Accounts.testkit.ts";
 
 const key = () =>
   Redacted.make(new TextEncoder().encode(syntheticValue().replaceAll("-", "").slice(0, 32)));
@@ -140,11 +160,19 @@ describe("AccountVault", () => {
         const records = new Map(storage.blobs);
 
         const waiting = { ...keychain, unattendedWaitsForPerson: true };
-        const atLogin = yield* makeAccountVault(storage.store, "/synthetic", waiting);
+        const { leases, atWindow } = yield* windowLeases();
+        const atLogin = yield* makeAccountVault(storage.store, "/synthetic", waiting).pipe(
+          Effect.provideService(ClientActivityLeases, leases),
+        );
         expect(yield* atLogin.openWithoutPrompt).toBe(false);
         expect(reads).toEqual([]);
         expect(new Map(storage.blobs)).toEqual(records);
-        // The next foreground use opens it as before.
+        // Any use with nobody at a window to answer the dialog leaves it closed, and reads nothing.
+        const closed = yield* Effect.flip(atLogin.decrypt("record", blob));
+        expect(closed.message).toBe(ACCOUNTS_AWAIT_PERSON);
+        expect(reads).toEqual([]);
+        // With someone at a window it opens as before.
+        yield* atWindow(true);
         const decoded = yield* atLogin.decrypt("record", blob);
         expect(
           Buffer.from(Redacted.value(decoded)).equals(Buffer.from(Redacted.value(value))),
@@ -192,6 +220,107 @@ describe("AccountVault", () => {
       yield* Deferred.succeed(release, undefined);
       expect(yield* Fiber.join(foreground)).toBe("keychain");
       expect(yield* vault.openWithoutPrompt).toBe(true);
+    }),
+  );
+  it.effect("a vault built before the background policy reads the leases it records", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { keychain, reads } = yield* recordingKeychain({ desktopBackgroundRunning: true });
+      const { leases } = yield* windowLeases(true);
+      const setUp = yield* makeAccountVault(storage.store, "/synthetic", keychain).pipe(
+        Effect.provideService(ClientActivityLeases, leases),
+      );
+      const blob = yield* setUp.encrypt("record", material());
+      reads.length = 0;
+      // As the server builds them: the vault first (Server Settings, through the Accounts secret
+      // store), then the background policy.
+      const hostPower = Layer.succeed(HostPowerMonitor, {
+        snapshot: Effect.succeed<HostPowerSnapshot>({
+          source: "unknown",
+          idle: "unknown",
+          idleSeconds: null,
+          locked: "unknown",
+          suspended: false,
+          onBattery: "unknown",
+          lowPowerMode: "unknown",
+          thermalState: "unknown",
+          stale: true,
+          updatedAt: DateTime.makeUnsafe(0),
+        }),
+        report: () => Effect.void,
+        streamChanges: Stream.empty,
+      });
+      const layer = BackgroundPolicyModule.layer.pipe(
+        Layer.provide(Layer.merge(hostPower, ServerSettings.layerTest())),
+        Layer.provideMerge(layerWith(Effect.succeed(keychain))),
+        Layer.provide(
+          Layer.merge(
+            Layer.succeed(ServerSecretStore, storage.store),
+            Layer.succeed(ServerConfig, { stateDir: "/synthetic" } as ServerConfig["Service"]),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const vault = yield* AccountVault;
+        const policy = yield* BackgroundPolicyModule.BackgroundPolicy;
+        // No window: the store stays closed, and nothing is read.
+        const closed = yield* Effect.flip(vault.decrypt("record", blob));
+        expect(closed.message).toBe(ACCOUNTS_AWAIT_PERSON);
+        expect(reads).toEqual([]);
+        // A window in the foreground: the vault, built first, sees its lease and opens.
+        yield* policy.reportClientActivity(AuthSessionId.make("session"), RpcClientId.make(1), {
+          clientId: "window",
+          clientKind: "desktop-renderer",
+          visible: true,
+          focused: true,
+          recentlyInteracted: true,
+          scopes: [],
+          ttlMs: 45_000,
+          observedAt: yield* DateTime.now,
+        });
+        // regression: the vault caught the policy at its own build, before the policy existed.
+        yield* vault.decrypt("record", blob);
+        expect(reads).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+  it.effect("only this computer's desktop, focused and unlocked, lets the keychain be read", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { keychain, reads } = yield* recordingKeychain({ desktopBackgroundRunning: true });
+      const { leases, client, hostLocked } = yield* windowLeases(true);
+      const vaultHere = makeAccountVault(storage.store, "/synthetic", keychain).pipe(
+        Effect.provideService(ClientActivityLeases, leases),
+      );
+      const blob = yield* (yield* vaultHere).encrypt("record", material());
+      reads.length = 0;
+      const vault = yield* vaultHere;
+      const refused = Effect.flip(vault.decrypt("record", blob)).pipe(
+        Effect.map((error) => error.message),
+      );
+      // regression: a window that had lost focus, but was used a moment ago, let it be read.
+      yield* client({ focused: false, recentlyInteracted: true });
+      expect(yield* refused).toBe(ACCOUNTS_AWAIT_PERSON);
+      // The computer unlocked, and a focused web client: elsewhere, as far as this computer knows.
+      yield* hostLocked(false);
+      // regression: a web client focused on another computer let it be read with nobody here.
+      yield* client({ clientKind: "web" });
+      expect(yield* refused).toBe(ACCOUNTS_AWAIT_PERSON);
+      // Nor a client only saying it's the desktop, signed in other than by this desktop.
+      yield* client({ clientKind: vouchedClientKind("pairing-link", "desktop-renderer") });
+      expect(yield* refused).toBe(ACCOUNTS_AWAIT_PERSON);
+      // A phone in the foreground: the dialog would show here, where nobody is.
+      yield* client({ clientKind: "mobile" });
+      expect(yield* refused).toBe(ACCOUNTS_AWAIT_PERSON);
+      // This computer's desktop window focused, the computer locked.
+      yield* client({ clientKind: vouchedClientKind("desktop-bootstrap", "desktop-renderer") });
+      yield* hostLocked(true);
+      expect(yield* refused).toBe(ACCOUNTS_AWAIT_PERSON);
+      expect(reads).toEqual([]);
+      // Unlocked: it opens.
+      yield* hostLocked(false);
+      yield* vault.decrypt("record", blob);
+      expect(reads).toHaveLength(1);
     }),
   );
 });

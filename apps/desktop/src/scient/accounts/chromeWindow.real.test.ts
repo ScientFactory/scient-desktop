@@ -53,7 +53,8 @@ async function openSignInTestWindow(
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
-  const read = signInInWindow({ browser, folder, url, platform });
+  // A throwaway folder: gone once read (round 6c keeps a profile's own folder by default).
+  const read = signInInWindow({ browser, folder, url, platform, remember: false });
   let pageReady = false;
   const stall: string[] = [];
   const aborted = () =>
@@ -342,6 +343,55 @@ describe.runIf(env.SCIENT_CHROME_WINDOW_TEST === "1" && canQuitWindow(platform))
           "sid=window-sign-in",
         ]);
         expect(NodeFS.existsSync(folder)).toBe(false);
+      },
+    );
+
+    // Round 6m: the window never finishes by itself; Done does.
+    it.for(oneOfEach)(
+      "leaves $name's window open after the sign-in, until Done",
+      async (browser) => {
+        const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "chrome-return-"));
+        const landed = Promise.withResolvers<void>();
+        const server = NodeHttp.createServer((request, response) => {
+          response.setHeader("Content-Type", "text/html");
+          if (request.url === "/login") {
+            response.setHeader("Set-Cookie", "sid=window-sign-in; Max-Age=3600; Path=/; HttpOnly");
+            response.end(
+              "<p>Signing in</p><script>setTimeout(() => location.href = '/account/home', 1000)</script>",
+            );
+          } else {
+            if (request.url === "/account/home") landed.resolve();
+            response.end("<p>Signed in</p>");
+          }
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/login`;
+        try {
+          const read = signInInWindow({
+            browser,
+            folder,
+            url,
+            platform,
+            remember: false,
+          });
+          let ended = false;
+          void read.then(() => (ended = true));
+          await landed.promise;
+          // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- the window must stay open after the person returns
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          // The sign-in's page loaded: the window is still the person's.
+          expect(ended).toBe(false);
+          expect(await endSignInWindow(true, platform)).toBe(true);
+          const outcome = await read;
+          expect(outcome.outcome).toBe("read");
+          if (outcome.outcome === "read")
+            expect(outcome.cookies.map(({ name }) => name)).toContain("sid");
+        } finally {
+          endSignInWindow(false, platform);
+          server.closeAllConnections();
+          server.close();
+          NodeFS.rmSync(folder, { recursive: true, force: true });
+        }
       },
     );
 

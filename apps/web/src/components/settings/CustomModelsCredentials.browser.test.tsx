@@ -19,7 +19,25 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock("~/scient/accounts/useAccounts", async (original) => ({
   ...(await original<typeof import("~/scient/accounts/useAccounts")>()),
-  useAccounts: () => ({ data: { accounts: fixture.accounts }, canWrite: true }),
+  useAccounts: () => ({
+    data: {
+      agentAccess: true,
+      profiles: [],
+      approvals: [],
+      recentActivity: [],
+      customModelKeys: [],
+      accounts: fixture.accounts,
+      stores: {
+        scient: { protection: "keychain" },
+        keychain: { platform: "macos", available: false },
+        onePassword: { state: "not-connected" },
+      },
+      keyConsumers: [
+        { accountId: "acc_synthetic_models", kind: "custom-model", id: "x", name: "Research chat" },
+      ],
+    },
+    canWrite: true,
+  }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => fixture.save }));
 vi.mock("~/state/server", async (original) => {
@@ -105,7 +123,11 @@ it("shows saved, unauthenticated, and reconnect states and chooses only an eligi
       <EditableCustomModelsContent environmentId={environmentId} />
     </main>,
   );
-  await expect.element(page.getByText("API key · Research gateway")).toBeVisible();
+  await expect.element(page.getByText("Key: Research gateway")).toBeVisible();
+  // Manage opens the key's editor at once, naming what uses it.
+  await page.getByRole("button", { name: "Manage key…" }).first().click();
+  await expect.element(page.getByText("Used by Custom models · Research chat")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
   await expect.element(page.getByText("No key needed")).toBeVisible();
   const directory = import.meta.env.VITE_SCIENT_CREDENTIALS_SCREENSHOTS;
   if (directory) {
@@ -121,8 +143,8 @@ it("shows saved, unauthenticated, and reconnect states and chooses only an eligi
     }
   }
   const archive = page.getByRole("region", { name: "Archive chat" });
-  await expect.element(archive.getByText("Reconnect")).toBeVisible();
-  await archive.getByRole("button", { name: "Choose a saved key…" }).click();
+  await expect.element(archive.getByText("Key unavailable")).toBeVisible();
+  await archive.getByRole("button", { name: "Reconnect" }).click();
   await expect.element(page.getByRole("button", { name: "Add a key in Accounts…" })).toBeVisible();
   await page.getByRole("combobox", { name: "Saved key" }).click();
   await expect

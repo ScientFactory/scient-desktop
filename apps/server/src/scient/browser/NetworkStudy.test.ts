@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import type { CDPSession, Page, Request, Response } from "playwright-core";
 
+import { typeAccountValue } from "../accounts/agent/browserOperations.ts";
 import { networkStudyOf } from "./NetworkStudy.ts";
 
 /**
@@ -131,6 +132,16 @@ const answer = (
   };
 };
 
+/** The accounts world as the browser answers it: one document, and every fill lands. */
+const accountsCdp = {
+  send: async (method: string) =>
+    method === "Page.getFrameTree"
+      ? { frameTree: { frame: { id: "frame", loaderId: "loader" } } }
+      : method === "Page.createIsolatedWorld"
+        ? { executionContextId: 1 }
+        : { result: { value: true } },
+} as unknown as CDPSession;
+
 describe("the network study", () => {
   it("hides every known secret from listed URLs and errors, in any encoding", async () => {
     const page = fakePage();
@@ -139,13 +150,27 @@ describe("the network study", () => {
     study.onRequest(failing);
     study.onFailed(failing);
     study.onRequest(fakeRequest("https://app.test/b", { authorization: "Bearer bearer-value-9" }));
+    // A sign-in code Scient typed sits in a text field, where the password read can't see it.
+    await typeAccountValue(page, accountsCdp, {
+      origin: "https://app.test",
+      selector: "#code",
+      text: "482913",
+      clear: true,
+      secret: true,
+    });
     study.onRequest(
       fakeRequest(
-        `https://app.test/c?echo=bearer-value-9&p=typed-pass-1&b=${Buffer.from("tab-cookie-77").toString("base64url")}`,
+        `https://app.test/c?echo=bearer-value-9&p=typed-pass-1&otp=482913&b=${Buffer.from("tab-cookie-77").toString("base64url")}`,
       ),
     );
     const listed = JSON.stringify(await study.list());
-    for (const secret of ["tab-cookie-77", "bearer-value-9", "typed-pass-1", "dGFiLWNvb2tpZS03Nw"])
+    for (const secret of [
+      "tab-cookie-77",
+      "bearer-value-9",
+      "typed-pass-1",
+      "482913",
+      "dGFiLWNvb2tpZS03Nw",
+    ])
       expect(listed).not.toContain(secret);
     expect(listed).toContain("https://app.test/b");
     expect(listed).toContain("net::ERR_FAILED");

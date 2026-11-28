@@ -30,6 +30,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+// SCIENT-FORK:START — Scient Accounts: its cards take typed values only.
+import { isAccountSecretRequest } from "@t3tools/shared/scientAccountSecretRequest";
+// SCIENT-FORK:END
 
 const SECRET_REF_PREFIX = "secret-ref:";
 const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
@@ -178,6 +181,11 @@ const make = Effect.gen(function* () {
     if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
       return yield* new SecretRequestError({ reason: "agent_stopped" });
     }
+    // SCIENT-FORK:START — Scient Accounts: an Accounts card saves a value, never a reference.
+    if (input.answer.type === "reference" && isAccountSecretRequest(item.id)) {
+      return yield* new SecretRequestError({ reason: "fields_mismatch" });
+    }
+    // SCIENT-FORK:END
     // Create before recording so racing answers cannot overwrite values or show saved before storage.
     // Existing values on pending cards finish earlier saves whose recording failed.
     const values =

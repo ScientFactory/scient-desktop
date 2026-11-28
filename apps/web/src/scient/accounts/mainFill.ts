@@ -482,8 +482,6 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           persistClientSettingsUpdate((current) => ({
             ...current,
             browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
-            // Browser profiles says so once, until dismissed.
-            mainDefaultNotice: true,
           })).then(() => undefined),
       });
       const after = await readSnapshot(environmentId);
@@ -608,14 +606,22 @@ async function fillFromProfile(
 }
 
 /** An import into a profile of this desktop: its whole jar goes to other computers again. */
-const resendImported = async (environmentId: EnvironmentId, profileId: string) => {
+const resendImported = async (
+  environmentId: EnvironmentId,
+  profileId: string,
+  operationId?: string,
+) => {
   if (environmentId !== readPrimaryEnvironmentId()) return;
   await runAtomCommand(
     appAtomRegistry,
     accountsState.profileResend,
     {
       environmentId,
-      input: { profileId: BrowserProfileId.make(profileId), why: "import" },
+      input: {
+        profileId: BrowserProfileId.make(profileId),
+        why: "import",
+        ...(operationId === undefined ? {} : { operationId }),
+      },
     },
     { reportFailure: false },
   ).catch((cause: unknown) => warn("Couldn't mark an import to send again", cause));
@@ -907,6 +913,8 @@ export async function importIntoMain(
   environmentId: EnvironmentId,
   importSourceId: BrowserImportSourceId,
   sourceProfileDirectory: string,
+  /** An agent's refresh of Main: checked again in Main's turn (round 6i). */
+  refresh?: { readonly operationId: string; readonly generation?: number | undefined },
 ) {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
   const rules = await outsideCopyRules(environmentId);
@@ -915,10 +923,17 @@ export async function importIntoMain(
     environmentId,
     from: { importSourceId, sourceProfileDirectory },
     ...rules,
+    ...(refresh ? { operationId: refresh.operationId } : {}),
+    ...(refresh?.generation === undefined ? {} : { generation: refresh.generation }),
   });
-  if (filled) await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  // An agent's refresh is sent on only once its computer still stands behind it (round 6j).
+  if (filled && !refresh) await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
   return filled;
 }
+
+/** An agent's refresh of Main, checked after its writes: what it brought goes to other computers. */
+export const sendMainRefresh = (environmentId: EnvironmentId, operationId: string) =>
+  resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID, operationId);
 
 /** A sign-in made in a Chrome window, copied into Main by an import's rules. */
 export async function chromeSignInIntoMain(

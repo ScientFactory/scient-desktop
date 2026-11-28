@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_1,
   type AccountId,
   type EnvironmentId,
   type ThreadId,
@@ -19,7 +19,9 @@ export function useSignIn(environmentId: EnvironmentId) {
   const current = useAccountCommand(accountsState.signInAsPerson, environmentId);
   const older = useAccountCommand(accountsState.universitySignIn, environmentId);
   const signIn =
-    (useAccounts(environmentId).data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL ? current : older;
+    (useAccounts(environmentId).data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL_1
+      ? current
+      : older;
   const scratchThread = useScratchThread(environmentId);
   return async (
     accountId: AccountId,
@@ -29,19 +31,25 @@ export function useSignIn(environmentId: EnvironmentId) {
       ? scopeThreadRef(environmentId, options.threadId)
       : await scratchThread();
     if (!thread) return false;
-    if (!options.threadId) useRightPanelStore.getState().requestMaximize(thread);
+    const panels = useRightPanelStore.getState();
+    // A new conversation opens straight onto its browser, loading, rather than an empty chat.
+    if (!options.threadId) {
+      panels.requestMaximize(thread);
+      panels.openBrowser(thread, null);
+    }
     const started = await signIn({
       accountId,
       threadId: thread.threadId,
       ...(options.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
     });
-    if (!started.ok) return false;
-    useRightPanelStore
-      .getState()
-      .openBrowser(
-        scopeThreadRef(environmentId, started.value.threadId ?? thread.threadId),
-        started.value.tabId,
-      );
+    if (!started.ok) {
+      if (!options.threadId) panels.closeSurface(thread, "browser:new");
+      return false;
+    }
+    panels.openBrowser(
+      scopeThreadRef(environmentId, started.value.threadId ?? thread.threadId),
+      started.value.tabId,
+    );
     return true;
   };
 }

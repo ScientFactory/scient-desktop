@@ -1,6 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import {
   AccountId,
+  PreviewTabId,
+  ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
@@ -10,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { Effect, Layer, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
-import { makeAccountsRpcHandlers } from "../scient/accounts/AccountsRpcHandlers.ts";
+import { makeAccountsRpcHandlers, type TabShows } from "../scient/accounts/AccountsRpcHandlers.ts";
 import { makeHarness, syntheticValue, website } from "../scient/accounts/Accounts.testkit.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
@@ -35,6 +37,7 @@ it.effect(
           list: () => Effect.die("not reached"),
           signInAsPerson: () => Effect.die("not reached"),
           universityBrowse: () => Effect.die("not reached"),
+          universitySignOut: () => Effect.die("not reached"),
           universities: () => Effect.die("not reached"),
         },
         plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
@@ -59,12 +62,14 @@ it.effect(
         reader[WS_METHODS.accountsKeychainCandidates]({}),
         reader[WS_METHODS.accountsSave](website()),
         reader[WS_METHODS.accountsRemove]({ accountId }),
+        reader[WS_METHODS.accountsRestore]({ accountId, removalId: "synthetic-removal" }),
         reader[WS_METHODS.accountsTest]({ accountId }),
         reader[WS_METHODS.accountsSetControls]({
           target: { type: "account", accountId },
           access: "off",
         }),
         reader[WS_METHODS.accountsSetAgentAccess]({ enabled: false }),
+        reader[WS_METHODS.accountsSetRenewAutomatically]({ enabled: false }),
         reader[WS_METHODS.accountsProfileUpdate]({ profileId: "synthetic", color: "#aabbcc" }),
         reader[WS_METHODS.accountsProfileRemove]({ profileId: "synthetic" }),
         reader[WS_METHODS.accountsHandoffCancel]({ handoffId: "synthetic-wait" }),
@@ -137,6 +142,7 @@ const paperClient = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
         list: () => Effect.die("not reached"),
         signInAsPerson: () => Effect.die("not reached"),
         universityBrowse: () => Effect.die("not reached"),
+        universitySignOut: () => Effect.die("not reached"),
         universities: () => Effect.die("not reached"),
       },
       plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
@@ -188,5 +194,68 @@ it.effect("lets a connection with the Library grant file papers into the Library
     yield* client[WS_METHODS.accountsPaperForSource]({ root: "/synthetic", ...source });
     for (const input of attachingRequests) yield* client[WS_METHODS.accountsPapersRequest](input);
     expect(reached).toEqual(["paperForSource", "request:2", "request:1"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("fills as before, recording each fill for a client other than this desktop", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const value = syntheticValue();
+    const { accountId } = yield* service.save(website(value));
+    const tab = {
+      threadId: ThreadId.make("thread-fill"),
+      tabId: PreviewTabId.make("tab-fill"),
+      url: "https://example.com",
+    };
+    const fill = (subject: string, shows: TabShows, request: { readonly tab?: typeof tab }) =>
+      Effect.gen(function* () {
+        const handlers = makeAccountsRpcHandlers({
+          accounts: service,
+          caller: { sessionId: `session-${subject}`, subject, client: "web · macOS" },
+          tabShows: () => Effect.succeed(shows),
+          observeRpcEffect: (_method, effect) => effect,
+          observeRpcStream: (_method, stream) => stream,
+          check: () => Effect.succeed({ checked: 0 }),
+          linkKey: () => Effect.void,
+          paperForSource: () => Effect.die("not reached"),
+          papers: {
+            request: () => Effect.die("not reached"),
+            continue: () => Effect.die("not reached"),
+            list: () => Effect.die("not reached"),
+            signInAsPerson: () => Effect.die("not reached"),
+            universityBrowse: () => Effect.die("not reached"),
+            universities: () => Effect.die("not reached"),
+            universitySignOut: () => Effect.die("not reached"),
+          },
+          plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
+          restoreKeptKeys: () => Effect.void,
+        });
+        const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.merge(group.toLayer(handlers), RpcAuthorization.layer([AuthSettingsWriteScope])),
+          ),
+        );
+        return yield* client[WS_METHODS.accountsFillValues]({
+          accountId,
+          origin: "https://example.com",
+          ...request,
+        }).pipe(
+          Effect.map((values) => values.password),
+          Effect.orElseSucceed(() => "refused"),
+        );
+      });
+    const details = () =>
+      Effect.map(service.activity({ target: { type: "account", accountId } }), (rows) =>
+        rows.map(({ detail }) => detail),
+      );
+    // This computer's desktop fills as it always has, unrecorded.
+    expect(yield* fill("desktop-bootstrap", "origin", { tab })).toBe(value);
+    expect(yield* details()).toEqual([]);
+    // Any other paired client fills too, recorded with the client and the page.
+    expect(yield* fill("one-time-token", "unknown", {})).toBe(value);
+    expect(yield* details()).toEqual(["Filled on web · macOS: https://example.com"]);
+    // A tab now on another page gets nothing.
+    expect(yield* fill("desktop-bootstrap", "elsewhere", { tab })).toBe("refused");
   }).pipe(Effect.scoped),
 );

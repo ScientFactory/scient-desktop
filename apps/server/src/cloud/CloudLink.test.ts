@@ -119,7 +119,11 @@ const withService = <A, E>(
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
       }),
-      Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
+      Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
+        requestCatchUp: () => Effect.void,
+        // SCIENT-FORK: a link change runs in the relay's acknowledgement turn.
+        replacingLink: (change) => change,
+      }),
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
       ManagedPolicy.layerTest(),
       Layer.mock(ConnectReachability.ConnectReachability)({
@@ -348,7 +352,9 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
         remove: (name) => Effect.sync(() => void stored.delete(name)),
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-      Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({}),
+      // SCIENT-FORK:START — Scient Accounts: a link change runs in the relay's acknowledgement turn.
+      Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ replacingLink: (change) => change }),
+      // SCIENT-FORK:END
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
         withLinkStateLock: (effect) => effect,
         applyConfig: (config) =>

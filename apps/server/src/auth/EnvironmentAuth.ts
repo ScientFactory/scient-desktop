@@ -447,6 +447,19 @@ export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthIn
   }
 }
 
+// SCIENT-FORK:START — Scient Accounts: the desktop app's own sign-in subject.
+/** The subject of sessions from the desktop app's own sign-in; no caller may choose it. */
+export const DESKTOP_APP_SUBJECT = "desktop-bootstrap";
+export class ServerAuthReservedSubjectError extends Schema.TaggedError<ServerAuthReservedSubjectError>()(
+  "ServerAuthReservedSubjectError",
+  { subject: Schema.String },
+) {
+  override get message(): string {
+    return `The session subject "${this.subject}" is reserved for the desktop app's own sign-in.`;
+  }
+}
+// SCIENT-FORK:END
+
 export class ServerAuthScopeNotGrantedError extends Schema.TaggedError<ServerAuthScopeNotGrantedError>()(
   "ServerAuthScopeNotGrantedError",
   {},
@@ -603,7 +616,11 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
-    }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
+      // SCIENT-FORK: a caller may not choose the desktop app's subject.
+    }) => Effect.Effect<
+      IssuedBearerSession,
+      ServerAuthInternalError | ServerAuthReservedSubjectError
+    >;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
       ServerAuthInternalError
@@ -1406,6 +1423,14 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
         Effect.withSpan("EnvironmentAuth.issueSession"),
       );
+  // SCIENT-FORK:START — Scient Accounts: the desktop app's own sign-in subject is reserved.
+  // Only the verified desktop bootstrap grant issues it (`PairingGrantStore`): Accounts trusts a
+  // session with it to be this computer's desktop (`vouchedClientKind`).
+  const issueUnreservedSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
+    input?.subject === DESKTOP_APP_SUBJECT
+      ? Effect.fail(new ServerAuthReservedSubjectError({ subject: input.subject }))
+      : issueSession(input);
+  // SCIENT-FORK:END
 
   const listSessions: EnvironmentAuth["Service"]["listSessions"] = () =>
     sessions.listActive().pipe(
@@ -1783,7 +1808,7 @@ export const make = Effect.gen(function* () {
     issueStartupPairingCredential,
     listPairingLinks,
     revokePairingLink,
-    issueSession,
+    issueSession: issueUnreservedSession, // SCIENT-FORK: the desktop app's subject is reserved.
     listSessions,
     revokeSession,
     listClientSessions,

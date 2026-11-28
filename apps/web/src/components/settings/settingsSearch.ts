@@ -1387,7 +1387,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "accounts-password-stores",
     title: msg("Password stores"),
     to: "/settings/accounts",
-    searchTerms: ["CSV", "keychain", "1Password"],
+    targetId: "accounts-password-stores",
+    searchTerms: ["CSV", "keychain", "1Password", "Bitwarden", "Proton Pass"],
+  },
+  {
+    id: "accounts-saved-passwords",
+    title: msg("Saved passwords"),
+    to: "/settings/accounts",
+    targetId: "accounts-saved-passwords",
+    searchTerms: ["logins", "websites", "autofill"],
+  },
+  {
+    id: "accounts-api-keys",
+    title: msg("API keys"),
+    to: "/settings/accounts",
+    targetId: "accounts-api-keys",
+    searchTerms: ["tokens", "keys", "env", "variables"],
+  },
+  {
+    id: "accounts-sign-in-codes",
+    title: msg("Sign-in codes"),
+    to: "/settings/accounts",
+    targetId: "accounts-sign-in-codes",
+    searchTerms: ["2FA", "one-time codes", "Messages", "verification"],
+  },
+  {
+    id: "accounts-universities",
+    title: msg("Universities"),
+    to: "/settings/accounts",
+    targetId: "accounts-list",
+    searchTerms: ["university", "library", "OpenAthens", "institution", "papers"],
   },
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Synced folders

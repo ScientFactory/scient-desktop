@@ -76,6 +76,9 @@ const reactTests = [
   "src/features/devices/device-stream.browser.test.ts",
   "src/features/keyboard/keyboardControllerState.test.tsx",
   "src/features/voice-input/useVoiceInputController.test.tsx",
+  // SCIENT-FORK:START — Scient Accounts: the home screen's sign-in waits.
+  "src/features/home/HomeAccountWaits.test.tsx",
+  // SCIENT-FORK:END
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;

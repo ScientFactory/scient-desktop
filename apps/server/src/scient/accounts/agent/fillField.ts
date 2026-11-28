@@ -38,6 +38,7 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
     readonly field: "username" | "password" | "code";
     readonly tabId?: PreviewTabId | undefined;
     readonly selector?: string | undefined;
+    readonly code?: string | undefined;
   },
 ) {
   const { details } = account;
@@ -89,9 +90,20 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   const selector = input.selector ?? found;
   if (!selector)
     return { filled: false, message: "No such field found. Pass its selector if you can see it." };
-  const text = input.field === "username" ? details.username : yield* secretText(input.field);
+  const text =
+    input.field === "username"
+      ? details.username
+      : input.field === "code" && input.code !== undefined
+        ? input.code
+        : yield* secretText(input.field);
   if (text === undefined)
     return { filled: false, message: `This account has no saved ${input.field}.` };
+  // The store may have waited on a prompt: Off or a changed site since then stops the fill.
+  yield* accounts.authorizeUse(
+    scope,
+    { type: "account", accountId: account.accountId },
+    { since: account, origin: page.origin },
+  );
   // Checked and set with nothing in between, so two fills at once can't both pass.
   const lastPassword = passwordFills.get(account.accountId);
   if (input.field === "password") {
@@ -102,7 +114,17 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
       };
     passwordFills.set(account.accountId, now);
   }
-  yield* invoke("accountType", { origin: page.origin, selector, text, clear: true }, tabId).pipe(
+  yield* invoke(
+    "accountType",
+    {
+      origin: page.origin,
+      selector,
+      text,
+      clear: true,
+      ...(input.field === "username" ? {} : { secret: true }),
+    },
+    tabId,
+  ).pipe(
     Effect.tapError(() =>
       Effect.sync(() => {
         if (input.field === "password") passwordFills.delete(account.accountId);

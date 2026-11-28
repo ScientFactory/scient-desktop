@@ -10,9 +10,11 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 
@@ -175,6 +177,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         readonly linkMode?: "managed" | "publish_only";
         /** Linked from desktop, web, or mobile: no CLI-desired link is stored. */
         readonly linkedByApp?: boolean;
+        // SCIENT-FORK:START — Scient Accounts: a running server that fails to unlink keeps its link.
+        /** A stored link, and whether the running server fails to unlink it. */
+        readonly failUnlink?: boolean;
+        /** The running server answers its unlink only once released, as behind the relay's turn. */
+        readonly slowUnlink?: { readonly arrived: () => void; readonly released: Promise<void> };
+        // SCIENT-FORK:END
       },
     ) =>
       Effect.gen(function* () {
@@ -184,6 +192,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           Effect.callback<NodeHttp.Server>((resume) => {
             const listening = NodeHttp.createServer((request, response) => {
               requests.push(`${request.method} ${request.url}`);
+              // SCIENT-FORK:START — Scient Accounts: a running server that fails to unlink.
+              if (options?.failUnlink && request.url === "/api/connect/unlink") {
+                response.writeHead(500, { "content-type": "application/json" });
+                response.end("{}");
+                return;
+              }
+              if (options?.slowUnlink && request.url === "/api/connect/unlink") {
+                options.slowUnlink.arrived();
+                void options.slowUnlink.released.then(() => {
+                  response.writeHead(200, { "content-type": "application/json" });
+                  response.end(JSON.stringify({ ok: true, endpointRuntimeStatus: null }));
+                });
+                return;
+              }
+              // SCIENT-FORK:END
               response.writeHead(200, { "content-type": "application/json" });
               response.end(JSON.stringify({ ok: true, endpointRuntimeStatus: null }));
             });
@@ -211,6 +234,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           path: `${baseDir}/userdata/server-runtime.json`,
           state: { ...state, pid: recordedPid },
         });
+        // SCIENT-FORK:START — Scient Accounts: a stored link the unlink may or may not clear.
+        if (options?.failUnlink !== undefined) {
+          yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
+          yield* fs.writeFileString(
+            `${baseDir}/userdata/secrets/${RELAY_ENVIRONMENT_CREDENTIAL_SECRET}.bin`,
+            "relay_credential",
+          );
+        }
+        // SCIENT-FORK:END
         if (options?.command === "status") {
           // Status asks the server for reachability only for a managed link.
           yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
@@ -250,7 +282,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           })),
         );
 
-        return { requests, warnings, printed: (yield* TestConsole.logLines).join("\n") };
+        return {
+          requests,
+          warnings,
+          printed: (yield* TestConsole.logLines).join("\n"),
+          // SCIENT-FORK:START — Scient Accounts: whether the link is still stored afterwards.
+          linkKept: yield* fs.exists(
+            `${baseDir}/userdata/secrets/${RELAY_ENVIRONMENT_CREDENTIAL_SECRET}.bin`,
+          ),
+          // SCIENT-FORK:END
+        };
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -263,6 +304,57 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
 
     // Above Linux's PID ceiling, as in pair.test.ts: no process can hold it.
     const deadPid = 4_194_305;
+
+    // SCIENT-FORK:START — Scient Accounts: a running server that fails to unlink keeps its link.
+    it.effect("leaves the clear to the running server's own unlink", () =>
+      Effect.gen(function* () {
+        const { requests, linkKept } = yield* runConnect(process.pid, { failUnlink: false });
+
+        assert.include(requests, "POST /api/connect/unlink");
+        // regression: the CLI cleared the link again itself, outside the server's turn, where it
+        // could erase a relink that came in between.
+        assert.isTrue(linkKept);
+      }),
+    );
+
+    it.effect("waits for a live unlink the server holds behind its relay's turn", () =>
+      Effect.gen(function* () {
+        let arrived: () => void = () => {};
+        const arrival = new Promise<void>((resolve) => (arrived = resolve));
+        let release: () => void = () => {};
+        const released = new Promise<void>((resolve) => (release = resolve));
+        const running = yield* runConnect(process.pid, {
+          failUnlink: false,
+          slowUnlink: { arrived, released },
+        }).pipe(Effect.forkChild);
+        yield* Effect.promise(() => arrival);
+        // The server waits out its relay's 15 s turn before it unlinks.
+        yield* TestClock.adjust("16 seconds");
+        release();
+        const { warnings } = yield* Fiber.join(running);
+        // regression: the CLI gave up after 5 s and reported the unlink as failed.
+        assert.notInclude(warnings.join("\n"), "could not stop its tunnel");
+      }),
+    );
+
+    it.effect("clears the stored link itself only with no server running", () =>
+      Effect.gen(function* () {
+        const { linkKept } = yield* runConnect(deadPid, { portFreed: true, failUnlink: false });
+
+        assert.isFalse(linkKept);
+      }),
+    );
+
+    it.effect("leaves the link to a running server that didn't unlink", () =>
+      Effect.gen(function* () {
+        const { requests, linkKept } = yield* runConnect(process.pid, { failUnlink: true });
+
+        assert.include(requests, "POST /api/connect/unlink");
+        // regression: the CLI cleared the link itself, under the running server's relay.
+        assert.isTrue(linkKept);
+      }),
+    );
+    // SCIENT-FORK:END
 
     it.effect("does not tell the user to restart a server that is gone", () =>
       Effect.gen(function* () {

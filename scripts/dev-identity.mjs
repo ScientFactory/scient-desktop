@@ -822,12 +822,11 @@ const EMPTY_ACCOUNTS = {
 };
 
 /**
- * The owner's accounts copied over a target, keeping what belongs to the target itself: its
- * senders, sender keys and per-thread profile choices, each profile's sharing records, the whole
- * row of any account with copies still waiting for the target's password stores, and the whole
- * row of any browser profile only the target has, so its controls are not reset to the defaults.
+ * The owner's accounts copied over a target, keeping what is the target's own: its senders,
+ * sender keys and thread choices, each profile's sharing records, its own accounts (`ownAccounts`)
+ * whole, and any browser profile only it has, so those controls aren't reset to the defaults.
  */
-export function keepLocalAccounts(next, local) {
+export function keepLocalAccounts(next, local, copied) {
   if (local === null || typeof local !== "object") return next;
   const merged = { ...next };
   for (const key of LOCAL_ACCOUNTS_KEYS) {
@@ -849,7 +848,7 @@ export function keepLocalAccounts(next, local) {
       return copy;
     });
   };
-  const pending = pendingAccounts(local);
+  const pending = ownAccounts(local, next, copied);
   if (pending.length > 0) {
     const list = Array.isArray(merged.accounts) ? merged.accounts : [];
     const mine = new Map(pending.map((account) => [accountIdOf(account), account]));
@@ -878,21 +877,29 @@ const hasPendingCopies = (account) =>
   Object.values(account.pendingCopies).some((stores) => Array.isArray(stores) && stores.length > 0);
 
 /**
- * A target's accounts with copies still waiting for its password stores. Such an account may hold
- * the only copy of a value the owner changed there, so it stays the target's, records and all,
- * until those copies are written.
+ * A target's own accounts, kept records and all: those with copies still waiting for its password
+ * stores, and those the home doesn't have that no copy brought (`copied.ids`). A row a copy brought
+ * and the home has since removed goes. An older marker has only the copy's time (`copied.at`).
  */
-const pendingAccounts = (local) =>
-  Array.isArray(local?.accounts)
-    ? local.accounts.filter(
-        (account) => accountIdOf(account) !== undefined && hasPendingCopies(account),
-      )
-    : [];
+const ownAccounts = (local, home, copied = {}) => {
+  if (!Array.isArray(local?.accounts)) return [];
+  const homeIds = new Set(Array.isArray(home?.accounts) ? home.accounts.map(accountIdOf) : []);
+  const addedHere = (account) => {
+    if (homeIds.has(accountIdOf(account))) return false;
+    if (copied.ids !== undefined) return !copied.ids.has(accountIdOf(account));
+    const created = account?.summary?.createdAt;
+    return copied.at === undefined || (typeof created === "string" && created > copied.at);
+  };
+  return local.accounts.filter(
+    (account) =>
+      accountIdOf(account) !== undefined && (hasPendingCopies(account) || addedHere(account)),
+  );
+};
 
-/** The value records a target's pending accounts point at, kept as the target has them. */
-const pendingRecords = (local) =>
+/** The value records a target's own accounts point at, kept as the target has them. */
+const pendingRecords = (local, home, copied) =>
   new Set(
-    collectStrings(pendingAccounts(local))
+    collectStrings(ownAccounts(local, home, copied))
       .filter((text) => RECORD_REFERENCE.test(text))
       .map((reference) => `${reference}.bin`),
   );
@@ -1049,14 +1056,14 @@ function stageSecrets({
     ),
   );
   for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
-  const kept = pendingRecords(target.accounts);
+  const kept = pendingRecords(target.accounts, capture.accounts, target.copied);
   for (const { name } of ownGrants.values()) kept.add(name);
   for (const name of kept) removed.delete(name);
   const sealAccounts = (accounts) =>
     vaultEncrypt(
       key,
       ACCOUNTS_STATE,
-      Buffer.from(JSON.stringify(keepLocalAccounts(accounts, target.accounts))),
+      Buffer.from(JSON.stringify(keepLocalAccounts(accounts, target.accounts, target.copied))),
     );
   const written = [];
   for (const [name, bytes] of capture.secrets) {
@@ -1681,6 +1688,18 @@ function lockStateDir(stateDir) {
   };
 }
 
+/** What the target's copies brought from the home: account ids, else the last copy's time. */
+function lastCopied(stateDir) {
+  const marker = readJsonObject(NodePath.join(stateDir, DEV_IDENTITY_MARKER));
+  if (marker?.status !== "imported") return {};
+  return {
+    ...(typeof marker.importedAt === "string" ? { at: marker.importedAt } : {}),
+    ...(Array.isArray(marker.importedAccounts)
+      ? { ids: new Set(marker.importedAccounts.filter((id) => typeof id === "string")) }
+      : {}),
+  };
+}
+
 /** The copy itself, run under the app's copy lock. */
 async function copyIdentity({ targetStateDir, home, environment, now }) {
   recoverInterruptedCopy(targetStateDir);
@@ -1703,7 +1722,11 @@ async function copyIdentity({ targetStateDir, home, environment, now }) {
   let target = {};
   if (protection === "file") {
     try {
-      target = readTargetVault(targetStateDir, { replaced: replacedByCopy });
+      target = {
+        ...readTargetVault(targetStateDir, { replaced: replacedByCopy }),
+        // Rows no copy brought are its own.
+        copied: lastCopied(targetStateDir),
+      };
     } catch (error) {
       if (!(error instanceof TargetVaultError)) throw error;
       return { status: "target-vault-not-portable", reason: error.message };
@@ -1794,7 +1817,15 @@ async function copyIdentity({ targetStateDir, home, environment, now }) {
     websiteProfiles: websites.copied.length,
     websiteProfilesSkipped: websites.skipped.length,
   };
-  changes.write(NodePath.join(targetStateDir, DEV_IDENTITY_MARKER), jsonBytes(summary), 0o644);
+  // The home's account ids, in the same transaction: the next copy knows which rows it brought.
+  const importedAccounts = Array.isArray(capture.accounts?.accounts)
+    ? capture.accounts.accounts.map(accountIdOf).filter((id) => typeof id === "string")
+    : [];
+  changes.write(
+    NodePath.join(targetStateDir, DEV_IDENTITY_MARKER),
+    jsonBytes({ ...summary, importedAccounts }),
+    0o644,
+  );
   changes.commit();
   return summary;
 }

@@ -1494,6 +1494,8 @@ export const buildAppUnderTest = (options?: {
             // that a no-op so no test reaches the awareness channel.
             Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
               requestCatchUp: () => Effect.void,
+              // SCIENT-FORK: a link change runs in the relay's acknowledgement turn.
+              replacingLink: (change) => change,
               ...options?.layers?.agentAwarenessRelay,
             }),
           ),

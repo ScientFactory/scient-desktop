@@ -42,10 +42,12 @@ const titleOf = (name: string) =>
 
 /**
  * Plain secrets in project `.env` files and shell profiles, by name only. Scient never changes
- * those files: keeping a key in Accounts is an offer, and the file stays as it is.
+ * those files: keeping a key in Accounts is an offer, and the file stays as it is. The projects
+ * are the server's own, never folders a client names.
  */
 export const makePlainKeys = Effect.fn("PlainKeys.make")(function* (
   accounts: AccountsServiceShape,
+  projectRoots: Effect.Effect<ReadonlyArray<string>, Error>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -55,16 +57,21 @@ export const makePlainKeys = Effect.fn("PlainKeys.make")(function* (
       Effect.map(secretsInText),
       Effect.orElseSucceed(() => []),
     );
-  const candidates = (roots: ReadonlyArray<string>) => [
-    ...roots.flatMap((root) => PROJECT_FILES.map((file) => path.join(root, file))),
-    ...SHELL_FILES.map((file) => path.join(home, file)),
-  ];
+  const candidates = projectRoots.pipe(
+    Effect.mapError(
+      () => new AccountsError({ reason: "unavailable", message: "Projects are unavailable." }),
+    ),
+    Effect.map((roots) => [
+      ...roots.flatMap((root) => PROJECT_FILES.map((file) => path.join(root, file))),
+      ...SHELL_FILES.map((file) => path.join(home, file)),
+    ]),
+  );
   return {
-    find: Effect.fn("PlainKeys.find")(function* (roots: ReadonlyArray<string>) {
+    find: Effect.fn("PlainKeys.find")(function* () {
       // Kept means its value is in Accounts: two files can hold different keys under one name.
       const held = yield* heldApiKeys(accounts);
       const found = yield* Effect.forEach(
-        candidates(roots),
+        yield* candidates,
         (file) =>
           readSecrets(file).pipe(
             Effect.map((secrets) =>
@@ -80,10 +87,9 @@ export const makePlainKeys = Effect.fn("PlainKeys.make")(function* (
       return found.flat();
     }),
     keep: Effect.fn("PlainKeys.keep")(function* (
-      input: AccountPlainKeyInput,
-      roots: ReadonlyArray<string>,
+      input: Pick<AccountPlainKeyInput, "file" | "name">,
     ) {
-      if (!candidates(roots).includes(input.file))
+      if (!(yield* candidates).includes(input.file))
         return yield* new AccountsError({
           reason: "invalid-input",
           message: "This file is not one Scient looks at.",

@@ -84,13 +84,19 @@ const textOf = (message: Record<string, unknown> | undefined) =>
 
 const setup = Effect.fn("setup")(function* (
   signIn: (root: string) => LocalSignInHandler,
-  hostOptions: { readonly inFlightGraceMs?: number } = {},
+  hostOptions: { readonly inFlightGraceMs?: number; readonly program?: string } = {},
 ) {
   const root = yield* scratch;
+  if (hostOptions.program !== undefined) {
+    const program = hostOptions.program;
+    yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "server.mjs"), program));
+  }
   const events: LocalConnectorEvent[] = [];
   const host = yield* makeLocalConnectorHost({
     onEvent: (event) => Effect.sync(() => void events.push(event)),
-    ...hostOptions,
+    ...(hostOptions.inFlightGraceMs === undefined
+      ? {}
+      : { inFlightGraceMs: hostOptions.inFlightGraceMs }),
   });
   const identity = { connectorId: "con_site", displayName: "Site" };
   /** Done when the program starts a second time: only a replacement after a sign-in does that. */
@@ -163,7 +169,14 @@ const setup = Effect.fn("setup")(function* (
   const starts = Effect.promise(async () =>
     (await NodeFSP.readFile(NodePath.join(root, "starts"), "utf8")).split("\n").filter(Boolean),
   );
-  return { host, call, post, sessionId, startWrite, writes, starts, events, restarted };
+  const callTool = (id: number, name: string) =>
+    post(sessionId, {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name, arguments: {} },
+    }).pipe(Effect.flatMap(readEvents));
+  return { host, call, callTool, post, sessionId, startWrite, writes, starts, events, restarted };
 });
 
 const layer = LocalDuplexProcess.layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -218,6 +231,44 @@ describe("signed-in local connectors", () => {
       expect(textOf(answered[0])).toBe("The site still ended the session.");
       expect(answered[0]).toMatchObject({ result: { isError: true } });
       expect(signIns).toBe(1);
+      yield* host.stop("con_site", "done");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("answers the template's session.read, out of the agent's sight", () =>
+    Effect.gen(function* () {
+      const asked: Array<[string, unknown]> = [];
+      const templates = NodePath.join(
+        import.meta.dirname,
+        "../../skills/built-ins/connector-authoring/templates",
+      );
+      const program = `
+import { serve } from ${JSON.stringify(NodePath.join(templates, "mcp.mjs"))};
+import { createSession } from ${JSON.stringify(NodePath.join(templates, "session.mjs"))};
+const session = createSession({ http: fetch, env: { SCIENT_SIGN_IN_SITE: "https://hours.example.test" } });
+serve({ name: "hours", version: "1", tools: [{ name: "hours", description: "Hours.",
+  annotations: { readOnlyHint: true },
+  handler: async () => (await session.read("hours", { month: "11" })).body }] });
+`;
+      const { callTool, host } = yield* setup(
+        () => ({
+          expired: () => Effect.succeed({ retry: false, message: "unused" } as const),
+          stillExpired: Effect.succeed("still"),
+          hostRequest: (method, params) =>
+            Effect.sync(() => {
+              asked.push([method, params]);
+              return { outcome: "ok", status: 200, body: "hours: 8", kept: "rotated" };
+            }),
+        }),
+        { program },
+      );
+      const answered = yield* callTool(2, "hours");
+      // One message reaches the agent: the tool's answer, never the request to Scient.
+      expect(answered).toHaveLength(1);
+      expect(textOf(answered[0])).toBe("hours: 8");
+      expect(asked).toEqual([
+        ["scient/readWithWebsiteSession", { operation: "hours", query: { month: "11" } }],
+      ]);
       yield* host.stop("con_site", "done");
     }).pipe(Effect.provide(layer)),
   );
@@ -319,6 +370,91 @@ describe("why a local connector stopped", () => {
         /^Broken could not start: Error: Cannot find module/u,
       );
       expect(message ?? (failed as { message: string }).message).not.toContain("Node.js v");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("hides a token Scient handed it after it started, in its error output and its exit", () =>
+    Effect.gen(function* () {
+      const root = yield* scratch;
+      const token = "synthetic-service-token-0001";
+      const minted = new Set<string>();
+      const stopped = yield* Deferred.make<string>();
+      const events: LocalConnectorEvent[] = [];
+      const host = yield* makeLocalConnectorHost({
+        onEvent: (event) =>
+          Effect.sync(() => void events.push(event)).pipe(
+            Effect.andThen(
+              event.type === "failed" ? Deferred.succeed(stopped, event.message) : Effect.void,
+            ),
+          ),
+      });
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "leaky.mjs"),
+          `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: "ask-1", method: "scient/serviceToken", params: { name: "app" } });
+  else if (message.id === "ask-1") {
+    // A careless HTTP library logs the URL it was given, token and all, then the program dies.
+    process.stderr.write("error: GET /api?wstoken=" + message.result.token + "\\n", () =>
+      process.exit(1),
+    );
+  }
+});
+`,
+        ),
+      );
+      const start = Effect.succeed({
+        launch: {
+          executable: process.execPath,
+          args: [NodePath.join(root, "leaky.mjs")],
+          shell: false,
+          cwd: root,
+          environment: {},
+        },
+        credentials: credentialSet([]),
+        liveCredentials: () => credentialSet([...minted]),
+      });
+      yield* host
+        .exchange(
+          { connectorId: "con_leaky", displayName: "Leaky" },
+          {
+            method: "POST",
+            sessionId: undefined,
+            body: encode({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "initialize",
+              params: {
+                protocolVersion: "2025-11-25",
+                capabilities: {},
+                clientInfo: { name: "t" },
+              },
+            }),
+            signal: openSignal(),
+          },
+          start,
+          {
+            expired: () => Effect.succeed({ retry: false, message: "unused" } as const),
+            stillExpired: Effect.succeed("unused"),
+            hostRequest: () =>
+              Effect.sync(() => {
+                minted.add(token);
+                return { outcome: "ok", token };
+              }),
+          },
+        )
+        .pipe(Effect.flatMap(readEvents), Effect.forkChild);
+      const message = yield* Deferred.await(stopped);
+      // regression: error output was hidden with the keys the program started with, not this one.
+      expect(message).not.toContain(token);
+      const logged = events.flatMap((event) => (event.type === "stderr" ? [event.text] : []));
+      expect(logged.join("")).not.toContain(token);
+      expect(logged.join("")).not.toBe("");
     }).pipe(Effect.provide(layer)),
   );
 });

@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: a background sign-in's notice opens Accounts, not a chat.
+import { isScientBackgroundThread } from "@t3tools/shared/scientSignInPage";
+// SCIENT-FORK:END
 function dataFromNotificationResponse(response: unknown): Record<string, unknown> | null {
   if (typeof response !== "object" || response === null) {
     return null;
@@ -81,7 +84,21 @@ export function threadDeepLinkOnScreen(pathname: string): string | null {
   return `/threads/${match[1]}/${match[2]}`;
 }
 
+// SCIENT-FORK:START — Scient Accounts: a background sign-in's notice opens Accounts, not a chat.
+function scientAccountsLink(link: string | null): string | null {
+  const match = link === null ? null : /^\/threads\/([^/]+)\/([^/]+)$/.exec(link);
+  if (!match?.[1] || !match[2]) return link;
+  return isScientBackgroundThread(decodeURIComponent(match[2]))
+    ? `/settings/environments/${match[1]}/accounts`
+    : link;
+}
+// SCIENT-FORK:END
+
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
+  return scientAccountsLink(extractThreadDeepLink(response));
+}
+
+function extractThreadDeepLink(response: unknown): string | null {
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
   if (typeof deepLink === "string") {

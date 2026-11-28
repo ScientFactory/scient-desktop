@@ -14,6 +14,7 @@ const consumer = {
   kind: "connector" as const,
   connectorId: ConnectorId.make("con_synthetic01"),
   origin: "https://api.example.com",
+  auth: { type: "bearer" as const },
 };
 const apiKey = (value = syntheticValue()) => ({
   name: "Synthetic API",
@@ -114,6 +115,9 @@ describe("Accounts connector bindings", () => {
           .resolveBound(ref, { ...consumer, origin: "https://notexample.com" })
           .pipe(Effect.flip)).reason,
       ).toBe("denied");
+      // A connector sending its key in another header can't use a bearer key.
+      const header = { ...consumer, auth: { type: "header" as const, name: "X-Api-Key" } };
+      expect((yield* service.resolveBound(ref, header).pipe(Effect.flip)).reason).toBe("denied");
       yield* service.save({ ...apiKey(), accountId, secrets: { token: { type: "clear" } } });
       expect((yield* service.resolveBound(ref, consumer).pipe(Effect.flip)).reason).toBe(
         "not-found",
@@ -199,8 +203,29 @@ describe("Accounts connector bindings", () => {
   );
 });
 
+it.effect("lets an agent's work use a Voice-only key for Voice and for nothing else", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const input = apiKey();
+    const { accountId } = yield* service.save({
+      ...input,
+      details: { ...input.details, sites: ["https://api.example.com"], speechOnly: true },
+    });
+    const target = { type: "account" as const, accountId };
+    yield* service.setControls({ target, access: "allowed" });
+    // A Voice job runs with no conversation: no thread, and nobody to ask.
+    const job = { projectId: undefined, unattended: true };
+    yield* service.authorizeUse(job, target, { key: { kind: "voice", id: "engine" } });
+    expect(
+      (yield* service
+        .authorizeUse(job, target, { key: { kind: "variable", id: "" } })
+        .pipe(Effect.flip)).reason,
+    ).toBe("denied");
+  }),
+);
+
 it.effect(
-  "keeps a sealed speech account out of agent access and binds its key to the configured origin",
+  "lists a sealed speech account to agents as Off, keeps it out of bindings and binds its key to the configured origin",
   () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
@@ -215,11 +240,12 @@ it.effect(
         projectId: ProjectId.make("project-synthetic"),
         unattended: false,
       };
-      expect((yield* service.forSession(scope)).accounts).toEqual([]);
+      // A legacy one is Off for agents, who see it and can offer Turn on.
+      yield* service.setControls({ target: { type: "account", accountId }, access: "off" });
+      expect((yield* service.forSession(scope)).accounts).toMatchObject([
+        { accountId, controls: { access: "off" } },
+      ]);
       expect(yield* service.listBindable({})).toEqual([]);
-      expect((yield* service.resolveSecrets(accountId, ["token"]).pipe(Effect.flip)).reason).toBe(
-        "not-found",
-      );
       expect(
         (yield* service.resolveBound(accountTokenRef(accountId), consumer).pipe(Effect.flip))
           .reason,
@@ -275,7 +301,7 @@ it.effect(
     }),
 );
 
-it.effect("defaults picker-created keys to agents off and applies project scope to speech", () =>
+it.effect("starts picker-created keys Allowed, lists one turned Off, and scopes speech", () =>
   Effect.gen(function* () {
     const { service } = yield* makeHarness();
     const origin = "https://api.example.test";
@@ -284,15 +310,17 @@ it.effect("defaults picker-created keys to agents off and applies project scope 
       ...input,
       details: { ...input.details, sites: [origin], purpose: "custom-models" },
     });
-    expect((yield* service.snapshot).accounts[0]?.controls.access).toBe("off");
+    expect((yield* service.snapshot).accounts[0]?.controls.access).toBe("allowed");
+    yield* service.setControls({ target: { type: "account", accountId }, access: "off" });
+    // Off keeps it from connectors; agents still see its name and that it is Off.
     expect(yield* service.listBindable({ origin })).toEqual([]);
     expect(
       (yield* service.forSession({
         projectId: ProjectId.make("project-scope"),
         threadId: ThreadId.make("thread-scope"),
         unattended: false,
-      })).accounts,
-    ).toEqual([]);
+      })).accounts.map((account) => account.controls.access),
+    ).toEqual(["off"]);
     const projectId = ProjectId.make("project-scope");
     yield* service.setControls({
       target: { type: "account", accountId },
@@ -304,5 +332,8 @@ it.effect("defaults picker-created keys to agents off and applies project scope 
     expect((yield* service.resolveSpeechKey(accountId, origin).pipe(Effect.flip)).reason).toBe(
       "denied",
     );
+    // An agent's job is stopped by agent Off, which the person's own use isn't.
+    const agentJob = service.resolveSpeechKey(accountId, origin, undefined, projectId, "agent");
+    expect((yield* agentJob.pipe(Effect.flip)).reason).toBe("denied");
   }),
 );

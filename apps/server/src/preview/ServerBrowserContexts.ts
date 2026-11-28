@@ -10,6 +10,7 @@ import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 // SCIENT-FORK:START — Scient Accounts: cookie copies hold a profile's context.
 import { ProfileContextLeases } from "../scient/accounts/profileContextLeases.ts";
+import { keepServerSessionCookies } from "../scient/accounts/keepServerSessionCookies.ts";
 // SCIENT-FORK:END
 
 // Playwright needs its files on disk. createRequire also resolves it from a Node SEA executable.
@@ -146,6 +147,9 @@ export class ServerBrowserContexts {
     contextFor: (profileId) => this.contextFor(profileId),
   });
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Clear moves a profile to a new folder (generation).
+  private readonly generations = new Map<string, number>();
+  // SCIENT-FORK:END
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -243,6 +247,10 @@ export class ServerBrowserContexts {
 
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
+    // SCIENT-FORK:START — Scient Accounts: a quarantined profile opens again after a restart.
+    if (isolationKey === undefined && this.held.has(profileId))
+      return Promise.reject(new Error("This profile is unavailable until the server restarts."));
+    // SCIENT-FORK:END
     const key = JSON.stringify([profileId, isolationKey ?? null]);
     // SCIENT-FORK:START — Scient Accounts: a tab waits for a cookie copy into its profile.
     const held = this.leases.tabWaits(key, () => this.contextFor(profileId, isolationKey));
@@ -277,7 +285,11 @@ export class ServerBrowserContexts {
     if (isolationKey !== undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID) {
       return this.sharedContext(contextOptions);
     }
-    const directory = this.profileDirectory(profileId);
+    // SCIENT-FORK:START — Scient Accounts: the jar's generation is the one it was opened in.
+    const generation = this.generations.get(profileId) ?? 0;
+    this.contextGenerations.set(profileId, generation);
+    const directory = this.profileDirectory(profileId, generation);
+    // SCIENT-FORK:END
     await NodeFSP.mkdir(directory, { recursive: true });
     // SCIENT-FORK:START — Scient Accounts: a profile's jar is private to the server's user (POSIX).
     await NodeFSP.chmod(directory, 0o700);
@@ -291,17 +303,127 @@ export class ServerBrowserContexts {
         executablePath,
       }),
     );
+    // SCIENT-FORK:START — Scient Accounts: the profile a page in this context belongs to (6o).
+    this.profileContexts.set(context, profileId);
+    // SCIENT-FORK:END
     stubWorkerBadges(context);
+    // SCIENT-FORK:START — Scient Accounts: a profile's sign-ins survive a server restart.
+    // Nothing is kept while a copy holds the profile, or once it is quarantined (round 6m).
+    keepServerSessionCookies(
+      context,
+      () => this.leases.holds(JSON.stringify([profileId, null])) || this.held.has(profileId),
+    );
+    // SCIENT-FORK:END
     return context;
   }
 
-  private profileDirectory(profileId: string) {
+  // SCIENT-FORK:START — Scient Accounts: the fence on a profile whose browser hung (6l-6p).
+  /** Each profile's own persistent context: the profile a page or popup in it belongs to. */
+  private readonly profileContexts = new WeakMap<BrowserContext, string>();
+  profileOf(context: BrowserContext) {
+    return this.profileContexts.get(context);
+  }
+
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: one folder per generation; the first keeps its old name.
+  private profileDirectory(profileId: string, generation = this.generations.get(profileId) ?? 0) {
     const encoded = encodeURIComponent(profileId);
-    return NodePath.join(
+    const base = NodePath.join(
       this.options.profilesDir,
       profileId === "." || profileId === ".." ? encoded.replaceAll(".", "%2E") : encoded,
     );
+    // "%7E" never appears in an encoded id ("~" stays as it is, "%" becomes "%25"): no profile
+    // id names another's generation.
+    return generation === 0 ? base : `${base}%7Eg${generation}`;
   }
+
+  /**
+   * Profiles whose browser never confirmed it closed: fenced in memory for the life of this
+   * server (amendment 62). Nothing is carried over a restart, and Playwright ends the browsers it
+   * launched when the server exits.
+   */
+  private readonly held = new Set<string>();
+  /** Fences the profile: no new context, lease, write, Clear, purge, page or publication. */
+  quarantineProfile(profileId: string) {
+    this.contexts.delete(JSON.stringify([profileId, null]));
+    this.held.add(profileId);
+  }
+  /** The profiles fenced until this server starts again. */
+  quarantinedProfiles(): ReadonlyArray<string> {
+    return [...this.held];
+  }
+  isQuarantined(profileId: string) {
+    return this.held.has(profileId);
+  }
+  /** Work admitted before a hold checks again where it would touch the folder (round 6n). */
+  private refuseHeld(profileId: string) {
+    if (this.held.has(profileId))
+      throw new Error("This profile is unavailable until the server restarts.");
+  }
+
+  /** The generation each profile's open context was opened in: its jar's (round 6e). */
+  private readonly contextGenerations = new Map<string, number>();
+  /** The generation the profile's jar is in now: the open context's, else its current one. */
+  contextGeneration(profileId: string) {
+    return (
+      (this.contexts.has(JSON.stringify([profileId, null]))
+        ? this.contextGenerations.get(profileId)
+        : undefined) ??
+      this.generations.get(profileId) ??
+      0
+    );
+  }
+
+  /** Which generation each profile is in; a profile not named is in its first. */
+  setGenerations(generations: ReadonlyMap<string, number>) {
+    this.generations.clear();
+    for (const [profileId, generation] of generations) this.generations.set(profileId, generation);
+  }
+
+  /** Closes the profile's open context, so its next tab opens in its current generation. */
+  async closeProfile(profileId: string) {
+    const key = JSON.stringify([profileId, null]);
+    // SCIENT-FORK:START — Scient Accounts: a fenced profile's Clear is never done (round 6q).
+    this.refuseHeld(profileId);
+    // SCIENT-FORK:END
+    if (this.leases.holds(key)) await this.leases.cleared(key);
+    // SCIENT-FORK:START — Scient Accounts: fenced while it waited, its context dropped (round 6r).
+    this.refuseHeld(profileId);
+    // SCIENT-FORK:END
+    const pending = this.contexts.get(key);
+    if (!pending) return;
+    this.contexts.delete(key);
+    const context = await pending.catch(() => undefined);
+    await context?.close();
+  }
+
+  /** Deletes one generation's folder, or every generation's (a removed profile's). */
+  async purgeProfile(profileId: string, generation?: number) {
+    if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
+    // Its browser may still write there: tried again once the server has restarted (6m).
+    this.refuseHeld(profileId);
+    if (generation !== undefined) {
+      if (generation === (this.generations.get(profileId) ?? 0)) await this.closeProfile(profileId);
+      this.refuseHeld(profileId);
+      await NodeFSP.rm(this.profileDirectory(profileId, generation), {
+        recursive: true,
+        force: true,
+      });
+      return;
+    }
+    await this.closeProfile(profileId);
+    const base = NodePath.basename(this.profileDirectory(profileId, 0));
+    const names = await NodeFSP.readdir(this.options.profilesDir).catch(() => []);
+    for (const name of names)
+      if (name === base || name.startsWith(`${base}%7Eg`)) {
+        this.refuseHeld(profileId);
+        await NodeFSP.rm(NodePath.join(this.options.profilesDir, name), {
+          recursive: true,
+          force: true,
+        });
+      }
+  }
+  // SCIENT-FORK:END
 
   async scratchPage() {
     if (this.closing) throw new Error("The preview browser is closed.");
@@ -330,6 +452,9 @@ export class ServerBrowserContexts {
 
   async clearProfile(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
+    // SCIENT-FORK:START — Scient Accounts: a quarantined profile's folder waits for a restart.
+    this.refuseHeld(profileId);
+    // SCIENT-FORK:END
     const key = JSON.stringify([profileId, null]);
     const existing = this.clearing.get(key);
     if (existing) return existing;
@@ -343,6 +468,7 @@ export class ServerBrowserContexts {
         const context = await pending.catch(() => undefined);
         await context?.close();
       }
+      this.refuseHeld(profileId);
       await NodeFSP.rm(this.profileDirectory(profileId), { recursive: true, force: true });
     })();
     this.clearing.set(key, clearing);

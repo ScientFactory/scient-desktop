@@ -15,6 +15,8 @@ type Invoke<E> = <A>(
 interface InvokeOptions {
   /** False for reads in the background, which must not change the agent's current tab. */
   readonly updateCurrentTab?: boolean;
+  /** Longer than the broker's default, for an operation that waits on the site. */
+  readonly timeoutMs?: number;
 }
 
 /** Calls the preview browser for one invocation, optionally turning its errors into `E`. */

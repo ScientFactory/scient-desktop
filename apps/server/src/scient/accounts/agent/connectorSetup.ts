@@ -15,7 +15,8 @@ import { agentStatusOf } from "../../extensions/connectors/agentStatus.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey, cardEndedNote, withCardAllowance } from "./accountAdd.ts";
+import { askForAccountKey, cardEndedNote } from "./accountAdd.ts";
+import { withCardAllowance } from "./cardAllowance.ts";
 import { authorize } from "./accountUse.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
@@ -106,7 +107,7 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
         : {}),
       ...(replace && current !== undefined ? { accountId: current.accountId } : {}),
     });
-    if (asked.status === "saved" || asked.status === "exists") {
+    if (asked.status === "saved") {
       keys[field.key] = { type: "account", ref: accountTokenRef(asked.accountId) };
     } else {
       missing.push(

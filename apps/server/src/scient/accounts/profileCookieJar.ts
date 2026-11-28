@@ -15,6 +15,8 @@ import type { BrowserContext, Page } from "playwright-core";
 export interface ProfileCookieJar extends CookieStore {
   /** Every cookie of the jar, for counts by site. */
   readonly readAll: () => Promise<ReadonlyArray<SessionCookie>>;
+  /** Round 6f: the domains of cookies no API can address (an opaque partition), left by every write. */
+  readonly unaddressable?: () => Promise<ReadonlyArray<string>>;
   /** Registrable sites of the profile's open pages. */
   readonly openTabSites: () => ReadonlyArray<string>;
   /** A tab or clear has waited too long for this hold: stop before the next unit. */
@@ -23,6 +25,13 @@ export interface ProfileCookieJar extends CookieStore {
   readonly stalled: () => boolean;
   /** Opening, attaching or closing a helper stalled: the context is discarded on release. */
   readonly quarantined: () => boolean;
+  /**
+   * Closes the jar's context at once, still held, and says whether that is confirmed, so nothing
+   * it was asked can land after (rounds 6i, 6j).
+   */
+  readonly fence?: () => Promise<boolean>;
+  /** Unconfirmed, its profile is fenced for the life of the server (rounds 6l-6p). */
+  readonly quarantineProfile?: () => void;
 }
 
 /** Reads through Playwright's own context API rather than CDP: the qualification's second look. */
@@ -73,6 +82,8 @@ export async function openProfileCookieJar(
   context: BrowserContext,
   stopping = () => false,
   deadlineMs = COOKIE_OPERATION_DEADLINE_MS,
+  /** Fences the profile until a restart when its close can't be confirmed (rounds 6l-6p). */
+  quarantineProfile?: () => void,
 ) {
   const helpers = new Set<Page>();
   let stalled = false;
@@ -125,12 +136,25 @@ export async function openProfileCookieJar(
   const readAll = async () => (await readJar(send)).cookies;
   const jar: ProfileCookieJar = {
     readAll,
+    unaddressable: async () => (await readJar(send)).unsupportedDomains,
     readUnit: async (unit) => unitCookies(unit, await readAll()),
     set: (cookies) => setCookies(send, cookies),
     remove: (cookies) => deleteCookies(send, cookies),
     stopping,
     stalled: () => stalled,
     quarantined: () => quarantined,
+    fence: async () => {
+      const ended = (closing: Promise<void>) =>
+        withinDeadline(closing, deadlineMs).then(
+          () => true,
+          () => false,
+        );
+      if (await ended(context.close())) return true;
+      const browser = context.browser();
+      // Only the browser's own close: a process found by its folder's lock may be another's.
+      return browser !== null && (await ended(browser.close()));
+    },
+    ...(quarantineProfile ? { quarantineProfile } : {}),
     openTabSites: () =>
       context.pages().flatMap((page) => {
         if (helpers.has(page) || page.isClosed()) return [];

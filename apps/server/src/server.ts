@@ -299,6 +299,8 @@ import { documentCaptureStartupSweepLayer } from "./scient/documentExport/Docume
 import { libraryIndexWarmLayer } from "./scient/sources/LibraryIndexWarm.ts";
 import { retiredJournalIconCacheLayer } from "./scient/sources/RetiredJournalIconCache.ts";
 import { paperQueueRecoveryLayer } from "./scient/papers/PaperQueueRecovery.ts";
+import { accountRenewalLayer } from "./scient/accounts/renewal.ts";
+import { taskResumeLayer } from "./scient/accounts/taskResume.ts";
 import { libraryMovePassLayer } from "./scient/sources/LibraryMovePass.ts";
 import { finishLibraryRestoreAtStart } from "./scient/sources/LibraryRestoreRuns.ts";
 // SCIENT-FORK:START — generated-image temp files a crash left behind.
@@ -1099,6 +1101,8 @@ export const layerMakeRoutes = Layer.mergeAll(
     libraryIndexWarmLayer,
     retiredJournalIconCacheLayer,
     paperQueueRecoveryLayer,
+    accountRenewalLayer,
+    taskResumeLayer,
     // SCIENT-FORK:START — generated-image temp files a crash left behind.
     generatedImageTempSweepLayer,
     // SCIENT-FORK:END

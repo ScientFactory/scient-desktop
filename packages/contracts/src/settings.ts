@@ -554,9 +554,6 @@ export const ClientSettingsSchema = Schema.Struct({
   // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.
   signInSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
-  mainDefaultNotice: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // SCIENT-FORK:END
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmTerminalClose: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -2496,9 +2493,6 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
   // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers only once turned on in Labs.
   signInSharingEnabled: Schema.optionalKey(Schema.Boolean),
-  // SCIENT-FORK:END
-  // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
-  mainDefaultNotice: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmTerminalClose: Schema.optionalKey(Schema.Boolean),

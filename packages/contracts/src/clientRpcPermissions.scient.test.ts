@@ -34,6 +34,8 @@ describe("Accounts client authorization", () => {
       WS_METHODS.accountsPasswordStore,
       WS_METHODS.accountsSave,
       WS_METHODS.accountsHandoffCancel,
+      WS_METHODS.accountsHandoffInsertCode,
+      WS_METHODS.accountsNeedsYouDismiss,
       WS_METHODS.accountsHandoffShow,
       WS_METHODS.accountsFillValues,
       WS_METHODS.accountsMatchSignIn,

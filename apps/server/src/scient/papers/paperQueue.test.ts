@@ -518,16 +518,25 @@ it.effect("finds a project's papers waiting on the user after a restart, until t
   ),
 );
 
-it.effect("forgets who asked once a paper is finished", () =>
+it.effect("retries an unreached paper as whoever asked, and forgets them once it's saved", () =>
   withServices((settled) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
       yield* requestPapers(root, [{ doi: "10.1/gone" }], agent);
       yield* settled(root);
-      const stored = yield* readQueue(root);
-      expect(stored.items).toMatchObject([{ doi: "10.1/gone", state: "not-found" }]);
-      expect(stored.requesters).toEqual({});
+      expect((yield* readQueue(root)).items).toMatchObject([
+        { doi: "10.1/gone", state: "not-found" },
+      ]);
+      // The person's Retry runs it as the agent that asked, with that agent's access.
+      fetched.calls.length = 0;
+      yield* continuePapers(root, user, undefined, undefined, "retry");
+      yield* settled(root);
+      expect(fetched.calls).toEqual([{ doi: "10.1/gone", requester: agent }]);
+      const saved = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      yield* requestPapers(saved, [{ doi: "10.1/preprint" }], agent);
+      yield* settled(saved);
+      expect((yield* readQueue(saved)).requesters).toEqual({});
     }),
   ),
 );

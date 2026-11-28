@@ -1,4 +1,7 @@
 import {
+  // SCIENT-FORK:START — Scient Accounts: a generator's key can name an Accounts key.
+  referencedAccountId,
+  // SCIENT-FORK:END
   type ListTextGeneratorModelsInput,
   type ListTextGeneratorModelsResult,
   type ProviderInstanceId,
@@ -15,9 +18,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
+// SCIENT-FORK:START — Scient Accounts: Accounts keys are absent where Accounts isn't built.
+import * as Option from "effect/Option";
+// SCIENT-FORK:END
 import * as Ref from "effect/Ref";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+// SCIENT-FORK:START — Scient Accounts: a generator's key can name an Accounts key.
+import * as TextGeneratorKeys from "../scient/accounts/textGeneratorKeys.ts";
+// SCIENT-FORK:END
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -45,6 +54,8 @@ export class TextGenerators extends Context.Service<
 interface CachedModels {
   readonly config: TextGeneratorConfig;
   readonly models: ReadonlyArray<TextGeneratorModel>;
+  // SCIENT-FORK: the key a typed key Accounts kept read; its row can change under one config.
+  readonly kept?: string | undefined;
 }
 
 /** The generator's name for messages: its label, else the host it reaches. */
@@ -61,6 +72,9 @@ const generatorLabel = (config: TextGeneratorConfig) => {
 export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
+  // SCIENT-FORK:START — Scient Accounts: a generator's key can name an Accounts key.
+  const accountKeys = yield* Effect.serviceOption(TextGeneratorKeys.TextGeneratorKeys);
+  // SCIENT-FORK:END
   const http = yield* HttpClient.HttpClient;
   const modelCache = yield* Ref.make(new Map<ProviderInstanceId, CachedModels>());
   // Settings already drop saved generators under an allow-list; this stops unsaved ones too.
@@ -77,29 +91,72 @@ export const make = Effect.gen(function* () {
     return textGeneratorForSelection(settings, id);
   });
 
-  const connect = Effect.fn("TextGenerators.connect")(function* (config: TextGeneratorConfig) {
+  const connect = Effect.fn("TextGenerators.connect")(function* (
+    config: TextGeneratorConfig,
+    // SCIENT-FORK: Scient Accounts names the generator using an Accounts key.
+    id: ProviderInstanceId,
+  ) {
     const label = generatorLabel(config);
-    const apiKey = yield* requireSettingsSecret(secrets, config.apiKey).pipe(
-      Effect.mapError((cause) => new TextGeneratorRequestError({ detail: cause.message, cause })),
-    );
+    // SCIENT-FORK:START — Scient Accounts: read an Accounts key for this generator's endpoint.
+    const accountId = referencedAccountId(config.apiKey);
+    const apiKey =
+      accountId !== undefined
+        ? yield* (
+            Option.isSome(accountKeys)
+              ? accountKeys.value.read(accountId, { ...config, id })
+              : Effect.fail(TextGeneratorKeys.ACCOUNTS_UNAVAILABLE)
+          ).pipe(Effect.mapError((detail) => new TextGeneratorRequestError({ detail })))
+        : typeof config.apiKey === "string" && config.apiKey.trim() && Option.isSome(accountKeys)
+          ? (yield* accountKeys.value
+              .kept({ ...config, id }, config.apiKey)
+              .pipe(Effect.mapError((detail) => new TextGeneratorRequestError({ detail })))).key
+          : yield* requireSettingsSecret(secrets, config.apiKey).pipe(
+              Effect.mapError(
+                (cause) => new TextGeneratorRequestError({ detail: cause.message, cause }),
+              ),
+            );
+    // SCIENT-FORK:END
     return { baseUrl: config.baseUrl, apiKey, label } satisfies TextGeneratorConnection;
   });
+
+  // SCIENT-FORK:START — Scient Accounts: the API's answer to an Accounts key shows on that use.
+  // Only a generation is proof the key works, and only a 401 says the key itself was refused.
+  const reportKey =
+    (config: TextGeneratorConfig, id: ProviderInstanceId, sent: string) =>
+    <A, R>(effect: Effect.Effect<A, TextGeneratorRequestError, R>) => {
+      if (Option.isNone(accountKeys) || !sent) return effect;
+      const use = { ...config, id };
+      return effect.pipe(
+        Effect.tap(() => Effect.exit(accountKeys.value.report(use, sent, "ok"))),
+        Effect.tapError((error) =>
+          error.status === 401
+            ? Effect.exit(accountKeys.value.report(use, sent, "refused"))
+            : Effect.void,
+        ),
+      );
+    };
+  // SCIENT-FORK:END
 
   const runnerFor =
     (config: TextGeneratorConfig): TextGenerationOperations.Runner =>
     (request) => {
       const driver = TEXT_GENERATOR_DRIVERS[config.kind];
       const label = generatorLabel(config);
-      return connect(config).pipe(
+      return connect(config, request.modelSelection.instanceId).pipe(
         Effect.flatMap((connection) =>
-          driver.generate(
-            connection,
-            request.modelSelection.model,
-            request.prompt,
-            request.structuredCorrection === "initial"
-              ? toJsonSchemaObject(request.outputSchema)
-              : undefined,
-          ),
+          driver
+            .generate(
+              connection,
+              request.modelSelection.model,
+              request.prompt,
+              request.structuredCorrection === "initial"
+                ? toJsonSchemaObject(request.outputSchema)
+                : undefined,
+            )
+            .pipe(
+              // SCIENT-FORK: Scient Accounts records the API's answer to an Accounts key.
+              reportKey(config, request.modelSelection.instanceId, connection.apiKey),
+            ),
         ),
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.mapError(
@@ -156,16 +213,26 @@ export const make = Effect.gen(function* () {
       // Checking unsaved settings, or testing, must reach the API rather than trust the cache.
       const fresh = input.config !== undefined || input.test === true;
       const cached = (yield* Ref.get(modelCache)).get(input.id);
+      // SCIENT-FORK:START — Scient Accounts: a kept typed key reads its row, which can change.
+      const kept =
+        typeof config.apiKey === "string" && config.apiKey.trim() && Option.isSome(accountKeys)
+          ? yield* connect(config, input.id)
+          : undefined;
+      // SCIENT-FORK:END
       // Keyed on the whole config so a changed URL or key never serves another API's list.
       if (
         !fresh &&
         input.refresh !== true &&
         cached !== undefined &&
-        Equal.equals(cached.config, config)
+        Equal.equals(cached.config, config) &&
+        // SCIENT-FORK: an Accounts key can be replaced or removed while the config stays the same.
+        referencedAccountId(config.apiKey) === undefined &&
+        cached.kept === kept?.apiKey
       ) {
         return { models: cached.models };
       }
-      const connection = yield* connect(config);
+      // SCIENT-FORK: Scient Accounts reads a kept typed key once.
+      const connection = kept ?? (yield* connect(config, input.id));
       const driver = TEXT_GENERATOR_DRIVERS[config.kind];
       const models = yield* driver
         .listModels(connection)
@@ -181,13 +248,16 @@ export const make = Effect.gen(function* () {
             detail: `${connection.label} lists no models to test with.`,
           });
         }
-        yield* driver
-          .generate(connection, model, "Reply with OK.")
-          .pipe(Effect.provideService(HttpClient.HttpClient, http));
+        yield* driver.generate(connection, model, "Reply with OK.").pipe(
+          Effect.provideService(HttpClient.HttpClient, http),
+          // SCIENT-FORK: Scient Accounts records the API's answer to an Accounts key.
+          reportKey(config, input.id, connection.apiKey),
+        );
         return { models, testedModel: model };
       }
       yield* Ref.update(modelCache, (current) =>
-        new Map(current).set(input.id, { config, models }),
+        // SCIENT-FORK: Scient Accounts keys the list on a kept typed key's value too.
+        new Map(current).set(input.id, { config, models, kept: kept?.apiKey }),
       );
       return { models };
     },
@@ -198,5 +268,11 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(TextGenerators, make).pipe(
-  Layer.provide([SecretResolverLayer.layer, FetchHttpClient.layer]),
+  Layer.provide([
+    SecretResolverLayer.layer,
+    FetchHttpClient.layer,
+    // SCIENT-FORK:START — Scient Accounts: the same instance Accounts serves (`serveLayer`).
+    TextGeneratorKeys.layer,
+    // SCIENT-FORK:END
+  ]),
 );

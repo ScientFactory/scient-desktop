@@ -5,6 +5,61 @@ export interface CookieMetadata {
   readonly domain: string;
   readonly httpOnly?: boolean;
   readonly expires?: number;
+  readonly name?: string;
+  readonly path?: string;
+  readonly digest?: string;
+}
+
+/**
+ * Cookies bot checks and request guards set on any page, a refusal too: never a sign-in's evidence
+ * (Cloudflare, Akamai, Imperva, PerimeterX, DataDome, AWS WAF, CSRF tokens).
+ */
+const NOT_A_SESSION =
+  /^(?:__cf_bm|cf_clearance|__cfruid|_cfuvid|ak_bmsc|bm_sz|bm_sv|bm_mi|_abck|incap_ses_.*|visid_incap_.*|nlbi_.*|reese84|datadome|_px.*|aws-waf-token|awswaf.*|__ddg.*|awsalb.*|xsrf-token|csrftoken|.*csrf.*)$/i;
+
+/**
+ * A cookie named as a site keeps its sign-in in. A bare "token", "user" or "account" names
+ * anything (a visitor's token, a user's preference): never positive evidence alone (round 6e).
+ */
+const SESSION_NAME =
+  /sess|sid|auth|login|logged|remember|jwt|ident|(?:access|refresh|id|bearer|api)[-_]?token/i;
+/** A flow's state, nonce or challenge, or a visitor's, device's or tracker's: no sign-in. */
+const FLOW_NAME =
+  /state|nonce|flow|challenge|verifier|pkce|redirect|return|consent|captcha|visit|guest|anon|device|track|analytic|pref|locale|lang|theme|experiment/i;
+
+/**
+ * What the site's cookies say about a sign-in since `before` (round 6d). "signed-in": positive
+ * evidence, a session rotated in place, or a new HttpOnly cookie named as a session. "unverified":
+ * a new HttpOnly cookie that could be a refusal's flow state, a bot check's cookie, or cookies
+ * without names; it never counts as signed in, nor as signed out. "none": nothing new.
+ */
+export function signInEvidence(
+  before: ReadonlyArray<CookieMetadata>,
+  after: ReadonlyArray<CookieMetadata>,
+  site: string,
+  now = Date.now(),
+): "signed-in" | "unverified" | "none" {
+  if (after.some((cookie) => cookie.name === undefined))
+    return hasNewSessionCookie(before, after, site, now) ? "unverified" : "none";
+  const identity = (cookie: CookieMetadata) =>
+    `${cookie.name}\u0000${cookie.domain.toLowerCase()}\u0000${cookie.path ?? "/"}`;
+  const earlier = new Map(
+    siteCookies(before, site, now).map((cookie) => [identity(cookie), cookie]),
+  );
+  let evidence: "signed-in" | "unverified" | "none" = "none";
+  for (const cookie of siteCookies(after, site, now)) {
+    const was = earlier.get(identity(cookie));
+    const rotated =
+      was !== undefined && cookie.digest !== undefined && was.digest !== cookie.digest;
+    if (was !== undefined && !rotated) continue;
+    const name = cookie.name ?? "";
+    if (NOT_A_SESSION.test(name) || FLOW_NAME.test(name)) evidence = "unverified";
+    // New or replaced, it counts when it is named as a session; a generic one replaced, as a
+    // refusal may, proves nothing alone (round 6f).
+    else if (SESSION_NAME.test(name)) return "signed-in";
+    else evidence = "unverified";
+  }
+  return evidence;
 }
 
 function siteHost(site: string) {
@@ -50,6 +105,16 @@ function newSessionDomains(
     counts.set(key(cookie), count - 1);
     return count > 0 ? [] : [cookie.domain.replace(/^\./, "").toLowerCase()];
   });
+}
+
+/** Whether the site got a new HttpOnly cookie between the two reads: a sign-in's evidence. */
+function hasNewSessionCookie(
+  before: ReadonlyArray<CookieMetadata>,
+  after: ReadonlyArray<CookieMetadata>,
+  site: string,
+  now = Date.now(),
+) {
+  return newSessionDomains(before, after, site, now).length > 0;
 }
 
 const YOUTUBE_SITE = "youtube.com";

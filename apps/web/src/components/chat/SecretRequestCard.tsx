@@ -25,6 +25,20 @@ import {
   type SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+// SCIENT-FORK:START — Scient Accounts: Accounts cards' own copy and link.
+import { Link } from "@tanstack/react-router";
+import {
+  isAccountSecretRequest,
+  isSignInCodeRequest,
+} from "@t3tools/shared/scientAccountSecretRequest";
+import {
+  accountCardAccountId,
+  accountCardLabel,
+  accountCardOutcome,
+} from "@t3tools/client-runtime/secret-request";
+import { accountEditorLink } from "../../scient/accounts/accountsLink";
+import { useAccounts } from "../../scient/accounts/useAccounts";
+// SCIENT-FORK:END
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -56,6 +70,12 @@ export function SecretRequestCard(props: {
   const { item } = props;
   const messages = useMessages();
   const display = secretRequestDisplay(item, props.visibility, messages);
+  // SCIENT-FORK:START — Scient Accounts: an Accounts card ends as Accounts says it did.
+  const accounts = useAccounts(props.environmentId).data;
+  const outcome = accountCardOutcome(accounts, item.id);
+  const accountLabel = accountCardLabel(item, outcome, messages);
+  const savedTo = accountCardAccountId(accounts, item.id);
+  // SCIENT-FORK:END
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -69,7 +89,22 @@ export function SecretRequestCard(props: {
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
         label={
           <>
-            {item.label} · {display.label}
+            {/* SCIENT-FORK:START — Scient Accounts: an Accounts card's outcome and its row. */}
+            {item.label} · {accountLabel ?? display.label}
+            {outcome === "saved" ? (
+              <>
+                {" · "}
+                <Link
+                  {...(savedTo
+                    ? accountEditorLink(props.environmentId, savedTo)
+                    : { to: "/settings/accounts", search: { machine: props.environmentId } })}
+                  className="underline"
+                >
+                  <T>Open in Accounts</T>
+                </Link>
+              </>
+            ) : null}
+            {/* SCIENT-FORK:END */}
           </>
         }
       />
@@ -108,7 +143,9 @@ function PendingSecretRequestForm(props: {
   const multiple = item.fields !== undefined;
   // A reference answers one value, so a card with fields is always typed.
   const configuredSources = useSecretRequestSources(props.environmentId);
-  const sources = multiple ? NO_SOURCES : configuredSources;
+  // SCIENT-FORK:START — Scient Accounts: an Accounts card saves a value; it takes no reference.
+  const sources = multiple || isAccountSecretRequest(item.id) ? NO_SOURCES : configuredSources;
+  // SCIENT-FORK:END
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
@@ -181,7 +218,15 @@ function PendingSecretRequestForm(props: {
   );
   const saveButton = (
     <Button type="submit" disabled={submitting || !canSave}>
-      <T>Save securely</T>
+      {/* SCIENT-FORK:START — Scient Accounts: say where the answer goes. */}
+      {isSignInCodeRequest(item.id) ? (
+        <T>Send code</T>
+      ) : isAccountSecretRequest(item.id) ? (
+        <T>Save to Accounts</T>
+      ) : (
+        <T>Save securely</T>
+      )}
+      {/* SCIENT-FORK:END */}
     </Button>
   );
 

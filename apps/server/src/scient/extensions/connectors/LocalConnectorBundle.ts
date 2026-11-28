@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 
 import { openZipArchive } from "../../../zipArchive.ts";
 import type { LocalLaunchTemplate } from "./LocalConnectorLaunch.ts";
+import type { TokenRecipe } from "./serviceTokens.ts";
 
 const MANIFEST_FILE = "manifest.json";
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -95,7 +96,39 @@ const ScientMeta = Schema.Struct({
   /** `project`: the chat's project folder; an absolute path: that folder. Default: the bundle's. */
   workingDirectory: Schema.optional(Schema.String),
   /** The website the program needs the user signed in to; Scient hands it the session. */
-  signIn: Schema.optional(Schema.Struct({ site: Schema.String })),
+  signIn: Schema.optional(
+    Schema.Struct({
+      site: Schema.String,
+      /**
+       * Reads Scient makes itself with the session (`scient/readWithWebsiteSession`): `reads` maps
+       * an operation to a path on the site, and the site's rotations of the `cookie` session
+       * cookie at `path` (default `/`) are kept in the profile.
+       */
+      writeBack: Schema.optional(
+        Schema.Struct({
+          cookie: Schema.String,
+          path: Schema.optional(Schema.String),
+          reads: Schema.Record(Schema.String, Schema.String),
+        }),
+      ),
+      /**
+       * Tokens the site mints from the session (`scient/serviceToken`): the page that hands one
+       * out (`{nonce}` filled with random hex), and the `pattern` whose first group is it.
+       */
+      tokens: Schema.optional(
+        Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            path: Schema.String,
+            pattern: Schema.String,
+            decode: Schema.optional(Schema.Literal("base64")),
+            separator: Schema.optional(Schema.String),
+            part: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+          }),
+        ),
+      ),
+    }),
+  ),
 });
 const decodeScientMeta = Schema.decodeUnknownExit(ScientMeta);
 
@@ -130,13 +163,90 @@ export const manifestWorkingDirectory = (manifest: BundleManifest): string | und
 const isLoopback = (url: URL) =>
   url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
 
+export interface ManifestWriteBack {
+  readonly cookie: string;
+  readonly path: string;
+  /** Operation id to an absolute URL on the site. */
+  readonly reads: Readonly<Record<string, string>>;
+}
+
+/** A path on the site, resolved; undefined for anything that would leave it. */
+const onSite = (site: URL, target: string) => {
+  const url =
+    target.startsWith("/") && !target.startsWith("//") ? new URL(target, site) : undefined;
+  return url !== undefined && url.origin === site.origin ? url.href : undefined;
+};
+
+const MOST_TOKENS = 8;
+
+/** The token recipes resolved on the site, or why one can't be used. */
+const tokensOf = (
+  site: URL,
+  raw: NonNullable<NonNullable<(typeof ScientMeta.Type)["signIn"]>["tokens"]>,
+): Readonly<Record<string, TokenRecipe>> | string => {
+  const entries = Object.entries(raw);
+  if (entries.length > MOST_TOKENS) return `Its signIn tokens may name at most ${MOST_TOKENS}.`;
+  const tokens: Record<string, TokenRecipe> = {};
+  for (const [name, recipe] of entries) {
+    const url = onSite(site, recipe.path);
+    let pattern: RegExp | undefined;
+    try {
+      pattern = recipe.pattern.length <= 500 ? new RegExp(recipe.pattern, "u") : undefined;
+    } catch {
+      pattern = undefined;
+    }
+    if (url === undefined || pattern === undefined || !/^[\w.-]{1,64}$/u.test(name))
+      return `Its signIn token ${name.slice(0, 64)} needs a path on the site and a pattern whose first group is the token.`;
+    tokens[name] = {
+      url,
+      pattern,
+      ...(recipe.decode === undefined ? {} : { decode: recipe.decode }),
+      ...(recipe.separator === undefined ? {} : { separator: recipe.separator }),
+      ...(recipe.part === undefined ? {} : { part: recipe.part }),
+    };
+  }
+  return tokens;
+};
+
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$/u;
+const MOST_READS = 32;
+
+/** The write-back block's reads resolved on the site, or why they can't be used. */
+const writeBackOf = (
+  site: URL,
+  raw: NonNullable<NonNullable<(typeof ScientMeta.Type)["signIn"]>["writeBack"]>,
+): ManifestWriteBack | string => {
+  const path = raw.path ?? "/";
+  const entries = Object.entries(raw.reads);
+  if (!COOKIE_NAME.test(raw.cookie) || !path.startsWith("/") || path.includes(";"))
+    return "Its signIn writeBack needs a cookie name and a path starting with /.";
+  if (entries.length === 0 || entries.length > MOST_READS)
+    return `Its signIn writeBack needs between 1 and ${MOST_READS} reads.`;
+  const reads: Record<string, string> = {};
+  for (const [operation, target] of entries) {
+    const url =
+      target.startsWith("/") && !target.startsWith("//") ? new URL(target, site) : undefined;
+    if (url === undefined || url.origin !== site.origin || !/^[\w.-]{1,64}$/u.test(operation))
+      return `Its signIn writeBack read ${operation.slice(0, 64)} must be a path on the site, such as /api/items.`;
+    reads[operation] = url.href;
+  }
+  return { cookie: raw.cookie, path, reads };
+};
+
 /**
  * The origin of the site a connector signs in to, or why the manifest's `signIn` cannot be used.
  * An `https:` site, or `http:` on this computer (localhost, 127.0.0.1) for a site under test.
  */
 export const manifestSignIn = (
   manifest: BundleManifest,
-): { readonly site: string } | { readonly problem: string } | undefined => {
+):
+  | {
+      readonly site: string;
+      readonly writeBack?: ManifestWriteBack;
+      readonly tokens?: Readonly<Record<string, TokenRecipe>>;
+    }
+  | { readonly problem: string }
+  | undefined => {
   const read = scientMetaOf(manifest);
   if ("problem" in read) return { problem: read.problem };
   const site = nonBlank(read.meta.signIn?.site);
@@ -149,7 +259,17 @@ export const manifestSignIn = (
     url.password
   )
     return { problem: `Its signIn site must be an https:// address, not ${site.slice(0, 200)}.` };
-  return { site: url.origin };
+  const raw = read.meta.signIn?.writeBack;
+  const writeBack = raw === undefined ? undefined : writeBackOf(url, raw);
+  if (typeof writeBack === "string") return { problem: writeBack };
+  const rawTokens = read.meta.signIn?.tokens;
+  const tokens = rawTokens === undefined ? undefined : tokensOf(url, rawTokens);
+  if (typeof tokens === "string") return { problem: tokens };
+  return {
+    site: url.origin,
+    ...(writeBack === undefined ? {} : { writeBack }),
+    ...(tokens === undefined ? {} : { tokens }),
+  };
 };
 
 const PLATFORM_NAMES: Readonly<Record<string, string>> = {

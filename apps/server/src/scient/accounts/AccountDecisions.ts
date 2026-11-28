@@ -10,7 +10,10 @@ import {
   type BrowserProfileRecord,
   type ProjectId,
 } from "@t3tools/contracts";
-import type { AccountAccessControls } from "@t3tools/shared/scientAccountAuthorization";
+import {
+  agentAccessOff,
+  type AccountAccessControls,
+} from "@t3tools/shared/scientAccountAuthorization";
 
 export {
   agentAccessOff,
@@ -20,12 +23,22 @@ export {
 export {
   automaticSignInOnHold,
   signedInMomentsAgo,
+  signedOutOnPurpose,
   signInHeld,
   signInRefused,
   siteLimiting,
   withSignIn,
 } from "@t3tools/shared/scientAccountSignIn";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
+
+/**
+ * Whether a key may sit in an agent's provider variable: a provider serves every project, so the
+ * key must reach every project, with agent access on.
+ */
+export const keyReachesProviders = (
+  enabled: boolean,
+  controls: Pick<AccountAccessControls, "access" | "scope">,
+) => !agentAccessOff(enabled, controls.access) && controls.scope.type === "all-projects";
 
 export const effectiveProfile = (
   profiles: ReadonlyArray<BrowserProfileRecord>,
@@ -46,6 +59,21 @@ export const applyApprovalDecision = <T extends AccountAccessControls>(
   return controls;
 };
 
+/**
+ * The person's answer to turning an Off item on for agents: Always makes it Allowed; this project
+ * or this conversation make it Ask, allowed there (the conversation's grant is kept apart).
+ */
+export const turnOnDecision = <T extends AccountAccessControls>(
+  controls: T,
+  decision: AccountApprovalDecision,
+  projectId: ProjectId | undefined,
+): T =>
+  decision === "deny"
+    ? controls
+    : decision === "always"
+      ? { ...controls, access: "allowed" }
+      : applyApprovalDecision({ ...controls, access: "ask" }, decision, projectId);
+
 export const sameTarget = (left: AccountTarget, right: AccountTarget) =>
   left.type === "account"
     ? right.type === "account" && left.accountId === right.accountId
@@ -61,6 +89,8 @@ export const outcomeSignInState = (outcome: AccountSignInOutcome): AccountSignIn
 
 /** An unchanged answer from Google is written this often, to date it without constant writes. */
 export const GOOGLE_RECHECK_WRITE_MS = 60 * 60 * 1000;
+/** A Google sign-out stands once two of Google's answers this far apart agree. */
+export const GOOGLE_OUT_CONFIRM_MS = 60_000;
 
 /** The row Scient keeps for a Google address in a profile. A saved password is a separate row. */
 export const isGoogleSessionRow = (account: Pick<AccountSummary, "details" | "secrets">) =>

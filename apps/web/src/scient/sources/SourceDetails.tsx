@@ -798,7 +798,8 @@ export function SourceDetails(props: {
     readonly name: string;
   }>;
   readonly onSourceActionsOpen?: () => void;
-  readonly onGetPdf?: () => Promise<void>;
+  /** Resolves with the outcome in a few words, shown at the button. */
+  readonly onGetPdf?: () => Promise<string | undefined>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
@@ -813,6 +814,7 @@ export function SourceDetails(props: {
   const gt = useGT();
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
+  const [pdfOutcome, setPdfOutcome] = useState<string>();
   const record = props.record;
   const readOnly = props.readOnly ?? false;
   const library = props.library;
@@ -951,6 +953,7 @@ export function SourceDetails(props: {
           <Pencil />
           <T context="verb, button">Edit</T>
         </Button>
+        {pdfOutcome ? <span className="text-xs text-muted-foreground">{pdfOutcome}</span> : null}
         {pdfSelection._tag === "Selected" ? (
           <Button
             size="xs"
@@ -1002,7 +1005,10 @@ export function SourceDetails(props: {
             disabled={gettingPdf || readOnly}
             onClick={() => {
               setGettingPdf(true);
-              void Promise.resolve(props.onGetPdf?.()).finally(() => setGettingPdf(false));
+              setPdfOutcome(undefined);
+              void Promise.resolve(props.onGetPdf?.())
+                .then(setPdfOutcome)
+                .finally(() => setGettingPdf(false));
             }}
           >
             {gettingPdf ? <LoaderCircle className="animate-spin" /> : <Download />}

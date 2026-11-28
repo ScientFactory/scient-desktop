@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { AccountSite, AccountsError, type CustomModelConnection } from "@t3tools/contracts";
 import { Effect, Option, Redacted, Schema } from "effect";
+import { TestClock } from "effect/testing";
 import {
   customModelSecretName,
   resolveCustomModelKey,
@@ -176,6 +177,8 @@ it.effect("rolls back the staged record after a failed compare-and-set", () =>
     const { service } = yield* f.start();
     expect(f.connection()).toEqual(legacy);
     expect((yield* service.snapshot).accounts).toHaveLength(0);
+    // Journaled, its staged value goes with the sweep.
+    yield* TestClock.adjust("1 minute");
     expect([...f.storage.blobs.keys()].some((ref) => ref.startsWith("accounts-value-"))).toBe(
       false,
     );
@@ -204,6 +207,8 @@ it.effect("reports named consumers and invalidates a replaced and removed shared
       secrets: { token: { type: "scient", value: replacement } },
     });
     expect(f.invalidations).toHaveLength(1);
+    // The replaced key's escrow is journaled; the minute's sweep deletes it.
+    yield* TestClock.adjust("1 minute");
     expect(f.storage.blobs.has(escrow)).toBe(false);
     expect(secretEquals((yield* f.resolve()).apiKey ?? undefined, replacement)).toBe(true);
     expect(
@@ -213,6 +218,153 @@ it.effect("reports named consumers and invalidates a replaced and removed shared
     expect(f.invalidations).toHaveLength(2);
     expect((yield* f.resolve()).credentialError).toContain("Choose a saved API key");
     expect((yield* service.snapshot).keyConsumers).toEqual(snapshot.keyConsumers);
+  }),
+);
+
+it.effect("lets a migrated key's old value go when it is replaced, escrow and all", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const { service } = yield* f.start();
+    const accountId = f.connection().accountId!;
+    const account = (yield* service.snapshot).accounts.find((row) => row.accountId === accountId)!;
+    const values = () =>
+      [...f.storage.blobs.keys()].filter((name) => name.startsWith("accounts-value-"));
+    const before = values();
+    yield* service.save({
+      accountId,
+      name: account.name,
+      details: account.details,
+      secrets: { token: { type: "scient", value: syntheticValue() } },
+    });
+    // Journaled in the write that pruned its escrow: the sweep takes it.
+    yield* TestClock.adjust("1 minute");
+    expect(before.filter((name) => f.storage.blobs.has(name))).toEqual([]);
+  }),
+);
+
+it.effect("keeps an escrow whose record no longer reads, even with no value named", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const name = "accounts-state";
+    const escrow = customModelEscrowName(legacy.credentialId!);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { vault } = yield* f.start();
+        expect(f.storage.blobs.has(escrow)).toBe(true);
+        // A later build's escrow record: its token lives elsewhere, so this one names no value.
+        const stored: { customModelEscrows?: Array<Record<string, unknown>> } = JSON.parse(
+          new TextDecoder().decode(
+            Redacted.value(yield* vault.decrypt(name, f.storage.blobs.get(name)!)),
+          ),
+        );
+        stored.customModelEscrows = (stored.customModelEscrows ?? []).map(
+          ({ tokenRef: _, ...record }) => record,
+        );
+        f.storage.blobs.set(
+          name,
+          yield* vault.encrypt(
+            name,
+            Redacted.make(new TextEncoder().encode(JSON.stringify(stored))),
+          ),
+        );
+      }),
+    );
+    // Two runs: the first holds what didn't read, the second cleans up what is certain.
+    yield* Effect.scoped(f.start());
+    yield* Effect.scoped(f.start());
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+  }),
+);
+
+/** The stored state, changed as `change` says, as a run of another build would leave it. */
+const rewriteStored = (
+  f: ReturnType<typeof migrationFixture>,
+  change: (stored: {
+    customModelEscrows?: Array<Record<string, unknown>>;
+    unreadable?: Array<Record<string, unknown>>;
+    unreferencedEscrows?: Array<string>;
+    escrowJournal?: Array<Record<string, unknown>>;
+  }) => void,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { vault } = yield* f.start();
+      const name = "accounts-state";
+      const stored = JSON.parse(
+        new TextDecoder().decode(
+          Redacted.value(yield* vault.decrypt(name, f.storage.blobs.get(name)!)),
+        ),
+      );
+      change(stored);
+      f.storage.blobs.set(
+        name,
+        yield* vault.encrypt(name, Redacted.make(new TextEncoder().encode(JSON.stringify(stored)))),
+      );
+    }),
+  );
+
+it.effect("keeps an escrow an earlier build held by its token alone, on upgrade", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const escrow = customModelEscrowName(legacy.credentialId!);
+    // As round 15 left it: the escrow's record discarded, only its token held.
+    yield* rewriteStored(f, (stored) => {
+      const row = stored.customModelEscrows![0]!;
+      stored.customModelEscrows = [];
+      stored.unreadable = [
+        ...(stored.unreadable ?? []),
+        { list: "customModelEscrows", accountId: row["accountId"], refs: [row["tokenRef"]] },
+      ];
+    });
+    yield* Effect.scoped(f.start());
+    yield* Effect.scoped(f.start().pipe(Effect.andThen(TestClock.adjust("2 minutes"))));
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+  }),
+);
+
+it.effect(
+  "keeps an escrow a record that didn't read names, when its readable twin's key rotates",
+  () =>
+    Effect.gen(function* () {
+      const f = migrationFixture();
+      const escrow = customModelEscrowName(legacy.credentialId!);
+      // A second record for the same escrow that no build reads (it names no token).
+      yield* rewriteStored(f, (stored) => {
+        const { tokenRef: _, ...twin } = stored.customModelEscrows![0]!;
+        stored.customModelEscrows = [...stored.customModelEscrows!, twin];
+      });
+      yield* Effect.scoped(f.start());
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { service } = yield* f.start();
+          const accountId = f.connection().accountId!;
+          const account = (yield* service.snapshot).accounts.find(
+            (row) => row.accountId === accountId,
+          )!;
+          yield* service.save({
+            accountId,
+            name: account.name,
+            details: account.details,
+            secrets: { token: { type: "scient", value: syntheticValue() } },
+          });
+          yield* TestClock.adjust("2 minutes");
+        }),
+      );
+      expect(f.storage.blobs.has(escrow)).toBe(true);
+    }),
+);
+
+it.effect("keeps a removed key's escrow for Undo, then drops it when the hour ends", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const { service } = yield* f.start();
+    const escrow = customModelEscrowName(legacy.credentialId!);
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+    yield* service.remove(f.connection().accountId!);
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+    // Nobody uses Accounts meanwhile: the escrow still goes with the Undo hour.
+    yield* TestClock.adjust("61 minutes");
+    expect(f.storage.blobs.has(escrow)).toBe(false);
   }),
 );
 
@@ -228,7 +380,7 @@ it.effect("installs the resolver before any vault read and migrates on first own
   }),
 );
 
-it.effect("flags an unavailable consumer inventory and prevents key deletion", () =>
+it.effect("flags an unavailable consumer inventory and still removes the key, for Undo", () =>
   Effect.gen(function* () {
     const { service } = yield* makeHarness({
       sourceOverrides: {
@@ -246,9 +398,8 @@ it.effect("flags an unavailable consumer inventory and prevents key deletion", (
       secrets: { token: { type: "scient", value: syntheticValue() } },
     });
     expect((yield* service.snapshot).keyConsumersIncomplete).toBe(true);
-    const failure = yield* service.remove(accountId).pipe(Effect.flip);
-    expect(failure.message).toContain("Could not check what uses this key");
-    expect((yield* service.snapshot).accounts.map((row) => row.accountId)).toContain(accountId);
+    yield* service.remove(accountId);
+    expect((yield* service.snapshot).accounts.map((row) => row.accountId)).not.toContain(accountId);
   }),
 );
 
@@ -319,6 +470,8 @@ it.effect("discards staging for a connection that lost its legacy reference", ()
     expect([...f.storage.blobs.keys()].some((ref) => ref.startsWith("accounts-value-"))).toBe(true);
     f.dropLegacyReference();
     const { service } = yield* f.start();
+    yield* service.snapshot;
+    yield* TestClock.adjust("1 minute");
     expect([...f.storage.blobs.keys()].some((ref) => ref.startsWith("accounts-value-"))).toBe(
       false,
     );
@@ -371,7 +524,7 @@ it.effect("reports a bound key as unavailable when its sealed value cannot be re
   }),
 );
 
-it.effect("retargets provider links only for a key with the same migration lineage", () =>
+it.effect("keeps an alias row for its other holders, and moves links only within its lineage", () =>
   Effect.gen(function* () {
     for (const changedBinding of [false, true]) {
       const f = migrationFixture();
@@ -393,12 +546,15 @@ it.effect("retargets provider links only for a key with the same migration linea
       }
       yield* service.migrateCustomModelKeys!;
       const after = yield* service.snapshot;
-      expect(after.accounts.some((entry) => entry.accountId === accountId)).toBe(false);
+      // Its id stays: a connector or plugin elsewhere may still name it.
+      expect(after.accounts.some((entry) => entry.accountId === accountId)).toBe(true);
       if (changedBinding) {
-        expect(after.keyLinks).toEqual([]);
-        expect(after.detachedKeyLinks).toEqual([{ ...target, accountId }]);
+        expect(after.keyLinks).toEqual([{ ...target, accountId }]);
       } else {
-        const migrated = after.accounts[0]!;
+        // It holds its own copy of the key, so those holders keep working.
+        const { token: kept } = yield* service.resolveSecrets(accountId, ["token"]);
+        expect(kept).toBeDefined();
+        const migrated = after.accounts.find((entry) => entry.accountId !== accountId)!;
         expect(after.keyLinks).toEqual([{ ...target, accountId: migrated.accountId }]);
         const value = syntheticValue();
         yield* service.save({
@@ -417,24 +573,140 @@ it.effect("retargets provider links only for a key with the same migration linea
   }),
 );
 
-it.effect(
-  "sweeps orphaned escrow names and retries a failed removal without touching live escrows",
-  () =>
-    Effect.gen(function* () {
-      const f = migrationFixture();
-      const { service } = yield* f.start();
-      const active = customModelEscrowName(legacy.credentialId!);
-      const orphan = customModelEscrowName("orphan");
-      const unrelated = "accounts-model-escrow-v2-other";
-      f.storage.blobs.set(orphan, new Uint8Array([1]));
-      f.storage.blobs.set(unrelated, new Uint8Array([2]));
-      f.storage.failRemovalOf(orphan);
-      yield* service.migrateCustomModelKeys!;
-      expect(f.storage.blobs.has(orphan)).toBe(true);
-      f.storage.failRemovalOf(undefined);
-      yield* service.migrateCustomModelKeys!;
-      expect(f.storage.blobs.has(orphan)).toBe(false);
-      expect(f.storage.blobs.has(active)).toBe(true);
-      expect(f.storage.blobs.has(unrelated)).toBe(true);
-    }),
+it.effect("leaves an escrow no record names on disk: a leak, never a loss", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const escrow = customModelEscrowName(legacy.credentialId!);
+    // Its record won't read and names neither its escrow's id nor its token.
+    yield* rewriteStored(f, (stored) => {
+      stored.customModelEscrows = stored.customModelEscrows!.map(
+        ({ legacyId: _, tokenRef: __, ...record }) => record,
+      );
+    });
+    yield* Effect.scoped(f.start());
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { service } = yield* f.start();
+        yield* service.migrateCustomModelKeys!;
+        yield* TestClock.adjust("2 minutes");
+      }),
+    );
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+  }),
+);
+
+it.effect("keeps an escrow held for one login held for another, once the first is removed", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const escrow = customModelEscrowName(legacy.credentialId!);
+    const other = "acc_00000000-0000-4000-8000-00000000000b";
+    // A's escrow, held by name for A too, and B's record of it that won't read (no token).
+    yield* rewriteStored(f, (stored) => {
+      const row = stored.customModelEscrows![0]!;
+      const { tokenRef: _, ...twin } = row;
+      stored.customModelEscrows = [...stored.customModelEscrows!, { ...twin, accountId: other }];
+      stored.unreadable = [
+        ...(stored.unreadable ?? []),
+        { list: "customModelEscrows", accountId: row["accountId"], refs: [], escrow },
+      ];
+    });
+    yield* Effect.scoped(f.start());
+    // A is removed and its Undo's hour ends; then a run that sweeps.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { service } = yield* f.start();
+        yield* service.remove(f.connection().accountId!);
+        yield* TestClock.adjust("61 minutes");
+      }),
+    );
+    yield* Effect.scoped(f.start().pipe(Effect.andThen(TestClock.adjust("2 minutes"))));
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+  }),
+);
+
+it.effect("keeps an escrow while a record of it that didn't read names nothing at all", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const escrow = customModelEscrowName(legacy.credentialId!);
+    // B's record of A's escrow won't read and names neither the escrow's id nor a token.
+    yield* rewriteStored(f, (stored) => {
+      const { tokenRef: _, legacyId: __, ...twin } = stored.customModelEscrows![0]!;
+      stored.customModelEscrows = [
+        ...stored.customModelEscrows!,
+        { ...twin, accountId: "acc_00000000-0000-4000-8000-00000000000b" },
+      ];
+    });
+    yield* Effect.scoped(f.start());
+    // A is removed and its Undo's hour ends; then a run that sweeps.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { service } = yield* f.start();
+        yield* service.remove(f.connection().accountId!);
+        yield* TestClock.adjust("61 minutes");
+      }),
+    );
+    yield* Effect.scoped(f.start().pipe(Effect.andThen(TestClock.adjust("2 minutes"))));
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+  }),
+);
+
+it.effect("never sweeps an escrow an earlier build journaled without saying why", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const orphan = customModelEscrowName("orphan");
+    f.storage.blobs.set(orphan, new Uint8Array([1]));
+    // As round 17 left it: an orphan found on disk, journaled for the sweep.
+    yield* rewriteStored(f, (stored) => {
+      stored.unreferencedEscrows = [orphan];
+    });
+    yield* Effect.scoped(f.start().pipe(Effect.andThen(TestClock.adjust("2 minutes"))));
+    expect(f.storage.blobs.has(orphan)).toBe(true);
+  }),
+);
+
+it.effect("opens with a journaled escrow that won't read, quarantined alone and never swept", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const missing = customModelEscrowName("missing");
+    const unknown = customModelEscrowName("unknown");
+    const journaled = customModelEscrowName("journaled");
+    for (const name of [missing, unknown, journaled])
+      f.storage.blobs.set(name, new Uint8Array([1]));
+    // Two entries with no or an unknown provenance beside one this build wrote.
+    yield* rewriteStored(f, (stored) => {
+      stored.escrowJournal = [
+        { name: missing },
+        { name: unknown, provenance: "found-on-disk" },
+        { name: journaled, provenance: "decoded-row" },
+      ];
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { service } = yield* f.start();
+        const accountId = f.connection().accountId!;
+        expect((yield* service.snapshot).accounts.map((row) => row.accountId)).toContain(accountId);
+        yield* TestClock.adjust("2 minutes");
+      }),
+    );
+    expect([missing, unknown, journaled].map((name) => f.storage.blobs.has(name))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+  }),
+);
+
+it.effect("never sweeps a quarantined escrow, though a valid entry names it too", () =>
+  Effect.gen(function* () {
+    const f = migrationFixture();
+    const escrow = customModelEscrowName("twice");
+    f.storage.blobs.set(escrow, new Uint8Array([1]));
+    // The same name twice: once with no provenance (quarantined), once as this build writes it.
+    yield* rewriteStored(f, (stored) => {
+      stored.escrowJournal = [{ name: escrow }, { name: escrow, provenance: "decoded-row" }];
+    });
+    yield* Effect.scoped(f.start().pipe(Effect.andThen(TestClock.adjust("2 minutes"))));
+    yield* Effect.scoped(f.start().pipe(Effect.andThen(TestClock.adjust("2 minutes"))));
+    expect(f.storage.blobs.has(escrow)).toBe(true);
+  }),
 );

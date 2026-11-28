@@ -1,7 +1,7 @@
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_1,
   BrowserProfileId,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
@@ -192,7 +192,7 @@ function RemoteComputerRow({
    */
   const signInThere = async () => {
     const first = needs[0];
-    if (!first || (remote?.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL) return openThere();
+    if (!first || (remote?.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL_1) return openThere();
     const saved = await save({
       name: first.site,
       details: {

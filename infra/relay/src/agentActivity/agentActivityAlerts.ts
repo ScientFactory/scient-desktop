@@ -72,6 +72,9 @@ export function attentionTransitionRows(input: TransitionInput) {
   );
   return input.nextAggregate.activities.filter(
     (row) =>
+      // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+      row.silent !== true &&
+      // SCIENT-FORK:END
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
       alertAllowedForPhase(input.preferences, row.phase),
@@ -107,6 +110,9 @@ export function terminalTransitionRows(
     input.includeUnobserved,
   ).filter((row) => {
     return (
+      // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+      row.silent !== true &&
+      // SCIENT-FORK:END
       alertAllowedForPhase(input.preferences, row.phase) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
@@ -143,6 +149,9 @@ export function alertForTerminalAggregate(input: {
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
   if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
+  // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+  if (row.silent === true) return null;
+  // SCIENT-FORK:END
   return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
 }
 
@@ -151,8 +160,14 @@ export function shouldAlertForActivity(input: {
   readonly updatedAt: string;
   readonly preferences: RelayAgentAwarenessPreferences | null;
   readonly nowMs: number;
+  // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+  readonly silent?: true | undefined;
+  // SCIENT-FORK:END
 }): boolean {
   return (
+    // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+    input.silent !== true &&
+    // SCIENT-FORK:END
     input.preferences?.notificationsEnabled === true &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||

@@ -257,7 +257,10 @@ function formatCloudStatus(
   ].join("\n");
 }
 
-const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
+// SCIENT-FORK:START — Scient Accounts: a live link change may first wait up to 15 s for the relay's
+// notice acknowledgements (LINK_CHANGE_WAIT_MS), then do its own work.
+const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(40);
+// SCIENT-FORK:END
 
 const confirmRelayClientInstall = (version: string) =>
   Prompt.run(
@@ -339,6 +342,29 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
     ? ({ status: "succeeded" } satisfies LiveCloudActionResult)
     : ({ status: "failed", cause: result.cause } satisfies LiveCloudActionResult);
 });
+
+// SCIENT-FORK:START — Scient Accounts: a running server changes its own link, in its relay's turn.
+/**
+ * Drops a revoked link: through the running server when one answers, so the change waits for any
+ * notice acknowledgement it is writing; directly only when no server runs. `failed`: a server
+ * runs but didn't answer, so nothing was dropped here.
+ */
+const dropRevokedLinkLive = Effect.fn("cloud.cli.drop_revoked_link")(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isNone(runtimeState) || !isProcessAlive(runtimeState.value.pid))
+    return (yield* CliState.dropRevokedCloudLink) ? ("dropped" as const) : ("none" as const);
+  const result = yield* Effect.exit(
+    RunningServer.serverClient(runtimeState.value.origin, [AuthRelayWriteScope]).pipe(
+      Effect.flatMap((client) => client.connect.dropRevokedLink({ headers: {} })),
+      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
+      Effect.scoped,
+    ),
+  );
+  if (Exit.isFailure(result)) return "failed" as const;
+  return result.value.dropped ? ("dropped" as const) : ("none" as const);
+});
+// SCIENT-FORK:END
 
 // One check probes the endpoint, the tunnel edge, and Tailscale, each with its own timeout.
 const CLOUD_CLI_REACHABILITY_TIMEOUT = Duration.seconds(30);
@@ -504,7 +530,12 @@ export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (opti
   yield* CliState.setCliDesiredCloudLink(false);
   const liveResult = yield* runLiveCloudUnlink();
   const relayResult = yield* Effect.exit(unlinkRelayEnvironment());
-  yield* CliState.clearPersistedCloudLink;
+  // SCIENT-FORK:START — Scient Accounts: only with no server running does the CLI clear the stored
+  // link itself; a running server's unlink clears it in its relay's turn, and one that failed
+  // keeps it.
+  if (liveResult.status === "not-running" || liveResult.status === "server-gone")
+    yield* CliState.clearPersistedCloudLink;
+  // SCIENT-FORK:END
 
   if (options.clearAuthorization) {
     const tokens = yield* CliTokenManager.CloudCliTokenManager;
@@ -611,9 +642,14 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
 
   const identity = yield* authorizeCli(options);
   yield* CliState.setCliDesiredCloudLink(true, publishOnly ? "publish_only" : "managed");
-  if (yield* CliState.dropRevokedCloudLink) {
-    yield* Console.log("Replacing the link Scient Connect revoked.");
-  }
+  // SCIENT-FORK:START — Scient Accounts: a running server drops the revoked link itself.
+  const dropped = yield* dropRevokedLinkLive();
+  if (dropped === "dropped") yield* Console.log("Replacing the link Scient Connect revoked.");
+  if (dropped === "failed")
+    yield* Console.warn(
+      "Scient is running but didn't answer, so the link Scient Connect revoked is still there.\nQuit Scient, or run this again.",
+    );
+  // SCIENT-FORK:END
   if (publishOnly) {
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, stringToBytes("true"));

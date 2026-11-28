@@ -69,10 +69,21 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
 
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
 
+// SCIENT-FORK:START — Scient Accounts: a link change runs in the relay's acknowledgement turn.
+/** Whether a link change is running in the relay's acknowledgement turn right now. */
+const relayTurn = { held: false };
+// SCIENT-FORK:END
 const idleAwarenessRelay = AgentAwarenessRelay.AgentAwarenessRelay.of({
   publishThread: () => Effect.void,
   drain: Effect.void,
   requestCatchUp: () => Effect.void,
+  // SCIENT-FORK:START — Scient Accounts: a link change runs in the relay's acknowledgement turn.
+  replacingLink: (change) =>
+    Effect.sync(() => void (relayTurn.held = true)).pipe(
+      Effect.andThen(change),
+      Effect.ensuring(Effect.sync(() => void (relayTurn.held = false))),
+    ),
+  // SCIENT-FORK:END
   start: () => Effect.void,
 });
 // The connect routes register recovery against the listening port; these tests
@@ -902,6 +913,104 @@ describe("releaseManagedTunnelOnShutdown", () => {
       }),
     );
   });
+
+  // SCIENT-FORK:START — Scient Accounts: a link change runs in the relay's acknowledgement turn.
+  it.effect("drops a revoked link in the relay's acknowledgement turn", () => {
+    const { store, values } = makeMemorySecretStore([
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+      [CLOUD_LINK_REVOKED, "true"],
+      [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
+    ]);
+    /** Each removal of a link secret, and whether it ran in the relay's turn. */
+    const removals: Array<readonly [string, boolean]> = [];
+    const watched = {
+      ...store,
+      remove: (name: string) =>
+        Effect.sync(() => void removals.push([name, relayTurn.held])).pipe(
+          Effect.andThen(store.remove(name)),
+        ),
+    } as typeof store;
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      yield* link
+        .applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-456",
+          environmentCredential: "fresh-credential",
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
+          endpointRuntime: null,
+        })
+        .pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+            ),
+          ),
+        );
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+      // regression: the revoked link's credential went outside the turn, so an acknowledgement
+      // being written then could land for a link already dropped.
+      expect(
+        removals.filter(
+          ([name]) => name === RELAY_ENVIRONMENT_CREDENTIAL_SECRET || name === CLOUD_LINKED_USER_ID,
+        ),
+      ).toEqual([
+        [CLOUD_LINKED_USER_ID, true],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, true],
+      ]);
+    }).pipe(
+      provideReleaseHarness({
+        store: watched,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () =>
+          Response.json({
+            challenge: "challenge-1",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            ok: true,
+            cloudUserId: "user-456",
+            environmentId: "env_123",
+            endpoint: {
+              httpBaseUrl: "http://127.0.0.1:3773",
+              wsBaseUrl: "ws://127.0.0.1:3773",
+              providerKind: "manual",
+            },
+            endpointRuntime: null,
+            relayIssuer: "https://relay.example.test",
+            environmentCredential: "fresh-credential",
+          }),
+      }),
+    );
+  });
+
+  it.effect("drops a revoked link for the CLI in the relay's acknowledgement turn", () => {
+    const { store, values } = makeMemorySecretStore([
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+      [CLOUD_LINK_REVOKED, "true"],
+    ]);
+    const removals: Array<readonly [string, boolean]> = [];
+    const watched = {
+      ...store,
+      remove: (name: string) =>
+        Effect.sync(() => void removals.push([name, relayTurn.held])).pipe(
+          Effect.andThen(store.remove(name)),
+        ),
+    } as typeof store;
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.dropRevokedLink()).toBe(true);
+      expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(false);
+      // regression: the CLI dropped it in its own process, beside a running server's relay.
+      expect(removals.every(([, inTurn]) => inTurn)).toBe(true);
+      expect(yield* link.dropRevokedLink()).toBe(false);
+    }).pipe(provideReleaseHarness({ store: watched, applyConfigCalls: [], requests: [] }));
+  });
+  // SCIENT-FORK:END
 
   it.effect(
     "starts a connector with a marker for the current origin without contacting relay",

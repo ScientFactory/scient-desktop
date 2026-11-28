@@ -226,3 +226,30 @@ it.effect("removes an agent with no keys without opening Accounts", () =>
     ]);
   }),
 );
+
+it.effect("never puts back a kept key that is Off or kept to some projects now", () =>
+  Effect.gen(function* () {
+    const settings = fakeSettings({ antigravity_2: agent([]) });
+    for (const controls of [
+      { ...defaultAccountControls("api-key"), access: "off" as const },
+      {
+        ...defaultAccountControls("api-key"),
+        scope: { type: "projects" as const, projectIds: [] },
+      },
+    ]) {
+      const fake = fakeAccounts({
+        accounts: [{ ...kept("acc_envkey01", "antigravity", "NEW_KEY"), controls }],
+        values: { token: "saved-key" },
+      });
+      const restore = yield* makeKeptAgentKeys(fake.service).pipe(
+        Effect.provideService(ServerSettingsService, settings.service),
+      );
+      const refused = yield* restore({
+        instanceId: "antigravity_2",
+        accountIds: [AccountId.make("acc_envkey01")],
+      }).pipe(Effect.flip);
+      expect(refused.reason).toBe("denied");
+    }
+    expect(settings.updates).toEqual([]);
+  }),
+);

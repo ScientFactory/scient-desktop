@@ -13,7 +13,14 @@ import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import { AccountsService } from "../AccountsService.ts";
-import { fakeAccounts, makeHarness } from "../Accounts.testkit.ts";
+import { ACCOUNTS_AWAIT_PERSON } from "../awaitPerson.ts";
+import {
+  fakeAccounts,
+  makeHarness,
+  memoryStore,
+  recordingKeychain,
+  windowLeases,
+} from "../Accounts.testkit.ts";
 import {
   authorizePreviewProfile,
   authorizePreviewTab,
@@ -192,6 +199,39 @@ it.effect("keeps a page autofill filled from agents that may not use its sign-in
     expect((yield* check(site, "https://example.com/other"))._tag).toBe("Failure");
     expect((yield* check(site, "https://other.example.org/"))._tag).toBe("Success");
   }),
+);
+
+it.effect("a scheduled run's Preview check opens Accounts only with someone at a window", () =>
+  Effect.gen(function* () {
+    const storage = memoryStore();
+    const { keychain, reads } = yield* recordingKeychain({ desktopBackgroundRunning: true });
+    const { leases, atWindow } = yield* windowLeases(true);
+    yield* Effect.scoped(
+      Effect.flatMap(makeHarness({ storage, keychain, leases }), (harness) =>
+        harness.service.save({
+          name: "Example",
+          details: { kind: "website", sites: ["example.com"], username: "synthetic-user" },
+          secrets: { password: { type: "scient", value: "synthetic-password" } },
+        }),
+      ),
+    );
+    reads.length = 0;
+    yield* atWindow(false);
+    const { service } = yield* makeHarness({ storage, keychain, leases });
+    const scheduled = { ...scope, unattended: true, scheduledTaskId: "task:hours" };
+    const onMain = { ...status, tabs: [{ ...status.tabs![0]!, profileId: defaultId }] };
+    const check = authorizePreviewTab(scheduled, onMain, undefined).pipe(
+      Effect.provideService(AccountsService, service),
+    );
+    // A cold store whose keychain would ask, and nobody at any window.
+    const refused = yield* Effect.flip(check);
+    // regression: Preview's account check opened the store by the ordinary keychain read.
+    expect(refused.message).toBe(ACCOUNTS_AWAIT_PERSON);
+    expect(reads).toEqual([]);
+    yield* atWindow(true);
+    yield* check;
+    expect(reads).toHaveLength(1);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("keeps a pairing only by a row the agent may use", () =>

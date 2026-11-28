@@ -67,6 +67,7 @@ const StoredRequester = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: Schema.optionalKey(ThreadId),
   projectId: Schema.optionalKey(ProjectId),
+  scheduledTaskId: Schema.optionalKey(Schema.String),
   browser: Schema.Boolean,
 });
 /** A PDF the queue saved: which paper it is and which version, for the next request. */
@@ -263,6 +264,10 @@ const load = Effect.fn("Papers.queue.load")(function* (root: string, requester: 
   return queue;
 });
 
+/** A paper no route reached that the person hasn't put away. */
+const isUnreached = (item: PaperItem) =>
+  (item.state === "no-access" || item.state === "not-found") && item.dismissed !== true;
+
 const summary = (queue: Queue, now: number): PaperQueueSummary => {
   const items = [...queue.items.values()];
   const requests = new Map<string, PaperRequest>();
@@ -271,12 +276,14 @@ const summary = (queue: Queue, now: number): PaperQueueSummary => {
     const key = `${needed.kind}|${needed.site ?? ""}|${needed.profileId ?? ""}`;
     requests.set(key, { ...needed, count: (requests.get(key)?.count ?? 0) + 1 });
   }
+  const through = items.findLast((item) => item.state === "saved")?.through;
   return {
     root: queue.root,
     ...(queue.threadId === undefined ? {} : { threadId: queue.threadId }),
+    ...(through ? { through } : {}),
     waiting: items.filter((item) => item.state === "waiting").length,
     saved: items.filter((item) => item.state === "saved").length,
-    failed: items.filter((item) => item.state === "no-access" || item.state === "not-found").length,
+    failed: items.filter(isUnreached).length,
     requests: [...requests.values()],
     paused: pausedPublishers(now).map(({ site, until }) => ({
       site,
@@ -518,6 +525,7 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
       published: fetched.published,
       version,
       path: saved,
+      ...("through" in fetched && fetched.through ? { through: fetched.through } : {}),
       ...(sourceId ? { sourceId } : {}),
       ...(message ? { message } : {}),
     } as const;
@@ -547,8 +555,9 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
     yield* announce(queue);
     return;
   }
-  // A finished paper runs no more; one waiting or needing the person runs again as its requester.
-  if (result.state === "saved" || result.state === "no-access" || result.state === "not-found") {
+  // A saved paper runs no more. Any other runs again, a Retry of an unreached one included, as
+  // its requester and for its filer; what they may use is decided again when it runs.
+  if (result.state === "saved") {
     queue.requesters.delete(itemId);
     queue.filers.delete(itemId);
   }
@@ -711,9 +720,23 @@ export const continuePapers = Effect.fn("Papers.queue.continue")(function* (
   requester: PaperRequester,
   signedIn?: AccountId,
   terms?: PaperQueueContinueInput["terms"],
+  unreached?: PaperQueueContinueInput["unreached"],
 ) {
   const queue = yield* load(root, requester);
   queue.requester = requester;
+  for (const item of queue.items.values())
+    if (unreached && isUnreached(item)) {
+      const { message: _, ...rest } = item;
+      queue.items.set(
+        item.itemId,
+        unreached === "retry" ? { ...rest, state: "waiting" } : { ...item, dismissed: true },
+      );
+      if (unreached === "dismiss") {
+        queue.requesters.delete(item.itemId);
+        queue.filers.delete(item.itemId);
+      }
+    }
+  if (unreached === "dismiss") return yield* announce(queue);
   if (terms) {
     const broker = yield* PreviewAutomationBroker;
     for (const item of queue.items.values()) {

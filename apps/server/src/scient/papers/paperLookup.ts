@@ -96,12 +96,22 @@ export interface Paper {
   }>;
 }
 
-const getText = (
+/** A research key's gate, run as the request carrying it leaves; refused, nothing goes. */
+type SendGate = ResearchKeys["beforeSend"];
+
+const getText = Effect.fn("Papers.getText")(function* (
   http: HttpClient.HttpClient,
   url: string,
   urlParams: Record<string, string | Redacted.Redacted<string>> = {},
-) =>
-  http
+  gate?: SendGate,
+) {
+  if (gate !== undefined) {
+    const address = new URL(url);
+    for (const [name, value] of Object.entries(urlParams))
+      address.searchParams.set(name, typeof value === "string" ? value : Redacted.value(value));
+    if (!(yield* Effect.promise(() => gate(address, {})))) return undefined;
+  }
+  return yield* http
     .execute(HttpClientRequest.get(url, { headers: { accept: "application/json" }, urlParams }))
     .pipe(
       Effect.flatMap((response) =>
@@ -111,6 +121,7 @@ const getText = (
       Effect.map((text) => Option.getOrUndefined(Option.flatten(text))),
       Effect.orElseSucceed(() => undefined),
     );
+});
 
 const publishedFirst = (copies: Paper["openAccess"]) =>
   copies.toSorted(
@@ -124,8 +135,9 @@ const unpaywallCopies = Effect.fn("Papers.unpaywallCopies")(function* (
   http: HttpClient.HttpClient,
   doi: string,
   email: Redacted.Redacted<string>,
+  gate?: SendGate,
 ) {
-  const text = yield* getText(http, `${UNPAYWALL}/v2/${encodeURI(doi)}`, { email });
+  const text = yield* getText(http, `${UNPAYWALL}/v2/${encodeURI(doi)}`, { email }, gate);
   const record = text === undefined ? Option.none() : decodeUnpaywall(text);
   if (Option.isNone(record)) return [];
   return (record.value.oa_locations ?? []).flatMap((location): Paper["openAccess"] => {
@@ -193,10 +205,15 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (
   // The Library's registry contact email goes to OpenAlex as mailto and stands in for Unpaywall's.
   const contact = registryContactEmail();
   if (doi) {
-    const text = yield* getText(http, `${OPENALEX}/works/doi:${encodeURI(doi)}`, {
-      ...(keys.openAlex ? { api_key: keys.openAlex } : {}),
-      ...(contact ? { mailto: Redacted.make(contact) } : {}),
-    });
+    const text = yield* getText(
+      http,
+      `${OPENALEX}/works/doi:${encodeURI(doi)}`,
+      {
+        ...(keys.openAlex ? { api_key: keys.openAlex } : {}),
+        ...(contact ? { mailto: Redacted.make(contact) } : {}),
+      },
+      keys.beforeSend,
+    );
     const work = text === undefined ? Option.none() : decodeWork(text);
     const paper = Option.isSome(work)
       ? paperFrom(work.value, doi, input.url)
@@ -209,7 +226,7 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (
     const missingCopies = Option.isNone(work) || paper.openAccess.length === 0;
     const email = keys.unpaywallEmail ?? (contact ? Redacted.make(contact) : undefined);
     if (!missingCopies || !email) return paper;
-    const more = yield* unpaywallCopies(http, doi, email);
+    const more = yield* unpaywallCopies(http, doi, email, keys.beforeSend);
     return more.length === 0
       ? paper
       : { ...paper, openAccess: publishedFirst([...more, ...paper.openAccess]) };

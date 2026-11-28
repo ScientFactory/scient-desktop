@@ -112,6 +112,9 @@ export class ServerConfig extends Context.Service<
     readonly desktopBootstrapToken: string | undefined;
     readonly desktopBootstrapSecret?: string | undefined;
     readonly desktopReadinessSecret?: string | undefined;
+    // SCIENT-FORK:START — Scient Accounts: the key for the desktop's page seals (primary only).
+    readonly desktopPageSealSecret?: string | undefined;
+    // SCIENT-FORK:END
     readonly shellEnvironmentPrepared?: boolean | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;

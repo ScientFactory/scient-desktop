@@ -449,6 +449,7 @@ it.effect(
           signInAsPerson: () => Effect.die("unused"),
           universityBrowse: () => Effect.die("unused"),
           universities: () => Effect.die("unused"),
+          universitySignOut: () => Effect.die("unused"),
         },
       });
 

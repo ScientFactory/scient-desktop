@@ -78,7 +78,9 @@ changes a model, tests it and removes it. A new key goes in a private card, neve
 a service doesn’t report a model’s limits, the agent says so and can set them by hand.
 
 If a saved key is missing or unreadable, only that connection's models become unavailable. Use
-**Test** for the setup error, then use **Manage** to re-enter the connection's key.
+**Test** for the setup error, then use **Manage** to re-enter the connection's key. A connection using a key from
+Accounts says **Key:** and the key's name, with its state when the service refused it; **Reconnect**
+chooses another saved key and **Open in Accounts** opens the key itself.
 
 In the model picker, a Pi instance with both kinds of models shows them in two sections:
 **Your Pi accounts** (models from Pi's own sign-ins and API keys, grouped by provider) and

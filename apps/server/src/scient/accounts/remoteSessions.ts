@@ -14,6 +14,7 @@ import {
   type ReceivedUnit,
   type SessionCookie,
   type SessionReceiveOutcome,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   SENDER_KEEP_DAYS,
@@ -28,7 +29,12 @@ import {
   unitSites,
   universitySites,
 } from "@t3tools/shared/scientSessionCookies";
-import { siteOf } from "@t3tools/shared/scientSiteMatch";
+import {
+  inSignOutTarget,
+  reachesFromParent,
+  siteHost,
+  siteOf,
+} from "@t3tools/shared/scientSiteMatch";
 import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
@@ -48,7 +54,9 @@ import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { SessionStore } from "../../auth/SessionStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
-import { AccountsService } from "./AccountsService.ts";
+import { PreviewManager } from "../../preview/Manager.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { AccountsService, type StoreWrite } from "./AccountsService.ts";
 import type { ProfileCookieJar } from "./profileCookieJar.ts";
 
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
@@ -74,6 +82,8 @@ const strictestControls = (received: ReadonlyArray<ProfileReceived>) => {
 export interface AccountsCallerSession {
   readonly sessionId: string;
   readonly subject: string;
+  /** What the client said it is (surface and system), for Activity; never for trust. */
+  readonly client?: string;
 }
 
 const RECEIVED_UNITS_LIMIT = 5_000;
@@ -116,11 +126,15 @@ const overlapping = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) => {
   return [...unitSites(b)].some((site) => sites.has(site));
 };
 
-/** Deletes a unit's cookies; true once none is left. */
-const clearUnit = async (jar: ProfileCookieJar, sites: ReadonlyArray<string>) => {
-  const present = await jar.readUnit(sites);
+/**
+ * Deletes a Sign out target's cookies: a whole site, or a host alone (`inSignOutTarget`); what is
+ * left of them afterwards.
+ */
+const clearTarget = async (jar: ProfileCookieJar, target: string) => {
+  const inTarget = (cookie: SessionCookie) => inSignOutTarget(cookie.domain, target);
+  const present = (await jar.readAll()).filter(inTarget);
   if (present.length) await jar.remove(present);
-  return (await jar.readUnit(sites)).length === 0;
+  return (await jar.readAll()).filter(inTarget);
 };
 
 const fromSent = (cookie: AccountSessionsReceiveInput["units"][number]["cookies"]) =>
@@ -155,7 +169,14 @@ async function receiveUnit(
     );
     return removed.length || (await jar.readUnit(unit.sites)).length === 0 ? "deleted" : "kept";
   }
-  if (unit.kind === "delete") return (await clearUnit(jar, unit.sites)) ? "deleted" : "failed";
+  // A Sign out's delete: each entry a whole site or a host alone, as the person's computer cleared it.
+  if (unit.kind === "delete") {
+    const targets = unit.sites.map((site) =>
+      site.startsWith("https://") ? siteOf(siteHost(site)) : site,
+    );
+    const left = await Promise.all(targets.map((target) => clearTarget(jar, target)));
+    return left.every((cookies) => cookies.length === 0) ? "deleted" : "failed";
+  }
   const outcome = await applyUnit(jar, {
     unit: unit.sites,
     source: fromSent(unit.cookies),
@@ -234,6 +255,17 @@ const keyMatches = (key: Redacted.Redacted<string>, keyHash: string) => {
 const SEEN_WRITE_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** A cookie's identity in a jar: its name, where it is sent, and its partition. */
+const cookieKey = (cookie: SessionCookie) =>
+  [
+    cookie.name,
+    cookie.domain,
+    cookie.path,
+    cookie.partitionKey
+      ? `${cookie.partitionKey.topLevelSite} ${cookie.partitionKey.hasCrossSiteAncestor}`
+      : "",
+  ].join("\u0000");
+
 export const makeRemoteSessions = Effect.gen(function* () {
   const browser = yield* ServerBrowser;
   const config = yield* ServerConfig;
@@ -249,23 +281,244 @@ export const makeRemoteSessions = Effect.gen(function* () {
   const exclusive = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-  /** Runs cookie work holding the profile's jar; the jar is released however it ends. */
-  const withJar = <A>(profileId: string, use: (jar: ProfileCookieJar) => Promise<A>) => {
+  const changing = <A>(run: () => Promise<A>) =>
+    Effect.tryPromise({
+      try: run,
+      catch: () => unavailable("This computer's browser could not change the profile."),
+    });
+  /**
+   * Runs cookie work holding the profile's jar, in `generation` when named (round 6e): refused
+   * once the profile was cleared since. The jar is released however it ends.
+   */
+  const holdJar = <A, R>(
+    profileId: string,
+    generation: number | undefined,
+    use: (jar: ProfileCookieJar) => Effect.Effect<A, AccountsError, R>,
+  ) => {
     const profileCookies = browser.profileCookies;
     if (!profileCookies)
       return Effect.fail(unavailable("This computer's browser can't hold sign-ins."));
     return Effect.scoped(
-      profileCookies(profileId).pipe(
-        Effect.mapError(() => unavailable("This computer's browser could not open the profile.")),
-        Effect.flatMap((jar) =>
-          Effect.tryPromise({
-            try: () => use(jar),
-            catch: () => unavailable("This computer's browser could not change the profile."),
-          }),
+      profileCookies(profileId, generation).pipe(
+        Effect.mapError(() =>
+          unavailable("This computer's browser could not open the profile, or it was cleared."),
         ),
+        Effect.flatMap(use),
       ),
     );
   };
+  /**
+   * The write, under the operation's check and Accounts' permit when it names one (round 6f). A
+   * jar whose helper stopped answering is fenced before the permit goes (round 6i): a command it
+   * timed out on can't land after another operation's check.
+   */
+  const committed = <A>(
+    write: StoreWrite | undefined,
+    jar: ProfileCookieJar,
+    effect: Effect.Effect<A, AccountsError>,
+  ) =>
+    write?.commit
+      ? write.commit(
+          effect.pipe(
+            Effect.ensuring(
+              Effect.gen(function* () {
+                if (!jar.quarantined() || !jar.quarantineProfile) return;
+                if (yield* Effect.promise(async () => (await jar.fence?.()) === true)) return;
+                // Unconfirmed: the profile is fenced in memory before the permit goes (6p).
+                jar.quarantineProfile();
+              }),
+            ),
+          ),
+        )
+      : effect;
+  /** Runs cookie work holding the profile's jar; the jar is released however it ends. */
+  const withJar = <A>(profileId: string, use: (jar: ProfileCookieJar) => Promise<A>) =>
+    holdJar(profileId, undefined, (jar) => changing(() => use(jar)));
+
+  // Round 6b: this server's browser takes part in a profile's Remove, Clear and sign-out.
+  // On a desktop, its own window does the desktop's part: named so no other desktop does.
+  const environment = yield* Effect.serviceOption(ServerEnvironment);
+  const descriptor =
+    config.mode === "desktop" && Option.isSome(environment)
+      ? yield* environment.value.getDescriptor.pipe(Effect.option)
+      : Option.none();
+  // This server's tabs, which Accounts asks itself before a profile retires (round 6e).
+  const previews = yield* Effect.serviceOption(PreviewManager);
+  yield* accounts.attachProfileStore({
+    desktop: config.mode === "desktop",
+    ...(Option.isSome(previews)
+      ? {
+          openTabs: (profileId: BrowserProfileId) =>
+            previews.value
+              .profileTabs(profileId)
+              .pipe(
+                Effect.map((tabs) => [
+                  ...new Set(tabs.map(({ threadId }) => ThreadId.make(threadId))),
+                ]),
+              ),
+        }
+      : {}),
+    ...(Option.isSome(descriptor)
+      ? {
+          computer: {
+            id: descriptor.value.environmentId,
+            label: descriptor.value.label.slice(0, 80),
+          },
+        }
+      : {}),
+    generations: (generations) => browser.profileGenerations?.(generations) ?? Effect.void,
+    unavailable: () => browser.quarantinedProfiles?.() ?? [],
+    closeProfile: (profileId) =>
+      (browser.closeProfile?.(profileId) ?? Effect.void).pipe(
+        Effect.mapError(() =>
+          unavailable("This profile is unavailable until the server restarts."),
+        ),
+      ),
+    // Read and sealed holding one jar; then checked and written under one permit (round 6f).
+    signOut: (profileId, site, keep, write) =>
+      exclusive(
+        holdJar(profileId, write?.generation, (jar) =>
+          Effect.gen(function* () {
+            const cookies = (yield* changing(() => jar.readAll())).filter((cookie) =>
+              inSignOutTarget(cookie.domain, site),
+            );
+            // An opaque partition's cookies of the site stay, and are counted (round 6f).
+            const leftBehind = jar.unaddressable
+              ? (yield* changing(() => jar.unaddressable!())).filter((domain) =>
+                  inSignOutTarget(domain, site),
+                ).length
+              : 0;
+            if (keep) yield* keep(cookies);
+            yield* committed(
+              write,
+              jar,
+              cookies.length ? changing(() => jar.remove(cookies)) : Effect.void,
+            );
+            return { cookies, ...(leftBehind ? { leftBehind } : {}) };
+          }),
+        ),
+      ),
+    restore: (profileId, cookies, write) =>
+      exclusive(
+        holdJar(profileId, write?.generation, (jar) =>
+          Effect.gen(function* () {
+            // A cookie the site set again since is a newer sign-in: it stays as it is.
+            const present = new Set((yield* changing(() => jar.readAll())).map(cookieKey));
+            return yield* committed(
+              write,
+              jar,
+              changing(async () => {
+                let restored = 0;
+                let refused = 0;
+                let newer = 0;
+                for (const cookie of cookies) {
+                  if (present.has(cookieKey(cookie))) {
+                    newer++;
+                    continue;
+                  }
+                  await jar.set([cookie]).then(
+                    () => restored++,
+                    () => refused++,
+                  );
+                }
+                return { restored, refused, ...(newer ? { newer } : {}) };
+              }),
+            );
+          }),
+        ),
+      ),
+    purge: (profileId, generation) =>
+      (browser.purgeProfile?.(profileId, generation) ?? Effect.succeed(true)).pipe(
+        Effect.flatMap((done) =>
+          done ? Effect.void : Effect.fail(unavailable("This computer's browser kept its data.")),
+        ),
+      ),
+    // Each jar is held on its own, the source's only to read: no two holds wait on each other.
+    copy: (from, into, sites, keep, write) =>
+      exclusive(
+        Effect.gen(function* () {
+          const inSites = (cookie: SessionCookie, chosen: ReadonlyArray<string>) =>
+            chosen.some((site) => inSignOutTarget(cookie.domain, site));
+          // Each in the generation it was decided in (round 6e).
+          const source = yield* holdJar(from, write?.generation, (jar) =>
+            changing(() => jar.readAll()),
+          );
+          const chosen = sites ?? [...new Set(source.map((cookie) => siteOf(cookie.domain)))];
+          const copying = source.filter((cookie) => inSites(cookie, chosen));
+          // A chosen site the source has nothing for: nothing comes, and the destination's stays.
+          const empty = chosen.filter((site) => !copying.some((cookie) => inSites(cookie, [site])));
+          const keys = new Set(copying.map(cookieKey));
+          // The destination read, sealed for Undo, checked and written holding one jar.
+          return yield* holdJar(into, write?.intoGeneration, (jar) =>
+            Effect.gen(function* () {
+              const before = (yield* changing(() => jar.readAll())).filter((cookie) =>
+                keys.has(cookieKey(cookie)),
+              );
+              yield* keep({ before, copied: copying });
+              const set: SessionCookie[] = [];
+              const done = yield* committed(
+                write,
+                jar,
+                changing(async () => {
+                  const uncovered = new Set<string>(empty);
+                  // Set over the same cookies only: a refused one leaves the destination's own.
+                  for (const cookie of copying)
+                    await jar.set([cookie]).then(
+                      () => void set.push(cookie),
+                      () => uncovered.add(siteOf(cookie.domain)),
+                    );
+                  return { copied: set.length, uncovered: [...uncovered], sites: chosen };
+                }),
+              ).pipe(
+                // Each one written is told while the destination is still held, a failed write
+                // of another cookie of its site too (round 6j).
+                Effect.ensuring(
+                  Effect.suspend(() =>
+                    write?.wrote && set.length ? write.wrote(set).pipe(Effect.ignore) : Effect.void,
+                  ),
+                ),
+              );
+              return done;
+            }),
+          );
+        }),
+      ),
+    restoreInto: (into, copied, before, write) =>
+      exclusive(
+        holdJar(into, write?.intoGeneration, (jar) =>
+          Effect.gen(function* () {
+            const now = new Map(
+              (yield* changing(() => jar.readAll())).map((cookie) => [cookieKey(cookie), cookie]),
+            );
+            return yield* committed(
+              write,
+              jar,
+              changing(async () => {
+                let newer = 0;
+                // A copy still as it came goes; one set again since is someone's newer sign-in.
+                const asCopied = copied.filter((cookie) => {
+                  const current = now.get(cookieKey(cookie));
+                  if (current && current.value !== cookie.value) newer++;
+                  return current?.value === cookie.value;
+                });
+                if (asCopied.length) await jar.remove(asCopied);
+                const freed = new Set(asCopied.map(cookieKey));
+                let restored = 0;
+                let refused = 0;
+                for (const cookie of before) {
+                  if (now.has(cookieKey(cookie)) && !freed.has(cookieKey(cookie))) continue;
+                  await jar.set([cookie]).then(
+                    () => restored++,
+                    () => refused++,
+                  );
+                }
+                return { restored, refused, ...(newer ? { newer } : {}) };
+              }),
+            );
+          }),
+        ),
+      ),
+  });
 
   const records = accounts.receivedProfiles.pipe(Effect.map((profiles) => ({ profiles })));
   const senderOf = (record: BrowserProfileRecord, source: EnvironmentId) =>
@@ -420,11 +673,9 @@ export const makeRemoteSessions = Effect.gen(function* () {
     return { deleted: yield* exclusive(forget(source)) };
   });
 
-  // Unattended: while unattended work waits for the person, a sweep never opens a store that
-  // needs them (`openWithoutPrompt`). Skipped then, it runs once the store opens, or at the next
-  // daily sweep or binding.
+  // While nobody can answer the keychain's dialog the store stays closed and a sweep does nothing
+  // (`AccountVault`); it runs once the store opens, or at the next daily sweep or binding.
   const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
-    if (unattendedWaitsForPerson && !(yield* accounts.openWithoutPrompt)) return;
     yield* exclusive(sweepSenders);
   }, Effect.ignore);
 
@@ -436,6 +687,8 @@ export const makeRemoteSessions = Effect.gen(function* () {
   const watch = Effect.all(
     [
       sweep().pipe(Effect.repeat(Schedule.spaced(Duration.days(1)))),
+      // A removed profile, or a generation Clear left, goes once its Undo hour is over.
+      accounts.purgeProfiles.pipe(Effect.repeat(Schedule.spaced(Duration.minutes(10)))),
       unattendedWaitsForPerson
         ? accounts.changes.pipe(
             Stream.take(1),
@@ -545,6 +798,11 @@ export const makeRemoteSessions = Effect.gen(function* () {
           if (Option.isSome(fresh) && sameUnit(live(fresh.value), live(before)))
             outcomes.set(unit, "busy");
         }
+        // The person's Sign out on the sending computer holds here too, so renewal leaves it alone.
+        for (const unit of pending)
+          if (unit.kind === "delete" && unit.copyOnly !== true && outcomes.get(unit) === "deleted")
+            for (const site of unit.sites)
+              yield* accounts.rememberSignOut(input.profileId, site).pipe(Effect.ignore);
         const result = input.units.map((unit, index) => {
           const early = decided[index];
           return {
@@ -676,8 +934,17 @@ export const makeRemoteSessions = Effect.gen(function* () {
     profileId: BrowserProfileId,
     site: string,
   ) {
+    // Remembered before the jar clears, so a sign-in answering meanwhile already sees it.
+    yield* accounts.rememberSignOut(profileId, site);
     return yield* exclusive(
-      withJar(profileId, async (jar) => ({ signedOut: await clearUnit(jar, [site]) })),
+      withJar(profileId, async (jar) => {
+        const left = await clearTarget(jar, site);
+        // A shared parent cookie it may not delete can still sign the host in.
+        return {
+          signedOut:
+            left.length === 0 && !(await jar.readAll()).some((c) => reachesFromParent(c, site)),
+        };
+      }),
     );
   });
 

@@ -390,7 +390,12 @@ object AgentNotifications {
     id: Int
   ): PendingIntent? {
     val threadPath = path?.takeIf { it.startsWith("/threads/") }
-    val route = threadPath?.takeUnless { it.contains('?') || it.contains('#') } ?: "/"
+    // SCIENT-FORK:START — Scient Accounts: a background sign-in's notice opens Accounts, not a chat.
+    val accountsPath = threadPath?.split("/")
+      ?.takeIf { it.size == 4 && Uri.decode(it[3]).startsWith("scient-") }
+      ?.let { "/settings/environments/${it[2]}/accounts" }
+    // SCIENT-FORK:END
+    val route = (accountsPath ?: threadPath)?.takeUnless { it.contains('?') || it.contains('#') } ?: "/"
     val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
       ?: return null
     intent.setAction(Intent.ACTION_VIEW).setData(Uri.parse("$scheme:/$route"))

@@ -9,6 +9,7 @@ import {
   isSecretAlreadyExistsError,
 } from "../../auth/ServerSecretStore.ts";
 import { AccountVault, layer as vaultLayer } from "./AccountVault.ts";
+import { awaitsPerson } from "./awaitPerson.ts";
 
 export class AccountsSecretStore extends Context.Service<
   AccountsSecretStore,
@@ -27,28 +28,32 @@ export const makeAccountsSecretStore = Effect.fn("AccountsSecretStore.make")(fun
   const serialized = <A, E>(effect: Effect.Effect<A, E>) =>
     lock.withPermits(1)(Effect.uninterruptible(effect));
   const seal = Effect.fn("AccountsSecretStore.seal")(function* (name: string, value: Uint8Array) {
-    const blob = yield* vault
-      .encrypt(name, Redacted.make(value))
-      .pipe(
-        Effect.mapError(
-          () =>
-            new SecretStorePersistError({ resource, cause: new Error("Encryption unavailable.") }),
-        ),
-      );
+    const blob = yield* vault.encrypt(name, Redacted.make(value)).pipe(
+      // A store waiting for the person says so (`awaitsPerson`), as on a read.
+      Effect.mapError(
+        (error) =>
+          new SecretStorePersistError({
+            resource,
+            cause: awaitsPerson(error) ? error : new Error("Encryption unavailable."),
+          }),
+      ),
+    );
     return Uint8Array.from([SEALED, ...blob]);
   });
   const read = Effect.fn("AccountsSecretStore.read")(function* (name: string) {
     const stored = yield* store.get(name);
     if (Option.isNone(stored)) return Option.none<Uint8Array>();
     if (stored.value[0] === SEALED) {
-      const value = yield* vault
-        .decrypt(name, stored.value.subarray(1))
-        .pipe(
-          Effect.mapError(
-            () =>
-              new SecretStoreDecodeError({ resource, cause: new Error("Decryption unavailable.") }),
-          ),
-        );
+      const value = yield* vault.decrypt(name, stored.value.subarray(1)).pipe(
+        // A store waiting for the person says so (`awaitsPerson`); any other failure is generic.
+        Effect.mapError(
+          (error) =>
+            new SecretStoreDecodeError({
+              resource,
+              cause: awaitsPerson(error) ? error : new Error("Decryption unavailable."),
+            }),
+        ),
+      );
       return Option.some(Redacted.value(value));
     }
     const legacy = Redacted.make(stored.value);

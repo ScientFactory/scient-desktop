@@ -2,7 +2,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { usePrimaryEnvironmentId } from "~/state/environments";
-import { accountsAvailability } from "~/scient/accounts/accountsState";
+import { accountsAvailability, accountsNeedYou } from "~/scient/accounts/accountsState";
 // SCIENT-FORK:END
 import {
   lazy,
@@ -210,11 +210,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const accountsAvailable = useAtomValue(
-    accountsAvailability(
-      scopeSearch.machine ? EnvironmentId.make(scopeSearch.machine) : primaryEnvironmentId,
-    ),
-  );
+  const accountsEnvironmentId = scopeSearch.machine
+    ? EnvironmentId.make(scopeSearch.machine)
+    : primaryEnvironmentId;
+  const accountsAvailable = useAtomValue(accountsAvailability(accountsEnvironmentId));
+  const accountsWaiting = useAtomValue(accountsNeedYou(accountsEnvironmentId));
   // SCIENT-FORK:END
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -489,9 +489,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
                       <div role="group" aria-labelledby={`settings-nav-group-${index}`}>
                         <SidebarMenu>
-                          {/* SCIENT-FORK: Scient Accounts omits unsupported navigation. */}
+                          {/* SCIENT-FORK: Scient Accounts omits unsupported navigation, and holds Secrets under Password stores. */}
                           {group.paths
-                            .filter((to) => to !== "/settings/accounts" || accountsAvailable)
+                            .filter((to) =>
+                              to === "/settings/accounts"
+                                ? accountsAvailable
+                                : to !== "/settings/secrets" || !accountsAvailable,
+                            )
                             .map((to) => {
                               const Icon = SETTINGS_SECTION_ICONS[to];
                               const isActive = activePath === to || activePath.startsWith(`${to}/`);
@@ -514,6 +518,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                     >
                                       {m(SETTINGS_NAV_LABELS[to])}
                                     </span>
+                                    {/* SCIENT-FORK: Scient Accounts marks a wait for the person. */}
+                                    {to === "/settings/accounts" && accountsWaiting ? (
+                                      <span
+                                        role="img"
+                                        aria-label={gt("Needs you")}
+                                        className="ms-auto size-1.5 shrink-0 rounded-full bg-primary"
+                                      />
+                                    ) : null}
                                   </SidebarMenuButton>
                                   {/* SCIENT-FORK: page section outline, hidden while the nav is an icon rail. */}
                                   <div

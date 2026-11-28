@@ -5,7 +5,7 @@ import {
   type DesktopChromeSignInResult,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -178,15 +178,13 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
   } | null>(null);
   const end = (keep: boolean) => {
     if (!open) return;
-    setOpen((current) =>
-      current ? { ...current, phase: keep ? "finishing" : "cancelling" } : current,
-    );
+    // Cancel closes the card at once; the window is stopped meanwhile, wherever it opened.
+    setOpen((current) => (!keep ? null : current ? { ...current, phase: "finishing" } : current));
     void accounts
       ?.endChromeSignIn?.(keep, open.attemptId)
       .then((ended) => {
-        // A Cancel refused: the copy was already being written, so it is not cancelled.
-        if (!keep && ended === false)
-          setOpen((current) => (current ? { ...current, phase: "committed" } : current));
+        // A Cancel refused: the copy was already being written; its notice says how it ended.
+        if (!keep && ended === false) return;
       })
       .catch(() => undefined);
   };
@@ -227,12 +225,23 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
       await recordImportedSessions(environmentId, profile.id, `${result.browser} window`, {
         fillMain: true,
       });
-    setOpen(null);
+    // Only this attempt's card: a newer one, opened after a Cancel, stays.
+    setOpen((current) => (current?.attemptId === attemptId ? null : current));
     // Google and every row look again at what the window brought.
     window.dispatchEvent(new Event("scient-accounts-session-changed"));
     report(result, profile.name);
     if (result.outcome === "copied") onCopied?.();
   };
+  // Round 6m: back in Scient with the window open, Done is focused, so Enter finishes it.
+  const doneRef = useRef<HTMLButtonElement>(null);
+  const waiting = open?.canQuit === true && open.phase === "signing-in";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Follows the window's own focus, which no React state holds.
+  useEffect(() => {
+    if (!waiting) return;
+    const back = () => doneRef.current?.focus();
+    window.addEventListener("focus", back);
+    return () => window.removeEventListener("focus", back);
+  }, [waiting]);
   const dialog = open ? (
     <Dialog
       open
@@ -262,27 +271,19 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
         <DialogPanel>
           <ul className="list-disc space-y-1 ps-4 text-muted-foreground text-sm">
             {open.purpose === "google" ? (
-              <>
-                <li>
-                  <T>
-                    If{" "}
-                    <Var>{browserPlatform() === "windows" ? "Windows Security" : open.browser}</Var>{" "}
-                    asks for a passkey you don't have, cancel it, then choose Try another way on
-                    Google's page.
-                  </T>
-                </li>
-                <li>
-                  <T>You don't need to install an authenticator app for this window.</T>
-                </li>
-              </>
+              <li>
+                <T>
+                  If{" "}
+                  <Var>{browserPlatform() === "windows" ? "Windows Security" : open.browser}</Var>{" "}
+                  asks for a passkey you don't have, cancel it, then choose Try another way on
+                  Google's page.
+                </T>
+              </li>
             ) : null}
             <li>
-              <T>If the page stays blank, reload it in the window.</T>
-            </li>
-            <li>
               <T>
-                The window uses its own temporary profile, apart from your <Var>{open.browser}</Var>{" "}
-                profiles, and it's deleted afterwards.
+                The window keeps its own sign-ins for <Var>{open.into}</Var>, apart from your{" "}
+                <Var>{open.browser}</Var> profiles.
               </T>
             </li>
           </ul>
@@ -302,7 +303,12 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
             <T>Cancel</T>
           </Button>
           {open.canQuit ? (
-            <Button disabled={open.phase !== "signing-in"} onClick={() => end(true)}>
+            <Button
+              ref={doneRef}
+              data-slot="dialog-action"
+              disabled={open.phase !== "signing-in"}
+              onClick={() => end(true)}
+            >
               {open.phase === "finishing" || open.phase === "committed"
                 ? gt("Bringing it into {into}…", { into: open.into })
                 : gt("Done")}

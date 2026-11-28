@@ -1,5 +1,5 @@
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_1,
   type AccountsSnapshot,
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
@@ -60,7 +60,7 @@ export function remoteView(input: RemoteLineInput): RemoteView {
         ? { kind: "failed", failure: input.failure }
         : input.refused
           ? { kind: "refused", route: input.refused }
-          : connected && input.remote && (input.remote.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL
+          : connected && input.remote && (input.remote.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL_1
             ? { kind: "outdated" }
             : sentAt
               ? connected

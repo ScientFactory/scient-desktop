@@ -10,11 +10,12 @@ import {
   type SessionCookie,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as Electron from "electron";
 import { setCookies } from "@t3tools/shared/scientSessionCookies";
+import { protectedStore } from "./protectedStore.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Electron from "electron";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
@@ -125,8 +126,19 @@ const writeCookies = async (
  * The person signs in to a site in a window of their own Chromium browser, on a profile folder
  * Scient owns; then what they signed in to is copied into a Scient profile.
  */
+/** One folder per Scient profile, kept so the browser remembers that profile's sign-ins. */
+export const signInFolder = (stateDir: string, profileId: string) =>
+  `${stateDir.replace(/[\\/]+$/u, "")}/scient/chrome-sign-in/${encodeURIComponent(profileId)}`;
+
+/** Scient's window the sign-in was started from: where the browser opens, and what comes back. */
+export interface SignInHost {
+  readonly position?: { readonly x: number; readonly y: number } | undefined;
+  readonly focus: () => void;
+}
+
 export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* (
   input: typeof ChromeSignInInput.Type,
+  host?: SignInHost,
 ) {
   const intoMain = input.profileId === DEFAULT_BROWSER_PROFILE_ID;
   if (input.profileId === INCOGNITO_BROWSER_PROFILE_ID || (intoMain && !input.main))
@@ -142,7 +154,7 @@ export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* 
   if (copying) return { outcome: "busy", browser: browser.name } as const;
   const copy: Copy = { attemptId, cancelled: false, writing: false };
   copying = copy;
-  return yield* copyFromWindow(input, browser, platform, copy).pipe(
+  return yield* copyFromWindow(input, browser, platform, copy, host).pipe(
     Effect.ensuring(
       Effect.sync(() => {
         if (copying === copy) copying = undefined;
@@ -157,6 +169,7 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
   browser: ChromiumBrowser,
   platform: NodeJS.Platform,
   copy: Copy,
+  host?: SignInHost,
 ) {
   const environmentId = input.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
   const intoMain = input.profileId === DEFAULT_BROWSER_PROFILE_ID;
@@ -165,11 +178,15 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
   const read = yield* Effect.promise(() =>
     signInInWindow({
       browser,
-      folder: environment.path.join(environment.stateDir, "scient", "chrome-sign-in"),
+      folder: signInFolder(environment.stateDir, input.profileId),
       url: input.url,
       platform,
+      position: host?.position,
+      remember: protectedStore(),
     }),
   );
+  // Back to Scient once the window is done or cancelled, from another Space too.
+  yield* Effect.sync(() => host?.focus());
   if (read.outcome !== "read") return { ...read, browser: browser.name };
   if (copy.cancelled) return cancelled;
   if (read.units.length === 0) return { outcome: "nothing", browser: browser.name } as const;

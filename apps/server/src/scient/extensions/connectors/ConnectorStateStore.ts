@@ -52,6 +52,11 @@ export const ConnectorAuthRecord = Schema.Union([
     headerName: Schema.optional(TrimmedNonEmptyString),
     storage: Schema.Literals(["owned", "bound"]),
     credentialRef: VaultSecretRef,
+    /**
+     * An owned key's row in Accounts, kept for this connector. This build uses it; an older one
+     * drops the field and keeps using the typed copy, which stays until that copy is retired.
+     */
+    accountRef: Schema.optional(VaultSecretRef),
   }),
   /** Borrowed from Source Control on each request; nothing of it is stored here. */
   Schema.Struct({

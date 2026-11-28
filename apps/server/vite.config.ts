@@ -126,6 +126,9 @@ export default mergeConfig(
               // SCIENT-FORK:START — execute the real bundled engine from installed qualification.
               "src/overleaf-packaging-probe.ts",
               "src/speech-packaging-probe.ts",
+              // A new process reads Messages and Mail each time, so a Full Disk Access grant
+              // works without a restart.
+              "src/sign-in-codes-worker.ts",
               // SCIENT-FORK:END
               "src/analytics-worker.ts",
               "src/claude-history-worker.ts",
@@ -208,6 +211,9 @@ export default mergeConfig(
         "./src/testUtils/managedServiceEnv.setup.ts",
         // SCIENT-FORK:START — Git cannot reach the source checkout from a test.
         "./src/testUtils/checkoutIsolation.setup.ts",
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — Scient Accounts: an unhandled rejection fails the test (round 6s).
+        "./src/testUtils/unhandledRejection.scient.setup.ts",
         // SCIENT-FORK:END
       ],
       hookTimeout: 120_000,

@@ -166,7 +166,10 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
   return { username, password, otp, other };
 }
 
-/** A box's own type and constraints, as `loginValueFits` reads them. */
+/**
+ * A box's own type and constraints, as `loginValueFits` reads them. A plain text box the page
+ * labels as an email box only, as a university's email tab does, is one too.
+ */
 function loginBox(input: {
   readonly type: string;
   readonly autocomplete: string;
@@ -174,12 +177,22 @@ function loginBox(input: {
   readonly minLength: number;
   readonly maxLength: number;
   readonly pattern: string;
+  readonly placeholder?: string;
+  readonly labels?: ArrayLike<{ readonly textContent: string | null }> | null;
+  readonly getAttribute?: (name: string) => string | null;
 }): LoginBox {
+  const label = [
+    input.placeholder,
+    input.getAttribute?.("aria-label"),
+    ...Array.from(input.labels ?? [], (item) => item.textContent),
+  ].join(" ");
   return {
     email:
       input.type === "email" ||
       input.autocomplete.toLowerCase().split(/\s+/).includes("email") ||
-      /^e-?mail$/i.test(input.name),
+      /^e-?mail$/i.test(input.name) ||
+      (/e-?mail|דוא["״]?ל|דואר אלקטרוני/i.test(label) &&
+        !/user|login|(^|[^a-z])id([^a-z]|$)|name|phone|משתמש|זהות|ת\.?ז|טלפון/i.test(label)),
     minLength: input.minLength,
     maxLength: input.maxLength,
     pattern: input.pattern,
@@ -277,14 +290,132 @@ function findRememberBox<Box extends PageCheckbox>(
   });
 }
 
+/**
+ * The boxes of a sign-up or change-password form that take the new password, confirmation
+ * included: those marked `new-password`, else every visible password box but a current one when
+ * there are two or more. A single unmarked password box is a sign-in, so none.
+ */
+function findNewPasswordBoxes<Input extends PageInput>(inputs: ReadonlyArray<Input>) {
+  const passwords = inputs.filter(
+    (input) =>
+      input.type === "password" && !input.disabled && !input.readOnly && loginElementVisible(input),
+  );
+  const tokens = (input: Input) => input.autocomplete.toLowerCase().split(/\s+/);
+  const marked = passwords.filter((input) => tokens(input).includes("new-password"));
+  if (marked.length > 0) return marked;
+  if (passwords.length < 2) return [];
+  return passwords.filter(
+    (input) =>
+      !tokens(input).includes("current-password") &&
+      !/current|old|existing/i.test(
+        [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" "),
+      ),
+  );
+}
+
+/**
+ * What a new-password form's own words say, read in the page so its text never leaves it: the
+ * lengths it states (-1 for none), the kinds of character it requires, whether it refuses
+ * symbols, and whether it says a password was refused (wrong, too weak, already used).
+ */
+function readNewPasswordWords(text: string) {
+  let minLength = -1;
+  let maxLength = -1;
+  const number = (pattern: RegExp) => {
+    const found = pattern.exec(text);
+    return found ? Number(found[found.length - 1]) : undefined;
+  };
+  const between = /(?:between|from)\s+(\d{1,3})\s+(?:and|to|-)\s+(\d{1,3})\s+char/i.exec(text);
+  if (between) {
+    minLength = Number(between[1]);
+    maxLength = Number(between[2]);
+  }
+  for (const least of [
+    number(/(?:at least|minimum(?: of)?|min\.?)\s+(\d{1,3})\s+char/i),
+    number(/(\d{1,3})\s*(?:\+|or more)\s+char/i),
+  ])
+    if (least !== undefined) minLength = Math.max(minLength, least);
+  const most = number(/(?:at most|maximum(?: of)?|max\.?|no more than|up to)\s+(\d{1,3})\s+char/i);
+  if (most !== undefined) maxLength = maxLength === -1 ? most : Math.min(maxLength, most);
+  const noSymbols =
+    /(?:no|not|without|can(?:no|')t contain|must not contain)\s+(?:any\s+)?(?:special characters|symbols)|(?:letters and (?:numbers|digits) only|only letters and (?:numbers|digits))|alphanumeric/i.test(
+      text,
+    );
+  const required = (
+    [
+      ["upper", /upper\s?case|capital/i],
+      ["lower", /lower\s?case/i],
+      ["digit", /\b(?:number|digit|numeral)s?\b/i],
+      ["symbol", /symbol|special char|punctuation/i],
+    ] as const
+  ).flatMap(([kind, pattern]) =>
+    pattern.test(text) && !(kind === "symbol" && noSymbols) ? [kind] : [],
+  );
+  const refusal =
+    /incorrect|invalid|wrong|too (?:short|weak|common|simple)|(?:do|does)(?:n't| not) match|already (?:been )?used|not strong enough|error/i.test(
+      text,
+    );
+  return { minLength, maxLength, required, noSymbols, refusal };
+}
+
+/** A text on the page: an element, or a text box whose value the page wrote codes into. */
+interface PageText extends PageElement {
+  readonly tagName: string;
+  readonly textContent: string | null;
+  readonly children: { readonly length: number };
+  readonly value?: string;
+}
+
+/**
+ * The backup codes a page lists, on a page that names them: 4 to 20 visible code-shaped texts
+ * (letters and digits with at least one digit, maybe one dash or space), all of one length.
+ * Anything else is not a list of codes, so none.
+ */
+function findRecoveryCodes() {
+  const page = (
+    globalThis as unknown as {
+      document: {
+        body: { readonly innerText: string } | null;
+        querySelectorAll(selectors: string): ArrayLike<PageText>;
+      };
+    }
+  ).document;
+  if (!/(?:recovery|backup|emergency|one-time)\s+codes?/i.test(page.body?.innerText ?? ""))
+    return [];
+  const shape = /^(?=[A-Za-z0-9 -]*\d)[A-Za-z0-9]{3,8}(?:[- ][A-Za-z0-9]{3,8})?$/;
+  const codes = new Set<string>();
+  for (const element of Array.from(
+    page.querySelectorAll("li, code, kbd, samp, td, span, div, p, pre, textarea"),
+  )) {
+    const text =
+      element.tagName === "TEXTAREA"
+        ? element.value
+        : element.tagName === "PRE" || element.children.length === 0
+          ? element.textContent
+          : null;
+    if (!text || !loginElementVisible(element)) continue;
+    for (const line of text.split(/\n/)) if (shape.test(line.trim())) codes.add(line.trim());
+  }
+  const list = [...codes];
+  const length = (code: string) => code.replace(/[- ]/g, "").length;
+  return list.length >= 4 &&
+    list.length <= 20 &&
+    list.every((code) => length(code) === length(list[0]!))
+    ? list
+    : [];
+}
+
 export const loginFieldsKit = {
   visible: loginElementVisible,
   collect: collectLoginFields,
   rememberBox: findRememberBox,
   box: loginBox,
   fits: loginValueFits,
+  newPasswordBoxes: findNewPasswordBoxes,
+  newPasswordWords: readNewPasswordWords,
+  recoveryCodes: findRecoveryCodes,
 };
 export type LoginFieldsKit = typeof loginFieldsKit;
 
 /** `loginFieldsKit` as a page-script expression; `.name` keeps any bundler rename. */
-export const loginFieldsKitSource = `(() => { ${loginElementVisible.toString()} ${detectLoginFields.toString()} ${collectLoginFields.toString()} ${findRememberBox.toString()} ${loginBox.toString()} ${loginValueFits.toString()} return { visible: ${loginElementVisible.name}, collect: ${collectLoginFields.name}, rememberBox: ${findRememberBox.name}, box: ${loginBox.name}, fits: ${loginValueFits.name} }; })()`;
+export const loginFieldsKitSource = `(() => { ${loginElementVisible.toString()} ${detectLoginFields.toString()} ${collectLoginFields.toString()} ${findRememberBox.toString()} ${loginBox.toString()} ${loginValueFits.toString()} ${findNewPasswordBoxes.toString()} ${readNewPasswordWords.toString()} ${findRecoveryCodes.toString()} return { visible: ${loginElementVisible.name}, collect: ${collectLoginFields.name}, rememberBox: ${findRememberBox.name}, box: ${loginBox.name}, fits: ${loginValueFits.name}, newPasswordBoxes: ${findNewPasswordBoxes.name}, newPasswordWords: ${readNewPasswordWords.name}, recoveryCodes: ${findRecoveryCodes.name} }; })()`;

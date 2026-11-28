@@ -74,6 +74,34 @@ const events = await session.json("/lib/ajax/service.php?…", {}, { signal });
 again and retries. The included MCP helper (`mcp.mjs`) suppresses this replay marker for other tools;
 check an uncertain write outcome before retrying. The program never sees the password.
 
+A site that rotates its session cookie on each answer would need a new sign-in after every
+restart. Declare its reads and its one session cookie instead, and use `session.read`:
+
+```json
+"signIn": { "site": "https://hours.example.com",
+  "writeBack": { "cookie": "sid", "reads": { "hours": "/api/hours" } } }
+```
+
+```js
+const { body } = await session.read("hours", { month: "2026-11" });
+```
+
+Scient makes each read itself, sends no redirect on, and keeps the site's new `sid` in the
+user's browser profile. It reports a site it couldn't reach apart from an ended session.
+
+A site whose API takes a token it mints from the signed-in session (a mobile-app or embed token)
+needs no stored key. Declare the page that hands it out and where the token is in the answer, and
+ask for it with `session.serviceToken`:
+
+```json
+"tokens": { "app": { "path": "/admin/tool/mobile/launch.php?service=app&passport={nonce}",
+  "pattern": "app://token=([A-Za-z0-9+/=]+)", "decode": "base64", "separator": ":::", "part": 1 } }
+```
+
+```js
+const token = await session.serviceToken("app"); // after the API refused it: { renew: true }
+```
+
 ### Libraries
 
 Zero dependencies is best: Scient cannot count on npm being on the user's computer. When a

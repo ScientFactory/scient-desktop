@@ -151,6 +151,16 @@ export function HostedBrowserWebview(props: {
     setWebviewGeneration((generation) => generation + 1);
   });
 
+  // SCIENT-FORK:START — Scient Accounts: a cleared profile's tab reloads in its new partition.
+  const shownPartition = useRef(config?.partition);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A Clear moves the profile to a new partition; the open tab remounts there, as after a crash.
+  useEffect(() => {
+    if (!config) return;
+    if (shownPartition.current && shownPartition.current !== config.partition)
+      remountCrashedWebview();
+    shownPartition.current = config.partition;
+  }, [config]);
+  // SCIENT-FORK:END
   const setWebviewRef = (node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
   };

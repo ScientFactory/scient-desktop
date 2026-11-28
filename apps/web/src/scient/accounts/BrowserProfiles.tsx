@@ -29,12 +29,20 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ChevronRightIcon,
-  InfoIcon,
+  ChevronDownIcon,
   PlusIcon,
   RefreshCwIcon,
-  XIcon,
 } from "lucide-react";
-import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuCheckboxItem,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+} from "~/components/ui/menu";
 import { QuitStep } from "~/components/settings/BrowserImportWizard";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "~/components/ui/collapsible";
@@ -72,10 +80,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
 import { forgetGoogleCopy } from "./googleCopyObservation";
+import { useSiteSignOut } from "./siteSignOut";
+import { useProfileOperations } from "./profileOperations";
 import { recordImportedSessions } from "./importedSessions";
 import { protectedNotice } from "./importSummary";
 import { copySignInIntoMain } from "./mainFill";
-import { CHROME_WINDOW_ACTION, useChromeSignIn } from "./ChromeSignIn";
+import { useChromeSignIn } from "./ChromeSignIn";
 import {
   BrowserConnectStep,
   REMOTE_DEBUGGING_QUESTION,
@@ -102,6 +112,8 @@ import {
   isBrowserSignIn,
   unlistedProfiles,
   sitesToKeep,
+  activityWithChanges,
+  type ActivityItem,
 } from "./accountsView";
 
 const RUNNING_BROWSER_COPY = msg("open, quit to import");
@@ -255,29 +267,17 @@ function SignedInSitesDialog({
   const gt = useGT();
   const remoteLabel = useEnvironment(environmentId)?.label ?? gt("this computer");
   const sender = profile.record.received?.[0]?.label;
-  const signOutRemote = useAccountCommand(accountsState.sessionsSignOutLocal, environmentId);
-  const recordSignOut = useAccountCommand(accountsState.profileSignedOut, environmentId);
+  const siteSignOut = useSiteSignOut(environmentId);
   const signOut = async (site: string) => {
     setBusy(site);
-    const accounts = window.desktopBridge?.accounts;
-    const profileId = BrowserProfileId.make(profile.id);
-    // Recorded first: other computers then delete the site too, and Main never gets it back.
-    const done = remote
-      ? (await signOutRemote({ profileId, site })).ok
-      : (await recordSignOut({ profileId, site })).ok &&
-        (profile.id === DEFAULT_BROWSER_PROFILE_ID
-          ? await accounts?.signOutMainSite?.(site, environmentId).catch(() => false)
-          : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false));
+    const done = await siteSignOut.signOut(profile.id, site, false, profile.name);
     if (!done) profileError();
-    else {
-      if (site === GOOGLE_SITE) forgetGoogleCopy(environmentId, profile.id);
-      // Every count and list of this profile reads again, this one too.
-      window.dispatchEvent(new Event("scient-accounts-session-changed"));
-    }
+    // Every count and list of this profile reads again, this one too.
+    else window.dispatchEvent(new Event("scient-accounts-session-changed"));
     if (!done) await reload();
     setBusy(null);
   };
-  const canSignOut = remote || window.desktopBridge?.accounts?.signOutSite !== undefined;
+  const canSignOut = siteSignOut.available;
   const find = query.trim().toLowerCase();
   const cookieSiteOf = (row: AccountSummary) =>
     sites?.find((site) => sitesNest([site.domain], rowSites(row)))?.domain;
@@ -399,9 +399,8 @@ export function BrowserImportDialog({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const readPasswords =
     environmentId === primaryEnvironmentId
-      ? window.desktopBridge?.accounts?.readBrowserPasswords
+      ? window.desktopBridge?.accounts?.importBrowserPasswords
       : undefined;
-  const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -607,17 +606,15 @@ export function BrowserImportDialog({
         }
       if (passwordSources.length) setImportingPasswords(true);
       for (const { profileId, ...input } of passwordSources) {
-        const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
-        const result = csv
-          ? await importPasswords({
-              format: "chrome",
-              content: csv.content,
-              ...(profileId === undefined ? {} : { profileId: BrowserProfileId.make(profileId) }),
-            })
-          : null;
-        if (csv && result?.ok) {
-          passwordTotals.imported += result.value.created + result.value.updated;
-          passwordTotals.skipped += csv.skipped + result.value.skipped;
+        // The desktop reads them and hands them to this computer's Accounts itself (round 6f).
+        const saved =
+          (await readPasswords?.({
+            ...input,
+            ...(profileId === undefined ? {} : { profileId }),
+          }).catch(() => null)) ?? null;
+        if (saved?.result) {
+          passwordTotals.imported += saved.result.created + saved.result.updated;
+          passwordTotals.skipped += saved.skipped + saved.result.skipped;
         } else passwordTotals.failed = true;
       }
       // After the passwords: a site with a saved password is one whose session gets a row.
@@ -965,9 +962,10 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
 export const GOOGLE_SIGNED_OUT = msg("Signed out of Google.");
 
 /**
- * What a signed-out profile does: bring the browser's Google sign-in in again. A profile with no
- * browser behind it, Main, copies another profile's working Google, or else imports one. Signing
- * in in a Chrome window works for every profile, so it is offered beside each.
+ * What a signed-out profile offers: one "Sign in again". With a Chrome window, it is a choice of
+ * two clearly different ways back: a new Google sign-in of Scient's own, or copying the browser's
+ * sign-ins again (Copy from another profile, or Import, where it has no browser). Without one,
+ * the button takes the remaining way at once.
  */
 export function googleRecovery(
   source: BrowserProfileRecord["source"],
@@ -979,53 +977,25 @@ export function googleRecovery(
   },
   resolve: MessageResolver = m,
 ) {
-  const message = resolve(GOOGLE_SIGNED_OUT);
-  const inWindow = actions.chromeWindow
-    ? { also: { action: resolve(CHROME_WINDOW_ACTION), onAction: actions.chromeWindow } }
-    : {};
-  if (!source)
-    return actions.copyFrom
+  const copyAgain = source
+    ? {
+        action: resolve(msg("Copy again from {browser}", { browser: browserName(source.browser) })),
+        onAction: actions.refresh,
+      }
+    : actions.copyFrom
       ? {
-          message,
-          hint: resolve(
-            msg("Copy {name}''s Google sign-in into Main.", { name: actions.copyFrom.name }),
-          ),
           action: resolve(msg("Copy from {name}", { name: actions.copyFrom.name })),
           onAction: actions.copyFrom.run,
-          ...inWindow,
         }
-      : actions.chromeWindow
-        ? {
-            message,
-            hint: resolve(
-              msg(
-                "Sign in to Google in a small Chrome window, or import a browser profile that has it.",
-              ),
-            ),
-            action: resolve(CHROME_WINDOW_ACTION),
-            onAction: actions.chromeWindow,
-            also: {
-              action: resolve(msg("Import from a browser…")),
-              onAction: actions.importProfile,
-            },
-          }
-        : {
-            message,
-            hint: resolve(msg("Sign in to Google in your browser, then import that profile.")),
-            action: resolve(msg("Import from a browser…")),
-            onAction: actions.importProfile,
-          };
-  const browser = browserName(source.browser);
+      : { action: resolve(msg("Import from a browser…")), onAction: actions.importProfile };
   return {
-    message,
-    hint: resolve(msg("Sign in to Google in {browser}, then Refresh.", { browser })),
-    action: resolve(msg("Refresh from {browser}", { browser })),
-    onAction: actions.refresh,
-    ...inWindow,
+    routes: actions.chromeWindow
+      ? [{ action: resolve(msg("New Google sign-in")), onAction: actions.chromeWindow }, copyAgain]
+      : [copyAgain],
   };
 }
 
-/** The line under a profile's name: its address and, when Google refused it, a way back in. */
+/** The line under a profile's name: its address and, when Google signed it out, Sign in again. */
 export function ProfileDetail({
   email,
   signedOut,
@@ -1037,46 +1007,55 @@ export function ProfileDetail({
 }) {
   const gt = useGT();
   if (!email && !signedOut) return null;
-  if (signedOut && recover)
-    return (
-      <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-        {email ? <span className="max-w-full truncate">{email} ·</span> : null}
-        <span>{recover.message}</span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={gt("Why signed out of Google")}
-                onClick={(event) => event.stopPropagation()}
-                className="inline-flex shrink-0 text-muted-foreground hover:text-foreground"
-              />
-            }
-          >
-            <InfoIcon className="size-3" />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom" className="max-w-64">
-            {recover.hint}
-          </TooltipPopup>
-        </Tooltip>
-        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={recover.onAction}>
-          <span className="text-xs text-foreground">{recover.action}</span>
-        </Button>
-        {recover.also ? (
-          <>
-            <span aria-hidden>·</span>
-            <Button
-              size="micro"
-              variant="link"
-              className="-my-0.5 shrink-0"
-              onClick={recover.also.onAction}
-            >
-              <span className="text-xs text-foreground">{recover.also.action}</span>
-            </Button>
-          </>
-        ) : null}
+  if (signedOut && recover) {
+    const [only] = recover.routes;
+    const button = (
+      <Button
+        size="micro"
+        variant="link"
+        className="-my-0.5 shrink-0"
+        aria-label={gt("Sign in to Google again")}
+      />
+    );
+    const label = (
+      <span className="inline-flex items-center gap-0.5 text-xs text-foreground">
+        <T>Sign in again</T>
+        {recover.routes.length > 1 ? <ChevronDownIcon className="size-3" /> : null}
       </span>
     );
+    return (
+      <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+        {email ? <span className="min-w-0 truncate">{email}</span> : null}
+        {email ? (
+          <span aria-hidden className="shrink-0">
+            ·
+          </span>
+        ) : null}
+        {recover.routes.length > 1 ? (
+          <Menu>
+            <MenuTrigger render={button}>{label}</MenuTrigger>
+            <MenuPopup align="start">
+              {recover.routes.map((route) => (
+                <MenuItem key={route.action} onClick={route.onAction}>
+                  {route.action}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        ) : (
+          <Button
+            size="micro"
+            variant="link"
+            className="-my-0.5 shrink-0"
+            aria-label={gt("Sign in to Google again")}
+            onClick={only!.onAction}
+          >
+            {label}
+          </Button>
+        )}
+      </span>
+    );
+  }
   return (
     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
       {email ? <span className="truncate">{email}</span> : null}
@@ -1095,12 +1074,15 @@ export function BrowserProfiles({
   snapshot,
   canWrite,
   onImport,
+  onActivity,
   onChromeWindow,
   renderSignIn,
 }: {
   environmentId: EnvironmentId;
   snapshot: AccountsSnapshot;
   canWrite: boolean;
+  /** A profile's Activity: its uses and what agents changed on it. */
+  onActivity?: ((entries: ReadonlyArray<ActivityItem>) => void) | undefined;
   /** A sign-in's row in its profile's sites, with `menu` added to the row's own. */
   renderSignIn: RenderSignIn;
   onImport: () => void;
@@ -1116,16 +1098,17 @@ export function BrowserProfiles({
     reportDefect: false,
   });
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
+  const activity = useAccountCommand(accountsState.activity, environmentId);
+  const operations = useProfileOperations(environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const retireRecord = useAccountCommand(accountsState.retireProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
   const forgetBrowsing = useForgetBrowserProfile();
-  const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   // Only the local desktop can read another browser's saved passwords.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const readPasswords =
     environmentId === primaryEnvironmentId
-      ? window.desktopBridge?.accounts?.readBrowserPasswords
+      ? window.desktopBridge?.accounts?.importBrowserPasswords
       : undefined;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
@@ -1346,18 +1329,13 @@ export function BrowserProfiles({
       if (profile.name !== linked.profileName)
         renames.push({ id, from: linked.profileName, to: profile.name });
       if (readPasswords && profile.passwordCount !== undefined) {
-        const csv = await readPasswords({
+        const saved = await readPasswords({
           sourceId: source.id,
           directory: profile.directory,
+          profileId: id,
+          refresh: true,
         }).catch(() => null);
-        const result = csv
-          ? await importPasswords({
-              format: "chrome",
-              content: csv.content,
-              profileId: BrowserProfileId.make(id),
-            })
-          : null;
-        if (!result?.ok) failed = true;
+        if (!saved?.result) failed = true;
       }
       await recordImportedSessions(environmentId, id, `${source.name} · ${profile.name}`, {
         fillMain: refreshed,
@@ -1525,25 +1503,6 @@ export function BrowserProfiles({
           }
         />
       ) : null}
-      {settings.mainDefaultNotice ? (
-        <SettingsRow
-          title={gt(
-            "New tabs now open in Main, which has your sign-ins. You can change this here.",
-          )}
-          control={
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={gt("Dismiss")}
-              onClick={() =>
-                void changeSettings((current) => ({ ...current, mainDefaultNotice: false }))
-              }
-            >
-              <XIcon />
-            </Button>
-          }
-        />
-      ) : null}
       {profiles.map((profile) => (
         <SettingsRow
           key={profile.id}
@@ -1586,6 +1545,11 @@ export function BrowserProfiles({
                     {settings.browserDefaultProfileId === profile.id ? (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         <T>New tabs</T>
+                      </span>
+                    ) : null}
+                    {profile.record.unavailable ? (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        <T>Unavailable</T>
                       </span>
                     ) : null}
                   </span>
@@ -1653,6 +1617,21 @@ export function BrowserProfiles({
                     <T>Signed-in sites</T>
                   </MenuItem>
                 ) : null}
+                {onActivity ? (
+                  <MenuItem
+                    onClick={async () => {
+                      const target = {
+                        type: "profile" as const,
+                        profileId: BrowserProfileId.make(profile.id),
+                      };
+                      const result = await activity({ target });
+                      if (result.ok)
+                        onActivity(activityWithChanges(result.value, snapshot.changes, target));
+                    }}
+                  >
+                    <T>Activity</T>
+                  </MenuItem>
+                ) : null}
                 {isBuiltInBrowserProfileId(profile.id) || isUnlisted(profile.id) ? null : (
                   <MenuItem onClick={() => setRenaming(profile.id)}>
                     <T>Rename</T>
@@ -1693,6 +1672,24 @@ export function BrowserProfiles({
                     <T>Use for new tabs</T>
                   </MenuItem>
                 )}
+                {onChromeWindow && window.desktopBridge?.accounts?.forgetChromeSignIn ? (
+                  <MenuItem
+                    onClick={() =>
+                      void window.desktopBridge?.accounts
+                        ?.forgetChromeSignIn?.(profile.id)
+                        .then((forgot) => {
+                          if (forgot)
+                            toastManager.add({
+                              type: "success",
+                              title: m(msg("Forgot the sign-in window")),
+                            });
+                        })
+                        .catch(() => undefined)
+                    }
+                  >
+                    <T>Forget the sign-in window</T>
+                  </MenuItem>
+                ) : null}
                 {previewBridge && profile.record.source && !isUnlisted(profile.id) ? (
                   <MenuItem onClick={() => void act(() => refresh([profile]))}>
                     <T>
@@ -1711,13 +1708,58 @@ export function BrowserProfiles({
                     <T>Manage passwords in Google</T>
                   </MenuItem>
                 ) : null}
-                <MenuItem onClick={() => void act(() => clear(profile.id))}>
+                <MenuItem
+                  onClick={() =>
+                    void act(async () => {
+                      // With Undo: the profile opens in fresh data; the old waits for the hour.
+                      if ((await operations.run("clear", profile)) !== undefined) return;
+                      await clear(profile.id);
+                      toastManager.add({
+                        type: "success",
+                        title: m(msg("Cookies and cache cleared")),
+                      });
+                    })
+                  }
+                >
                   <T>Clear cookies and cache</T>
                 </MenuItem>
+                {operations.supported && !profile.record.received
+                  ? (
+                      [
+                        ["copy", gt("Copy to")],
+                        ["move", gt("Move to")],
+                        ...(isBuiltInBrowserProfileId(profile.id)
+                          ? []
+                          : [["merge", gt("Merge into")] as const]),
+                      ] as const
+                    ).map(([kind, label]) => (
+                      <MenuSub key={kind}>
+                        <MenuSubTrigger>{label}</MenuSubTrigger>
+                        <MenuSubPopup>
+                          {listed
+                            .filter((other) => other.id !== profile.id && !other.record.received)
+                            .map((other) => (
+                              <MenuItem
+                                key={other.id}
+                                onClick={() =>
+                                  void act(async () => {
+                                    await operations.run(kind, profile, undefined, other);
+                                  })
+                                }
+                              >
+                                {other.name}
+                              </MenuItem>
+                            ))}
+                        </MenuSubPopup>
+                      </MenuSub>
+                    ))
+                  : null}
                 {!isBuiltInBrowserProfileId(profile.id) ? (
                   <MenuItem
                     onClick={() =>
                       void act(async () => {
+                        // With Undo: hidden at once, its data kept for the hour, then purged.
+                        if ((await operations.run("remove", profile)) !== undefined) return;
                         await clear(profile.id);
                         const result = await removeRecord({ profileId: profile.id });
                         if (!result.ok) return;
@@ -1731,6 +1773,10 @@ export function BrowserProfiles({
                             : {}),
                         }));
                         forgetBrowsing(profile.id);
+                        toastManager.add({
+                          type: "success",
+                          title: m(msg("Removed {name}", { name: profile.name })),
+                        });
                       })
                     }
                   >

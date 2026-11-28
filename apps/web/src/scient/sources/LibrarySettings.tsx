@@ -12,6 +12,7 @@ import { Input } from "~/components/ui/input";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { LibraryKeys } from "./LibraryKeys";
 
 /** The setting belongs to the server the Documents page is showing. */
 export function LibrarySettings({ environmentId }: { environmentId: EnvironmentId }) {
@@ -81,6 +82,7 @@ export function LibrarySettings({ environmentId }: { environmentId: EnvironmentI
           />
         }
       />
+      <LibraryKeys environmentId={environmentId} />
     </SettingsSection>
   );
 }

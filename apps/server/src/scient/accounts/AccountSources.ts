@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native keyring and metadata-only OS commands are lazy adapters.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
 import {
   AccountsError,
   BUILT_IN_BROWSER_PROFILES,
@@ -13,7 +14,7 @@ import {
   type AccountValueSource,
   type OnePasswordConnectInput,
 } from "@t3tools/contracts";
-import { Context, Duration, Effect, Layer, Option, Redacted } from "effect";
+import { Clock, Context, Duration, Effect, Layer, Option, Redacted, Semaphore } from "effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ServerConfig } from "../../config.ts";
 import { readCloudEngineConfigs } from "../../transcription/CloudEngines.ts";
@@ -32,9 +33,12 @@ import {
 } from "./KeychainCandidates.ts";
 
 import { makeCliPasswordStores } from "./CliPasswordStores.ts";
+import { makeSettledQueue } from "./settledQueue.ts";
+import { codeSourcesReadable, lastCodeSourcesCheck } from "./signIn/codeSourcesHelper.ts";
+import { pwnedRange } from "./passwordHealth.ts";
 
 const requireKeyring = NodeModule.createRequire(import.meta.url);
-const KEYCHAIN_PROMPT_TIMEOUT = Duration.minutes(2);
+const PROMPT_TIMEOUT = Duration.minutes(2);
 
 export const onePasswordWriteFailure = (cause: unknown) =>
   new AccountsError({
@@ -45,6 +49,13 @@ export const onePasswordWriteFailure = (cause: unknown) =>
     message: "1Password copy could not be written.",
   });
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
+/** The Keychain and 1Password can wait on their own prompt: long enough to answer, never forever. */
+const withinPrompt = (message: string) =>
+  Effect.timeoutOrElse({
+    duration: PROMPT_TIMEOUT,
+    orElse: () => Effect.fail(unavailable(message)),
+  });
+
 export interface OnePasswordClient {
   readonly resolve: (reference: string) => Effect.Effect<Redacted.Redacted<string>, AccountsError>;
   readonly label: string;
@@ -72,6 +83,13 @@ export class AccountSources extends Context.Service<
   {
     readonly passwordStores: ReturnType<typeof makeCliPasswordStores>;
     readonly platform: "macos" | "windows" | "linux";
+    /** On a Mac: its name, and whether macOS lets Scient read Messages and Mail there. */
+    readonly codesHost?: Effect.Effect<{ readonly computer: string; readonly readable: boolean }>;
+    /**
+     * Have I Been Pwned's range answer for a 5-hex SHA-1 prefix (padded): the only thing a leak
+     * check sends. Absent: leaks aren't checked.
+     */
+    readonly pwnedRange?: (prefix: string) => Effect.Effect<string, AccountsError>;
     readonly profiles: Effect.Effect<ReadonlyArray<BrowserProfileId>, AccountsError>;
     readonly transcriptionKeyConsumers?: Effect.Effect<
       readonly AccountKeyConsumer[],
@@ -139,10 +157,33 @@ export const layer = Layer.effect(
       platform: hostPlatform,
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => passwordStores.dispose()));
+    // 1Password writes whole items, which aliases can name differently: one at a time, across
+    // every client, so a reconnect never writes while an earlier call is still settling.
+    const writes = makeSettledQueue();
+    // Asked of a new process, as snapshots come: soon after a denial, so a grant shows at once
+    // when the person comes back, and seldom once readable. One check at a time.
+    const codesCheck = yield* Semaphore.make(1);
+    const codesReadable = codesCheck.withPermits(1)(
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const known = lastCodeSourcesCheck();
+        if (known && now - known.at < (known.readable ? 60_000 : 2_000)) return known.readable;
+        return yield* codeSourcesReadable();
+      }),
+    );
     return AccountSources.of({
       passwordStores,
       platform,
+      ...(platform === "macos"
+        ? {
+            codesHost: Effect.map(codesReadable, (readable) => ({
+              computer: NodeOS.hostname().replace(/\.local$/u, ""),
+              readable,
+            })),
+          }
+        : {}),
       profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
+      pwnedRange,
       transcriptionKeyConsumers: readCloudEngineConfigs(stateDir).pipe(
         Effect.map((engines) => {
           const connections = scient.committedCustomModels().connections;
@@ -191,16 +232,10 @@ export const layer = Layer.effect(
           },
           catch: () => unavailable("Keychain item not found or unavailable."),
         }).pipe(
-          // macOS asks the user before an app reads another app's item; never wait forever.
-          Effect.timeoutOrElse({
-            duration: KEYCHAIN_PROMPT_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                unavailable(
-                  "The Keychain did not answer. Ask the user to allow Scient in the Keychain prompt, then try again.",
-                ),
-              ),
-          }),
+          // macOS asks the user before an app reads another app's item.
+          withinPrompt(
+            "The Keychain did not answer. Ask the user to allow Scient in the Keychain prompt, then try again.",
+          ),
         ),
       ),
       writeKeychain: Effect.fn("AccountSources.writeKeychain")((source, value) =>
@@ -300,116 +335,124 @@ export const layer = Layer.effect(
               createLogin: Effect.fn("AccountSources.onePassword.createLogin")(
                 (input: Parameters<NonNullable<OnePasswordClient["createLogin"]>>[0]) =>
                   Effect.tryPromise({
-                    try: async () => {
-                      const tag = `scient:${input.copyId}`;
-                      const previous = (await client.items.list(input.vaultId)).filter((item) =>
-                        item.tags.includes(tag),
-                      );
-                      if (previous.length > 1) throw new Error("Copy identity is ambiguous");
-                      if (previous[0]) {
-                        const item = await client.items.get(input.vaultId, previous[0].id);
-                        const field = item.fields.find((field) => field.id === input.field);
-                        if (!field) throw new Error("Copy field is missing");
-                        field.value = Redacted.value(input.value);
-                        await client.items.put(item);
+                    try: () =>
+                      writes(async () => {
+                        const tag = `scient:${input.copyId}`;
+                        const previous = (await client.items.list(input.vaultId)).filter((item) =>
+                          item.tags.includes(tag),
+                        );
+                        if (previous.length > 1) throw new Error("Copy identity is ambiguous");
+                        if (previous[0]) {
+                          const item = await client.items.get(input.vaultId, previous[0].id);
+                          const field = item.fields.find((field) => field.id === input.field);
+                          if (!field) throw new Error("Copy field is missing");
+                          field.value = Redacted.value(input.value);
+                          await client.items.put(item);
+                          return {
+                            type: "1password" as const,
+                            reference: `op://${item.vaultId}/${item.id}/${input.field}`,
+                          };
+                        }
+                        const item = await client.items.create({
+                          tags: [tag],
+                          vaultId: input.vaultId,
+                          title: input.title,
+                          category: sdk.ItemCategory.Login,
+                          fields: [
+                            ...(input.details.kind === "website" &&
+                            input.details.username !== undefined
+                              ? [
+                                  {
+                                    id: "username",
+                                    title: "username",
+                                    fieldType: sdk.ItemFieldType.Text,
+                                    value: input.details.username,
+                                  },
+                                ]
+                              : []),
+                            {
+                              id: input.field,
+                              title: input.field,
+                              fieldType:
+                                input.field === "totp"
+                                  ? sdk.ItemFieldType.Totp
+                                  : sdk.ItemFieldType.Concealed,
+                              value: Redacted.value(input.value),
+                            },
+                          ],
+                          websites:
+                            "sites" in input.details
+                              ? input.details.sites.map((site) => ({
+                                  url: site.startsWith("https://") ? site : `https://${site}`,
+                                  label: "",
+                                  autofillBehavior: site.startsWith("https://")
+                                    ? sdk.AutofillBehavior.ExactDomain
+                                    : sdk.AutofillBehavior.AnywhereOnWebsite,
+                                }))
+                              : [],
+                        });
                         return {
                           type: "1password" as const,
                           reference: `op://${item.vaultId}/${item.id}/${input.field}`,
                         };
-                      }
-                      const item = await client.items.create({
-                        tags: [tag],
-                        vaultId: input.vaultId,
-                        title: input.title,
-                        category: sdk.ItemCategory.Login,
-                        fields: [
-                          ...(input.details.kind === "website" &&
-                          input.details.username !== undefined
-                            ? [
-                                {
-                                  id: "username",
-                                  title: "username",
-                                  fieldType: sdk.ItemFieldType.Text,
-                                  value: input.details.username,
-                                },
-                              ]
-                            : []),
-                          {
-                            id: input.field,
-                            title: input.field,
-                            fieldType:
-                              input.field === "totp"
-                                ? sdk.ItemFieldType.Totp
-                                : sdk.ItemFieldType.Concealed,
-                            value: Redacted.value(input.value),
-                          },
-                        ],
-                        websites:
-                          "sites" in input.details
-                            ? input.details.sites.map((site) => ({
-                                url: site.startsWith("https://") ? site : `https://${site}`,
-                                label: "",
-                                autofillBehavior: site.startsWith("https://")
-                                  ? sdk.AutofillBehavior.ExactDomain
-                                  : sdk.AutofillBehavior.AnywhereOnWebsite,
-                              }))
-                            : [],
-                      });
-                      return {
-                        type: "1password" as const,
-                        reference: `op://${item.vaultId}/${item.id}/${input.field}`,
-                      };
-                    },
+                      }),
                     catch: onePasswordWriteFailure,
-                  }),
+                  }).pipe(
+                    withinPrompt("1Password did not answer. Unlock 1Password, then try again."),
+                  ),
               ),
               write: Effect.fn("AccountSources.onePassword.write")((reference, value) =>
                 Effect.tryPromise({
-                  try: async () => {
-                    const parts = reference.slice(5).split("/");
-                    if (parts.length < 3 || reference.includes("?"))
-                      throw new Error("Unsupported field reference");
-                    const vaultMatches = vaults.filter(
-                      (vault) => vault.id === parts[0] || vault.name === parts[0],
-                    );
-                    if (vaultMatches.length !== 1) throw new Error("Vault not found");
-                    const vaultId = vaultMatches[0]!.id;
-                    const items = await client.items.list(vaultId);
-                    const matches = items.filter(
-                      (item) => item.id === parts[1] || item.title === parts[1],
-                    );
-                    if (matches.length !== 1) throw new Error("Item not found");
-                    const item = await client.items.get(vaultId, matches[0]!.id);
-                    const section =
-                      parts.length === 4
-                        ? item.sections.find(
-                            (section) => section.id === parts[2] || section.title === parts[2],
-                          )
-                        : undefined;
-                    const fields = item.fields.filter(
-                      (field) =>
-                        (field.id === parts.at(-1) || field.title === parts.at(-1)) &&
-                        (parts.length !== 4 ||
-                          (section !== undefined && field.sectionId === section.id)),
-                    );
-                    if (fields.length !== 1) throw new Error("Field not found");
-                    fields[0]!.value = Redacted.value(value);
-                    await client.items.put(item);
-                  },
+                  try: () =>
+                    writes(async () => {
+                      const parts = reference.slice(5).split("/");
+                      if (parts.length < 3 || reference.includes("?"))
+                        throw new Error("Unsupported field reference");
+                      const vaultMatches = vaults.filter(
+                        (vault) => vault.id === parts[0] || vault.name === parts[0],
+                      );
+                      if (vaultMatches.length !== 1) throw new Error("Vault not found");
+                      const vaultId = vaultMatches[0]!.id;
+                      const items = await client.items.list(vaultId);
+                      const matches = items.filter(
+                        (item) => item.id === parts[1] || item.title === parts[1],
+                      );
+                      if (matches.length !== 1) throw new Error("Item not found");
+                      const item = await client.items.get(vaultId, matches[0]!.id);
+                      const section =
+                        parts.length === 4
+                          ? item.sections.find(
+                              (section) => section.id === parts[2] || section.title === parts[2],
+                            )
+                          : undefined;
+                      const fields = item.fields.filter(
+                        (field) =>
+                          (field.id === parts.at(-1) || field.title === parts.at(-1)) &&
+                          (parts.length !== 4 ||
+                            (section !== undefined && field.sectionId === section.id)),
+                      );
+                      if (fields.length !== 1) throw new Error("Field not found");
+                      fields[0]!.value = Redacted.value(value);
+                      await client.items.put(item);
+                    }),
                   catch: onePasswordWriteFailure,
-                }),
+                }).pipe(
+                  withinPrompt("1Password did not answer. Unlock 1Password, then try again."),
+                ),
               ),
               resolve: Effect.fn("AccountSources.onePassword.resolve")((reference: string) =>
                 Effect.tryPromise({
                   try: async () => Redacted.make(await client.secrets.resolve(reference)),
                   catch: () => unavailable("1Password secret could not be resolved."),
-                }),
+                }).pipe(
+                  withinPrompt("1Password did not answer. Unlock 1Password, then try again."),
+                ),
               ),
             };
           },
           catch: () =>
             unavailable("1Password could not connect. Check the connection in 1Password."),
-        }),
+        }).pipe(withinPrompt("1Password did not answer. Unlock 1Password, then try again.")),
       ),
       candidates: Effect.fn("AccountSources.candidates")(function* (query) {
         if (platform === "linux") return { listed: false, candidates: [] };

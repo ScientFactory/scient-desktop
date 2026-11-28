@@ -59,8 +59,12 @@ import * as Result from "effect/Result";
 import * as Base64Url from "effect/encoding/Base64Url";
 // SCIENT-FORK:START — Scient Accounts: execute account operations over server and desktop CDP sessions.
 import {
+  clearAccountCookies,
+  writeAccountCookie,
   readAccountCookies,
   typeAccountValue,
+  accountsWorldEvaluation,
+  accountsWorldDispatch,
   waitForAccountPage,
 } from "../scient/accounts/agent/browserOperations.ts";
 import {
@@ -323,6 +327,12 @@ class ServerBrowserDownloadsCleanupError extends Schema.TaggedError<ServerBrowse
   }
 }
 
+// SCIENT-FORK:START — Scient Accounts: a tab set up across a Clear is made again after it.
+/** A tab's setup overlapped a Clear's rollover of its profile: it is made again, in the new data. */
+class RolledOver extends Schema.TaggedError<RolledOver>()("ServerBrowserRolledOver", {}) {}
+const isRolledOver = Schema.is(RolledOver);
+// SCIENT-FORK:END
+
 export class ServerBrowserLaunchError extends Schema.TaggedError<ServerBrowserLaunchError>()(
   "ServerBrowserLaunchError",
   { cause: Schema.Defect() },
@@ -446,7 +456,17 @@ export class ServerBrowser extends Context.Service<
     // SCIENT-FORK:START — Scient Accounts: one profile's jar, for copies from another computer.
     readonly profileCookies?: (
       profileId: string,
+      /** Round 6e: only this generation's jar; refused once the profile was cleared since. */
+      generation?: number,
     ) => Effect.Effect<ProfileCookieJar, ProfileCookiesError, Scope.Scope>;
+    /** Round 6b: which folder (generation) each profile's data is in, its close and purge. */
+    readonly profileGenerations?: (generations: ReadonlyMap<string, number>) => Effect.Effect<void>;
+    /** Fails when the close is refused, as for a fenced profile (round 6r). */
+    readonly closeProfile?: (profileId: string) => Effect.Effect<void, ProfileCookiesError>;
+    /** Whether its folders are gone: a purge that failed is tried again. */
+    readonly purgeProfile?: (profileId: string, generation?: number) => Effect.Effect<boolean>;
+    /** Round 6l: the profiles held until this server starts again. */
+    readonly quarantinedProfiles?: () => ReadonlyArray<string>;
     // SCIENT-FORK:END
 
     readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
@@ -864,6 +884,82 @@ const make = Effect.gen(function* () {
     pendingTabs.set(key, { agentId: tab.control.agentId, promise: reopening });
     await reopening.catch(constVoid);
   };
+
+  // SCIENT-FORK:START — Scient Accounts: a Clear reopens the profile's tabs in its new data.
+  /**
+   * Closes a profile's context so its next page opens in the generation Clear moved it to, and
+   * opens each of its tabs again there, same tab, same session, at the page it was on, as a
+   * crashed tab is reopened. Lookups in between wait for the new page.
+   */
+  /** A profile's rollover in progress, which new pages wait for, and how many it has had. */
+  const rollovers = new Map<string, Promise<void>>();
+  const rolloverEpochs = new Map<string, number>();
+  /**
+   * Round 6m: a profile whose browser never confirmed it closed. Fenced at once for the life of
+   * this server, and its tabs leave Scient.
+   */
+  const quarantineProfile = (profileId: string) => {
+    contexts.quarantineProfile(profileId);
+    // Each tab by the context its page is in, popups of popups too (round 6o).
+    for (const tab of tabs.values())
+      if (contexts.profileOf(tab.page.context()) === profileId) dropTab(tab, true);
+  };
+  /** Refuses a page in a held profile's own context, whatever tab or popup it came from. */
+  const refuseHeldContext = (context: BrowserContext) => {
+    const profileId = contexts.profileOf(context);
+    if (profileId !== undefined && contexts.isQuarantined(profileId))
+      throw new Error("This profile is unavailable until the server restarts.");
+  };
+  const reopenProfileTabs = async (profileId: string) => {
+    // New pages in the profile wait for the rollover; one being set up meanwhile is made again
+    // after it, before it is published, so none keeps the old data (round 6d).
+    const rollover = Promise.withResolvers<void>();
+    rollovers.set(profileId, rollover.promise);
+    rolloverEpochs.set(profileId, (rolloverEpochs.get(profileId) ?? 0) + 1);
+    const affected = [...tabs.values()].filter(
+      (tab) => !tab.desktop && !tab.isolatedContext && (tab.profileId ?? "default") === profileId,
+    );
+    const gate = Promise.withResolvers<void>();
+    const reopened = affected.map((tab) => {
+      const key = tabKey(tab.threadId, tab.tabId);
+      const url = ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048);
+      const promise = gate.promise
+        .then(async () => {
+          const { sessions } = await runPromise(manager.list({ threadId: tab.threadId }));
+          const snapshot = sessions.find(
+            (session) => session.tabId === tab.tabId && session.runtime === "server",
+          );
+          if (!snapshot)
+            throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+          // The page it was on loads again, as a new tab's first page does, now in the new data.
+          return createTab(
+            /^https?:/.test(url)
+              ? { ...snapshot, navStatus: { _tag: "Loading", url, title: "" } }
+              : snapshot,
+          );
+        })
+        .finally(() => {
+          pendingTabs.delete(key);
+          closedPendingTabs.delete(key);
+        });
+      pendingTabs.set(key, { agentId: tab.control.agentId, promise });
+      // Observed here, whoever else waits for it: a refused reopen never goes unhandled (6s).
+      promise.catch(constVoid);
+      // Its session stays: the page is replaced, the tab is not closed.
+      dropTab(tab, false, true);
+      return promise;
+    });
+    try {
+      await contexts.closeProfile(profileId);
+    } finally {
+      rollovers.delete(profileId);
+      rollover.resolve();
+      gate.resolve();
+      // Drained however the close ended; a refused close still fails, typed, for its caller.
+      await Promise.allSettled(reopened);
+    }
+  };
+  // SCIENT-FORK:END
 
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
@@ -1349,13 +1445,25 @@ const make = Effect.gen(function* () {
     snapshot: PreviewSessionSnapshot,
     crashedUrl?: string,
   ): Promise<ServerTab> => {
-    const opened: Array<() => Promise<void>> = [];
-    try {
-      return await setUpTab(snapshot, opened, crashedUrl);
-    } catch (cause) {
-      // An unpublished tab is in no list, so nothing else would ever close it.
-      for (const close of opened.reverse()) await close().catch(constVoid);
-      throw cause;
+    // SCIENT-FORK:START — Scient Accounts: a tab set up across a Clear is made again after it.
+    const profileKey = snapshot.profileId ?? "default";
+    for (let attempt = 0; ; attempt++) {
+      const epoch = rolloverEpochs.get(profileKey) ?? 0;
+      // SCIENT-FORK:END
+      const opened: Array<() => Promise<void>> = [];
+      try {
+        return await setUpTab(snapshot, opened, crashedUrl, epoch);
+      } catch (cause) {
+        // An unpublished tab is in no list, so nothing else would ever close it.
+        for (const close of opened.reverse()) await close().catch(constVoid);
+        // SCIENT-FORK:START — Scient Accounts: a tab set up across a Clear is made again after it.
+        if (isRolledOver(cause) && attempt < 3) {
+          await rollovers.get(profileKey);
+          continue;
+        }
+        // SCIENT-FORK:END
+        throw cause;
+      }
     }
   };
 
@@ -1363,6 +1471,8 @@ const make = Effect.gen(function* () {
     snapshot: PreviewSessionSnapshot,
     opened: Array<() => Promise<void>>,
     crashedUrl: string | undefined,
+    /** The profile's rollover count when this began: a Clear since means it is made again. */
+    epoch = 0,
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
@@ -1386,6 +1496,10 @@ const make = Effect.gen(function* () {
       desktop === null &&
       ((snapshot.automationOwner !== undefined && snapshot.profileId === undefined) ||
         snapshot.profileId === INCOGNITO_BROWSER_PROFILE_ID);
+    // SCIENT-FORK:START — Scient Accounts: during a Clear's rollover, a new page waits for it.
+    if (adopted === undefined && desktop === null && !isolatedContext)
+      await rollovers.get(snapshot.profileId ?? "default");
+    // SCIENT-FORK:END
     const context =
       adopted?.page.context() ??
       desktop?.page.context() ??
@@ -1396,6 +1510,9 @@ const make = Effect.gen(function* () {
     if (isolatedContext) opened.push(() => context.close());
     if (adopted?.page.isClosed()) throw new Error("The popup closed before it opened.");
     if (!desktop) await prepareContext(context);
+    // SCIENT-FORK:START — Scient Accounts: no page is made in a profile held meanwhile (6o).
+    refuseHeldContext(context);
+    // SCIENT-FORK:END
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
@@ -1695,6 +1812,26 @@ const make = Effect.gen(function* () {
       await control.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
+    // SCIENT-FORK:START — Scient Accounts: a page made, or a popup adopted, in a profile held
+    // meanwhile is never published there (rounds 6n, 6o).
+    try {
+      refuseHeldContext(page.context());
+    } catch (cause) {
+      await control.close().catch(constVoid);
+      throw cause;
+    }
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — Scient Accounts: never published on the data a Clear just replaced.
+    if (
+      adopted === undefined &&
+      desktop === null &&
+      !isolatedContext &&
+      (rolloverEpochs.get(snapshot.profileId ?? "default") ?? 0) !== epoch
+    ) {
+      await control.close().catch(constVoid);
+      throw new RolledOver();
+    }
+    // SCIENT-FORK:END
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => reopenCrashedTab(tab));
     tabs.set(key, tab);
@@ -3164,8 +3301,12 @@ const make = Effect.gen(function* () {
       // SCIENT-FORK:START — Scient Accounts: keep credential fills out of action errors and read HttpOnly cookies.
       case "accountCookies":
         return readAccountCookies(tab.cdp, input);
+      case "accountClearCookies":
+        return clearAccountCookies(tab.cdp, input);
+      case "accountWriteCookie":
+        return writeAccountCookie(tab.cdp, input);
       case "accountType":
-        return typeAccountValue(tab.page, input);
+        return typeAccountValue(tab.page, tab.cdp, input, tab.recording !== null);
       case "accountWaitForLoad":
         return waitForAccountPage(tab.page, input, request.timeoutMs);
       // SCIENT-FORK:END
@@ -3281,6 +3422,10 @@ const make = Effect.gen(function* () {
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
       case "click": {
+        // SCIENT-FORK:START — Scient Accounts: a typed key is sent from its isolated world.
+        const keySent = accountsWorldDispatch(tab.page, tab.cdp, input);
+        if (keySent) return keySent;
+        // SCIENT-FORK:END
         // Time spent queued behind other work on this tab counts against the broker's deadline.
         const clickInput = {
           ...(input as PreviewAutomationClickInput),
@@ -3316,18 +3461,28 @@ const make = Effect.gen(function* () {
         return recordAction(tab, "type", () => ServerBrowserPage.type(tab.page, typeInput));
       }
       case "press":
-        return recordAction(tab, "press", () =>
-          ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),
+        // SCIENT-FORK:START — Scient Accounts: a typed key is sent from its isolated world.
+        return (
+          accountsWorldDispatch(tab.page, tab.cdp, input) ??
+          // SCIENT-FORK:END
+          recordAction(tab, "press", () =>
+            ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),
+          )
         );
       case "scroll":
         return recordAction(tab, "scroll", () =>
           ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput),
         );
       case "evaluate":
-        return ServerBrowserPage.evaluate(
-          tab.cdp,
-          input as PreviewAutomationEvaluateInput,
-          request.timeoutMs,
+        // SCIENT-FORK:START — Scient Accounts: the sign-in detection runs in its isolated world.
+        return (
+          accountsWorldEvaluation(tab.cdp, input, request.timeoutMs) ??
+          // SCIENT-FORK:END
+          ServerBrowserPage.evaluate(
+            tab.cdp,
+            input as PreviewAutomationEvaluateInput,
+            request.timeoutMs,
+          )
         );
       case "waitFor":
         return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);
@@ -4057,14 +4212,21 @@ const make = Effect.gen(function* () {
     });
 
   // SCIENT-FORK:START — Scient Accounts: one profile's jar, held against tabs and clears.
-  const profileCookies = (profileId: string) =>
+  const profileCookies = (profileId: string, generation?: number) =>
     Effect.acquireRelease(
       Effect.tryPromise({
         try: async () => {
           const lease = await contexts.leases.lease(profileId);
+          // Held, the jar's generation can't change: a write bound to another one goes nowhere.
+          if (generation !== undefined && contexts.contextGeneration(profileId) !== generation) {
+            await lease.release();
+            throw new Error("The profile was cleared since.");
+          }
           try {
             return {
-              ...(await openProfileCookieJar(lease.context, lease.stopping)),
+              ...(await openProfileCookieJar(lease.context, lease.stopping, undefined, () =>
+                quarantineProfile(profileId),
+              )),
               release: lease.release,
             };
           } catch (cause) {
@@ -4281,8 +4443,28 @@ const make = Effect.gen(function* () {
     navigateDocument,
     attachViewer,
     clearProfile,
-    // SCIENT-FORK:START — Scient Accounts: one profile's jar.
+    // SCIENT-FORK:START — Scient Accounts: one profile's jar, its generations, close and purge.
     profileCookies,
+    profileGenerations: Effect.fn("ServerBrowser.profileGenerations")(
+      (generations: ReadonlyMap<string, number>) =>
+        Effect.sync(() => contexts.setGenerations(generations)),
+    ),
+    closeProfile: Effect.fn("ServerBrowser.closeProfile")((profileId: string) =>
+      Effect.tryPromise({
+        try: () => reopenProfileTabs(profileId),
+        catch: (cause) => new ProfileCookiesError({ profileId, cause }),
+      }),
+    ),
+    purgeProfile: Effect.fn("ServerBrowser.purgeProfile")(
+      (profileId: string, generation?: number) =>
+        Effect.promise(() =>
+          contexts.purgeProfile(profileId, generation).then(
+            () => true,
+            () => false,
+          ),
+        ),
+    ),
+    quarantinedProfiles: () => contexts.quarantinedProfiles(),
     // SCIENT-FORK:END
     profileReporter,
     openDownload,

@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -165,9 +166,18 @@ export class ServerSecretStore extends Context.Service<
       bytes: number,
     ) => Effect.Effect<Uint8Array, SecretStoreError>;
     readonly remove: (name: string) => Effect.Effect<void, SecretStoreError>;
+    /**
+     * Deletes each write's temporary file (a crash before its rename) older than any write in
+     * flight; at start, and again as its writer asks (a file a quick restart found too young).
+     */
+    readonly reclaimTemporary?: Effect.Effect<void>;
   }
 >()("t3/auth/ServerSecretStore") {}
 
+// SCIENT-FORK:START — Scient Extensions: a write's temporary file (`setAt`), and how long one lives.
+const TEMPORARY_FILE = /\.bin\.[0-9a-f-]{36}\.tmp$/;
+const TEMPORARY_FILE_AGE_MS = 10 * 60_000;
+// SCIENT-FORK:END
 /** @public */
 export const make = Effect.gen(function* () {
   const crypto = yield* SecureRandom.SecureRandom;
@@ -214,6 +224,32 @@ export const make = Effect.gen(function* () {
       .open(serverConfig.secretsDir, { flag: "r" })
       .pipe(Effect.flatMap((directory) => directory.sync)),
   ).pipe(Effect.catchIf(directorySyncUnsupported, () => Effect.void));
+  // A write cut short before its rename (a crash) leaves its temporary file: the server, this
+  // directory's writer, reclaims each once it is older than any write in flight, and never one
+  // of its own writes still running (however slow its sync).
+  const writing = new Set<string>();
+  const whileWriting = <A, E, R>(tempPath: string, write: Effect.Effect<A, E, R>) =>
+    Effect.sync(() => writing.add(tempPath)).pipe(
+      Effect.andThen(write),
+      Effect.ensuring(Effect.sync(() => writing.delete(tempPath))),
+    );
+  const reclaimTemporary = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    for (const entry of yield* fileSystem
+      .readDirectory(serverConfig.secretsDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))) {
+      if (!TEMPORARY_FILE.test(entry)) continue;
+      const temporary = path.join(serverConfig.secretsDir, entry);
+      if (writing.has(temporary)) continue;
+      const info = yield* Effect.option(fileSystem.stat(temporary));
+      const modified = Option.isSome(info)
+        ? Option.getOrUndefined(info.value.mtime)?.getTime()
+        : undefined;
+      if (modified === undefined || now - modified < TEMPORARY_FILE_AGE_MS) continue;
+      yield* fileSystem.remove(temporary).pipe(Effect.ignore);
+    }
+  });
+  yield* reclaimTemporary;
   // SCIENT-FORK:END
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
@@ -253,33 +289,38 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((uuid) => {
         const tempPath = `${secretPath}.${uuid}.tmp`;
-        return Effect.gen(function* () {
-          // SCIENT-FORK:START — Scient Extensions: durable replace: the data is synced before the rename
-          // and the directory entry after it; a failed sync fails the write.
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const file = yield* fileSystem.open(tempPath, { flag: "w", mode: 0o600 });
-              yield* file.writeAll(value);
-              yield* file.sync;
-            }),
-          );
+        // SCIENT-FORK:START — Scient Extensions: a write in flight is never reclaimed.
+        return whileWriting(
+          tempPath,
           // SCIENT-FORK:END
-          yield* fileSystem.chmod(tempPath, 0o600);
-          yield* fileSystem.rename(tempPath, secretPath);
-          yield* fileSystem.chmod(secretPath, 0o600);
-          // SCIENT-FORK:START — Scient Extensions: persist the rename itself.
-          yield* syncSecretsDirectory;
-          // SCIENT-FORK:END
-        }).pipe(
-          Effect.catch((cause) =>
-            fileSystem.remove(tempPath).pipe(
-              Effect.ignore,
-              Effect.flatMap(() =>
-                Effect.fail(
-                  new SecretStorePersistError({
-                    resource: `secret ${name}`,
-                    cause,
-                  }),
+          Effect.gen(function* () {
+            // SCIENT-FORK:START — Scient Extensions: durable replace: the data is synced before the rename
+            // and the directory entry after it; a failed sync fails the write.
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const file = yield* fileSystem.open(tempPath, { flag: "w", mode: 0o600 });
+                yield* file.writeAll(value);
+                yield* file.sync;
+              }),
+            );
+            // SCIENT-FORK:END
+            yield* fileSystem.chmod(tempPath, 0o600);
+            yield* fileSystem.rename(tempPath, secretPath);
+            yield* fileSystem.chmod(secretPath, 0o600);
+            // SCIENT-FORK:START — Scient Extensions: persist the rename itself.
+            yield* syncSecretsDirectory;
+            // SCIENT-FORK:END
+          }).pipe(
+            Effect.catch((cause) =>
+              fileSystem.remove(tempPath).pipe(
+                Effect.ignore,
+                Effect.flatMap(() =>
+                  Effect.fail(
+                    new SecretStorePersistError({
+                      resource: `secret ${name}`,
+                      cause,
+                    }),
+                  ),
                 ),
               ),
             ),
@@ -304,27 +345,32 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((uuid) => {
         const tempPath = `${secretPath}.${uuid}.tmp`;
-        return Effect.gen(function* () {
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
-              yield* file.writeAll(value);
-              yield* file.sync;
-            }),
-          );
-          yield* fileSystem.chmod(tempPath, 0o600);
-          yield* fileSystem.link(tempPath, secretPath);
-          // SCIENT-FORK:START — durably publish the completed secret without exposing partial bytes.
-          yield* syncSecretsDirectory;
+        // SCIENT-FORK:START — Scient Extensions: a write in flight is never reclaimed.
+        return whileWriting(
+          tempPath,
           // SCIENT-FORK:END
-        }).pipe(
-          Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
-          Effect.mapError(
-            (cause) =>
-              new SecretStorePersistError({
-                resource: `secret ${name}`,
-                cause,
+          Effect.gen(function* () {
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
+                yield* file.writeAll(value);
+                yield* file.sync;
               }),
+            );
+            yield* fileSystem.chmod(tempPath, 0o600);
+            yield* fileSystem.link(tempPath, secretPath);
+            // SCIENT-FORK:START — durably publish the completed secret without exposing partial bytes.
+            yield* syncSecretsDirectory;
+            // SCIENT-FORK:END
+          }).pipe(
+            Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+            Effect.mapError(
+              (cause) =>
+                new SecretStorePersistError({
+                  resource: `secret ${name}`,
+                  cause,
+                }),
+            ),
           ),
         );
       }),
@@ -426,6 +472,7 @@ export const make = Effect.gen(function* () {
     create,
     getOrCreateRandom,
     remove,
+    reclaimTemporary,
   });
 });
 

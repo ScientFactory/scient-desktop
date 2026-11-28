@@ -1,11 +1,12 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { GOOGLE_SITE, type AccountSummary, type EnvironmentId } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import { signedOutOnPurpose } from "@t3tools/shared/scientAccountSignIn";
 import {
   OPEN_ATHENS_QUIET_VISIT,
+  openAthensUniversity,
   universityDetails,
   universitySignInLink,
-  usesOpenAthens,
 } from "@t3tools/shared/scientPaperLinks";
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import type { AtomRegistry } from "effect/reactivity";
@@ -32,13 +33,14 @@ export function nextQuietVisit(
       const visit = visits[account.accountId];
       const due = visit ? visit.at + visit.gapMs : 0;
       const details = universityDetails(account.details);
-      if (details?.institution && details.profileId) {
+      const openAthens = details !== undefined && openAthensUniversity(details);
+      // The person signed out of it: keeping its session in use would undo that.
+      if (details && signedOutOnPurpose(account.signIn)) return [];
+      if ((details?.institution || openAthens) && details?.profileId) {
         // OpenAthens keeps the session itself; other universities answer with a page that posts
         // itself onward, which a quiet request can't follow. Either way the answer keeps the
-        // session in use but says nothing about it.
-        const url = usesOpenAthens(details.institution)
-          ? OPEN_ATHENS_QUIET_VISIT
-          : universitySignInLink(details);
+        // session in use but says nothing about it: OpenAthens' own answer then confirms it.
+        const url = openAthens ? OPEN_ATHENS_QUIET_VISIT : universitySignInLink(details);
         return url && due <= now
           ? [
               {
@@ -47,6 +49,7 @@ export function nextQuietVisit(
                 url,
                 due,
                 tellsSessionState: false,
+                confirm: openAthens,
               },
             ]
           : [];
@@ -63,6 +66,7 @@ export function nextQuietVisit(
               url: site.startsWith("https://") ? site : `https://${site}/`,
               due,
               tellsSessionState: true,
+              confirm: false,
             },
           ];
     })
@@ -127,6 +131,14 @@ export function watchKeepSignedIn(
         [target.accountId]: afterVisit(visits[target.accountId], ended, now),
       }),
     );
+    // The server's glance reads OpenAthens' own answer and keeps it on the row.
+    if (target.confirm)
+      await runAtomCommand(
+        registry,
+        accountsState.check,
+        { environmentId, input: { accountId: target.accountId, glance: true } },
+        { reportFailure: false },
+      );
     if (ended)
       await runAtomCommand(
         registry,

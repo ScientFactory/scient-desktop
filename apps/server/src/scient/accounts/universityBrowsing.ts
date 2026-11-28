@@ -1,14 +1,14 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  type AccountId,
   type AccountSummary,
   type EnvironmentId,
   type UniversityBrowseInput,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 import {
-  institutionLink,
   openAthensLink,
-  universitiesOf,
+  publisherOf,
   universityDetails,
   usesOpenAthens,
 } from "@t3tools/shared/scientPaperLinks";
@@ -19,15 +19,28 @@ import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { userRunInvocation } from "./checkAccounts.ts";
+import { AccountsService } from "./AccountsService.ts";
+import { signedOutOnPurpose } from "@t3tools/shared/scientAccountSignIn";
 import { isUniversityPage } from "./signInTabs.ts";
+import { routeSteps, routeUniversities, type RouteStep } from "../papers/paperRoutes.ts";
+import { workedAt } from "../papers/paperAttempt.ts";
 
 /** A journal recognises a reader for hours once their university vouched for them. */
 const ROUTED_MEMORY_MS = 6 * 60 * 60 * 1000;
 /** A journal OpenAthens has no way into for this university isn't asked about again soon. */
 const NO_ROUTE_MEMORY_MS = 60 * 60 * 1000;
 
-/** Per profile and journal: when it was brought in, or found to have no way in. */
-const remembered = new Map<string, { readonly at: number; readonly forMs: number }>();
+/** A reroute counts as access only once the journal's own page came back to the tab: until then. */
+const CONFIRM_MS = 2 * 60 * 1000;
+
+/**
+ * Per profile and journal: when it was brought in, or found to have no way in through a university.
+ * `through` marks a reroute not yet confirmed, through that row.
+ */
+const remembered = new Map<
+  string,
+  { readonly at: number; readonly forMs: number; readonly through?: AccountId }
+>();
 
 /**
  * Reads the page as a journal article only when it names a DOI or a journal for indexers, as
@@ -95,28 +108,30 @@ const askOpenAthens = Effect.fn("University.askOpenAthens")(
   Effect.orElseSucceed((): Answer => ({ kind: "unknown" })),
 );
 
-/** The way into this article through the university, when one is known to work. */
-const browseLink = Effect.fn("University.browseLink")(function* (
-  account: AccountSummary,
-  article: { readonly url: string; readonly doi: string | null },
+/**
+ * Where one of the shared route steps goes for a page the person opened: OpenAthens is asked on
+ * the server, without following it; a library link that already rewrote the page goes nowhere.
+ */
+const stepAnswer = Effect.fn("University.stepAnswer")(function* (
+  step: RouteStep,
+  article: { readonly url: string },
 ) {
-  const details = universityDetails(account.details);
+  const details = step.account && universityDetails(step.account.details);
   if (!details) return { kind: "none" } satisfies Answer;
   const { institution, proxyUrl } = details;
-  if (institution && usesOpenAthens(institution))
+  if (
+    step.route === "university" &&
+    institution &&
+    usesOpenAthens(institution) &&
+    step.url === openAthensLink(institution.domain, article.url)
+  )
     return yield* askOpenAthens(institution.domain, openAthensTarget(article.url));
-  if (proxyUrl) {
+  if (step.route === "library" && proxyUrl) {
     const proxyHost = URL.canParse(proxyUrl) ? new URL(proxyUrl).hostname : undefined;
-    const already = proxyHost !== undefined && new URL(article.url).hostname.endsWith(proxyHost);
-    return already
-      ? ({ kind: "none" } satisfies Answer)
-      : ({
-          kind: "route",
-          url: proxyUrl.replace("{url}", encodeURIComponent(article.url)),
-        } satisfies Answer);
+    if (proxyHost !== undefined && new URL(article.url).hostname.endsWith(proxyHost))
+      return { kind: "none" } satisfies Answer;
   }
-  const own = institution && institutionLink(article.url, institution.entityId);
-  return own ? ({ kind: "route", url: own } satisfies Answer) : ({ kind: "none" } satisfies Answer);
+  return { kind: "route", url: step.url } satisfies Answer;
 });
 
 /**
@@ -138,21 +153,45 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
     isPrivateNetworkHost(page.hostname)
   )
     return { routed: false };
-  const university = universitiesOf(accounts).find(
-    (account) =>
-      account.signIn?.state === "signed-in" &&
-      (universityDetails(account.details)?.profileId ?? DEFAULT_BROWSER_PROFILE_ID) ===
-        input.profileId,
+  // The paper route order among the rows signed in and living in this tab's profile: the
+  // university that last delivered from this publisher first, and at most one other.
+  const worked = workedAt(publisherOf(input.url));
+  const candidates = routeUniversities(
+    accounts.filter((account) => {
+      const details = universityDetails(account.details);
+      return (
+        account.signIn?.state === "signed-in" &&
+        details !== undefined &&
+        (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === input.profileId &&
+        !isUniversityPage(details, input.url)
+      );
+    }),
+    worked,
   );
-  const details = university && universityDetails(university.details);
-  if (!university || !details || isUniversityPage(details, input.url)) return { routed: false };
-  const key = `${input.profileId}:${university.accountId}:${page.hostname}`;
-  const now = yield* Clock.currentTimeMillis;
-  const known = (at: number) => {
+  // A journal brought in through any university stays in; a university with no way in is skipped.
+  const routedKey = `${input.profileId}:${page.hostname}`;
+  const noneKey = (account: AccountSummary) =>
+    `${input.profileId}:${account.accountId}:${page.hostname}`;
+  const known = (key: string, at: number) => {
     const last = remembered.get(key);
     return last !== undefined && at - last.at < last.forMs;
   };
-  if (known(now)) return { routed: false };
+  const now = yield* Clock.currentTimeMillis;
+  if (known(routedKey, now)) return { routed: false };
+  // A reroute waits for its own tab to come back with the article; no other call confirms it.
+  const pendingKey = `${routedKey}|${input.tabId}`;
+  const pending = remembered.get(pendingKey);
+  const confirming = pending && now - pending.at < CONFIRM_MS ? pending : undefined;
+  if (pending?.through !== undefined && !confirming) {
+    // It never came back: that way in led elsewhere, so the next university may be tried.
+    remembered.delete(pendingKey);
+    remembered.set(`${input.profileId}:${pending.through}:${page.hostname}`, {
+      at: now,
+      forMs: NO_ROUTE_MEMORY_MS,
+    });
+  }
+  const untried = candidates.filter((account) => !known(noneKey(account), now));
+  if (untried.length === 0 && !confirming) return { routed: false };
   // Each page asks for itself: one the person left stops on its own before navigating.
   return yield* Effect.gen(function* () {
     const broker = yield* PreviewAutomationBroker;
@@ -172,20 +211,45 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
     const article = Option.getOrNull(decodeArticle(read));
     // The person may have moved on while the page was read.
     if (!article || !samePage(article.url, input.url)) return { routed: false };
-    const answer = yield* browseLink(university, article);
-    const at = yield* Clock.currentTimeMillis;
-    if (answer.kind === "none") remembered.set(key, { at, forMs: NO_ROUTE_MEMORY_MS });
-    if (answer.kind !== "route") return { routed: false };
-    // Only the page the person is still on is reloaded; a newer one is theirs.
-    const still = yield* invoke<unknown>("evaluate", { expression: whereScript }).pipe(
-      Effect.orElseSucceed(() => null),
-    );
-    if (typeof still !== "string" || !samePage(still, article.url)) return { routed: false };
-    // Another page of this journal may have been brought in meanwhile.
-    if (known(at)) return { routed: false };
-    remembered.set(key, { at, forMs: ROUTED_MEMORY_MS });
-    const moved = yield* invoke("navigate", { url: answer.url }).pipe(Effect.option);
-    if (Option.isNone(moved)) remembered.delete(key);
-    return { routed: Option.isSome(moved) };
+    // The rerouted tab is back on the journal's article: the university let the person in.
+    if (confirming) {
+      remembered.delete(pendingKey);
+      remembered.set(routedKey, { at: yield* Clock.currentTimeMillis, forMs: ROUTED_MEMORY_MS });
+      return { routed: false };
+    }
+    // The shared route steps, the one that last worked at this publisher first.
+    const steps = routeSteps(
+      { landingUrl: article.url, articleUrl: article.url },
+      untried,
+      worked,
+    ).filter((step) => step.account !== undefined);
+    for (const step of steps) {
+      const university = step.account!;
+      const answer = yield* stepAnswer(step, article);
+      const at = yield* Clock.currentTimeMillis;
+      const lastOfRow = !steps.some(
+        (other) => steps.indexOf(other) > steps.indexOf(step) && other.account === university,
+      );
+      if (answer.kind === "none" && lastOfRow)
+        remembered.set(noneKey(university), { at, forMs: NO_ROUTE_MEMORY_MS });
+      if (answer.kind !== "route") continue;
+      // Only the page the person is still on is reloaded; a newer one is theirs.
+      const still = yield* invoke<unknown>("evaluate", { expression: whereScript }).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (typeof still !== "string" || !samePage(still, article.url)) return { routed: false };
+      // Another page of this journal may have been brought in meanwhile.
+      if (known(routedKey, at)) return { routed: false };
+      // Read again right before navigating: the person may have signed out of it meanwhile.
+      const current = (yield* (yield* AccountsService).snapshot).accounts.find(
+        (row) => row.accountId === university.accountId,
+      );
+      if (signedOutOnPurpose(current?.signIn)) return { routed: false };
+      remembered.set(pendingKey, { at, forMs: CONFIRM_MS, through: university.accountId });
+      const moved = yield* invoke("navigate", { url: answer.url }).pipe(Effect.option);
+      if (Option.isNone(moved)) remembered.delete(pendingKey);
+      return { routed: Option.isSome(moved) };
+    }
+    return { routed: false };
   });
 });

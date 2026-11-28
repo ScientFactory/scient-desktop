@@ -4,6 +4,10 @@ import type { SignInDetection } from "./detection.ts";
 /** Google alone can take seven: account list, address, passkey, options, password, code, trust. */
 export const MAX_SIGN_IN_STEPS = 10;
 export const SIGN_IN_TOO_LONG = `Sign-in did not finish after ${MAX_SIGN_IN_STEPS} steps.`;
+/** Only the person's browser on an enrolled computer gets past a managed-device policy. */
+export const MANAGED_DEVICE_MESSAGE =
+  "This organization admits the account only from a managed device: sign in in Microsoft Edge on this computer.";
+export const MANAGED_DEVICE_STEP = "Sign in in Microsoft Edge";
 
 export function decideSignIn(
   page: SignInDetection,
@@ -29,12 +33,23 @@ export function decideSignIn(
       message: "Continue sign-in on an allowed site.",
     } as const;
   if (page.signedIn) return { type: "signed-in" } as const;
+  // Blank, it may still load: the person sees it in the browser, not a check to solve.
+  if (page.blank)
+    return {
+      type: "needs-user",
+      kind: "other",
+      notLoaded: true,
+      message: "The sign-in page didn't load. Open it in the browser.",
+    } as const;
   if (page.limited)
     return {
       type: "needs-user",
       kind: undefined,
       message: "The site is limiting access from this network. Try again later.",
     } as const;
+  // Nothing Scient types or waits for gets past it, so it stops here, never in a loop.
+  if (page.managedDevice)
+    return { type: "needs-user", kind: undefined, message: MANAGED_DEVICE_MESSAGE } as const;
   // Passkeys can't be used in this browser yet, and many accounts offer one first.
   if (page.challenge === "passkey" && page.signInLink && available.password)
     return { type: "fill", fields: [], submit: page.signInLink } as const;
@@ -59,6 +74,15 @@ export function decideSignIn(
   );
   if (fields.length === 0 && listed)
     return { type: "fill", fields, submit: listed.selector } as const;
+  // A list without the saved account is the person's to choose from, even beside its
+  // "Use another account" link: which account to use is theirs to say.
+  if (fields.length === 0 && page.accountChoices?.length)
+    return {
+      type: "needs-user",
+      kind: "other",
+      choose: "account",
+      message: "Choose the account in the browser.",
+    } as const;
   // "Stay signed in?" has no fields; its Yes button is the whole step.
   if (fields.length === 0 && page.stay) return { type: "fill", fields, submit: page.stay } as const;
   // A site's home page often has only a link to its sign-in page.
@@ -103,6 +127,14 @@ export interface SignInSubmission {
   origin: string;
   fields: ReadonlyArray<"username" | "password" | "otp">;
   otpPeriod: number | undefined;
+  /** A code no person chose (found in Messages or Mail, or an agent's): refused, the next one may do. */
+  found?: true;
+  /** The saved 2FA key's code: only its refusal says anything about what's saved. */
+  saved?: true;
+  /** The challenge a found code went into: one automatic code per challenge, across resumes. */
+  challenge?: string;
+  /** Still with the site, unanswered, when Scient stopped: no code is sent after it. */
+  unanswered?: true;
 }
 
 export function decideSignInContinuation(
@@ -123,7 +155,10 @@ export function decideSignInContinuation(
   // Going round in circles looks like an attack to a site, and has got a browser restricted.
   if (page.username && sameOrigin.filter((entry) => entry.fields.includes("username")).length >= 2)
     return { type: "failed", message: "The site kept returning to its first step." } as const;
-  const codes = sameOrigin.filter((entry) => entry.fields.includes("otp"));
+  // A code the site never answered was neither taken nor refused.
+  const codes = sameOrigin.filter(
+    (entry) => entry.fields.includes("otp") && !entry.found && !entry.unanswered,
+  );
   if (
     page.otp &&
     codes.length &&
@@ -134,6 +169,8 @@ export function decideSignInContinuation(
     return {
       type: "code-rejected",
       message: "The site did not accept the sign-in code.",
+      // A code someone typed or Scient found says nothing about the saved 2FA key.
+      saved: codes.at(-1)!.saved === true,
     } as const;
   if (step >= MAX_SIGN_IN_STEPS) return { type: "failed", message: SIGN_IN_TOO_LONG } as const;
   return { type: "continue" } as const;

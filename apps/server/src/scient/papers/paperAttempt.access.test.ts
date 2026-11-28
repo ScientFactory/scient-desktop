@@ -19,9 +19,25 @@ import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperFetch from "./paperFetch.ts";
 import type * as PaperLookup from "./paperLookup.ts";
+import type * as PaperRoutes from "./paperRoutes.ts";
 import { clearHolds, fetchOnePaper, type PaperRequester } from "./paperAttempt.ts";
 
 const opened = vi.hoisted(() => [] as Array<{ url: string; profileId: string }>);
+/** Runs as each page opens, before it answers. */
+const onOpen = vi.hoisted(() => ({ current: undefined as ((url: string) => void) | undefined }));
+/** Each fallback the attempt budget is asked for: the route that would give it up. */
+const fallbacks = vi.hoisted(() => [] as Array<string>);
+
+vi.mock("./paperRoutes.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof PaperRoutes>();
+  const { sync } = await import("effect/Effect");
+  const takeFallback: typeof actual.takeFallback = (original) =>
+    sync(() => {
+      fallbacks.push(original.url);
+      return true;
+    });
+  return { ...actual, takeFallback };
+});
 
 // vi.mock factories are hoisted above this file's imports, so they import what they use.
 /** Each journal answers with a paywall at its own address, and the PDF through a university. */
@@ -30,8 +46,9 @@ vi.mock("./paperFetch.ts", async (importOriginal) => {
   const { succeed } = await import("effect/Effect");
   const fetchFromPage: typeof actual.fetchFromPage = ({ url, profileId }) => {
     opened.push({ url, profileId });
+    onOpen.current?.(url);
     return succeed(
-      url.includes("openathens")
+      url.includes("openathens") && !url.includes("paywalled.edu")
         ? { status: "saved" as const, bytes: new Uint8Array([1]) }
         : {
             status: "no-access" as const,
@@ -91,7 +108,10 @@ const agent = (doi: string): PaperRequester => ({
 /** One paper, as an agent's request, with the university connected after it asked. */
 const fetchAs = (
   doi: string,
-  refused: (target: AccountTarget) => boolean,
+  refused: (
+    target: AccountTarget,
+    scope: { readonly scheduledTaskId?: string | undefined },
+  ) => boolean,
   requester = agent(doi),
   accounts: ReadonlyArray<AccountSummary> = [university],
   later = true,
@@ -110,9 +130,9 @@ const fetchAs = (
     ).pipe(
       Effect.provideService(AccountsService, {
         ...fake.service,
-        authorize: (_scope, target) =>
+        authorize: (scope, target) =>
           Effect.succeed(
-            refused(target)
+            refused(target, scope)
               ? ({ decision: "denied", reason: "declined" } as const)
               : ({ decision: "allowed" } as const),
           ),
@@ -135,6 +155,19 @@ it.effect("goes through a university connected after the agent asked, in its pro
     expect(outcome).toMatchObject({ state: "saved", route: "university" });
     expect(opened.map(({ profileId }) => profileId)).toEqual(["work", "work"]);
     expect(opened[1]?.url).toContain("openathens");
+  }),
+);
+
+it.effect("asks for a pinned scheduled task's run, so its pin decides the university", () =>
+  Effect.gen(function* () {
+    // Accounts refuses anything but the pinned sign-in to that task's run.
+    const { outcome } = yield* fetchAs(
+      "10.1/pinned-run",
+      (target, scope) => target.type === "account" && scope.scheduledTaskId === "task:hours",
+      { ...agent("10.1/pinned-run"), scheduledTaskId: "task:hours" },
+    );
+    // regression: a paper fetched for a pinned run went through another sign-in.
+    expect(outcome).toMatchObject({ state: "needs-you", needed: { kind: "access" } });
   }),
 );
 
@@ -203,6 +236,7 @@ it.effect("stops at once when the user turns agents' access off, default profile
 it.effect("resumes a terms gate in its profile, but never after that profile is denied", () =>
   Effect.gen(function* () {
     clearHolds();
+    fallbacks.length = 0;
     const other = {
       ...university,
       accountId: AccountId.make("acc_other_university"),
@@ -220,6 +254,8 @@ it.effect("resumes a terms gate in its profile, but never after that profile is 
     );
     expect(first.outcome).toMatchObject({ state: "saved", route: "university" });
     expect(first.opened.map(({ profileId }) => profileId)).toEqual(["work", "work"]);
+    // The other profile's routes never ran, so nothing was charged as a fallback.
+    expect(fallbacks).toEqual([]);
     const denied = yield* fetchAs(
       "10.1/terms-denied",
       (target) => target.type === "profile" && target.profileId === "work",
@@ -231,5 +267,109 @@ it.effect("resumes a terms gate in its profile, but never after that profile is 
     );
     expect(denied.outcome.state).not.toBe("saved");
     expect(denied.opened).toEqual([]);
+  }),
+);
+
+it.effect("reaches a university the conversation may use behind two it may not", () =>
+  Effect.gen(function* () {
+    const other = (id: string, domain: string, at: string) =>
+      ({
+        ...university,
+        accountId: AccountId.make(id),
+        name: domain,
+        details: {
+          kind: "website",
+          sites: [domain],
+          profileId: "work",
+          institution: { name: domain, entityId: `https://idp.${domain}/shibboleth`, domain },
+        },
+        signIn: { state: "signed-in", at },
+      }) as unknown as AccountSummary;
+    // Signed in more recently, so they rank first, but this conversation may use neither.
+    const first = other("acc_first_univ", "first.edu", "2026-11-25T00:00:00.000Z");
+    const second = other("acc_second_univ", "second.edu", "2026-11-24T00:00:00.000Z");
+    const { outcome } = yield* fetchAs(
+      "10.1/third-allowed",
+      (target) =>
+        target.type === "account" &&
+        (target.accountId === first.accountId || target.accountId === second.accountId),
+      undefined,
+      [first, second, university],
+    );
+    expect(outcome).toMatchObject({ state: "saved", route: "university" });
+  }),
+);
+
+it.effect("says a university was turned off when that happens while the paper waits its turn", () =>
+  Effect.gen(function* () {
+    const changing = {
+      ...university,
+      controls: { access: "allowed", scope: { type: "all-projects" } },
+    };
+    // Allowed when the paper starts; Off by the time its turn comes.
+    const refused = (target: AccountTarget) => {
+      if (target.type !== "account") return false;
+      const off = changing.controls.access === "off";
+      changing.controls = { ...changing.controls, access: "off" };
+      return off;
+    };
+    const { outcome } = yield* fetchAs("10.1/withdrawn", refused, undefined, [changing as never]);
+    expect(outcome).toMatchObject({ needed: { kind: "access", site: "Hebrew University" } });
+  }),
+);
+
+it.effect("never opens a university the person signed out of while the paper waited its turn", () =>
+  Effect.gen(function* () {
+    const leaving = { ...university } as AccountSummary & { signIn?: AccountSummary["signIn"] };
+    // Usable when the paper starts; the person signs out while the publisher's own page loads.
+    onOpen.current = () => {
+      leaving.signIn = { state: "signed-out", at: "2026-11-26T00:00:00.000Z", by: "action" };
+    };
+    const { outcome, opened } = yield* fetchAs("10.1/signed-out", () => false, undefined, [
+      leaving,
+    ]).pipe(Effect.ensuring(Effect.sync(() => void (onOpen.current = undefined))));
+    expect(opened.map(({ url }) => url).join()).not.toContain("openathens");
+    expect(outcome.state).not.toBe("saved");
+  }),
+);
+
+it.effect("never charges a fallback for a university turned off while the paper waited", () =>
+  Effect.gen(function* () {
+    clearHolds();
+    fallbacks.length = 0;
+    const library = {
+      ...university,
+      accountId: AccountId.make("acc_library_first"),
+      name: "First university",
+      details: {
+        kind: "website",
+        sites: ["paywalled.edu"],
+        profileId: "work",
+        institution: {
+          name: "First university",
+          entityId: "https://idp.openathens.net/paywalled",
+          domain: "paywalled.edu",
+        },
+      },
+      signIn: { state: "signed-in", at: "2026-11-25T00:00:00.000Z" },
+      controls: { access: "allowed", scope: { type: "all-projects" } },
+    } as unknown as AccountSummary;
+    const second = {
+      ...university,
+      controls: { access: "allowed", scope: { type: "all-projects" } },
+    } as unknown as AccountSummary & { controls: { access: string } };
+    // The first university's paywall is met; meanwhile the second is turned off.
+    onOpen.current = (url) => {
+      if (url.includes("paywalled.edu"))
+        second.controls = { ...second.controls, access: "off" } as never;
+    };
+    const refused = (target: AccountTarget) =>
+      target.type === "account" &&
+      target.accountId === second.accountId &&
+      second.controls.access === "off";
+    yield* fetchAs("10.1/no-charge", refused, undefined, [library, second]).pipe(
+      Effect.ensuring(Effect.sync(() => void (onOpen.current = undefined))),
+    );
+    expect(fallbacks).toEqual([]);
   }),
 );

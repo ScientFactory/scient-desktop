@@ -459,6 +459,25 @@ describe("sharing with other computers", () => {
       ...input,
     });
 
+  it("delivers a host's delete as that host, never merged into its site with the jar", () => {
+    // A whole-jar revision still holds the vendor's other site; the Sign out deleted one host.
+    const planned = plan({
+      log: {
+        head: 9,
+        jar: 8,
+        units: [{ sites: ["proxy.library-vendor.com"], revision: 9, kind: "delete" }],
+      },
+      applied: applied([{ sites: ["library-vendor.com"], revision: 2 }]),
+      jar: [["library-vendor.com"]],
+    });
+    expect(planned).toMatchObject({
+      units: [
+        { sites: ["proxy.library-vendor.com"], revision: 9, kind: "delete" },
+        { sites: ["library-vendor.com"], revision: 8, kind: "copy" },
+      ],
+    });
+  });
+
   it("fills a computer that never received from this desktop with the whole jar", () => {
     expect(
       plan({

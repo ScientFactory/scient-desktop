@@ -1,5 +1,5 @@
 import type { BrowserImportResult, BrowserImportSourceId } from "../browserImport.ts";
-import type { SessionCookie } from "./accounts.ts";
+import type { AccountPageOffer, SessionCookie } from "./accounts.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
 export interface DesktopSourceProfileDetails {
@@ -32,8 +32,44 @@ export interface DesktopCapturedSignIn {
   readonly step: "password";
   readonly username: string;
   readonly password: string;
+  /**
+   * A sign-up or change form's new password, where it has one. With it, `password` is the current
+   * one, and may be empty.
+   */
+  readonly newPassword?: string;
   /** The username came from an earlier step of the same sign-in, in this tab and origin. */
   readonly usernameFrom: "form" | "earlier-step";
+}
+
+export interface DesktopSignInPage {
+  /** "done": past every username, password and code box, the page fully loaded. */
+  readonly state: "loading" | "login" | "code" | "done";
+  readonly url: string;
+  /** The page's document came back as an HTTP error (a refused form's answer, a 404). */
+  readonly failed?: boolean;
+  /** The page says the site is limiting sign-ins (too many attempts, a lockout). */
+  readonly limited?: boolean;
+  /** The page's document, as its form reports name it; absent on older desktops. */
+  readonly documentId?: string;
+  /**
+   * The answer to the last new-password or filled sign-in form submitted in this tab: the response
+   * to the request it sent on the submit, and the page right after that response (never a later
+   * one).
+   */
+  readonly submitted?: DesktopSubmitAnswer;
+}
+
+export interface DesktopSubmitAnswer {
+  /** The document whose form was submitted. */
+  readonly documentId: string;
+  /** The final HTTP status of that request (after redirects); 0 when it failed. */
+  readonly status: number;
+  /** The page right after: no new-password, sign-in or code box left. */
+  readonly formGone: boolean;
+  /** The page right after says it failed (a password wrong, a rule unmet), in English. */
+  readonly refusal: boolean;
+  /** The page right after is on another origin. */
+  readonly leftOrigin: boolean;
 }
 
 export interface DesktopLoginForm {
@@ -49,6 +85,32 @@ export interface DesktopLoginForm {
   readonly hasValues: boolean;
   /** The page's username box, then its second one: what each accepts. */
   readonly boxes: ReadonlyArray<DesktopLoginBox>;
+  /** The page also offers something to keep: a 2FA setup's key. Absent from older desktops. */
+  readonly offer?: AccountPageOffer;
+  /** A sign-up or change-password form: what it says about the new password it takes. */
+  readonly newPassword?: DesktopNewPasswordRules;
+}
+
+/**
+ * What a page says about the new password it takes: its box's limits, and what its own words
+ * state, read in the page (the words themselves stay there, since they can hold codes).
+ */
+export interface DesktopNewPasswordRules {
+  readonly minLength: number;
+  readonly maxLength: number;
+  /** The box's `pattern`, matched whole, as the browser checks it. */
+  readonly pattern: string;
+  /** Apple's `passwordrules` attribute, where the page has one. */
+  readonly passwordRules: string;
+  /** Lengths the form's words state, such as "at least 12 characters" (-1 for none). */
+  readonly statedMinLength: number;
+  readonly statedMaxLength: number;
+  /** Kinds of character the words require, such as "one symbol". */
+  readonly required: ReadonlyArray<"lower" | "upper" | "digit" | "symbol">;
+  /** The words refuse symbols ("letters and numbers only"). */
+  readonly noSymbols: boolean;
+  /** The words say a password was refused ("incorrect", "too weak", "already used"). */
+  readonly refusal: boolean;
 }
 
 /** What a username box accepts: an email or not, and its own length and pattern limits. */
@@ -72,6 +134,21 @@ export interface DesktopSignInFill {
   readonly otherUsername?: string;
   readonly password?: string;
   readonly otp?: string;
+  /**
+   * Replace the code box's value only while it still holds this code (Scient's own earlier one
+   * for the same setup), never what the person typed.
+   */
+  readonly otpExpected?: string;
+  /**
+   * Replace the password box's value only while it still holds this password (the one Scient
+   * typed and a site refused), never what the person typed.
+   */
+  readonly passwordExpected?: string;
+  /**
+   * A new password for every new-password box of a sign-up or change form; `password` then goes
+   * in its current box. Sent only to a desktop whose form reports carry `newPassword`.
+   */
+  readonly newPassword?: string;
 }
 
 /** Scient Accounts members of the desktop bridge (`ScientDesktopBridge.accounts`). */
@@ -129,6 +206,9 @@ export interface DesktopFillMainInput {
   readonly replaceGoogle?: boolean;
   /** Sites the user signed out of in Main; never copied. */
   readonly skipSites: ReadonlyArray<string>;
+  /** An agent's refresh of Main: checked in Main's turn, in the data it was decided in. */
+  readonly operationId?: string;
+  readonly generation?: number;
 }
 
 /** A sign-in in a window of the person's own Chromium browser, then copied into a Scient profile. */
@@ -201,11 +281,25 @@ export interface DesktopQualifyCase {
 export interface DesktopAccountsBridge {
   /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
   readonly originBoundFill?: true;
-  /** A Chromium profile's saved passwords as CSV for `accountsImportPasswords`; local desktop only. */
-  readonly readBrowserPasswords?: (input: {
+  /**
+   * Round 6f: a Chromium profile's saved passwords, read by the desktop and handed by it straight
+   * to its own backend's Accounts: never to the page. Null when they couldn't be read or sent.
+   */
+  readonly importBrowserPasswords?: (input: {
     readonly sourceId: BrowserImportSourceId;
     readonly directory: string;
-  }) => Promise<{ readonly content: string; readonly skipped: number } | null>;
+    readonly profileId?: string;
+    readonly refresh?: true;
+    readonly operationId?: string;
+  }) => Promise<{
+    readonly result?: {
+      readonly created: number;
+      readonly updated: number;
+      readonly skipped: number;
+    };
+    readonly refused?: string;
+    readonly skipped: number;
+  } | null>;
   readonly sourceProfiles: () => Promise<ReadonlyArray<DesktopSourceProfileDetails>>;
   /** The site's icon as an image data URI, from the site itself and cached on disk; null if none. */
   readonly siteIcon?: (site: string) => Promise<string | null>;
@@ -222,7 +316,13 @@ export interface DesktopAccountsBridge {
     readonly domain: string;
     readonly httpOnly?: boolean;
     readonly expires?: number;
+    /** Its name and path, and a short fingerprint of its value (never the value): a rotation shows. */
+    readonly name?: string;
+    readonly path?: string;
+    readonly digest?: string;
   }> | null>;
+  /** A signed-in Google page refreshed a session in some profile; ask `googleSessions` again. */
+  readonly onGoogleActivity?: (listener: () => void) => () => void;
   /** What Google says about this profile's accounts, or null when it couldn't be read. */
   readonly googleSessions?: (
     profileId: string,
@@ -235,6 +335,69 @@ export interface DesktopAccountsBridge {
     environmentId?: string,
   ) => Promise<{ readonly url: string; readonly status: number } | null>;
   /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
+  /**
+   * Round 6e: each operation's Undo deadline as its computer's Accounts records it (ISO), or null
+   * while it is under way. The desktop lets go of an Undo save only past its deadline.
+   */
+  readonly setUndoDeadlines?: (
+    deadlines: Readonly<Record<string, string | null>>,
+  ) => Promise<boolean>;
+  /** Round 6b: the generation each profile's partition is in, as Accounts says. */
+  readonly setProfileGenerations?: (
+    generations: Readonly<Record<string, number>>,
+    environmentId?: string,
+  ) => Promise<boolean>;
+  /** Signs a profile out of a site, keeping its cookies encrypted for the Undo hour. */
+  readonly signOutSiteKept?: (
+    profileId: string,
+    site: string,
+    operationId: string,
+    environmentId?: string,
+    /** Round 6d: the data it was done in (and its destination's): its writes go there. */
+    at?: { readonly generation?: number; readonly intoGeneration?: number },
+  ) => Promise<{
+    readonly signedOut: boolean;
+    readonly saved: number;
+    readonly notRestorable: number;
+    /** Cookies it couldn't reach (an opaque partition), still there. */
+    readonly leftBehind?: number;
+  } | null>;
+  /** That sign-out's Undo: the cookies set back where the site still takes them. */
+  readonly restoreSignOut?: (
+    profileId: string,
+    operationId: string,
+    environmentId?: string,
+    /** Round 6d: the data it was done in (and its destination's): its writes go there. */
+    at?: { readonly generation?: number; readonly intoGeneration?: number },
+  ) => Promise<{ readonly restored: number; readonly refused: number } | null>;
+  /** Copies a profile's cookies for these sites (all when none) into another partition, with Undo. */
+  readonly copyProfileSites?: (
+    profileId: string,
+    into: string,
+    sites: ReadonlyArray<string> | undefined,
+    move: boolean,
+    operationId: string,
+    environmentId?: string,
+    /** Round 6d: the data it was done in (and its destination's): its writes go there. */
+    at?: { readonly generation?: number; readonly intoGeneration?: number },
+  ) => Promise<{ readonly copied: number; readonly uncovered: ReadonlyArray<string> } | null>;
+  readonly undoProfileCopy?: (
+    profileId: string,
+    into: string,
+    operationId: string,
+    environmentId?: string,
+    /** Round 6d: the data it was done in (and its destination's): its writes go there. */
+    at?: { readonly generation?: number; readonly intoGeneration?: number },
+  ) => Promise<{ readonly restored: number; readonly refused: number } | null>;
+  /** Forgets a profile's sign-in window: the folder where the browser kept its sign-ins. */
+  /** With `since`: kept if the window was signed in to after it. False while the window is open. */
+  readonly forgetChromeSignIn?: (profileId: string, since?: string) => Promise<boolean>;
+  /** Empties one generation of a profile's partition, once its Undo hour is over. */
+  readonly purgeProfileData?: (
+    profileId: string,
+    generation: number,
+    environmentId?: string,
+  ) => Promise<boolean>;
   readonly signOutSite?: (
     profileId: string,
     site: string,
@@ -244,6 +407,24 @@ export interface DesktopAccountsBridge {
   /** False when nothing was filled; "submitted" when the form was also really sent. */
   readonly fill: (input: DesktopSignInFill) => Promise<boolean | "submitted">;
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
+  /** Where the tab's sign-in stands; null when it can't tell. Optional for older desktops. */
+  readonly signInPage?: (tabId: string) => Promise<DesktopSignInPage | null>;
+  /**
+   * What a 2FA setup or backup-code page in the person's own tab shows, read in the page's
+   * document `documentId` only and sealed in the desktop's main process for the local backend it
+   * runs (a key only the two derive), once, with the page's origin, profile and document bound to
+   * it: the app only carries it, and no other server opens it. Null otherwise.
+   */
+  readonly pageSecrets?: (
+    tabId: string,
+    offer: AccountPageOffer,
+    documentId: string,
+  ) => Promise<{ readonly sealed: string } | null>;
+  /**
+   * Takes the person's tab from a page without a change-password form, along the site's own
+   * links, to one with it; never off `origin`, redirects included. True when it got there.
+   */
+  readonly seekPasswordPage?: (tabId: string, origin: string) => Promise<boolean>;
   readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
   /** The one writer of Scient's copies into Main; null when refused. Optional for older desktops. */
@@ -284,6 +465,13 @@ export interface DesktopAccountsBridge {
   readonly browserConnection?: (
     sourceId: BrowserImportSourceId,
   ) => Promise<{ readonly on: boolean } | null>;
+  /**
+   * On a Mac: asks for Messages once so macOS lists Scient, opens Full Disk Access, and shows the
+   * app in Finder to drag in. False elsewhere or when refused.
+   */
+  readonly openFullDiskAccess?: () => Promise<boolean>;
+  /** Restarts Scient. */
+  readonly relaunch?: () => Promise<boolean>;
   /** Resolves once the window closed and its sign-in was copied, or with why not. */
   readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
   /**

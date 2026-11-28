@@ -8,9 +8,15 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "../baseSchemas.ts";
-import { BrowserImportSourceId } from "../browserImport.ts";
+import {
+  BROWSER_IMPORT_FAILURE_COPY,
+  BrowserImportFailureReason,
+  BrowserImportSourceId,
+} from "../browserImport.ts";
 import { BrowserProfileId } from "../browserProfile.ts";
 import { PreviewTabId } from "../preview.ts";
+import { SecretProviderId } from "../secretReference.ts";
+import { isSecretReference } from "../settingsSecretValue.ts";
 import { GrantScope } from "./secrets.ts";
 
 /**
@@ -153,6 +159,38 @@ export const AccountSecretSummary = Schema.Struct({
   verifiedAt: Schema.optional(IsoDateTime),
   /** Passwords only: when the browser it was imported from last changed it. */
   changedAt: Schema.optional(IsoDateTime),
+  /** Passwords only: when a newer password replaced the one kept for recovery. */
+  previousAt: Schema.optional(IsoDateTime),
+  /**
+   * Passwords only: when the site refused this value as Scient typed it. Bound to the value: a new
+   * one starts without it, and only a sign-in where Scient types it again clears it.
+   */
+  refusedAt: Schema.optional(IsoDateTime),
+  /**
+   * Website passwords only: the login's earlier passwords, newest first, each usable again by its
+   * `version` (`AccountRevealInput`, `AccountUsePasswordInput`). Older servers send none.
+   */
+  history: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        version: Schema.String,
+        savedAt: Schema.optional(IsoDateTime),
+        provenAt: Schema.optional(IsoDateTime),
+        refused: Schema.optional(Schema.Literal(true)),
+      }),
+    ),
+  ),
+  /**
+   * Website passwords only: each earlier password the person removed, its Undo
+   * (`accounts.passwordVersions.restore`) open until `until`.
+   */
+  removedVersions: Schema.optional(
+    Schema.Array(Schema.Struct({ undoId: Schema.String, until: IsoDateTime })),
+  ),
+  /** Backup codes only: how many are left unused. */
+  left: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Backup codes only: kept one per line, a line one code; without it, split at any space. */
+  lines: Schema.optional(Schema.Literal(true)),
 });
 export type AccountSecretSummary = typeof AccountSecretSummary.Type;
 
@@ -216,6 +254,11 @@ const WebsiteFields = {
   proxyUrl: Schema.optional(HttpsUrl.check(Schema.isIncluding("{url}"))),
   /** Recorded from a browser profile's session rather than typed in, so there is nothing to fill. */
   origin: Schema.optional(Schema.Literal("browser-session")),
+  /**
+   * The site keeps one session per account: a new sign-in ends the other one, the person's own
+   * browser included. Scient then never signs in by itself; it asks the person.
+   */
+  oneSession: Schema.optional(Schema.Literal(true)),
 } as const;
 
 export const ApiKeyAuth = Schema.Union([
@@ -225,6 +268,13 @@ export const ApiKeyAuth = Schema.Union([
   Schema.Struct({ type: Schema.Literal("query"), name: TrimmedNonEmptyString }),
 ]);
 export type ApiKeyAuth = typeof ApiKeyAuth.Type;
+
+/** Whether a saved key's style is the one a use sends: the same type, and header or parameter. */
+export function sameAuthStyle(saved: ApiKeyAuth, sent: ApiKeyAuth): boolean {
+  if (saved.type === "header" || saved.type === "query")
+    return sent.type === saved.type && sent.name.toLowerCase() === saved.name.toLowerCase();
+  return sent.type === saved.type;
+}
 
 export const CliLoginTool = Schema.Literals(["gh", "glab", "wrangler", "aws", "gcloud", "other"]);
 export type CliLoginTool = typeof CliLoginTool.Type;
@@ -260,6 +310,17 @@ export function keptAgentOf(instance: { readonly driver: string; readonly config
   return typeof agentId === "string" && agentId ? `acpRegistry:${agentId}` : instance.driver;
 }
 
+/**
+ * A key kept for one use only, as a typed key was: never listed to agents, read or bound
+ * elsewhere. Older builds drop the field, so these rows are also saved Off and hidden.
+ */
+export const AccountPrivateUse = Schema.Struct({
+  kind: Schema.Literals(["connector", "text-generator"]),
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type AccountPrivateUse = typeof AccountPrivateUse.Type;
+
 /** What the account is; secret values are held separately under `secrets`. */
 export const AccountDetails = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("website"), ...WebsiteFields }),
@@ -272,6 +333,7 @@ export const AccountDetails = Schema.Union([
     keptFrom: Schema.optional(AccountKeptFrom),
     speechOnly: Schema.optional(Schema.Boolean),
     purpose: Schema.optional(Schema.Literal("custom-models")),
+    privateTo: Schema.optional(AccountPrivateUse),
   }).check(
     Schema.makeFilter(
       ({ speechOnly, purpose, sites }) =>
@@ -310,7 +372,7 @@ export type AccountDetails = typeof AccountDetails.Type;
 export const ACCOUNT_SECRET_FIELDS: Readonly<
   Record<Exclude<AccountKind, "cli-login">, ReadonlyArray<string>>
 > = {
-  website: ["password", "totp"],
+  website: ["password", "totp", "recovery"],
   "api-key": ["token"],
   database: ["password", "clientCert", "clientKey", "caCert"],
 };
@@ -361,6 +423,13 @@ export const AccountSignIn = Schema.Struct({
    * not yet seen on the site. Any later look or attempt replaces it.
    */
   from: Schema.optional(Schema.Literals(["import", "copy"])),
+  /** Failed attempts in a row, which space out the next automatic one. Absent means one. */
+  failures: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  /**
+   * With `unknown`: the site couldn't be reached from this computer (network, VPN, the site down),
+   * which says nothing about the sign-in. Older builds show it as a check that couldn't tell.
+   */
+  unreachable: Schema.optional(Schema.Literal(true)),
 });
 export type AccountSignIn = typeof AccountSignIn.Type;
 
@@ -380,6 +449,72 @@ export const AccountSummary = Schema.Struct({
 });
 export type AccountSummary = typeof AccountSummary.Type;
 
+/** An account name from any label: Accounts keeps at most 80 characters. */
+export const accountName = (label: string) => label.trim().slice(0, 80).trim() || "Key";
+
+/**
+ * Whether a key saved for `sites` may go to `origin`: listed exactly, or listed by its bare host
+ * when `origin` is that host over `https://` on the default port.
+ */
+export function keyServesOrigin(sites: ReadonlyArray<string>, origin: string): boolean {
+  if (sites.includes(origin)) return true;
+  if (!URL.canParse(origin)) return false;
+  const url = new URL(origin);
+  return url.protocol === "https:" && url.origin === origin && !url.port
+    ? sites.includes(url.hostname)
+    : false;
+}
+
+/** Whether Voice can send this key to a speech endpoint at `origin`: a sealed Bearer key for it. */
+export function acceptsSpeechKey(
+  account: Pick<AccountSummary, "details" | "secrets">,
+  origin: string,
+): boolean {
+  const { details, secrets } = account;
+  return (
+    details.kind === "api-key" &&
+    keyServesUse(account, { kind: "voice", id: "" }) &&
+    details.auth.type === "bearer" &&
+    isSpeechAccountOrigin(origin) &&
+    keyServesOrigin(details.sites, origin) &&
+    secrets.token?.source.type === "scient"
+  );
+}
+
+/** Who is about to read or bind a key: a kind of use, and which one (empty when any). */
+export interface KeyUser {
+  readonly kind: AccountKeyUse["kind"];
+  readonly id: string;
+}
+
+/**
+ * The one rule for which uses a key may serve. A key kept for one use serves that use only; a
+ * legacy Voice-only key serves Voice and an agent's own authorized use; any other key serves all.
+ */
+export function keyServesUse(account: Pick<AccountSummary, "details">, use: KeyUser): boolean {
+  const { details } = account;
+  if (details.kind !== "api-key") return false;
+  if (details.privateTo)
+    return details.privateTo.kind === use.kind && details.privateTo.id === use.id;
+  if (details.speechOnly) return use.kind === "voice" || use.kind === "request";
+  return true;
+}
+
+/**
+ * Whether agents may use this key in every project: what a use that serves all projects at once
+ * (a provider's variables, a background pass) needs, since it can't enforce a narrower scope.
+ */
+export function agentsMayUseEverywhere(
+  account: Pick<AccountSummary, "controls">,
+  agentAccess: boolean,
+): boolean {
+  return (
+    agentAccess &&
+    account.controls.access !== "off" &&
+    account.controls.scope.type === "all-projects"
+  );
+}
+
 /** Metadata eligibility for a server-owned Custom models credential. */
 export function acceptsCustomModelKey(
   account: Pick<AccountSummary, "details" | "secrets">,
@@ -389,11 +524,82 @@ export function acceptsCustomModelKey(
   const { details, secrets } = account;
   return (
     details.kind === "api-key" &&
-    !details.speechOnly &&
+    keyServesUse(account, { kind: "custom-model", id: "" }) &&
     isCustomModelAccountOrigin(origin) &&
-    details.sites.includes(origin) &&
+    keyServesOrigin(details.sites, origin) &&
     secrets.token?.source.type === "scient" &&
     (protocol === "anthropic-messages"
+      ? details.auth.type === "header" && details.auth.name.toLowerCase() === "x-api-key"
+      : details.auth.type === "bearer")
+  );
+}
+
+/** One use of a key, as Used by and refusals name it. */
+export const AccountKeyUse = Schema.Struct({
+  kind: Schema.Literals([
+    "connector",
+    "plugin",
+    "custom-model",
+    "voice",
+    "text-generator",
+    "request",
+    "library",
+    "variable",
+    "local-connector",
+  ]),
+  id: TrimmedNonEmptyString,
+});
+export type AccountKeyUse = typeof AccountKeyUse.Type;
+
+/** A use whose provider refused the key as it is now; never the key. */
+export const AccountKeyRefusal = Schema.Struct({
+  accountId: AccountId,
+  use: AccountKeyUse,
+  at: IsoDateTime,
+});
+export type AccountKeyRefusal = typeof AccountKeyRefusal.Type;
+
+/** A text generator's key, when it names an Accounts key rather than holding one. */
+const ACCOUNTS_KEY_PROVIDER = "scient-accounts";
+
+export const accountKeyReference = (accountId: AccountId) => ({
+  provider: SecretProviderId.make(ACCOUNTS_KEY_PROVIDER),
+  reference: accountId,
+});
+
+// A person may have named a secret provider "scient-accounts"; its references are `op://…`.
+const isAccountIdText = Schema.is(AccountId);
+
+export function referencedAccountId(value: unknown): AccountId | undefined {
+  return isSecretReference(value) &&
+    value.provider === ACCOUNTS_KEY_PROVIDER &&
+    isAccountIdText(value.reference)
+    ? value.reference
+    : undefined;
+}
+
+/**
+ * Whether a text generator of `kind` at `baseUrl` can send this key, in the header it uses. A
+ * generator writes for every project, so a key limited to some projects never fits.
+ */
+export function acceptsTextGeneratorKey(
+  account: Pick<AccountSummary, "details" | "secrets" | "controls">,
+  generator: {
+    readonly id: string;
+    readonly baseUrl: string;
+    readonly kind: "openaiCompatible" | "anthropic";
+  },
+): boolean {
+  const { details, secrets } = account;
+  const { baseUrl, kind } = generator;
+  return (
+    details.kind === "api-key" &&
+    keyServesUse(account, { kind: "text-generator", id: generator.id }) &&
+    URL.canParse(baseUrl) &&
+    keyServesOrigin(details.sites, new URL(baseUrl).origin) &&
+    secrets.token !== undefined &&
+    account.controls.scope.type === "all-projects" &&
+    (kind === "anthropic"
       ? details.auth.type === "header" && details.auth.name.toLowerCase() === "x-api-key"
       : details.auth.type === "bearer")
   );
@@ -408,12 +614,21 @@ export type ProfilePictureDataUri = typeof ProfilePictureDataUri.Type;
 
 export const ProfileColor = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/i));
 
+/** The desktop a report comes from: its own server's environment id and the name it shows. */
+export const ReportingComputer = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+});
+export type ReportingComputer = typeof ReportingComputer.Type;
+
 export const BrowserProfileSource = Schema.Struct({
   browser: BrowserImportSourceId,
   profileName: TrimmedNonEmptyString,
   /** The source profile's folder; unlike its name, it survives a rename in that browser. */
   directory: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  /** The desktop it is on: a refresh never takes another computer's folder of the same name. */
+  computer: Schema.optional(ReportingComputer),
   importedAt: IsoDateTime,
 });
 export type BrowserProfileSource = typeof BrowserProfileSource.Type;
@@ -508,6 +723,8 @@ export const MainProfileState = Schema.Struct({
    * copies back. A sign-in seen in Main clears its site.
    */
   signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Each Sign out of Main counts one: a refresh decided before the latest is stopped (6j). */
+  signOuts: Schema.optional(NonNegativeInt),
   /** The profiles whose sessions have been copied into Main once, in this environment. */
   backfilled: Schema.optional(Schema.Array(BrowserProfileId)),
   /** When profiles made in Scient were merged into Main, once, and the names of those merged. */
@@ -549,6 +766,40 @@ export const BrowserProfileRecord = Schema.Struct({
   ),
   /** When Undo brought it back from Main; such a profile is never merged again. */
   undone: Schema.optional(IsoDateTime),
+  /** When what binds agents last changed (controls, retirement): the version an agent writes at. */
+  updatedAt: Schema.optional(IsoDateTime),
+  /** The name a client last listed it under, so agents and other clients see it (protocol 2). */
+  name: Schema.optional(FoldedProfileName),
+  /**
+   * The browser data in use: 0 (absent) is the profile's first; Clear moves to a new one, kept apart
+   * from the old, which Undo can go back to for the hour.
+   */
+  generation: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /**
+   * Removed, with Undo for the hour: hidden from every client and agent, its data left as it was
+   * until `until`, then purged (`purgedAt`). A record so marked is never used again.
+   */
+  /** Round 6l: this server's browser can't open it until the server starts again. Never stored. */
+  unavailable: Schema.optional(Schema.Literal(true)),
+  removed: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
+      operationId: TrimmedNonEmptyString,
+      until: IsoDateTime,
+      name: Schema.optional(FoldedProfileName),
+      purgedAt: Schema.optional(IsoDateTime),
+    }),
+  ),
+  /** Generations Clear or its Undo left, kept for Undo until `until`, then purged. */
+  retained: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        generation: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        until: IsoDateTime,
+        purgedAt: Schema.optional(IsoDateTime),
+      }),
+    ),
+  ),
   /** Main's own record; no other profile has one. */
   main: Schema.optional(MainProfileState),
   /** On the desktop: the actions other computers follow. */
@@ -635,6 +886,270 @@ export const AccountActivityEntry = Schema.Struct({
 });
 export type AccountActivityEntry = typeof AccountActivityEntry.Type;
 
+/**
+ * A change an agent made to an account or profile (AMENDMENTS 56), kept apart from Activity: its
+ * action list is closed, and an older client rejects a kind it doesn't know.
+ */
+export const AccountChange = Schema.Struct({
+  at: IsoDateTime,
+  target: AccountTarget,
+  change: Schema.Literals([
+    "edit",
+    "controls",
+    "remove",
+    "restore",
+    "save-offer",
+    "clear",
+    "sign-out",
+    "copy",
+    "move",
+    "merge",
+    "fold",
+    "refresh",
+  ]),
+  threadId: Schema.optional(ThreadId),
+  projectId: Schema.optional(ProjectId),
+  /** Safe summary such as a new name; never values. */
+  detail: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+});
+export type AccountChange = typeof AccountChange.Type;
+
+/**
+ * A browser profile on a desktop that Scient can import from (AMENDMENTS 58): which browser and
+ * folder, what the browser calls it, and the Scient profile it is linked to. Never a cookie,
+ * password or history.
+ */
+export const BrowserSourceProfile = Schema.Struct({
+  browser: BrowserImportSourceId,
+  directory: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  name: FoldedProfileName,
+  email: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(254))),
+  linkedTo: Schema.optional(BrowserProfileId),
+});
+export type BrowserSourceProfile = typeof BrowserSourceProfile.Type;
+
+/**
+ * Whether a profile's link names this browser profile (round 6i): the one rule reports, admission
+ * and commits all go by. By folder where both have one; a link made before folders were kept, by
+ * the browser's name for it. A link or profile that names no desktop matches any.
+ */
+export const linksBrowserProfile = (
+  link: Pick<BrowserProfileSource, "browser" | "profileName" | "directory" | "computer">,
+  profile: {
+    readonly browser: string;
+    readonly name: string;
+    readonly directory?: string | undefined;
+    readonly computerId?: string | undefined;
+  },
+) =>
+  link.browser === profile.browser &&
+  (link.computer === undefined ||
+    profile.computerId === undefined ||
+    link.computer.id === profile.computerId) &&
+  (link.directory && profile.directory
+    ? link.directory === profile.directory
+    : link.profileName === profile.name);
+
+/**
+ * Why an import or refresh from a browser profile failed (round 6d): the browser's own reason, or
+ * one of Accounts', each with the one thing to do about it.
+ */
+export const ProfileImportCause = Schema.Literals([
+  ...BrowserImportFailureReason.literals,
+  "notLinked",
+  "managedPolicy",
+  "passwordsUnreadable",
+  "passwordsNotSaved",
+  "stopped",
+]);
+export type ProfileImportCause = typeof ProfileImportCause.Type;
+
+/** Each cause in English, with the one action it needs; the app translates its own. */
+export const PROFILE_IMPORT_CAUSE_COPY: Readonly<Record<ProfileImportCause, string>> = {
+  ...BROWSER_IMPORT_FAILURE_COPY,
+  notLinked: "It isn't linked to a browser profile: import from one of its sources.",
+  managedPolicy: "This computer's managed policy doesn't allow importing browser cookies.",
+  passwordsUnreadable:
+    "The browser's passwords couldn't be read. Allow access if the computer asks, then try again.",
+  passwordsNotSaved: "The passwords were read but couldn't be saved. Try again.",
+  stopped:
+    "The profile or agent access changed meanwhile, so it stopped. What it brought in stays.",
+};
+
+/** What one store of a profile (this server's browser, or the desktop's) did for an operation. */
+export const ProfileStoreOutcome = Schema.Struct({
+  state: Schema.Literals(["pending", "done", "failed"]),
+  /** Sign-out: cookies kept for Undo, and those the browser didn't give back (not restorable). */
+  saved: Schema.optional(Schema.Int),
+  notRestorable: Schema.optional(Schema.Int),
+  /** Undo of a sign-out: cookies set back, and those the browser refused. */
+  restored: Schema.optional(Schema.Int),
+  refused: Schema.optional(Schema.Int),
+  /** Copy, move, merge: cookies copied, and the sites that couldn't be. */
+  copied: Schema.optional(Schema.Int),
+  uncovered: Schema.optional(Schema.Array(Schema.String)),
+  /** Undo: cookies left as they are, set again since (a newer sign-in), not put back. */
+  newer: Schema.optional(Schema.Int),
+  /** Sign-out: cookies it couldn't reach (an opaque partition), still there (round 6d). */
+  leftBehind: Schema.optional(Schema.Int),
+  /** Import or refresh: why it failed, and the passwords it saved (round 6d). */
+  cause: Schema.optional(ProfileImportCause),
+  passwords: Schema.optional(Schema.Int),
+});
+export type ProfileStoreOutcome = typeof ProfileStoreOutcome.Type;
+
+export const ProfileOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(100));
+
+/**
+ * A profile's Remove, Clear or site sign-out, by the person or an agent, with the Undo the person
+ * gets: its receipt, per store, kept for the hour. A retry with the same id gets this receipt.
+ */
+/** Another desktop's part of a sign-out: its own jar of the profile (round 6d). */
+const OtherDesktopPart = Schema.Struct({
+  computer: ReportingComputer,
+  outcome: ProfileStoreOutcome,
+});
+
+export const ProfileOperation = Schema.Struct({
+  operationId: ProfileOperationId,
+  kind: Schema.Literals([
+    "remove",
+    "clear",
+    "sign-out",
+    "copy",
+    "move",
+    "merge",
+    "fold",
+    "refresh",
+  ]),
+  profileId: BrowserProfileId,
+  name: Schema.optional(FoldedProfileName),
+  site: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(253))),
+  /** Copy, move, merge and fold: the profile the sign-ins go to (Main for a fold). */
+  into: Schema.optional(BrowserProfileId),
+  /** Copy and move: the sites chosen; merge and fold take every one. */
+  sites: Schema.optional(Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(253)))),
+  /** Sites a store couldn't copy; a merge then keeps its source. */
+  uncovered: Schema.optional(Schema.Array(Schema.String)),
+  /** Logins copied as new rows in `into`, which Undo removes. */
+  rowsAdded: Schema.optional(Schema.Array(AccountId)),
+  /** Each added row's version when added: Undo keeps a row edited since. */
+  rowsAddedAt: Schema.optional(Schema.Array(Schema.String)),
+  /** The profile's data (generation) when it was done, and the destination's: Undo needs both. */
+  generation: Schema.optional(Schema.Int),
+  intoGeneration: Schema.optional(Schema.Int),
+  /** The profiles' versions it was decided at: its work stops if either changed (round 6c). */
+  fromVersion: Schema.optional(Schema.String),
+  intoVersion: Schema.optional(Schema.String),
+  /** A sign-out: each other desktop linked to this computer signs its own jar out too. */
+  others: Schema.optional(Schema.Array(OtherDesktopPart)),
+  /** Why its work stopped before it began: a profile or an agent's access changed meanwhile. */
+  stopped: Schema.optional(Schema.String),
+  /** A merge retired its source: every site was copied. */
+  retiredSource: Schema.optional(Schema.Boolean),
+  /** Refresh from the linked browser profile: what was chosen to bring, sign-ins and passwords. */
+  cookies: Schema.optional(Schema.Boolean),
+  passwords: Schema.optional(Schema.Boolean),
+  /** An import from a browser profile by its source: the desktop it is on carries it out. */
+  computer: Schema.optional(ReportingComputer),
+  /** The import made this profile. An import or refresh has no Undo (round 6m). */
+  madeProfile: Schema.optional(Schema.Boolean),
+  /**
+   * An agent's call, as its retries name it (round 6e): kept apart from the operation's id, which
+   * is fresh for every new request, so no id is ever used for two.
+   */
+  requestKey: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+  /**
+   * An import by source: the link it makes once it has succeeded (round 6d), whether it did, and
+   * the link it replaced.
+   */
+  link: Schema.optional(BrowserProfileSource),
+  linked: Schema.optional(Schema.Boolean),
+  /** A refresh of Main: Main's sign-out count when it was decided (round 6j). */
+  mainSignOuts: Schema.optional(NonNegativeInt),
+  at: IsoDateTime,
+  until: IsoDateTime,
+  threadId: Schema.optional(ThreadId),
+  projectId: Schema.optional(ProjectId),
+  /** Clear: the generation it left and the one it opened. */
+  from: Schema.optional(Schema.Int),
+  to: Schema.optional(Schema.Int),
+  server: Schema.optional(ProfileStoreOutcome),
+  desktop: Schema.optional(ProfileStoreOutcome),
+  undone: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
+      /** Clear: the sign-ins made since, kept in the generation Undo left. */
+      conflicts: Schema.optional(Schema.Array(Schema.String)),
+      server: Schema.optional(ProfileStoreOutcome),
+      desktop: Schema.optional(ProfileStoreOutcome),
+      others: Schema.optional(Schema.Array(OtherDesktopPart)),
+    }),
+  ),
+});
+export type ProfileOperation = typeof ProfileOperation.Type;
+
+export const ProfileOperateInput = Schema.Struct({
+  operationId: ProfileOperationId,
+  kind: ProfileOperation.fields.kind,
+  profileId: BrowserProfileId,
+  site: ProfileOperation.fields.site,
+  into: ProfileOperation.fields.into,
+  cookies: ProfileOperation.fields.cookies,
+  passwords: ProfileOperation.fields.passwords,
+  /** Import: the source (`sources` id) to bring, into `profileId`, or a new profile when unknown. */
+  sourceId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(400))),
+  requestKey: ProfileOperation.fields.requestKey,
+  sites: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(253))).check(
+      Schema.isMaxLength(100),
+    ),
+  ),
+});
+export type ProfileOperateInput = typeof ProfileOperateInput.Type;
+
+/** The receipt, or why nothing was done: tabs open in it (their chats) or a sign-in under way. */
+export const ProfileOperateResult = Schema.Struct({
+  operation: Schema.optional(ProfileOperation),
+  refused: Schema.optional(
+    Schema.Struct({
+      reason: Schema.Literals(["open-tabs", "signing-in", "not-allowed", "widens"]),
+      message: Schema.String,
+      threadIds: Schema.optional(Schema.Array(ThreadId)),
+    }),
+  ),
+});
+export type ProfileOperateResult = typeof ProfileOperateResult.Type;
+
+export const ProfileUndoInput = Schema.Struct({ operationId: ProfileOperationId });
+
+/** The desktop's part of an operation or its Undo, as the owner window carried it out. */
+export const ProfileStoreDoneInput = Schema.Struct({
+  operationId: ProfileOperationId,
+  /** Which desktop's part: another desktop's, of a sign-out (round 6d); else the desktop's. */
+  computer: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+  phase: Schema.Literals(["do", "undo"]),
+  outcome: ProfileStoreOutcome,
+});
+export type ProfileStoreDoneInput = typeof ProfileStoreDoneInput.Type;
+
+/**
+ * A desktop asks before carrying out its part, and again before it writes: only the desktop it is
+ * for, only one, and only while what it was decided on still stands (round 6c).
+ */
+export const ProfileClaimInput = Schema.Struct({
+  operationId: ProfileOperationId,
+  phase: Schema.Literals(["do", "undo"]),
+  /** This desktop's computer id, as its profile report names it. */
+  computer: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type ProfileClaimInput = typeof ProfileClaimInput.Type;
+export const ProfileClaimResult = Schema.Struct({
+  ok: Schema.Boolean,
+  message: Schema.optional(Schema.String),
+});
+export type ProfileClaimResult = typeof ProfileClaimResult.Type;
+
 export const AccountApprovalId = TrimmedNonEmptyString.check(
   Schema.isPattern(/^apr_[A-Za-z0-9_-]{8,64}$/),
 );
@@ -647,6 +1162,8 @@ export const AccountApproval = Schema.Struct({
   threadId: ThreadId,
   projectId: Schema.optional(ProjectId),
   requestedAt: IsoDateTime,
+  /** The item is Off for agents: the person's answer turns it on (`always`, `project`, `once`). */
+  turnOn: Schema.optional(Schema.Literal(true)),
 });
 export type AccountApproval = typeof AccountApproval.Type;
 
@@ -711,8 +1228,34 @@ export const AccountHandoff = Schema.Struct({
   tabId: Schema.optional(TrimmedNonEmptyString),
   kind: Schema.Literals(["push", "captcha", "passkey", "code", "other"]),
   number: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{1,3}$/))),
+  /** How the factor reaches the person: a hardware key for `passkey`, a text for `code`. */
+  via: Schema.optional(Schema.Literals(["security-key", "text"])),
   /** Why an agent asked the user to sign in here. */
   reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
+  /** Codes found for this step that weren't certain enough to insert alone: one click inserts. */
+  codes: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        codeId: TrimmedNonEmptyString,
+        source: Schema.Literals(["messages", "mail"]),
+        at: IsoDateTime,
+        /** Who sent a code that names no service, or one others share: the person tells. */
+        from: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+      }),
+    ),
+  ),
+  /** A saved password Scient didn't type: the person can have it typed (its username, or ""). */
+  useSaved: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+  /** The card's Use saved, bound to the page it shows: a click sends it, and a newer card ends it. */
+  useSavedRevision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+  /** The login has backup codes: one tap types the next (`BACKUP_CODE_ID`), never on its own. */
+  backupCodes: Schema.optional(Schema.Literal(true)),
+  /** The site refused the password last tried in this tab, the person's or Scient's. */
+  refused: Schema.optional(Schema.Literal("password")),
+  /** The page lists accounts, none of them the saved one: the person picks. */
+  choose: Schema.optional(Schema.Literal("account")),
+  /** The page shows nothing at all: it never loaded, so it is not a step to finish there. */
+  notLoaded: Schema.optional(Schema.Literal(true)),
   startedAt: IsoDateTime,
   expiresAt: IsoDateTime,
 });
@@ -730,7 +1273,48 @@ export const AccountSignInAttempt = Schema.Struct({
 });
 export type AccountSignInAttempt = typeof AccountSignInAttempt.Type;
 
+/** How the person's last sign-in to a row ended, kept for the server's life. No values. */
+export const AccountSignInEnd = Schema.Struct({
+  accountId: AccountId,
+  outcome: Schema.Literals(["signed-in", "needs-you", "cancelled", "failed", "timed-out"]),
+  message: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
+  at: IsoDateTime,
+});
+export type AccountSignInEnd = typeof AccountSignInEnd.Type;
+
 export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
+export const AccountHandoffUseSavedInput = Schema.Struct({
+  handoffId: TrimmedNonEmptyString,
+  /** The `useSavedRevision` of the card clicked. */
+  revision: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+});
+
+/**
+ * Something only the person can do, kept until it's done or they dismiss it: one per item, so it is
+ * asked once. `needId` names the item (`sign-in:<accountId>`); a newer entry for it replaces the old.
+ */
+export const AccountNeedsYou = Schema.Struct({
+  needId: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  /** What it is about, such as the account's name. */
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
+  /** What to do, in a few words. */
+  detail: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  /** What answers it: signing in, allowing a use in its chat, or saving what a card asked for. */
+  action: Schema.optional(Schema.Literals(["sign-in", "allow", "save"])),
+  accountId: Schema.optional(AccountId),
+  /** The chat it came from, when there is one. */
+  threadId: Schema.optional(ThreadId),
+  since: IsoDateTime,
+});
+export type AccountNeedsYou = typeof AccountNeedsYou.Type;
+export const AccountNeedsYouDismissInput = Schema.Struct({ needId: TrimmedNonEmptyString });
+/** The code id that asks for the login's next backup code instead of a found one. */
+export const BACKUP_CODE_ID = "backup";
+export const AccountHandoffInsertCodeInput = Schema.Struct({
+  handoffId: TrimmedNonEmptyString,
+  /** A found code's id, or `BACKUP_CODE_ID`. */
+  codeId: TrimmedNonEmptyString,
+});
 
 /**
  * Which browser profile a tab opens in, as the user chose it: per project, and per conversation
@@ -784,6 +1368,9 @@ export const AccountPaperForSourceResult = Schema.Union([
     status: Schema.Literal("attached"),
     /** False for an accepted manuscript or preprint. */
     published: Schema.Boolean,
+    /** The university it came through, and how. */
+    through: Schema.optional(Schema.String),
+    route: Schema.optional(PaperRoute),
   }),
   Schema.Struct({
     status: Schema.Literals(["not-found", "no-access", "needs-you", "waiting"]),
@@ -844,6 +1431,10 @@ export const PaperItem = Schema.Struct({
   message: Schema.optional(Schema.String),
   /** What this paper waits on, while it is "needs-you". */
   needed: Schema.optional(Schema.Struct(PaperNeed)),
+  /** The university it came through. */
+  through: Schema.optional(Schema.String),
+  /** Unreached, and put away by the person. */
+  dismissed: Schema.optional(Schema.Boolean),
 });
 export type PaperItem = typeof PaperItem.Type;
 
@@ -865,6 +1456,8 @@ export const PaperQueueSummary = Schema.Struct({
   requests: Schema.Array(PaperRequest),
   /** Publishers that asked Scient to slow down, with when each resumes. */
   paused: Schema.Array(Schema.Struct({ site: Schema.String, until: IsoDateTime })),
+  /** The university the latest saved paper came through. */
+  through: Schema.optional(Schema.String),
 });
 export type PaperQueueSummary = typeof PaperQueueSummary.Type;
 
@@ -882,6 +1475,8 @@ export type PaperQueueInput = typeof PaperQueueInput.Type;
 export const PaperQueueContinueInput = Schema.Struct({
   ...PaperQueueInput.fields,
   terms: Schema.optional(Schema.Struct({ site: Schema.String, profileId: Schema.String })),
+  /** The papers no route reached: tried again, or put away. Older servers ignore these. */
+  unreached: Schema.optional(Schema.Literals(["retry", "dismiss"])),
 });
 export type PaperQueueContinueInput = typeof PaperQueueContinueInput.Type;
 
@@ -895,8 +1490,143 @@ export const AccountSignInAsPersonInput = Schema.Struct({
   threadId: ThreadId,
   /** A row made just for this sign-in goes again if it ends with nothing kept. */
   discardIfUnfinished: Schema.optional(Schema.Literal(true)),
+  /** Sign in on this tab of the conversation, which the server runs, instead of a new one. */
+  tabId: Schema.optional(PreviewTabId),
 });
 export type AccountSignInAsPersonInput = typeof AccountSignInAsPersonInput.Type;
+
+/** What a page in the person's tab offers to keep, as the desktop saw it. */
+export const AccountPageOffer = Schema.Literals(["two-factor-setup", "recovery-codes"]);
+export type AccountPageOffer = typeof AccountPageOffer.Type;
+
+/**
+ * A 2FA setup page as the desktop read it in the person's tab: its `otpauth://` links, and each
+ * square image, canvas or SVG as one bit per pixel (dark or light), within one budget.
+ */
+export const AccountSetupPage = Schema.Struct({
+  uris: Schema.Array(Schema.String.check(Schema.isMaxLength(2048))).check(Schema.isMaxLength(4)),
+  images: Schema.Array(
+    Schema.Struct({
+      width: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(400)),
+      height: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(400)),
+      bits: Schema.String.check(Schema.isMaxLength(48_000)),
+    }),
+  ).check(Schema.isMaxLength(6)),
+});
+export type AccountSetupPage = typeof AccountSetupPage.Type;
+
+/**
+ * What the person's tab shows (a 2FA setup, backup codes), held by the server as a private pending
+ * record until the person saves it to a login. `sealed` is what the desktop read in `documentId`,
+ * sealed in its main process with a key only it and its own backend derive (from the desktop's
+ * bootstrap secret), once: the page's values never pass the app's own code.
+ */
+export const AccountPageKeepInput = Schema.Struct({
+  offer: AccountPageOffer,
+  documentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  sealed: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80_000)),
+});
+export type AccountPageKeepInput = typeof AccountPageKeepInput.Type;
+const TotpPeriod = Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(300));
+export const AccountPageKeepResult = Schema.Struct({
+  found: Schema.Boolean,
+  pendingId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * A setup's current code, for the client to fill as autofill does: only into an empty box of
+   * the same document. Like a fill's values, it goes only to the person's own client.
+   */
+  code: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{6,8}$/))),
+  /** The code's period in seconds. */
+  period: Schema.optional(TotpPeriod),
+});
+export type AccountPageKeepResult = typeof AccountPageKeepResult.Type;
+
+/**
+ * A secret Scient holds privately until it is settled: a 2FA key or backup codes the person's
+ * tab showed, waiting to be saved to a login; or a new password a form sent, waiting for the
+ * site's answer (`unclear` once that answer didn't come). It is on no login until then.
+ */
+export const AccountPendingSecret = Schema.Struct({
+  pendingId: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  kind: Schema.Literals(["totp", "recovery", "password"]),
+  /** The page's origin. */
+  site: Schema.String,
+  profileId: Schema.optional(BrowserProfileId),
+  /** The account the page named: a setup's label, or the username a form sent. */
+  label: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  /**
+   * The login it is for: a new password's own; for a factor, the one login its label names, else
+   * the site's only saved login in its profile.
+   */
+  accountId: Schema.optional(AccountId),
+  /** Logins on the site in its profile that could take a factor. */
+  candidates: Schema.optional(Schema.Array(AccountId).check(Schema.isMaxLength(20))),
+  /** A new password whose site gave no clear answer: kept until the person says. */
+  unclear: Schema.optional(Schema.Literal(true)),
+  /**
+   * A new password answered as taken after its login got another one (or changed whose it is):
+   * both are kept until the person says which.
+   */
+  conflict: Schema.optional(Schema.Literal(true)),
+  since: IsoDateTime,
+});
+export type AccountPendingSecret = typeof AccountPendingSecret.Type;
+
+const PendingId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+/**
+ * A pending secret's steps: `reserve` holds a new password before its fill (refused when full);
+ * `rotate` says its form sent it; `settle` gives the site's answer; `save` puts it on a login
+ * (a factor or a `replace`: as seen at `updatedAt`); `discard` forgets it; `code` gives a code.
+ */
+export const AccountPendingInput = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("reserve"),
+    origin: Schema.String.check(Schema.isMaxLength(2048)),
+    profileId: Schema.optional(BrowserProfileId),
+    password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(65_536)),
+    accountId: Schema.optional(AccountId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("rotate"),
+    pendingId: Schema.optional(PendingId),
+    origin: Schema.String.check(Schema.isMaxLength(2048)),
+    profileId: Schema.optional(BrowserProfileId),
+    username: Schema.String.check(Schema.isMaxLength(512)),
+    password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(65_536)),
+    accountId: Schema.optional(AccountId),
+    login: Schema.optional(
+      Schema.Struct({
+        name: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
+        details: Schema.Struct({ kind: Schema.Literal("website"), ...WebsiteFields }),
+      }),
+    ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("settle"),
+    pendingId: PendingId,
+    outcome: Schema.Literals(["accepted", "unclear"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("save"),
+    pendingId: PendingId,
+    accountId: Schema.optional(AccountId),
+    updatedAt: Schema.optional(Schema.String),
+    replace: Schema.optional(Schema.Literal(true)),
+  }),
+  Schema.Struct({ type: Schema.Literal("discard"), pendingId: PendingId }),
+  Schema.Struct({ type: Schema.Literal("code"), pendingId: PendingId }),
+]);
+export type AccountPendingInput = typeof AccountPendingInput.Type;
+export const AccountPendingResult = Schema.Struct({
+  pendingId: Schema.optional(TrimmedNonEmptyString),
+  accountId: Schema.optional(AccountId),
+  /** Not saved: its login got another password or changed since; both are kept. */
+  conflict: Schema.optional(Schema.Literal(true)),
+  code: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{6,8}$/))),
+  /** The code's period in seconds: the next one is due at the period's next boundary. */
+  period: Schema.optional(TotpPeriod),
+});
+export type AccountPendingResult = typeof AccountPendingResult.Type;
 
 /** A page the person opened, to bring in through their university when it is a journal article. */
 export const UniversityBrowseInput = Schema.Struct({
@@ -906,6 +1636,43 @@ export const UniversityBrowseInput = Schema.Struct({
   url: Schema.String.check(Schema.isMaxLength(8192)),
 });
 export type UniversityBrowseInput = typeof UniversityBrowseInput.Type;
+
+/** Signs one university membership out in its profiles: every row of it that `accountId` belongs to. */
+/** One site or host a university Sign out clears in one profile. */
+export const UniversitySignOutTarget = Schema.Struct({
+  profileId: BrowserProfileId,
+  site: TrimmedNonEmptyString,
+});
+export type UniversitySignOutTarget = typeof UniversitySignOutTarget.Type;
+
+/**
+ * Signs one university membership out in its profiles: every row of it that `accountId` belongs
+ * to. With `opId`, reports which of that sign-out's targets the client cleared.
+ */
+export const UniversitySignOutInput = Schema.Struct({
+  accountId: AccountId,
+  opId: Schema.optional(TrimmedNonEmptyString),
+  cleared: Schema.optional(Schema.Array(UniversitySignOutTarget)),
+});
+export type UniversitySignOutInput = typeof UniversitySignOutInput.Type;
+/** What the client clears, the way a site's Sign out does, and the sign-out it belongs to. */
+export const UniversitySignOutResult = Schema.Struct({
+  opId: Schema.optional(TrimmedNonEmptyString),
+  sites: Schema.Array(UniversitySignOutTarget),
+});
+export type UniversitySignOutResult = typeof UniversitySignOutResult.Type;
+
+/**
+ * A university Sign out whose targets aren't all cleared yet, in order (`seq`): a newer explicit
+ * sign-in on any of its rows ends it, and an older one never acts after that.
+ */
+export const UniversitySignOut = Schema.Struct({
+  opId: TrimmedNonEmptyString,
+  seq: Schema.Int,
+  accountIds: Schema.Array(AccountId),
+  pending: Schema.Array(UniversitySignOutTarget),
+});
+export type UniversitySignOut = typeof UniversitySignOut.Type;
 
 /** A secret sitting in a plain file: by name only, never its value. */
 export const AccountPlainKey = Schema.Struct({
@@ -931,6 +1698,8 @@ export const AccountKeyLink = Schema.Struct({
   accountId: AccountId,
   instanceId: TrimmedNonEmptyString,
   variable: EnvironmentVariableName,
+  /** Digests of the values the link last wrote there: any other value is the person's own. */
+  copies: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(2))),
 });
 export type AccountKeyLink = typeof AccountKeyLink.Type;
 
@@ -965,7 +1734,7 @@ export const AccountGoogleSessions = Schema.Struct({
 });
 export type AccountGoogleSessions = typeof AccountGoogleSessions.Type;
 
-/** Where Scient may look for a sign-in code. Off until the user turns it on. */
+/** Where Scient may look for a sign-in code: Messages and Mail on the server's Mac. On by default. */
 export const AccountCodeSources = Schema.Struct({
   messages: Schema.Boolean,
 });
@@ -977,12 +1746,22 @@ export const AccountCodeSourcesResult = Schema.Struct({
 });
 
 /**
- * Accounts' protocol between a client and a server, which may run different builds. 1: imported
- * sessions recorded (`sessionsSeen`), sign-ins received from another computer, sign-in on any
- * website row, and keeping what the user types in a sign-in Scient runs.
+ * Accounts' protocol between a client and a server, which may run different builds; the server
+ * reports the one it speaks, and a client gates each feature on the version that brought it.
  */
-export const ACCOUNTS_PROTOCOL = 1;
-
+export const ACCOUNTS_PROTOCOL = 3;
+/**
+ * 1: imported sessions recorded (`sessionsSeen`), sign-ins received from another computer, sign-in
+ * on any website row, and keeping what the user types in a sign-in Scient runs.
+ */
+export const ACCOUNTS_PROTOCOL_1 = 1;
+/**
+ * 2: Undo (`accounts.restore`); Needs you; hand-off codes and the codes setting; text generators'
+ * Accounts keys; grouped logins, Show and Copy (`accounts.reveal`), Use saved, `neverAsk` and the
+ * person's sign-in on a server-run tab; university sign-out and attempt ends; a new password's
+ * Undo (`accounts.passwords.undo`).
+ */
+export const ACCOUNTS_PROTOCOL_2 = 2;
 const AccountSpeechConsumer = Schema.Struct({
   accountId: AccountId,
   label: Schema.String,
@@ -997,6 +1776,26 @@ const AccountKeyConsumer = Schema.Struct({
   name: TrimmedNonEmptyString,
 });
 export type AccountKeyConsumer = typeof AccountKeyConsumer.Type;
+
+/**
+ * What Scient told the person's phone about a code it caused: kept as history, so a quick sign-in
+ * adds "signed in" instead of taking the notice back before it reached them.
+ */
+export const AccountCodeNotice = Schema.Struct({
+  noticeId: Schema.String,
+  accountId: Schema.String,
+  /** The notice, naming the site. */
+  text: Schema.String,
+  at: IsoDateTime,
+  /** The relay took it for the phone. */
+  delivered: Schema.optional(Schema.Literal(true)),
+  /** How the sign-in it was about ended, and when. */
+  settled: Schema.optional(Schema.Literals(["signed-in", "not-signed-in"])),
+  settledAt: Schema.optional(IsoDateTime),
+  /** The relay took these rows off the phone; the notice goes once every row it showed is off. */
+  cleared: Schema.optional(Schema.Array(Schema.Literals(["notice", "settled"]))),
+});
+export type AccountCodeNotice = typeof AccountCodeNotice.Type;
 
 export const AccountManagedElsewhereItem = Schema.Struct({
   kind: Schema.Literals(["github", "custom-model"]),
@@ -1023,24 +1822,121 @@ export const AccountsSnapshot = Schema.Struct({
   profiles: Schema.Array(BrowserProfileRecord),
   profileChoices: Schema.optional(BrowserProfileChoices),
   codeSources: Schema.optional(AccountCodeSources),
+  /**
+   * "Renew sign-ins automatically", on unless the person turned it off. Absent from a server that
+   * has no such setting.
+   */
+  renewAutomatically: Schema.optional(Schema.Boolean),
+  codeNotices: Schema.optional(Schema.Array(AccountCodeNotice)),
+  /** The server's Mac, where codes are read; absent when the server isn't a Mac. */
+  codeSourcesHost: Schema.optional(
+    Schema.Struct({ computer: TrimmedNonEmptyString, readable: Schema.Boolean }),
+  ),
+  /** Sites (`https://` origins) where the person said not to offer saving a sign-in. */
+  neverAsk: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * How each recent Accounts card ended, by its request id: the card's own status says only that
+   * it was answered or closed; this says whether Accounts kept the value, or why it closed.
+   */
+  cards: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        requestId: Schema.String,
+        outcome: Schema.Literals(["saved", "failed", "declined", "cancelled", "timed_out"]),
+        /** The row a saved card's value went into. */
+        accountId: Schema.optional(AccountId),
+      }),
+    ),
+  ),
+  /**
+   * The cards whose value Accounts is still keeping, from a server that tracks them: an answered
+   * card in neither list has ended, its outcome no longer kept.
+   */
+  cardsSettling: Schema.optional(Schema.Array(Schema.String)),
   keyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   speechConsumers: Schema.optional(Schema.Array(AccountSpeechConsumer)),
   detachedKeyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
+  /** Rows removed within the hour, which Undo can still bring back with their receipt. */
+  removed: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        accountId: AccountId,
+        name: Schema.String,
+        removalId: Schema.String,
+        /** The press that removed it: rows removed together come back with one Undo. */
+        operationId: Schema.optional(Schema.String),
+        /** An agent's removal: its chat (round 6c). */
+        threadId: Schema.optional(ThreadId),
+        until: IsoDateTime,
+      }),
+    ),
+  ),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),
+  needsYou: Schema.optional(Schema.Array(AccountNeedsYou)),
   paperQueues: Schema.optional(Schema.Array(PaperQueueSummary)),
   recentActivity: Schema.Array(AccountActivityEntry),
   customModelKeys: Schema.Array(AccountCustomModelKey),
   keyConsumers: Schema.optional(Schema.Array(AccountKeyConsumer)),
   unavailableCustomModelKeyIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   keyConsumersIncomplete: Schema.optional(Schema.Boolean),
+  /** Uses whose provider refused the key's current value. */
+  keyRefusals: Schema.optional(Schema.Array(AccountKeyRefusal)),
+  /** Secrets Scient holds privately until they are settled; an older client ignores them. */
+  pendingSecrets: Schema.optional(Schema.Array(AccountPendingSecret)),
+  /**
+   * What this server's pending secrets take (protocol 3's `accounts.pending`, by feature): a made
+   * password held from before its fill (`reserve`), page secrets the desktop sealed for it
+   * (`page-seal`). A client uses a step only on a server that lists it.
+   */
+  pendingFeatures: Schema.optional(Schema.Array(Schema.Literals(["reserve", "page-seal"]))),
+  /**
+   * Logins whose new password just worked and was saved: each copy's own Undo, for the hour. With
+   * `field`, a 2FA key Scient kept itself instead (older clients read it as a password).
+   */
+  passwordUpdates: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        undoId: TrimmedNonEmptyString,
+        accountId: AccountId,
+        name: Schema.String,
+        until: IsoDateTime,
+        field: Schema.optional(Schema.Literals(["totp", "recovery"])),
+      }),
+    ),
+  ),
+  /** What agents changed, newest last; an older client ignores it. */
+  changes: Schema.optional(Schema.Array(AccountChange)),
+  /** Profile operations of the hour, with their Undo; an older client ignores them. */
+  profileOperations: Schema.optional(Schema.Array(ProfileOperation)),
+  /** API-key rows holding the same value, which pickers show as one entry. Never the value. */
+  sameKeys: Schema.optional(Schema.Array(Schema.Array(AccountId))),
+  /**
+   * Saved passwords with something wrong, checked on this server: seen in a breach (by a 5-hex
+   * hash prefix only), used on another login, or weak. Never a value or a hash.
+   */
+  passwordHealth: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        accountId: AccountId,
+        finding: Schema.Literals(["leaked", "reused", "weak"]),
+      }),
+    ),
+  ),
   managedElsewhere: Schema.optional(Schema.Array(AccountManagedElsewhereItem)),
   /** What this server can do that an older one can't, so a newer client offers only that. */
-  /** What this server's Accounts speaks; absent on a server older than `ACCOUNTS_PROTOCOL`. */
+  /** What this server's Accounts speaks; absent on a server older than `ACCOUNTS_PROTOCOL_1`. */
   accountsProtocol: Schema.optional(Schema.Int),
   /** Sign-ins Scient is running, by tab; no values. Agents can't read these tabs meanwhile. */
   attempts: Schema.optional(Schema.Array(AccountSignInAttempt)),
+  /**
+   * How each row's last sign-in by the person ended, while this server runs. Present, even empty,
+   * on a server that also signs universities out and retries or puts away unreached papers.
+   */
+  signInEnds: Schema.optional(Schema.Array(AccountSignInEnd)),
+  /** University sign-outs still clearing: their targets stay on offer until cleared. */
+  universitySignOuts: Schema.optional(Schema.Array(UniversitySignOut)),
 });
 export type AccountsSnapshot = typeof AccountsSnapshot.Type;
 
@@ -1053,6 +1949,8 @@ export const AccountSecretInput = Schema.Union([
     value: SecretValue,
     /** An import's own date for this password, kept on the saved row as `changedAt`. */
     changedAt: Schema.optional(IsoDateTime),
+    /** Backup codes written one per line (a code may hold a space); else split at any space. */
+    lines: Schema.optional(Schema.Literal(true)),
     saveTo: Schema.optional(
       Schema.Array(AccountWriteStore).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
     ),
@@ -1081,10 +1979,37 @@ export const AccountSaveResult = Schema.Struct({
   /** The saved account as Accounts lists it, for a client to show before its next snapshot. */
   account: Schema.optional(AccountSummary),
   warnings: Schema.optional(Schema.Array(Schema.String)),
+  /** The Undo this save's new password got, so a client can take it back itself. */
+  undoId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
 });
 export type AccountSaveResult = typeof AccountSaveResult.Type;
 
-export const AccountRemoveInput = Schema.Struct({ accountId: AccountId });
+export const AccountPasswordUndoInput = Schema.Struct({
+  undoId: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+});
+/** Copies given back their own earlier password, and copies changed since, left as they are. */
+export const AccountPasswordUndoResult = Schema.Struct({
+  restored: Schema.Number,
+  changed: Schema.Number,
+  /** Keychain or 1Password copies that couldn't take the earlier password back: they keep the newer one. */
+  mirrorsLeft: Schema.optional(Schema.Array(Schema.String)),
+});
+
+export const AccountRemoveInput = Schema.Struct({
+  accountId: AccountId,
+  /** The row as the person last saw it: Remove refuses a version edited since. */
+  updatedAt: Schema.optional(Schema.String),
+  /** One press's removal of several rows, such as a university's, for its one Undo. */
+  operationId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+});
+
+/** A receipt for this removal; Undo names it, so an old Undo never brings back a later removal. */
+export const AccountRemoveResult = Schema.Struct({ removalId: Schema.optional(Schema.String) });
+
+export const AccountRestoreInput = Schema.Struct({
+  accountId: AccountId,
+  removalId: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+});
 
 export const AccountSetControlsInput = Schema.Struct({
   target: AccountTarget,
@@ -1099,6 +2024,9 @@ export type AccountSetControlsInput = typeof AccountSetControlsInput.Type;
 
 export const AccountsSetAgentAccessInput = Schema.Struct({ enabled: Schema.Boolean });
 
+/** "Renew sign-ins automatically": off, renewal only looks and never signs in by itself. */
+export const AccountsSetRenewAutomaticallyInput = Schema.Struct({ enabled: Schema.Boolean });
+
 /** Sent by the client that imported or edited a profile; `null` clears a field. */
 export const BrowserProfileRecordUpdateInput = Schema.Struct({
   profileId: BrowserProfileId,
@@ -1110,6 +2038,16 @@ export const BrowserProfileRecordUpdateInput = Schema.Struct({
 export type BrowserProfileRecordUpdateInput = typeof BrowserProfileRecordUpdateInput.Type;
 
 export const BrowserProfileRecordRemoveInput = Schema.Struct({ profileId: BrowserProfileId });
+
+/** A client's profiles, by id and the name it lists them under; the server keeps the name. */
+export const BrowserProfilesReportInput = Schema.Struct({
+  profiles: Schema.Array(
+    Schema.Struct({ profileId: BrowserProfileId, name: FoldedProfileName }),
+  ).check(Schema.isMaxLength(100)),
+  /** A desktop's browser profiles, replacing what it reported before. */
+  computer: Schema.optional(ReportingComputer),
+  sources: Schema.optional(Schema.Array(BrowserSourceProfile).check(Schema.isMaxLength(100))),
+});
 
 /**
  * The fold merges a profile into Main: its rows and choices name Main and its record is marked
@@ -1163,6 +2101,8 @@ export const AccountProfileSendLogInput = Schema.Struct({ profileId: BrowserProf
 export const AccountProfileResendInput = Schema.Struct({
   profileId: BrowserProfileId,
   why: Schema.Literals(["import", "send-again"]),
+  /** An agent's refresh: sent only while it still stands, checked where it commits (6k). */
+  operationId: Schema.optional(ProfileOperationId),
 });
 
 export const AccountProfileRevision = Schema.Struct({ revision: SessionRevision });
@@ -1349,11 +2289,20 @@ export const PasswordImportFormat = Schema.Literals([
 ]);
 export type PasswordImportFormat = typeof PasswordImportFormat.Type;
 
-/** A password export file's text (CSV). The client reads the file; the server never sees its path. */
+/**
+ * A password export file's text (CSV), or Google Authenticator export addresses
+ * (`otpauth-migration://`, one per line). The client reads the file; the server never sees its path.
+ */
 export const PasswordImportInput = Schema.Struct({
   format: PasswordImportFormat,
   content: Schema.String.check(Schema.isMaxLength(10_000_000)),
   profileId: Schema.optional(BrowserProfileId),
+  /** From a browser import or refresh: logins the person removed are left out. */
+  origin: Schema.optional(Schema.Literal("browser")),
+  /** A browser profile's Refresh: logins the person removed stay removed. */
+  refresh: Schema.optional(Schema.Literal(true)),
+  /** An agent's import, by its operation: refused once that no longer stands (round 6c). */
+  operationId: Schema.optional(ProfileOperationId),
 });
 export type PasswordImportInput = typeof PasswordImportInput.Type;
 
@@ -1361,8 +2310,35 @@ export const PasswordImportResult = Schema.Struct({
   created: NonNegativeInt,
   updated: NonNegativeInt,
   skipped: NonNegativeInt,
+  /** Authenticator keys no saved login or named site took, by issuer. */
+  unmatched: Schema.optional(Schema.Array(Schema.String)),
 });
 export type PasswordImportResult = typeof PasswordImportResult.Type;
+
+/**
+ * Round 6f: what only the desktop's main process asks its own backend, with its own session:
+ * a browser's saved passwords, read there and handed straight to this backend's Accounts (no page
+ * ever holds them), and whether an operation still stands at the moment its desktop part writes.
+ */
+export const ACCOUNTS_DESKTOP_PASSWORDS_PATH = "/api/scient/accounts/v1/desktop/passwords";
+export const ACCOUNTS_DESKTOP_WRITE_CHECK_PATH = "/api/scient/accounts/v1/desktop/write-check";
+export const DesktopPasswordImportReply = Schema.Struct({
+  result: Schema.optional(PasswordImportResult),
+  refused: Schema.optional(Schema.String),
+});
+export type DesktopPasswordImportReply = typeof DesktopPasswordImportReply.Type;
+export const DesktopWriteCheckInput = Schema.Struct({
+  operationId: ProfileOperationId,
+  phase: Schema.Literals(["do", "undo"]),
+  /** Another desktop's own part of a sign-out, by its computer. */
+  computer: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type DesktopWriteCheckInput = typeof DesktopWriteCheckInput.Type;
+export const DesktopWriteCheckResult = Schema.Struct({
+  ok: Schema.Boolean,
+  message: Schema.optional(Schema.String),
+});
+export type DesktopWriteCheckResult = typeof DesktopWriteCheckResult.Type;
 
 /** The user's own sign-in on a page they are viewing; refused unless `origin` matches the account. */
 export const AccountFilledTab = Schema.Struct({
@@ -1377,17 +2353,64 @@ export const AccountFillValuesInput = Schema.Struct({
   accountId: AccountId,
   origin: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   tab: Schema.optional(AccountFilledTab),
+  /**
+   * The client would submit the form by itself: the server says whether the site's budget allows
+   * it (`AccountFillValues.submit`), and counts it if so.
+   */
+  autoSubmit: Schema.optional(Schema.Literal(true)),
 });
 
 export const AccountFillValues = Schema.Struct({
   username: Schema.optional(Schema.String),
   password: Schema.optional(Schema.String),
   otp: Schema.optional(Schema.String),
+  /** This fill's one-time name for its sign-in's result (`AccountSignInSeenInput`). */
+  attempt: Schema.optional(Schema.String),
+  /** The form may be submitted by itself, counted against the site's budget. */
+  submit: Schema.optional(Schema.Literal(true)),
 });
 export type AccountFillValues = typeof AccountFillValues.Type;
 
+/** "Don't ask for this site": `add` origins, or ask again on `remove`. */
+export const AccountNeverAskInput = Schema.Struct({
+  add: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))).check(
+      Schema.isMaxLength(500),
+    ),
+  ),
+  remove: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+});
+
+/**
+ * The person's own Show or Copy of a saved website password, the one it replaced, or one of its
+ * earlier versions (`version`, from `AccountSecretSummary.history`).
+ */
+export const AccountRevealInput = Schema.Struct({
+  accountId: AccountId,
+  field: Schema.Literals(["password", "previous", "version"]),
+  version: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+});
+export const AccountRevealResult = Schema.Struct({ value: Schema.String });
+
+/** The person puts one of a login's earlier passwords (`version`) back as its password. */
+export const AccountUsePasswordInput = Schema.Struct({
+  accountId: AccountId,
+  version: Schema.String.check(Schema.isMaxLength(64)),
+});
+export type AccountUsePasswordInput = typeof AccountUsePasswordInput.Type;
+/**
+ * The person removes one of a login's earlier passwords (`version`, as `AccountUsePasswordInput`):
+ * nothing else ever does. Undo (`undoId`) brings it back within the hour.
+ */
+export const AccountRemovePasswordVersionResult = Schema.Struct({ undoId: Schema.String });
+export const AccountRestorePasswordVersionInput = Schema.Struct({
+  undoId: Schema.String.check(Schema.isMaxLength(64)),
+});
+
 export const AccountMatchSignInInput = Schema.Struct({
   origin: AccountFillValuesInput.fields.origin,
+  /** The page's path when the form was sent: the route a saved tenant is matched by. */
+  path: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
   username: Schema.String.check(Schema.isMaxLength(256)),
   password: SecretValue,
   profileId: Schema.optional(BrowserProfileId),
@@ -1396,6 +2419,8 @@ export type AccountMatchSignInInput = typeof AccountMatchSignInInput.Type;
 export const AccountMatchSignInResult = Schema.Struct({
   result: Schema.Literals(["new", "password-changed", "same"]),
   accountId: Schema.optional(AccountId),
+  /** Saved tenants of this site and username the page could belong to: the person picks one. */
+  choices: Schema.optional(Schema.Array(AccountId)),
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
 
@@ -1434,10 +2459,15 @@ export const AccountKeepTypedInput = Schema.Struct({
 });
 export type AccountKeepTypedInput = typeof AccountKeepTypedInput.Type;
 
-/** How a sign-in with this saved password on the user's own tab ended. */
+/**
+ * How a sign-in with this saved password on the user's own tab ended. `attempt`, from the fill,
+ * names the password typed and the login it was for, and counts once; without it the result
+ * orders none of the login's passwords. `limited`: the site is limiting sign-ins.
+ */
 export const AccountSignInSeenInput = Schema.Struct({
   accountId: AccountId,
-  outcome: Schema.Literals(["signed-in", "password-rejected"]),
+  outcome: Schema.Literals(["signed-in", "password-rejected", "limited"]),
+  attempt: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
 });
 export type AccountSignInSeenInput = typeof AccountSignInSeenInput.Type;
 
@@ -1453,6 +2483,9 @@ export const AccountsCheckInput = Schema.Struct({
 export type AccountsCheckInput = typeof AccountsCheckInput.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });
+/** A key's Check: its service accepted it, refused it, or only its saved value could be read. */
+export const AccountKeyCheck = Schema.Literals(["works", "refused", "readable"]);
+export type AccountKeyCheck = typeof AccountKeyCheck.Type;
 
 /** Why a connector tool failed: the connector runtime's reason, as an analytics code. */
 export const ConnectorToolFailureClass = Schema.Literals([

@@ -640,6 +640,11 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopBootstrapToken,
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
     ...(desktopReadinessSecret === undefined ? {} : { desktopReadinessSecret }),
+    // SCIENT-FORK:START — Scient Accounts: only the desktop's primary backend opens page seals.
+    ...(bootstrap?.desktopPageSealSecret === undefined
+      ? {}
+      : { desktopPageSealSecret: bootstrap.desktopPageSealSecret }),
+    // SCIENT-FORK:END
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,
     desktopTelemetryControlFd,

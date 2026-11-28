@@ -11,12 +11,14 @@ const launches = vi.hoisted(() => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
   chmod: vi.fn().mockResolvedValue(undefined),
+  readdir: vi.fn().mockResolvedValue([] as string[]),
 }));
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
 vi.mock("node:fs/promises", () => ({
   mkdir: launches.mkdir,
   rm: launches.rm,
   chmod: launches.chmod,
+  readdir: launches.readdir,
 }));
 
 const makeContext = () => {
@@ -154,6 +156,80 @@ describe("ServerBrowserContexts lease", () => {
     expect(second).toBe(false);
     await first.release();
     await (await waiting).release();
+    await pool.close();
+  });
+});
+
+describe("ServerBrowserContexts generations (round 6b)", () => {
+  it("opens a cleared profile in a new folder, keeps the old one, and purges by generation", async () => {
+    const first = makeContext();
+    const second = makeContext();
+    launches.persistent
+      .mockResolvedValueOnce(first as unknown as BrowserContext)
+      .mockResolvedValueOnce(second as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work");
+    expect(launches.persistent.mock.calls[0]?.[0]).toBe("/test/profiles/work");
+    // Clear: generation 1. The open context closes; the next tab opens the new folder.
+    pool.setGenerations(new Map([["work", 1]]));
+    await pool.closeProfile("work");
+    expect(first.close).toHaveBeenCalled();
+    await pool.contextFor("work");
+    expect(launches.persistent.mock.calls[1]?.[0]).toBe("/test/profiles/work%7Eg1");
+    // The old generation goes alone once its hour is over; nothing was deleted before.
+    expect(launches.rm).not.toHaveBeenCalled();
+    await pool.purgeProfile("work", 0);
+    expect(launches.rm).toHaveBeenCalledWith("/test/profiles/work", expect.anything());
+    // A removed profile: every generation's folder, and no one else's.
+    launches.rm.mockClear();
+    launches.readdir.mockResolvedValueOnce(["work", "work%7Eg1", "work%7Eg3", "workshop", "home"]);
+    await pool.purgeProfile("work");
+    expect(launches.rm.mock.calls.map(([path]) => path).toSorted()).toEqual([
+      "/test/profiles/work",
+      "/test/profiles/work%7Eg1",
+      "/test/profiles/work%7Eg3",
+    ]);
+    await pool.close();
+  });
+});
+
+describe("each generation's folder is its own (round 6c, finding 7)", () => {
+  it("purges a profile's generations without touching a profile named like one", async () => {
+    launches.readdir.mockResolvedValueOnce([
+      "work",
+      "work%7Eg1",
+      "work%7Eg2",
+      // Another profile whose id happens to look like a generation of Work.
+      "work~g1",
+      "work~g1%7Eg1",
+    ]);
+    const contexts = new ServerBrowserContexts(options());
+    await contexts.purgeProfile("work");
+    expect(launches.rm.mock.calls.map(([path]) => path)).toEqual([
+      "/test/profiles/work",
+      "/test/profiles/work%7Eg1",
+      "/test/profiles/work%7Eg2",
+    ]);
+    launches.rm.mockClear();
+    // And one generation of the look-alike is its own folder.
+    await contexts.purgeProfile("work~g1", 1);
+    expect(launches.rm.mock.calls.map(([path]) => path)).toEqual(["/test/profiles/work~g1%7Eg1"]);
+  });
+});
+
+describe("a jar's generation is the one its context opened in (round 6e)", () => {
+  it("names the open context's generation until it closes, then the profile's", async () => {
+    const first = makeContext();
+    launches.persistent.mockResolvedValueOnce(first as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work");
+    expect(pool.contextGeneration("work")).toBe(0);
+    // Cleared: the generation moves on, but the jar a hold gets now is still generation 0's.
+    pool.setGenerations(new Map([["work", 1]]));
+    // regression: a write bound to generation 0 couldn't tell it would land in the old jar.
+    expect(pool.contextGeneration("work")).toBe(0);
+    await pool.closeProfile("work");
+    expect(pool.contextGeneration("work")).toBe(1);
     await pool.close();
   });
 });

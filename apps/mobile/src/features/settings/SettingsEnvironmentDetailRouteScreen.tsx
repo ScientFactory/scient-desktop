@@ -221,6 +221,15 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onUpdate={connections.onUpdateEnvironment}
               />
             </SettingsSection>
+            {/* SCIENT-FORK:START — Scient Accounts on the phone. */}
+            <SettingsSection title={gt("Accounts")}>
+              <SettingsActionRow
+                icon="person.crop.circle"
+                label={gt("Accounts & secrets")}
+                onPress={() => navigation.navigate("SettingsAccounts", { environmentId })}
+              />
+            </SettingsSection>
+            {/* SCIENT-FORK:END */}
             <EnvironmentRoutesSection
               environmentId={environmentId}
               connected={connected}

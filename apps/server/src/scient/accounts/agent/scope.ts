@@ -38,6 +38,9 @@ export function deriveAccountSessionScope(
   const active = runs.filter((candidate) =>
     ["running", "waiting", "starting", "preparing"].includes(candidate.status),
   );
+  const scheduledTaskId = active
+    .map((run) => messages.find((candidate) => candidate.id === run.userMessageId)?.scheduledTaskId)
+    .find((id) => id !== undefined);
   return {
     threadId,
     projectId,
@@ -47,5 +50,6 @@ export function deriveAccountSessionScope(
         const message = messages.find((candidate) => candidate.id === run.userMessageId);
         return message === undefined || message.scheduledTaskId !== undefined;
       }),
+    ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
   };
 }

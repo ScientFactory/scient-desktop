@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "vite-plus/test";
-import { attributedText, codeInText, readMessageCode, serviceWords } from "./messageCodes.ts";
+import { attributedText, codeInText, readMessageCodes, serviceWords } from "./messageCodes.ts";
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
 
@@ -41,7 +41,7 @@ describe("sign-in codes in messages", () => {
     expect(attributedText(body)).toBe(text);
   });
 
-  it("reads the newest received code since the sign-in began", () => {
+  it("reads every received code since the sign-in began that names the service", () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "messages-"));
     const path = NodePath.join(directory, "chat.db");
     const db = new NodeSqlite.DatabaseSync(path);
@@ -56,8 +56,27 @@ describe("sign-in codes in messages", () => {
     insert.run("Other Bank code is 444444", at(now - 800), 0);
     insert.run("Example code is 333333", at(now - 500), 1);
     db.close();
-    expect(readMessageCode(now - 60_000, ["example"], path)).toBe("222222");
-    expect(readMessageCode(now, ["example"], path)).toBeUndefined();
+    // Another service's code is read too, marked as naming none: it is only ever offered.
+    expect(readMessageCodes(now - 60_000, ["example"], path)).toEqual([
+      {
+        key: "messages:3",
+        code: "444444",
+        source: "messages",
+        at: now - 800,
+        sender: "",
+        toAccount: undefined,
+        named: false,
+      },
+      {
+        key: "messages:2",
+        code: "222222",
+        source: "messages",
+        at: now - 1_000,
+        sender: "",
+        toAccount: undefined,
+      },
+    ]);
+    expect(readMessageCodes(now, ["example"], path)).toEqual([]);
     NodeFS.rmSync(directory, { recursive: true });
   });
 });
@@ -75,4 +94,24 @@ it("takes the code from the message, never the sender's number or a year", () =>
   expect(codeInText("Example: your code is 482913", service, "32665")).toBe("482913");
   expect(codeInText("In 2026 Example code is 482913", service)).toBe("482913");
   expect(codeInText("G-482913 is your Example verification code.", service)).toBe("482913");
+});
+
+describe("codes for a site named only with generic words (Step 7)", () => {
+  it("matches login.gov.il's codes by its domain, written out or as the sender ID", () => {
+    const service = serviceWords({ name: "login.gov.il", sites: ["login.gov.il"] });
+    // regression: "login" and "gov" are generic and "il" too short, so nothing matched.
+    expect(service).toEqual(["gov.il", "govil"]);
+    expect(codeInText("קוד האימות שלך לאתר gov.il הוא 482913", service, "GOVIL")).toBe("482913");
+    expect(codeInText("קוד אימות: 482913", service, "GOVIL")).toBe("482913");
+    // Another service's code is not this site's.
+    expect(codeInText("Your Bank code is 482913", service, "MYBANK")).toBeUndefined();
+  });
+
+  it("keeps the specific words a site has, and falls back for every all-generic host", () => {
+    expect(serviceWords({ name: "Secure", sites: ["secure.example.org"] })).toEqual(["example"]);
+    expect(serviceWords({ name: "SSO", sites: ["https://sso.edu.au"] })).toEqual([
+      "edu.au",
+      "eduau",
+    ]);
+  });
 });

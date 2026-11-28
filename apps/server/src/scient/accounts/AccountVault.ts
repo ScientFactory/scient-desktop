@@ -3,15 +3,19 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import { AccountsError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { Context, Effect, Layer, Option, Redacted, Semaphore } from "effect";
+import { Context, Duration, Effect, Layer, Option, Queue, Redacted, Semaphore } from "effect";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { ACCOUNTS_AWAIT_PERSON } from "./awaitPerson.ts";
+import { ClientActivityLeases, leasesLayer, someoneAtWindow } from "./clientLeases.ts";
 
 const requireKeyring = NodeModule.createRequire(import.meta.url);
 const unavailable = () =>
   new AccountsError({ reason: "unavailable", message: "Scient Accounts store is unavailable." });
 const SENTINEL = "accounts-vault";
 const KEY_FILE = "accounts-master-key";
+/** How often a refused open looks for someone at a window: it opens within this of their lease. */
+const PERSON_LOOK_GAP = Duration.seconds(1);
 
 export interface AccountKeychain {
   readonly read: (
@@ -21,7 +25,10 @@ export interface AccountKeychain {
     account: string,
     key: Redacted.Redacted<string>,
   ) => Effect.Effect<void, AccountsError>;
-  /** Unattended work may not read it: it waits for the person's next foreground use. */
+  /**
+   * While Scient may run with no window (macOS, Linux): the keychain is read only when someone can
+   * answer its dialog, and unattended work opens nothing (`openWithoutPrompt`).
+   */
   readonly unattendedWaitsForPerson: boolean;
 }
 
@@ -111,10 +118,15 @@ export class AccountVault extends Context.Service<
     /** Opens a vault set up before for unattended work; false when that needs the person. */
     readonly openWithoutPrompt: Effect.Effect<boolean, AccountsError>;
     /**
-     * Unattended work must not open a keychain-protected vault: it opens only through
-     * `openWithoutPrompt`, which then declines one. False: it opens as any use does.
+     * While Scient may run with no window: the store opens only with a client in the foreground,
+     * and `openWithoutPrompt` declines a keychain one.
      */
     readonly unattendedWaitsForPerson: boolean;
+    /**
+     * Waits for an open refused for want of a person, then for someone at a window: the moment to
+     * open the store. One wait per refusal: after it, the next waits for the next refusal.
+     */
+    readonly personArrived: Effect.Effect<void>;
     readonly encrypt: (
       name: string,
       value: Redacted.Redacted<Uint8Array>,
@@ -134,6 +146,26 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
   const account = NodeCrypto.createHash("sha256").update(stateDirectory).digest("hex");
   const lock = yield* Semaphore.make(1);
   let loaded: { key: Redacted.Redacted<Uint8Array>; protection: "keychain" | "file" } | undefined;
+  // The clients' leases and the host's lock state as they are when the keychain would be read:
+  // shared with the background policy, which is built after this vault.
+  const leases = yield* Effect.serviceOption(ClientActivityLeases);
+  /** Someone can answer a keychain dialog here now (`someoneAtWindow`), nothing else. */
+  const personCanAnswer = Option.isSome(leases)
+    ? someoneAtWindow(leases.value)
+    : Effect.succeed(false);
+  /** An open refused for want of a person, until someone arrives to answer it. */
+  const refused = yield* Queue.sliding<void>(1);
+  const personArrived = Option.isNone(leases)
+    ? Effect.never
+    : Queue.take(refused).pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            while (!(yield* personCanAnswer)) yield* Effect.sleep(PERSON_LOOK_GAP);
+            // Every refusal made while this one waited joins it: one try for the person's return.
+            yield* Queue.clear(refused);
+          }),
+        ),
+      );
   const load = lock.withPermits(1)(
     Effect.gen(function* () {
       if (loaded) return loaded;
@@ -155,6 +187,15 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
         key = file.value;
         selected = "file";
       } else {
+        // The one place the keychain is read to open the store: while nobody can answer a dialog,
+        // it stays closed, and work waiting for it goes on once the person opens it (`changes`).
+        if (keychain.unattendedWaitsForPerson && !(yield* personCanAnswer)) {
+          yield* Queue.offer(refused, undefined);
+          return yield* new AccountsError({
+            reason: "unavailable",
+            message: ACCOUNTS_AWAIT_PERSON,
+          });
+        }
         const read = yield* keychain.read(account).pipe(Effect.result);
         if (protection === "keychain") {
           if (read._tag === "Failure" || read.success === null) return yield* unavailable();
@@ -238,6 +279,7 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
     protection: load.pipe(Effect.map((value) => value.protection)),
     openWithoutPrompt,
     unattendedWaitsForPerson: keychain.unattendedWaitsForPerson,
+    personArrived,
     encrypt: Effect.fn("AccountVault.encrypt")(function* (name, value) {
       return yield* encryptBlob((yield* load).key, name, value);
     }),
@@ -247,13 +289,17 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
   });
 });
 
-export const layer = Layer.effect(
-  AccountVault,
-  Effect.gen(function* () {
-    return yield* makeAccountVault(
-      yield* ServerSecretStore,
-      (yield* ServerConfig).stateDir,
-      yield* makeAccountKeychain(nativeKeychain),
-    );
-  }),
-);
+/** The vault over `keychain`, reading the clients' shared leases (`ClientActivityLeases`). */
+export const layerWith = (keychain: Effect.Effect<AccountKeychain, never, ServerConfig>) =>
+  Layer.effect(
+    AccountVault,
+    Effect.gen(function* () {
+      return yield* makeAccountVault(
+        yield* ServerSecretStore,
+        (yield* ServerConfig).stateDir,
+        yield* keychain,
+      );
+    }),
+  ).pipe(Layer.provide(leasesLayer));
+
+export const layer = layerWith(makeAccountKeychain(nativeKeychain));

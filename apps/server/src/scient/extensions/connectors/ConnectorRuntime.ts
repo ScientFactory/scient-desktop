@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
+  type AccountSummary,
   type ConnectorAddInput,
   type ConnectorAddResult,
   type ConnectorAuthSummary,
@@ -28,6 +29,7 @@ import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
@@ -41,7 +43,10 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { AccountsService } from "../../accounts/AccountsService.ts";
+import { AccountsService, typedDigest } from "../../accounts/AccountsService.ts";
+import { connectorKeyAuth, keepTypedConnectorKeys } from "./connectorKeyMigration.ts";
+import { accountTokenRef, boundAccountId } from "../../accounts/AccountBoundRef.ts";
+import { accountName, type AccountId } from "@t3tools/contracts";
 import {
   type ConnectorSessionsShape,
   makeConnectorSessions,
@@ -144,6 +149,10 @@ import { makeRunTool, type RunTool } from "./PackageSource.ts";
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
+/** After startup settles, then daily; a token expiring before the next sweep is refreshed now. */
+const REFRESH_AHEAD_FIRST = "10 minutes";
+const REFRESH_AHEAD_EVERY = "1 day";
+const REFRESH_AHEAD_MS = 24 * 60 * 60 * 1000;
 /**
  * Upstream exchanges per connector, held until the response body completes or
  * is cancelled (open SSE streams included). A full connector answers busy
@@ -197,6 +206,8 @@ type Credential =
       readonly borrowed?: SourceControlCredential;
       /** Lent by the dev identity home, which alone refreshes it: the sign-in it belongs to. */
       readonly brokeredGrant?: string;
+      /** An Accounts key's row as its value was read, for the gate as the request leaves. */
+      readonly accountVersion?: Pick<AccountSummary, "updatedAt">;
     }
   | { readonly type: "lost"; readonly message: string }
   | { readonly type: "failed"; readonly message: string }
@@ -281,6 +292,10 @@ const authSummary = (auth: ConnectorAuthRecord): ConnectorAuthSummary => {
         strategy: auth.strategy,
         storage: auth.storage,
         ...(auth.headerName === undefined ? {} : { headerName: auth.headerName }),
+        ...Option.match(boundAccountId(auth.accountRef ?? auth.credentialRef), {
+          onNone: () => ({}),
+          onSome: (accountId) => ({ accountId }),
+        }),
       };
     case "source-control":
       return { type: "source-control", host: auth.host, account: auth.account };
@@ -671,6 +686,36 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           (event) => analytics.record(event.name, event.properties).pipe(Effect.ignoreCause()),
           { discard: true },
         );
+  // Every status change passes here, so one "Needs you" is raised when a connector needs the
+  // person and cleared when it works again, whichever path changed it.
+  const needsYouFor = (
+    before: ReadonlyArray<ConnectorRecord>,
+    after: ReadonlyArray<ConnectorRecord>,
+  ) => {
+    if (Option.isNone(accounts)) return Effect.void;
+    const service = accounts.value;
+    const was = new Map(before.map((record) => [record.connectorId, record.status]));
+    return Effect.forEach(
+      // A connector just added is the person's own step, not a repair.
+      after.filter(
+        (record) => was.has(record.connectorId) && was.get(record.connectorId) !== record.status,
+      ),
+      (record) => {
+        const needId = `connector:${record.connectorId}`;
+        return Effect.exit(
+          record.status === "connected"
+            ? service.clearNeedsYou(needId)
+            : service.setNeedsYou({
+                needId,
+                name: record.displayName,
+                // The words of the connector's row under Apps and connectors.
+                detail: record.status === "needs-auth" ? "Needs sign-in" : "Key missing",
+              }),
+        );
+      },
+      { discard: true },
+    );
+  };
   const savedStore = yield* makeConnectorStateStore(options.stateDir);
   // Every saved change, from any path (Extensions, agents, plugins, sign-in), says what it did.
   const store: typeof savedStore = {
@@ -689,11 +734,19 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           Effect.flatMap(([result, change]) =>
             change === undefined
               ? Effect.succeed(result)
-              : recordExtensionEvents(connectorChangeEvents(...change)).pipe(Effect.as(result)),
+              : recordExtensionEvents(connectorChangeEvents(...change)).pipe(
+                  Effect.andThen(needsYouFor(...change)),
+                  Effect.as(result),
+                ),
           ),
         ),
   };
   yield* recordExtensionEvents(connectorInventoryEvents((yield* store.read).connectors));
+  if (Option.isSome(accounts))
+    yield* keepTypedConnectorKeys({ store, credentials, accounts: accounts.value }).pipe(
+      Effect.ignore,
+      Effect.forkScoped,
+    );
   const clock = yield* Clock.Clock;
   const random = yield* SecureRandom.SecureRandom;
   const now = () => clock.currentTimeMillisUnsafe();
@@ -995,12 +1048,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     ).pipe(Effect.ignore);
 
   /** The site ended a signed-in connector's session: sign in again, or say who must. */
-  const signInHandler = (record: ConnectorRecord): LocalSignInHandler => ({
+  const signInHandler = (
+    record: ConnectorRecord,
+    location: ConnectorForwardRequest["location"],
+  ): LocalSignInHandler => ({
     expired: (generation) =>
       observed("connectors.session.refresh")(
         Effect.gen(function* () {
           const current = (yield* findRecord(record.connectorId)) ?? record;
-          const renewed = yield* localConnectors.signInAgain(current, generation);
+          const renewed = yield* localConnectors.signInAgain(current, generation, location);
           yield* markNeedsUser(record.connectorId, renewed.type === "needs-user");
           return renewed;
         }),
@@ -1026,6 +1082,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const site = yield* localConnectors.signInSiteOf(record.local!);
       const host = site !== undefined && URL.canParse(site) ? new URL(site).host : "The site";
       return `${host} still ended the session right after Scient signed in again. The connector may not send the session the way the site expects; fix it with scient_connector_copy, or ask the user to sign in on the connector's page.`;
+    }),
+    hostRequest: Effect.fn("ConnectorRuntime.hostRequest")(function* (method, params) {
+      const current = (yield* findRecord(record.connectorId)) ?? record;
+      return yield* localConnectors.hostRequest(current, location, method, params);
     }),
   });
 
@@ -1057,7 +1117,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       { connectorId: record.connectorId, displayName: record.displayName },
       request,
       localConnectors.start(record, record.serverName, location),
-      record.local?.signIn === undefined ? undefined : signInHandler(record),
+      record.local?.signIn === undefined ? undefined : signInHandler(record, location),
     );
     return {
       type: "response",
@@ -1389,6 +1449,28 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }),
     );
 
+  /**
+   * Once a day, each own grant whose token would expire before the next sweep is refreshed, so a
+   * refresh token idle between uses stays alive and a revoked one shows "needs sign-in" before an
+   * agent hits it. Grants the dev identity home lends are its own to refresh.
+   */
+  const refreshAhead = Effect.fn("ConnectorRuntime.refreshAhead")(function* () {
+    for (const record of (yield* store.read).connectors) {
+      if (record.auth.type !== "oauth" || !isLive(record.connectorId)) continue;
+      const entry = yield* loadOAuth(record).pipe(Effect.orElseSucceed(() => undefined));
+      const session = entry?.material.session;
+      if (session?.refreshToken === undefined || session.expiresAt === undefined) continue;
+      if (session.expiresAt - REFRESH_AHEAD_MS > (yield* Clock.currentTimeMillis)) continue;
+      yield* refreshSession(record, session.accessToken).pipe(Effect.ignore);
+    }
+  });
+  yield* refreshAhead().pipe(
+    Effect.ignore,
+    Effect.delay(REFRESH_AHEAD_FIRST),
+    Effect.repeat(Schedule.spaced(REFRESH_AHEAD_EVERY)),
+    Effect.forkScoped,
+  );
+
   const credentialFor = Effect.fn("ConnectorRuntime.credentialFor")(function* (
     record: ConnectorRecord,
     scope?: McpInvocationScope,
@@ -1418,13 +1500,25 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           secrets: [],
         } satisfies Credential;
       case "credential": {
-        const stored = yield* auth.storage === "bound"
+        // An owned key kept in Accounts too is read from there; its typed copy is for older builds.
+        const accountRef = auth.storage === "bound" ? auth.credentialRef : auth.accountRef;
+        // The row as it was before the read: the gate as the request leaves refuses any edit since.
+        const boundId = accountRef === undefined ? Option.none() : boundAccountId(accountRef);
+        const since =
+          Option.isSome(boundId) && Option.isSome(accounts)
+            ? yield* accounts.value
+                .rowVersion(boundId.value)
+                .pipe(Effect.orElseSucceed(() => undefined))
+            : undefined;
+        const stored = yield* accountRef !== undefined
           ? Option.isSome(accounts)
             ? accounts.value
-                .resolveBound(auth.credentialRef, {
+                .resolveBound(accountRef, {
                   kind: "connector",
                   connectorId: record.connectorId,
                   origin: new URL(record.url).origin,
+                  // A key the person bound already worked in the connector's own style.
+                  ...(auth.storage === "bound" ? {} : { auth: connectorKeyAuth(auth) }),
                 })
                 .pipe(
                   Effect.map((value) => Option.some(Redacted.value(value))),
@@ -1458,6 +1552,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           headers: credentialHeadersFor(auth, value),
           accessToken: undefined,
           secrets: enteredSecrets(auth.strategy, value),
+          ...(since ? { accountVersion: since } : {}),
         } satisfies Credential;
       }
       case "oauth": {
@@ -1706,6 +1801,35 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     ) {
       return { type: "rejected", message: refusedKeyMessage(record) } satisfies SendOutcome;
     }
+    // An Accounts key's outcome on this connector, so a refusal shows on the key's uses.
+    const boundKey =
+      record.auth.type === "credential"
+        ? boundAccountId(
+            record.auth.storage === "bound"
+              ? record.auth.credentialRef
+              : (record.auth.accountRef ?? record.auth.credentialRef),
+          )
+        : Option.none();
+    // An Accounts key is checked once more as the request leaves: Off, Remove, a narrower scope
+    // or a new value or site since the read wins. A key read with no version can't be checked.
+    if (
+      Option.isSome(boundKey) &&
+      Option.isSome(accounts) &&
+      (credential.accountVersion === undefined ||
+        !(yield* accounts.value
+          .authorizeUse(
+            { projectId: undefined, unattended: true },
+            { type: "account", accountId: boundKey.value },
+            {
+              origin: new URL(record.url).origin,
+              key: { kind: "connector", id: record.connectorId },
+              linked: true,
+              since: credential.accountVersion,
+            },
+          )
+          .pipe(Effect.isSuccess)))
+    )
+      return gone;
     const first = yield* send(credential.headers);
     if (Exit.isFailure(first)) {
       if (!isLive(record.connectorId)) return gone;
@@ -1715,6 +1839,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       } satisfies SendOutcome;
     }
     const firstVerdict = yield* refusedCredential(first.value, credential.secrets);
+    if (Option.isSome(boundKey) && Option.isSome(accounts) && accounts.value.reportKeyUse) {
+      if (firstVerdict.refused || first.value.ok)
+        yield* accounts.value
+          .reportKeyUse(
+            boundKey.value,
+            { kind: "connector", id: record.connectorId },
+            firstVerdict.refused ? "refused" : "ok",
+            typedDigest(credential.secrets[0] ?? ""),
+          )
+          .pipe(Effect.exit);
+    }
     if (!firstVerdict.refused) {
       if (first.value.ok && rejectedCredentialFingerprints.delete(record.connectorId)) {
         if (pluginHttp.has(record.connectorId)) {
@@ -2148,6 +2283,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
     let auth: ConnectorAuthRecord;
     let status: ConnectorRecord["status"];
+    let keptAccount: AccountId | undefined;
     const entered = input.credential;
     if (entered !== undefined) {
       if (entered.strategy === "header") {
@@ -2178,6 +2314,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
                     kind: "connector",
                     connectorId,
                     origin: new URL(url).origin,
+                    auth: connectorKeyAuth(credentialAuth),
                   })
                   .pipe(
                     Effect.mapError(() =>
@@ -2207,13 +2344,39 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         return yield* extensionsError("sign-in-failed", "The service rejected this credential.");
       }
       if (probe.type !== "open") return yield* probeFailure(probe, displayName);
+      // A typed key goes into Accounts, Allowed like any new key, and the connector binds it.
+      const keptId =
+        entered.type === "entered" && Option.isSome(accounts) && new URL(url).protocol === "https:"
+          ? (yield* accounts.value
+              .save({
+                name: accountName(displayName),
+                details: {
+                  kind: "api-key",
+                  sites: [new URL(url).origin],
+                  auth: connectorKeyAuth(credentialAuth),
+                },
+                secrets: { token: { type: "scient", value } },
+              })
+              .pipe(
+                Effect.mapError(() =>
+                  extensionsError("state-unavailable", "Accounts couldn't keep this key."),
+                ),
+              )).accountId
+          : undefined;
+      if (keptId !== undefined) keptAccount = keptId;
       const credentialRef =
         entered.type === "bound"
           ? entered.secretRef
-          : yield* credentials.put(owner, entered.strategy, new TextEncoder().encode(value), {
-              label: `${displayName} credential`,
-            });
-      auth = { ...credentialAuth, credentialRef };
+          : keptId !== undefined
+            ? accountTokenRef(keptId)
+            : yield* credentials.put(owner, entered.strategy, new TextEncoder().encode(value), {
+                label: `${displayName} credential`,
+              });
+      auth = {
+        ...credentialAuth,
+        ...(keptId !== undefined ? { storage: "bound" as const } : {}),
+        credentialRef,
+      };
       status = "connected";
     } else {
       const probe = yield* Effect.promise((signal) => probeConnector({ url, fetch, signal }));
@@ -2272,11 +2435,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     // commit removes the credential so nothing is left unreferenced.
     const created = yield* commitNewRecord(record).pipe(
       Effect.tapError(() =>
-        "credentialRef" in auth &&
-        auth.credentialRef !== undefined &&
-        !(auth.type === "credential" && auth.storage === "bound")
-          ? credentials.remove(auth.credentialRef).pipe(Effect.ignore)
-          : Effect.void,
+        keptAccount !== undefined && Option.isSome(accounts)
+          ? accounts.value.remove(keptAccount).pipe(Effect.ignore)
+          : "credentialRef" in auth &&
+              auth.credentialRef !== undefined &&
+              !(auth.type === "credential" && auth.storage === "bound")
+            ? credentials.remove(auth.credentialRef).pipe(Effect.ignore)
+            : Effect.void,
       ),
     );
     yield* publishChange;
@@ -2629,10 +2794,40 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         ),
       ),
     );
+  /** Each sign-in flow's waiters and, briefly, how it ended, by its OAuth `state`. */
+  const signInWaiters = new Map<string, Set<Deferred.Deferred<"connected" | "failed">>>();
+  const signInOutcomes = new Map<string, "connected" | "failed">();
+  const signInEnded: NonNullable<ConnectorRuntimeShape["signInEnded"]> = (state) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const waiter = Deferred.makeUnsafe<"connected" | "failed">();
+        const ended = signInOutcomes.get(state);
+        if (ended !== undefined) Deferred.doneUnsafe(waiter, Exit.succeed(ended));
+        const waiters = signInWaiters.get(state) ?? new Set();
+        waiters.add(waiter);
+        signInWaiters.set(state, waiters);
+        return waiter;
+      }),
+      (waiter) => Deferred.await(waiter),
+      (waiter) =>
+        Effect.sync(() => {
+          const waiters = signInWaiters.get(state);
+          waiters?.delete(waiter);
+          if (waiters?.size === 0) signInWaiters.delete(state);
+        }),
+    );
   const completeSignIn: ConnectorRuntimeShape["completeSignIn"] = (query) =>
     completeSignInSteps(query).pipe(
       Effect.tap((result) => {
         const end = signInEnds.get(result);
+        if (query.state !== undefined) {
+          const outcome = result.outcome === "connected" ? "connected" : "failed";
+          // Kept a little while, for a waiter that starts just after the callback.
+          signInOutcomes.set(query.state, outcome);
+          for (const old of [...signInOutcomes.keys()].slice(0, -50)) signInOutcomes.delete(old);
+          for (const waiter of signInWaiters.get(query.state) ?? [])
+            Deferred.doneUnsafe(waiter, Exit.succeed(outcome));
+        }
         return recordExtensionEvents([
           {
             name: "extension.sign_in.finished",
@@ -3399,6 +3594,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
     startSignIn,
     completeSignIn,
+    signInEnded,
     update: Effect.fn("ConnectorRuntime.update")(function* (input) {
       if (input.enabled === true) {
         const record = yield* requireRecord(input.connectorId);
@@ -3412,6 +3608,95 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const availability =
         input.availability === undefined ? undefined : yield* checkAvailability(input.availability);
       const restarts = input.restart === true || input.localSetup !== undefined;
+      // A key connector moves to another Accounts key only once that key works for it here.
+      // A key connector moves to another key only once the service accepts it; until then the
+      // working key stays. A typed key goes to Accounts where its address allows, else it is owned.
+      const rebind =
+        input.credentialRef === undefined && input.credentialValue === undefined
+          ? undefined
+          : yield* Effect.gen(function* () {
+              const record = yield* requireRecord(input.connectorId);
+              const auth = record.auth;
+              if (auth.type !== "credential")
+                return yield* extensionsError("invalid-input", "This service doesn't use a key.");
+              const origin = new URL(record.url).origin;
+              const value =
+                input.credentialRef !== undefined
+                  ? Option.isSome(accounts)
+                    ? Redacted.value(
+                        yield* accounts.value
+                          .resolveBound(input.credentialRef, {
+                            kind: "connector",
+                            connectorId: record.connectorId,
+                            origin,
+                            auth: connectorKeyAuth(auth),
+                          })
+                          .pipe(
+                            Effect.mapError(() =>
+                              extensionsError(
+                                "invalid-input",
+                                "This key is unavailable for this service.",
+                              ),
+                            ),
+                          ),
+                      )
+                    : yield* extensionsError(
+                        "unsupported",
+                        "Accounts is unavailable on this server.",
+                      )
+                  : input.credentialValue!;
+              if (!enteredSecrets(auth.strategy, value).every(isProtectableCredential))
+                return yield* tooShort("credential");
+              const probe = yield* Effect.promise((signal) =>
+                probeConnector({
+                  signal,
+                  url: record.url,
+                  fetch: controlFetch(policyOf(record)),
+                  headers: credentialHeadersFor(auth, value),
+                }),
+              );
+              if (probe.type === "auth-required")
+                return yield* extensionsError("sign-in-failed", "The service rejected this key.");
+              if (probe.type !== "open") return yield* probeFailure(probe, record.displayName);
+              const ref =
+                input.credentialRef ??
+                (origin.startsWith("https://") && Option.isSome(accounts)
+                  ? accountTokenRef(
+                      (yield* accounts.value
+                        .save({
+                          name: accountName(record.displayName),
+                          details: {
+                            kind: "api-key",
+                            sites: [origin],
+                            auth: connectorKeyAuth(auth),
+                          },
+                          secrets: { token: { type: "scient", value } },
+                        })
+                        .pipe(
+                          Effect.mapError(() =>
+                            extensionsError(
+                              "state-unavailable",
+                              "Accounts couldn't keep this key.",
+                            ),
+                          ),
+                        )).accountId,
+                    )
+                  : undefined);
+              const owned =
+                ref === undefined
+                  ? yield* credentials.put(
+                      { type: "connector", connectorId: record.connectorId },
+                      auth.strategy,
+                      new TextEncoder().encode(value),
+                      { label: `${record.displayName} credential` },
+                    )
+                  : undefined;
+              return {
+                ref: ref ?? owned!,
+                storage: ref ? "bound" : "owned",
+                previous: auth,
+              } as const;
+            });
       const commit = Effect.gen(function* () {
         let local: ConnectorRecord["local"];
         if (input.localSetup !== undefined) {
@@ -3437,6 +3722,22 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
             ...(availability === undefined ? {} : { availability }),
+            ...(rebind === undefined || current.auth.type !== "credential"
+              ? {}
+              : {
+                  auth: {
+                    type: "credential" as const,
+                    strategy: current.auth.strategy,
+                    ...(current.auth.headerName === undefined
+                      ? {}
+                      : { headerName: current.auth.headerName }),
+                    storage: rebind.storage,
+                    credentialRef: rebind.ref,
+                  },
+                  status: "connected" as const,
+                  authRevision: current.authRevision + 1,
+                  lastError: undefined,
+                }),
             // A restart asked for after the person signed in starts with the new session.
             ...(nextLocal === undefined
               ? {}
@@ -3455,6 +3756,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       yield* input.localSetup === undefined
         ? commit
         : authoring.exclusive(input.connectorId)(commit);
+      if (rebind !== undefined) {
+        sessions.dropConnector(input.connectorId);
+        rejectedCredentialFingerprints.delete(input.connectorId);
+        if (
+          rebind.previous.type === "credential" &&
+          rebind.previous.storage === "owned" &&
+          rebind.previous.credentialRef !== rebind.ref
+        )
+          yield* credentials.remove(rebind.previous.credentialRef).pipe(Effect.ignore);
+        yield* publishChange;
+      }
       // Turned off, the person has dealt with the refused sign-in: it meets the empty server.
       // Under the lifecycle lock, so a refresh already running when it was turned off (which
       // publishes its refusal under that lock) settles first and cannot bring the refusal back.

@@ -50,6 +50,8 @@ export interface LocalStart {
   readonly credentials: CredentialSet;
   /** Which sign-in the program's session files came from, for a connector that signs in. */
   readonly signInGeneration?: number;
+  /** Everything it holds now, tokens minted since it started included, read at each redaction. */
+  readonly liveCredentials?: () => CredentialSet;
 }
 
 /**
@@ -65,6 +67,14 @@ export interface LocalSignInHandler {
   >;
   /** What the agent reads when the call still finds the session ended after a new sign-in. */
   readonly stillExpired: Effect.Effect<string>;
+  /**
+   * A request the program sent Scient itself (`scient/…`), such as a read Scient makes with the
+   * session. Its answer goes back to the program alone; the agent never sees either.
+   */
+  readonly hostRequest?: (
+    method: string,
+    params: unknown,
+  ) => Effect.Effect<unknown, { readonly message: string }>;
 }
 
 export type LocalConnectorEvent =
@@ -93,6 +103,7 @@ interface Session {
   scope: Scope.Closeable;
   process: DuplexProcessHandle;
   credentials: CredentialSet;
+  live: (() => CredentialSet) | undefined;
   readonly posts: Set<PostChannel>;
   get: Channel | undefined;
   readonly backlog: string[];
@@ -124,6 +135,7 @@ interface Session {
 
 type Routed =
   | { readonly type: "none" }
+  | { readonly type: "host"; readonly message: JsonMessage }
   | { readonly type: "ready" }
   | { readonly type: "expired"; readonly key: string; readonly again: boolean }
   | {
@@ -162,6 +174,10 @@ const isResponse = (message: JsonMessage) =>
 
 const isRequest = (message: JsonMessage) => "method" in message && "id" in message;
 
+/** Requests a program addresses to Scient rather than to the agent. */
+const isHostRequest = (message: JsonMessage) =>
+  isRequest(message) && typeof message.method === "string" && message.method.startsWith("scient/");
+
 /** A tool result whose first text starts with the session-ended marker. */
 const signInExpired = (message: JsonMessage) => {
   const result = message.result;
@@ -185,6 +201,9 @@ const toolError = (id: unknown, text: string): JsonMessage => ({
   id,
   result: { isError: true, content: [{ type: "text", text }] },
 });
+
+/** What the program holds right now: a token minted after it started is hidden too. */
+const credentialsOf = (session: Session) => session.live?.() ?? session.credentials;
 
 /** Lines that are not JSON objects (a program logging on stdout) are not messages. */
 const messageOf = (line: string): JsonMessage | undefined => {
@@ -283,6 +302,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       }
       return first ? { type: "ready" } : { type: "none" };
     }
+    if (isHostRequest(message)) return { type: "host", message };
     deliver(session, message, undefined);
     return { type: "none" };
   };
@@ -354,7 +374,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     // Its last words explain the exit; they may still be in the pipe.
     yield* Deferred.await(session.stderrDone).pipe(Effect.timeout("2 seconds"), Effect.ignore);
     if (session.stopping) return;
-    const detail = lastLine(redactText(session.stderr, session.credentials));
+    const detail = lastLine(redactText(session.stderr, credentialsOf(session)));
     const reason = detail ? `: ${detail}` : ` (exit code ${code})`;
     const message = session.initialized
       ? `${session.identity.displayName} stopped${reason}.`
@@ -362,6 +382,24 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     // Recorded first, so the failure is visible by the time a waiting agent hears of it.
     yield* options.onEvent({ type: "failed", connectorId: session.identity.connectorId, message });
     yield* stopSession(session, message);
+  });
+
+  /** Answers the program's own request to Scient on its stdin; a replaced process gets nothing. */
+  const answerHost = Effect.fn("LocalConnectorHost.answerHost")(function* (
+    session: Session,
+    process: DuplexProcessHandle,
+    message: JsonMessage,
+  ) {
+    const handler = session.signIn?.hostRequest;
+    const answer =
+      handler === undefined
+        ? rpcError(message.id, `Scient has no ${String(message.method)} for this connector.`)
+        : yield* handler(String(message.method), message.params).pipe(
+            Effect.map((result) => ({ jsonrpc: "2.0", id: message.id, result })),
+            Effect.catch((error) => Effect.succeed(rpcError(message.id, error.message))),
+          );
+    if (session.process === process && !session.stopping)
+      yield* writeTo(process, [answer]).pipe(Effect.ignore);
   });
 
   const readStdout = Effect.fn("LocalConnectorHost.readStdout")(function* (
@@ -383,6 +421,8 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
         else if (routed?.type === "expired")
           // Detached: signing in again replaces this process, which ends this reader.
           yield* expired(session, routed.key, routed.again).pipe(Effect.forkDetach);
+        else if (routed?.type === "host")
+          yield* answerHost(session, process, routed.message).pipe(Effect.forkIn(session.scope));
         newline = buffer.indexOf("\n");
       }
       if (buffer.length > MAX_LINE_CHARS) {
@@ -408,7 +448,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
         : options.onEvent({
             type: "stderr",
             connectorId: session.identity.connectorId,
-            text: redactText(text, session.credentials),
+            text: redactText(text, credentialsOf(session)),
           });
     return process.stderr.pipe(
       Stream.decodeText(),
@@ -518,6 +558,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       scope,
       process,
       credentials: prepared.credentials,
+      live: prepared.liveCredentials,
       posts: new Set(),
       get: undefined,
       backlog: [],
@@ -594,6 +635,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     session.scope = next.scope;
     session.process = next.process;
     session.credentials = prepared.credentials;
+    session.live = prepared.liveCredentials;
     session.signInGeneration = prepared.signInGeneration;
     session.stderr = "";
     yield* Scope.close(previous, Exit.void);

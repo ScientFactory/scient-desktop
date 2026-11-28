@@ -1,6 +1,7 @@
 import { type AccountTarget, type AccountUseAction, type AccountSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
+import { needIdOf, needsYou, personTimeLeft } from "./cardAllowance.ts";
 
 export const authorize = Effect.fn("AccountsAgent.authorize")(function* (
   scope: AccountSessionScope,
@@ -8,12 +9,30 @@ export const authorize = Effect.fn("AccountsAgent.authorize")(function* (
   action: AccountUseAction,
 ) {
   const accounts = yield* AccountsService;
-  const decision = yield* accounts.authorize(scope, target, action);
-  if (decision.decision === "denied")
+  const decision = yield* accounts.authorize(scope, target, action, {
+    waitMs: yield* personTimeLeft,
+  });
+  if (decision.decision === "denied") {
+    // Nobody answered: it waits on its row for the person, once.
+    if (
+      decision.reason === "timed-out" ||
+      (scope.unattended && decision.reason !== "out-of-scope" && decision.reason !== "pinned")
+    )
+      yield* needsYou(target, scope, action);
     return yield* fail(
       "denied",
-      "This account is unavailable to this session. Change its access in Settings → Accounts & secrets.",
+      decision.reason === "pinned"
+        ? "This scheduled task runs only as its pinned sign-in, in its pinned profile."
+        : decision.reason === "out-of-scope"
+          ? "This account isn't available in this project."
+          : decision.reason === "timed-out" || scope.unattended
+            ? "The user wasn't there to allow it. It waits for them on the account; carry on without it."
+            : "The user didn't allow this account here. Don't ask again this turn.",
     );
+  }
+  // Allowed now: an entry an earlier unanswered card left is settled.
+  if (action !== "sign-in")
+    yield* accounts.clearNeedsYou(needIdOf(target, action)).pipe(Effect.ignore);
 });
 export const withAccountUse = Effect.fn("AccountsAgent.use")(function* <A, E, R>(
   scope: AccountSessionScope,

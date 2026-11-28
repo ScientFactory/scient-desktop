@@ -8,7 +8,7 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
-import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
+import { connectorKeyFits } from "@t3tools/shared/scientConnectorKeys";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useState } from "react";
 
@@ -29,7 +29,7 @@ import { NativeSelect } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
-import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
+import { ApiKeyAccountPicker, keyOptions } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { useAccountsExternalIdentities } from "../accounts/useAccountsExternalIdentities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -279,12 +279,13 @@ function RemoteConnectorDialog({
   const accountsQuery = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
   const externalIdentitiesQuery = useAccountsExternalIdentities(environmentId, open && github);
   const matchingAccounts = accountsQuery.isSuccess
-    ? (accountsQuery.data?.accounts.filter(
-        ({ details }) =>
-          details.kind === "api-key" &&
-          details.sites.some((site) =>
-            siteMatchesUrl(site, entry ? draft.remoteUrl : draft.url.trim()),
-          ),
+    ? (accountsQuery.data?.accounts.filter((account) =>
+        connectorKeyFits(account, {
+          connectorId: "",
+          url: entry ? draft.remoteUrl : draft.url.trim(),
+          strategy: draft.strategy,
+          headerName: draft.headerName.trim() || undefined,
+        }),
       ) ?? [])
     : [];
   const managedElsewhereRows =
@@ -692,10 +693,13 @@ function RemoteConnectorDialog({
                           id="connector-account"
                           value={draft.accountId}
                           emptyLabel={gt("Enter a key")}
-                          options={matchingAccounts.map((account) => ({
-                            value: account.accountId,
-                            name: account.name,
-                          }))}
+                          options={keyOptions(
+                            { accounts: matchingAccounts, sameKeys: accountsQuery.data?.sameKeys },
+                            { kind: "connector", id: "" },
+                            () => true,
+                            undefined,
+                            draft.accountId,
+                          )}
                           {...invalidProps("connector-account", shownErrors.accountId)}
                           onChange={(event) => patch({ accountId: event.target.value, value: "" })}
                         />

@@ -118,3 +118,18 @@ it("leaves imported and copied rows alone: they never said the session was there
   expect(ended([{ domain: "login.example.com", httpOnly: true }])).toEqual([]);
   expect(ended([])).toEqual([]);
 });
+it("leaves Google's rows to Google's own answer, whatever their cookies do", () => {
+  const google: AccountSummary = {
+    ...account,
+    details: {
+      kind: "website",
+      sites: ["google.com"],
+      username: "a@example.com",
+      profileId: "work",
+    },
+  };
+  // regression: an empty readable jar marked a Google row signed out that Google still accepted.
+  expect(
+    endedWebsiteSessions([google], [{ profileId: "work", cookies: [] }], new Set(), now),
+  ).toEqual([]);
+});

@@ -21,6 +21,9 @@ import { usePreparedConnection } from "../../state/session";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserChrome } from "./BrowserBar";
 import { BrowserTabMenu } from "./BrowserTabMenu";
+// SCIENT-FORK:START — Scient Accounts: sign in on this tab with a saved login.
+import { BrowserSignInKey } from "./BrowserSignInKey";
+// SCIENT-FORK:END
 import { browserTabTitle, browserTabUrl, latestBrowserTab } from "./browserTabs";
 import {
   PreviewStreamWebView,
@@ -185,6 +188,17 @@ function BrowserPreviewScreen({
                   />
                 </Menu>
               ) : null}
+              {/* SCIENT-FORK:START — Scient Accounts: sign in on this tab with a saved login. */}
+              {tab && ready ? (
+                <BrowserSignInKey
+                  environmentId={environmentId}
+                  threadId={threadId}
+                  tabId={tab.tabId}
+                  url={browserTabUrl(tab)}
+                  profileId={tab.profileId}
+                />
+              ) : null}
+              {/* SCIENT-FORK:END */}
               {tab ? (
                 <BrowserTabMenu
                   environmentId={environmentId}

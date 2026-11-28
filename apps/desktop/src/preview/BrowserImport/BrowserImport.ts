@@ -143,6 +143,9 @@ export class BrowserImport extends Context.Service<
       readonly scope: string;
       readonly persistent: boolean;
       readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
+      // SCIENT-FORK:START — Scient Accounts: an agent's refresh asks, as it writes, if it stands.
+      readonly mayWrite?: Effect.Effect<boolean>;
+      // SCIENT-FORK:END
     }) => Effect.Effect<BrowserImportResult, BrowserImportFailedError | BrowserImportPolicyError>;
   }
 >()("@t3tools/desktop/preview/BrowserImport/BrowserImport") {}
@@ -222,7 +225,6 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
       }
       continue;
     }
-    // SCIENT-FORK:END
     const written = yield* Effect.tryPromise({
       try: () =>
         session.cookies.set({
@@ -330,8 +332,16 @@ export const make = Effect.gen(function* BrowserImportMake() {
       readonly scope: string;
       readonly persistent: boolean;
       readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
+      readonly mayWrite?: Effect.Effect<boolean>;
     },
   ) {
+    // Read, and maybe waited on the OS meanwhile: asked once more at the write (round 6f).
+    if (input.mayWrite && !(yield* input.mayWrite))
+      return yield* new BrowserImportFailedError({
+        sourceId: definition.id,
+        reason: "writeFailed",
+        cause: "It no longer stands.",
+      });
     const session = yield* browserSession
       .getSession(input.scope, input.persistent, input.namespace)
       .pipe(

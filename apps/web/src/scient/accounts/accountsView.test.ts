@@ -5,16 +5,23 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   AccountId,
+  accountKeyReference,
   BrowserProfileId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
+  type AccountsSnapshot,
   type ConnectorSummary,
   ConnectorId,
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  activityItemLine,
+  activityWithChanges,
+  captureFollowUp,
   accountStatusLabel,
+  signInInterrupted,
+  wrongAccountField,
   fillableAccounts,
   isBrowserSignIn,
   renamedSourceLabel,
@@ -28,6 +35,7 @@ import {
   libraryLinkTemplate,
   githubIdentities,
   providerManagedAccounts,
+  signedOutAgents,
   steadyProviderRows,
   type ProviderRowsCache,
   accountCatalogue,
@@ -273,7 +281,11 @@ describe("Accounts decisions", () => {
       OPENALEX_API_KEY: { type: "query", name: "api_key" },
       UNPAYWALL_EMAIL: { type: "query", name: "email" },
     });
-    expect(secretFields(catalogueDetails(null, "example.com"))).toEqual(["password", "totp"]);
+    expect(secretFields(catalogueDetails(null, "example.com"))).toEqual([
+      "password",
+      "totp",
+      "recovery",
+    ]);
     const gh = forms.find((form) => form.kind === "cli-login" && form.tool === "gh");
     expect(gh && secretFields(gh)).toEqual(["GH_TOKEN"]);
     expect(
@@ -387,6 +399,24 @@ it("fills each login box with a saved username that fits it", () => {
   // A box for a 9-digit ID takes the ID row even when an email row comes first.
   expect(fillChoice([email, id], [{ ...textBox, pattern: "[0-9]{9}" }]).account).toBe(id);
   expect(fillChoice([email, id], [textBox]).account).toBe(email);
+});
+
+it("fills the login whose username fits the box, and none when no saved username fits", () => {
+  const signIn = (username: string, refused = false) => ({
+    details: { kind: "website" as const, sites: ["huji.ac.il"], username },
+    secrets: {},
+    ...(refused
+      ? { signIn: { state: "password-rejected" as const, at: "2026-11-26T00:00:00Z" } }
+      : {}),
+  });
+  const id = signIn("123456789");
+  const email = signIn("person@mail.huji.ac.il");
+  const emailBox = [{ email: true, minLength: -1, maxLength: -1, pattern: "" }];
+  expect(fillChoice([id, email], emailBox)).toEqual({ account: email, otherUsername: undefined });
+  expect(fillChoice([id], emailBox).account).toBeUndefined();
+  expect(fillChoice([id, signIn(email.details.username, true)], emailBox).account).toBeUndefined();
+  // A password step with no username box still fills the site's login.
+  expect(fillChoice([id], []).account).toBe(id);
 });
 
 it("fills the newest saved password of the username, and never one the site refused", () => {
@@ -561,7 +591,7 @@ describe("toggleScope", () => {
   });
 });
 
-it("lists only signed-in provider connections, deduplicating apps across plugins", () => {
+it("lists provider connections that are signed in or refused, deduplicating apps across plugins", () => {
   const base: ServerProvider = {
     instanceId: ProviderInstanceId.make("synthetic-claude"),
     driver: ProviderDriverKind.make("claudeAgent"),
@@ -610,9 +640,18 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
     ],
   };
   const first = rows([base, codex]);
-  expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
-    ["codex", "Connected app", codex.instanceId],
-    ["claude", "Signed in", base.instanceId],
+  // A Claude connection that needs signing in again shows from the first load, saying so.
+  expect(
+    first.rows.map((row) => [
+      row.kind,
+      row.name,
+      row.instanceId,
+      "connection" in row ? row.connection : undefined,
+    ]),
+  ).toEqual([
+    ["codex", "Connected app", codex.instanceId, undefined],
+    ["claude", "Sign in required", base.instanceId, "needs-sign-in"],
+    ["claude", "Signed in", base.instanceId, undefined],
   ]);
   // Droid's own word that it holds the sign-in; a local server or one asking to sign in is not.
   expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
@@ -652,15 +691,21 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
   expect(
     rows([base, codex], first.next, [base, (({ plugins: _, ...rest }) => rest)(codex)]).rows,
   ).toEqual(first.rows);
-  // A Claude server still starting keeps its place; one that asks to sign in again leaves.
+  // A known Claude server keeps its place, saying it is being checked or needs signing in again.
   const restarting = (status: "pending" | "needs-auth") => ({
     ...base,
     mcpServers: [{ name: "Signed in", status, scope: "claudeai" as const }],
   });
-  expect(rows([restarting("pending"), codex], first.next).rows).toEqual(first.rows);
+  const states = (result: ReturnType<typeof rows>) =>
+    result.rows.map((row) => [row.kind, "connection" in row ? row.connection : undefined]);
+  expect(states(rows([restarting("pending"), codex], first.next))).toEqual([
+    ["codex", undefined],
+    ["claude", "checking"],
+  ]);
   expect(rows([restarting("pending"), codex]).rows.map((row) => row.kind)).toEqual(["codex"]);
-  expect(rows([restarting("needs-auth"), codex], first.next).rows.map((row) => row.kind)).toEqual([
-    "codex",
+  expect(states(rows([restarting("needs-auth"), codex], first.next))).toEqual([
+    ["codex", undefined],
+    ["claude", "needs-sign-in"],
   ]);
 });
 
@@ -778,6 +823,19 @@ it("lets an agent's tab fill only sign-ins that agent may use", () => {
 describe("account status", () => {
   const at = "2026-10-30T10:00:00.000Z";
   const relative = () => "2h ago";
+  it("says Interrupted for a Needs you row that nothing waits on, as after a restart", () => {
+    const row = {
+      accountId: AccountId.make("acc_huji0001"),
+      signIn: { state: "needs-you" as const, at },
+    };
+    const handoff = { accountId: row.accountId } as NonNullable<
+      AccountsSnapshot["handoffs"]
+    >[number];
+    const label = (snapshot: Parameters<typeof signInInterrupted>[1]) =>
+      accountStatusLabel(row, relative, undefined, signInInterrupted(row, snapshot));
+    expect(label({ handoffs: [handoff] })).toBe("Needs you");
+    expect(label({ handoffs: [], needsYou: [] })).toBe("Interrupted");
+  });
   it("puts what needs the user first, then the last check", () => {
     // A refusal outlasts a session seen working (the server keeps it), so the row says so.
     expect(accountStatusLabel({ signIn: { state: "password-rejected", at } }, relative)).toBe(
@@ -815,14 +873,20 @@ describe("account status", () => {
     ).toBe("Couldn't check");
     expect(
       accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, unreachable: true } },
+        relative,
+      ),
+    ).toBe("Can't reach");
+    expect(
+      accountStatusLabel(
         { signIn: { state: "unknown", at, detail: "Password changed", by: "action" } },
         relative,
       ),
     ).toBe("Password changed");
     expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
-    // A failed attempt holds automatic sign-ins: the row says what the person can do.
+    // A failed attempt holds automatic sign-ins: the row says what happened, and when.
     expect(accountStatusLabel({ signIn: { state: "failed", at } }, relative)).toBe(
-      "Sign in needed",
+      "Sign-in failed · 2h ago",
     );
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(
@@ -903,6 +967,30 @@ describe("API keys", () => {
       { connectionId: "groq", name: "Groq" },
       { connectionId: "local", name: "Local", origin: "https://models.example" },
     ],
+    textGenerators: {
+      titles: { label: "Titles", apiKey: accountKeyReference(AccountId.make("acc_openai01")) },
+      local: { apiKey: "" },
+    },
+    connectors: [
+      {
+        connectorId: "con_search" as never,
+        displayName: "Search MCP",
+        auth: {
+          type: "credential",
+          strategy: "bearer",
+          storage: "bound",
+          accountId: AccountId.make("acc_openai01"),
+        },
+      },
+    ],
+    libraryKeys: { openAlex: "acc_openai01" },
+    keyRefusals: [
+      {
+        accountId: AccountId.make("acc_openai01"),
+        use: { kind: "connector", id: "con_search" },
+        at: "2026-11-26T00:00:00.000Z",
+      },
+    ],
     plainKeys: [
       { file: "/p/.env", name: "WANDB_API_KEY", kept: false },
       { file: "/home/.zshrc", name: "WANDB_API_KEY", kept: false },
@@ -916,7 +1004,7 @@ describe("API keys", () => {
       // Custom models keep their keys in Accounts' sealed store: kept, even without an account.
       ["Groq", ["Custom models"], undefined],
       ["Local", ["Custom models"], undefined],
-      ["OpenAI", ["Codex"], undefined],
+      ["OpenAI", ["Codex", "Text generation", "Extensions", "Library"], undefined],
       // Its account was removed, so the variable's last key is only in the agent.
       ["HF_TOKEN", ["Work"], "Only in Work settings"],
       // Linked by agent and variable: Work's variable of the same name is its own key.
@@ -925,6 +1013,12 @@ describe("API keys", () => {
       ["WANDB_API_KEY", [], "Only in /p/.env"],
       ["WANDB_API_KEY", [], "Only in /home/.zshrc"],
     ]);
+    const openAi = rows.find((row) => row.name === "OpenAI");
+    // The connector that refused it says so; the file keeps its own copy.
+    expect(openAi?.uses.filter((use) => use.refused).map((use) => use.consumerName)).toEqual([
+      "Search MCP",
+    ]);
+    expect(openAi?.stored === "accounts" && openAi.files).toEqual(["/p/.env"]);
     expect(rows.find((row) => row.name === "OpenAI")?.uses[0]?.link).toEqual({
       instanceId: "codex",
       variable: "OPENAI_API_KEY",
@@ -1097,4 +1191,123 @@ it("offers back the latest key kept for each setting of this kind of agent", () 
     newer,
     field,
   ]);
+});
+
+it("offers Reconnect for an agent the person turned on that reports no sign-in", () => {
+  const agent = (id: string, fields: Partial<ServerProvider>): ServerProvider => ({
+    instanceId: ProviderInstanceId.make(id),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "unauthenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    ...fields,
+  });
+  const listed = signedOutAgents([
+    agent("signed-out", {}),
+    agent("signed-in", { auth: { status: "authenticated" } }),
+    agent("unchecked", { auth: { status: "unknown" } }),
+    agent("turned-off", { enabled: false }),
+    agent("keyless", { auth: { status: "unauthenticated", required: false } }),
+  ]);
+  expect(listed.map(({ instanceId }) => instanceId)).toEqual(["signed-out"]);
+});
+
+describe("the account field to fix", () => {
+  it("names the field that keeps a sign-in from saving", () => {
+    const site = (sites: string[], loginUrl?: string) => ({
+      kind: "website" as const,
+      sites,
+      ...(loginUrl ? { loginUrl } : {}),
+    });
+    expect(wrongAccountField(" ", site(["example.com"]))).toBe("Check the name.");
+    expect(wrongAccountField("Lab", site(["not a site"]))).toContain("Check the site");
+    expect(wrongAccountField("Lab", site(["example.com"], "example.com/login"))).toContain(
+      "sign-in address",
+    );
+    expect(
+      wrongAccountField("Lab", { ...site(["example.com"]), proxyUrl: "https://proxy.example/" }),
+    ).toContain("library link");
+    expect(wrongAccountField("Lab", site(["https://example.com"]))).toBeUndefined();
+  });
+});
+
+describe("what a typed sign-in leads to", () => {
+  const login = (accountId: string, username: string, refused = false) =>
+    ({
+      accountId,
+      name: "tss2.ada.huji.ac.il",
+      details: { kind: "website", sites: ["tss2.ada.huji.ac.il"], username },
+      secrets: {
+        password: {
+          source: { type: "scient" },
+          ...(refused ? { refusedAt: "2026-11-26T00:00:00.000Z" } : {}),
+        },
+      },
+      controls: {
+        access: "allowed",
+        permission: "full",
+        visibility: "hidden",
+        scope: { type: "all-projects" },
+      },
+      status: "ready",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      updatedAt: "2026-11-01T00:00:00.000Z",
+    }) as unknown as Parameters<typeof captureFollowUp>[1][number];
+
+  it("updates the same login with no card, and saves another username beside a refused one", () => {
+    // The same login with another password: updated once it works, no offer card.
+    expect(captureFollowUp({ result: "password-changed", accountId: "acc_one" }, [])).toBe(
+      "update",
+    );
+    // Several tenants it could be: the person picks, on the card.
+    expect(
+      captureFollowUp(
+        { result: "password-changed", accountId: "acc_one", choices: ["acc_one", "acc_two"] },
+        [],
+      ),
+    ).toBe("offer");
+    // Another username works where a saved one was refused: its own login.
+    expect(captureFollowUp({ result: "new" }, [login("acc_old", "cc\\corcosy", true)])).toBe(
+      "save-new",
+    );
+    // A brand-new sign-in is still offered, and the saved password needs nothing.
+    expect(captureFollowUp({ result: "new" }, [login("acc_old", "cc\\corcosy")])).toBe("offer");
+    expect(captureFollowUp({ result: "same", accountId: "acc_old" }, [])).toBe("none");
+  });
+});
+
+describe("an account's Activity with agents' changes", () => {
+  it("lists what an agent changed among the uses, newest first, with its own words", () => {
+    const target = { type: "account", accountId: AccountId.make("acc_activity1") } as const;
+    const items = activityWithChanges(
+      [
+        {
+          at: "2026-11-26T09:00:00.000Z",
+          target,
+          action: "sign-in",
+          decision: "allowed",
+        } as Parameters<typeof activityWithChanges>[0][number],
+      ],
+      [
+        { at: "2026-11-26T10:00:00.000Z", target, change: "remove", threadId: "thread-a" as never },
+        {
+          at: "2026-11-26T11:00:00.000Z",
+          target: { type: "account", accountId: AccountId.make("acc_other0001") },
+          change: "edit",
+        },
+      ],
+      target,
+    );
+    expect(items.map((item) => item.at)).toEqual([
+      "2026-11-26T10:00:00.000Z",
+      "2026-11-26T09:00:00.000Z",
+    ]);
+    expect(activityItemLine(items[0]!, "Lab chat")).toBe("Removed by an agent · Lab chat");
+  });
 });

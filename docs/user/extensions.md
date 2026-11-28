@@ -49,9 +49,11 @@ sign-in, **Advanced** lets you use an OAuth client that you registered with the
 service yourself.
 
 With **API key**, choose **Use an existing account** in the key picker when a
-matching API-key account is saved in **Settings → Accounts & secrets**. Updating that
-account's key updates the service too. Account access set to **Off**, or the global
-**Agent access** switch, prevents its use.
+matching API-key account is saved in **Settings → Accounts & secrets**, or paste a key, which
+Scient saves there as a new API key (an `https://` service only). Updating that account's key
+updates the service too. Account access set to **Off**, or the global **Agent access** switch,
+prevents its use. A key typed into a service before Accounts held them moved there once, as a
+key for that service only: Accounts shows it as **Only for** the service, and agents can't see it.
 
 ### GitHub
 
@@ -143,7 +145,8 @@ A service's page has three cards.
 
 **Connection** shows whether the service is ready, needs sign-in, or is missing
 its key. **Sign in** or **Reconnect** appears when signing in is possible; use
-**Reconnect** to switch accounts or after the service revoked access. The
+**Reconnect** to switch accounts or after the service revoked access. A service with a key has a
+**Key** row: choose another saved key or **Add new…** there when the key is gone or refused. The
 **⋯** menu offers **Test**, which checks that the service answers.
 
 - **Use with agents** turns the service on or off for every agent.

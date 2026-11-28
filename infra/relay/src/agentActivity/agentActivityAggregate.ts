@@ -42,6 +42,9 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
+    // SCIENT-FORK:START — Scient Accounts: a silent row stays silent in every aggregate.
+    ...(state.silent === true ? { silent: true as const } : {}),
+    // SCIENT-FORK:END
   };
 }
 

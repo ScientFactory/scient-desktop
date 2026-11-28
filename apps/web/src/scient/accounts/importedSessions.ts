@@ -1,6 +1,6 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_1,
   GOOGLE_SITE,
   type AccountSummary,
   type EnvironmentId,
@@ -101,7 +101,7 @@ async function recordRows(environmentId: EnvironmentId, profileId: string, from:
     { environmentId, input: { omitExternalIdentities: true } },
     { reportFailure: false },
   ).catch(() => null);
-  if (read?._tag !== "Success" || (read.value.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL) return;
+  if (read?._tag !== "Success" || (read.value.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL_1) return;
   const sites = importedSessionSites(cookies, read.value.accounts, Date.now());
   if (sites.length === 0) return;
   await runAtomCommand(

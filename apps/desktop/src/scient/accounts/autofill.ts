@@ -19,6 +19,15 @@ export function installLoginFormDetection(
   };
   Object.defineProperty(globalThis, "__scientAccountsLogin", { configurable: true, value: state });
   let reported: string | null = null;
+  /** Login boxes already reported: the same layout drawn anew (fresh nodes) is reported again. */
+  const seen = new WeakSet<HTMLInputElement>();
+  const loginBoxes = () => {
+    const fields = loginFieldsKit.collect(Array.from(document.querySelectorAll("input")));
+    return [fields.username, fields.other, fields.password, fields.otp].flatMap((index) => {
+      const input = fields.inputs[index];
+      return input ? [input] : [];
+    });
+  };
   const observer = new MutationObserver(() => report());
   const observe = (attributeFilter: Array<string>) => {
     observer.disconnect();
@@ -31,10 +40,13 @@ export function installLoginFormDetection(
   };
   const report = (again = false) => {
     const form = loginFormReport();
-    if (!form || (form.fields === reported && !again) || !allowed()) return;
+    if (!form || !allowed()) return;
+    const boxes = loginBoxes();
+    if (form.fields === reported && !again && boxes.every((input) => seen.has(input))) return;
     // Once a login form shows, class changes can show its other tabs too.
     if (reported === null) observe([...OBSERVED, "class"]);
     reported = form.fields;
+    for (const input of boxes) seen.add(input);
     send(form);
   };
   const edited = (event: Event) => {

@@ -1,25 +1,33 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Card request ids use the operating system CSPRNG.
+import {
+  isLogin,
+  loginCandidates,
+  loginSiteKey,
+  loginTenant,
+  loginUserKey,
+} from "@t3tools/shared/scientLoginIdentity";
 import * as NodeCrypto from "node:crypto";
 import {
   AccountsError,
   DEFAULT_BROWSER_PROFILE_ID,
+  type AccountId,
+  type AccountSaveResult,
   type AccountSummary,
-  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { FetchHttpClient } from "effect/http";
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
-import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
-import { personWaitMs } from "../../../provider/ScientPersonWaitTools.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { ACCOUNT_SECRET_REQUEST_PREFIX } from "@t3tools/shared/scientAccountSecretRequest";
+import { formatAccountLink } from "@t3tools/shared/scientAccountLinks";
+import {
+  accountSecretRequestId,
+  type AccountSecretKind,
+} from "@t3tools/shared/scientAccountSecretRequest";
 import { searchUniversities } from "../../papers/universityDirectory.ts";
 import { continueWaitingPapers } from "../../papers/getPaper.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
@@ -27,6 +35,14 @@ import { accountUsage } from "./accountUse.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
+import {
+  CARD_RETURN_MS,
+  CurrentCardAllowance,
+  MIN_CARD_MS,
+  personTimeLeft,
+  startAllowance,
+  withCardAllowance,
+} from "./cardAllowance.ts";
 
 type Input = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)["scient_account_add"]["parametersSchema"]
@@ -36,71 +52,16 @@ const MAX_VALUE = 65_536;
 const fail = (message: string) => new AccountsError({ reason: "unavailable", message });
 const host = (site: string) => site.replace(/^https:\/\//, "").replace(/:\d+$/, "");
 
-/**
- * An API key the agent may already use or the user turned off, so a card is never a duplicate.
- * The same name wins over the same variable, then over a shared site.
- */
-const existingKey = (accounts: ReadonlyArray<AccountSummary>, input: Input) => {
-  const keys = accounts.flatMap((account) =>
-    account.details.kind === "api-key" ? [{ account, details: account.details }] : [],
-  );
-  return (
-    keys.find(({ account }) => account.name.toLowerCase() === input.name.toLowerCase()) ??
-    keys.find(({ details }) => input.envName !== undefined && details.envName === input.envName) ??
-    keys.find(({ details }) =>
-      (input.sites ?? []).some((site) => details.sites.some((own) => host(own) === host(site))),
-    )
-  )?.account;
-};
-
-/** The calling agent's driver, when the registry knows its instance. */
-const callerDriver = Effect.fn("AccountsAgent.callerDriver")(function* (
-  instanceId: ProviderInstanceId | undefined,
+/** An Off account the agent needs: the person's card may turn it on for agents. */
+const turnedOn = Effect.fn("AccountsAgent.turnedOn")(function* (
+  scope: AccountSessionScope,
+  account: AccountSummary,
 ) {
-  const registry = yield* Effect.serviceOption(ProviderRegistry);
-  if (instanceId === undefined || Option.isNone(registry)) return undefined;
-  const providers = yield* registry.value.getProviders;
-  return providers.find((provider) => provider.instanceId === instanceId)?.driver;
-});
-
-/** Kept between a card's close and the call's deadline, for the answer to reach the caller. */
-const CARD_RETURN_MS = 5_000;
-/** A card with less time left than this could not be answered, so it is not opened. */
-const MIN_CARD_MS = 15_000;
-
-/**
- * The time one tool call has for the person, shared by every card it opens: set when the call
- * starts, it ends for good once a card times out or the run ends under one.
- */
-interface CardAllowance {
-  readonly deadline: number;
-  readonly ended: Ref.Ref<"cancelled" | "timed_out" | undefined>;
-}
-
-const CurrentCardAllowance = Context.Reference<CardAllowance | undefined>(
-  "scient/accounts/CardAllowance",
-  { defaultValue: () => undefined },
-);
-
-const startAllowance = Effect.gen(function* () {
-  const invocation = yield* Effect.serviceOption(McpInvocationContext);
-  const driver = yield* callerDriver(Option.getOrUndefined(invocation)?.thread?.providerInstanceId);
-  return {
-    // Less than the calling agent keeps one silent tool call open.
-    deadline: (yield* Clock.currentTimeMillis) + personWaitMs(driver),
-    ended: yield* Ref.make<"cancelled" | "timed_out" | undefined>(undefined),
-  } satisfies CardAllowance;
-});
-
-/**
- * Runs a tool call that may open cards under one allowance from its start, so its cards together
- * end before the caller would drop the call. A call inside another keeps the outer allowance.
- */
-export const withCardAllowance = Effect.fn("AccountsAgent.withCardAllowance")(function* <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-) {
-  if ((yield* CurrentCardAllowance) !== undefined) return yield* effect;
-  return yield* effect.pipe(Effect.provideService(CurrentCardAllowance, yield* startAllowance));
+  const target = { type: "account" as const, accountId: account.accountId };
+  const decided = yield* (yield* AccountsService).authorize(scope, target, "credentials", {
+    waitMs: yield* personTimeLeft,
+  });
+  return decided.decision === "allowed";
 });
 
 /**
@@ -116,38 +77,89 @@ export const askInCard = Effect.fn("AccountsAgent.askInCard")(function* (
     readonly placeholder?: string;
     /** What the agent reads when the value could not be read. */
     readonly notKept: string;
+    /** What the card saves, for its few-word note; a key unless named. */
+    readonly kind?: AccountSecretKind;
   },
 ) {
   if (scope.projectId === undefined) return yield* fail(card.notKept);
   const invocation = yield* McpInvocationContext;
+  const accounts = yield* AccountsService;
+  // Nobody was there to save it: it waits for the person in Needs you, once per card and chat.
+  const needId = `save:${scope.threadId}:${card.label}`.slice(0, 200);
+  const unanswered = <S extends "cancelled" | "timed_out">(status: S) =>
+    (status === "timed_out"
+      ? accounts
+          .setNeedsYou({
+            needId,
+            name: card.label.slice(0, 120),
+            detail: "Waiting for you to save it",
+            action: "save",
+            threadId: scope.threadId,
+          })
+          .pipe(Effect.ignore)
+      : Effect.void
+    ).pipe(Effect.as({ status }));
   const allowance = (yield* CurrentCardAllowance) ?? (yield* startAllowance);
   const ended = yield* Ref.get(allowance.ended);
-  if (ended !== undefined) return { status: ended };
+  if (ended !== undefined) return yield* unanswered(ended);
   const left = allowance.deadline - (yield* Clock.currentTimeMillis) - CARD_RETURN_MS;
   if (left < MIN_CARD_MS) {
     yield* Ref.set(allowance.ended, "timed_out");
-    return { status: "timed_out" as const };
+    return yield* unanswered("timed_out" as const);
   }
+  const requestId = accountSecretRequestId(card.kind ?? "key", NodeCrypto.randomUUID());
+  yield* accounts.startCard(requestId);
   const asked = yield* (yield* OrchestratorMcpService)
     .requestSecret(invocation, {
       label: card.label,
       reason: card.reason,
       ...(card.placeholder === undefined ? {} : { placeholder: card.placeholder }),
-      clientRequestId: `${ACCOUNT_SECRET_REQUEST_PREFIX}${NodeCrypto.randomUUID()}`,
+      clientRequestId: requestId,
       timeoutMs: Math.floor(left),
     })
-    .pipe(Effect.mapError((error) => fail(error.message)));
+    .pipe(
+      Effect.mapError((error) => fail(error.message)),
+      Effect.tapError(() => accounts.recordCard(requestId, "failed")),
+      Effect.onInterrupt(() => accounts.recordCard(requestId, "failed")),
+    );
   if (asked.status === "cancelled" || asked.status === "timed_out") {
     yield* Ref.set(allowance.ended, asked.status);
   }
-  if (asked.status !== "saved") return { status: asked.status };
-  if (!("secretRef" in asked)) return yield* fail(card.notKept);
-  const value = (yield* (yield* SecretRequests)
-    .consume({ ref: asked.secretRef, projectId: scope.projectId })
-    .pipe(Effect.mapError(() => fail(card.notKept)))).trim();
-  if (value.length === 0 || value.length > MAX_VALUE)
-    return yield* fail(`${card.notKept} It was empty or longer than ${MAX_VALUE} characters.`);
-  return { status: "saved" as const, value };
+  if (asked.status !== "saved") {
+    yield* accounts.recordCard(requestId, asked.status);
+    if (asked.status === "timed_out") yield* unanswered(asked.status);
+    return { status: asked.status };
+  }
+  const projectId = scope.projectId;
+  const value = yield* Effect.gen(function* () {
+    if (!("secretRef" in asked)) return yield* fail(card.notKept);
+    const read = (yield* (yield* SecretRequests)
+      .consume({ ref: asked.secretRef, projectId })
+      .pipe(Effect.mapError(() => fail(card.notKept)))).trim();
+    if (read.length === 0 || read.length > MAX_VALUE)
+      return yield* fail(`${card.notKept} It was empty or longer than ${MAX_VALUE} characters.`);
+    return read;
+  }).pipe(
+    Effect.tapError(() => accounts.recordCard(requestId, "failed")),
+    Effect.onInterrupt(() => accounts.recordCard(requestId, "failed")),
+  );
+  yield* accounts.clearNeedsYou(needId).pipe(Effect.ignore);
+  return { status: "saved" as const, value, requestId };
+});
+
+/** The card says Saved once what its value went into committed, and Not saved if it failed. */
+const settleCard = Effect.fn("AccountsAgent.settleCard")(function* <
+  A extends { readonly accountId: AccountId },
+  E,
+  R,
+>(requestId: string, keep: Effect.Effect<A, E, R>) {
+  const accounts = yield* AccountsService;
+  return yield* keep.pipe(
+    Effect.tap(({ accountId }) => accounts.recordCard(requestId, "saved", accountId)),
+    Effect.tapError(() => accounts.recordCard(requestId, "failed")),
+    // A save cut short never leaves the card saying Saving…: it wasn't kept.
+    Effect.onInterrupt(() => accounts.recordCard(requestId, "failed")),
+  );
 });
 
 /**
@@ -162,8 +174,8 @@ export const cardEndedNote = (status: "declined" | "cancelled" | "timed_out"): s
       : "The card closed before the user answered. Don't open it again this turn unless the user asks.";
 
 /**
- * Asks for a key in upstream's private secret card and keeps the answer as an API-key account.
- * The value moves from the card's one-use store into Accounts and never reaches the agent.
+ * Keeps an API key as a new row, or in the row named by `accountId`; never as another row of the
+ * service. A `value` the agent has is saved as is; otherwise the private card asks the person.
  */
 export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
   scope: AccountSessionScope,
@@ -177,7 +189,16 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
       message:
         "Agent access to Accounts is off. The user can turn it on in Settings → Accounts & secrets.",
     };
-  if (scope.unattended || scope.projectId === undefined)
+  const given = input.value?.trim();
+  if (
+    given !== undefined &&
+    (given.length === 0 || given.length > MAX_VALUE || /[\r\n\0]/u.test(given))
+  )
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: `Pass the key alone, on one line, at most ${MAX_VALUE} characters.`,
+    });
+  if (given === undefined && (scope.unattended || scope.projectId === undefined))
     return {
       status: "unavailable" as const,
       message: "No one can answer a card in this run. Ask the user when they are here.",
@@ -191,64 +212,132 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
       reason: "invalid-input",
       message: "Choose an API key account from scient_accounts_list to replace.",
     });
-  const match = replacing ?? existingKey(session.accounts, input);
-  if (match?.controls.access === "off")
-    return { status: "turned_off" as const, accountId: match.accountId, name: match.name };
-  if (match && !replacing)
-    return { status: "exists" as const, accountId: match.accountId, usage: accountUsage(match) };
-  // Saving a new value would cut the link, so a linked key is updated where it lives.
+  // Only the row the agent named to replace is ever asked about.
+  if (replacing?.controls.access === "off" && !(yield* turnedOn(scope, replacing)))
+    return { status: "turned_off" as const, accountId: replacing.accountId, name: replacing.name };
+  // A key in a store Scient can write (1Password, the keychain) is replaced there too; one in a
+  // store Scient only reads is updated where it lives.
   const source = replacing?.secrets.token?.source;
-  if (replacing && source !== undefined && source.type !== "scient")
+  const writable = source?.type === "1password" || source?.type === "keychain";
+  if (replacing && source !== undefined && source.type !== "scient" && !writable)
     return { status: "linked" as const, accountId: replacing.accountId, name: replacing.name };
 
   const notKept = "The key was not kept. Ask the user to enter it again.";
-  const asked = yield* askInCard(scope, {
-    label: replacing
-      ? `New key for “${replacing.name}”`
-      : /(?:^|[^a-z])(?:key|token)$/i.test(input.name)
-        ? input.name
-        : `${input.name} API key`,
-    reason: input.reason,
-    ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
-    notKept,
+  const keep = Effect.fn("AccountsAgent.keepKey")(function* (value: string) {
+    // Access may have changed while the card waited.
+    const current = yield* accounts.forSession(scope);
+    const target = replacing
+      ? current.accounts.find((account) => account.accountId === replacing.accountId)
+      : undefined;
+    if (!current.agentAccess || (replacing && (!target || target.controls.access === "off")))
+      return yield* fail(
+        `${notKept} Its access changed in Settings → Accounts & secrets meanwhile.`,
+      );
+    const secrets = {
+      token: {
+        type: "scient" as const,
+        value,
+        // Naming Scient's store keeps the link and writes the new value through it.
+        ...(writable ? { saveTo: [{ type: "scient" as const }] } : {}),
+      },
+    };
+    return yield* (
+      replacing
+        ? accounts.save({
+            accountId: replacing.accountId,
+            name: replacing.name,
+            details: replacing.details,
+            secrets,
+          })
+        : accounts.save({
+            name: input.name,
+            details: {
+              kind: "api-key",
+              // `https://` origins, which every key picker matches.
+              sites: (input.sites ?? []).map((site) => loginSiteKey(site) ?? site),
+              auth: input.header ? { type: "header", name: input.header } : { type: "bearer" },
+              ...(input.envName === undefined ? {} : { envName: input.envName }),
+            },
+            secrets,
+          })
+    ).pipe(Effect.mapError(() => fail(notKept)));
   });
-  if (asked.status !== "saved") return { status: asked.status, note: cardEndedNote(asked.status) };
-  // Access may have changed while the card waited.
-  const current = yield* accounts.forSession(scope);
-  const target = replacing
-    ? current.accounts.find((account) => account.accountId === replacing.accountId)
-    : undefined;
-  if (!current.agentAccess || (replacing && (!target || target.controls.access === "off")))
-    return yield* fail(`${notKept} Its access changed in Settings → Accounts & secrets meanwhile.`);
-  const value = asked.value;
-  const secrets = { token: { type: "scient" as const, value } };
-  const saved = yield* (
-    replacing
-      ? accounts.save({
-          accountId: replacing.accountId,
-          name: replacing.name,
-          details: replacing.details,
-          secrets,
-        })
-      : accounts.save({
-          name: input.name,
-          details: {
-            kind: "api-key",
-            sites: input.sites ?? [],
-            auth: input.header ? { type: "header", name: input.header } : { type: "bearer" },
-            ...(input.envName === undefined ? {} : { envName: input.envName }),
-          },
-          secrets,
-        })
-  ).pipe(Effect.mapError(() => fail(notKept)));
+  let saved: AccountSaveResult;
+  if (given !== undefined) saved = yield* keep(given);
+  else {
+    const asked = yield* askInCard(scope, {
+      label: replacing
+        ? `New key for “${replacing.name}”`
+        : /(?:^|[^a-z])(?:key|token)$/i.test(input.name)
+          ? input.name
+          : `${input.name} API key`,
+      reason: input.reason,
+      ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
+      notKept,
+    });
+    if (asked.status !== "saved")
+      return { status: asked.status, note: cardEndedNote(asked.status) };
+    saved = yield* settleCard(asked.requestId, keep(asked.value));
+  }
   const account = (yield* accounts.forSession(scope)).accounts.find(
     (item) => item.accountId === saved.accountId,
   );
+  const invocation = yield* McpInvocationContext;
   return {
     status: "saved" as const,
     accountId: saved.accountId,
     usage: account ? accountUsage(account) : [],
+    open: formatAccountLink(
+      invocation.environmentId,
+      saved.accountId,
+      account?.name ?? replacing?.name ?? input.name,
+    ),
   };
+});
+
+/**
+ * The saved sign-in an agent names by site, username and optional sign-in address: the exact
+ * tenant when it gave an address, else the one saved there; several are the agent's to choose.
+ */
+/** A sign-in address the agent gave must be the row's own tenant, with or without a password. */
+const addressFits = (
+  details: { readonly loginUrl?: string | undefined },
+  input: { readonly loginUrl?: string | undefined },
+) => input.loginUrl === undefined || loginTenant(details.loginUrl) === loginTenant(input.loginUrl);
+
+const pickLogin = Effect.fn("AccountsAgent.pickLogin")(function* (
+  accounts: ReadonlyArray<AccountSummary>,
+  site: string,
+  input: { readonly username?: string | undefined; readonly loginUrl?: string | undefined },
+) {
+  const named = {
+    kind: "website",
+    sites: [site],
+    username: input.username,
+    loginUrl: input.loginUrl,
+  };
+  const logins = loginCandidates(accounts, named);
+  if (input.loginUrl !== undefined) return logins.find((account) => isLogin(account, named));
+  const tenants = [
+    ...new Map(
+      logins.map((account) => [
+        account.details.kind === "website" ? (account.details.loginUrl ?? "") : "",
+        account,
+      ]),
+    ).values(),
+  ];
+  if (tenants.length > 1)
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: `Several saved sign-ins match. Pass loginUrl or accountId: ${tenants
+        .map((account) =>
+          account.details.kind === "website"
+            ? `${account.name} (${account.accountId}, ${account.details.loginUrl ?? "no sign-in address"})`
+            : account.accountId,
+        )
+        .join("; ")}.`,
+    });
+  return tenants[0];
 });
 
 const sameSite = (sites: ReadonlyArray<string>, site: string) =>
@@ -383,15 +472,19 @@ export const addSignIn = Effect.fn("AccountsAgent.addSignIn")(function* (
       reason: "invalid-input",
       message: "Name the site to sign in to, e.g. site: github.com.",
     });
-  const existing = session.accounts.find(
-    ({ details, secrets }) =>
-      details.kind === "website" &&
-      sameSite(details.sites, site) &&
-      (input.username !== undefined
-        ? details.username?.toLowerCase() === input.username.toLowerCase()
-        : secrets.password === undefined &&
-          (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === DEFAULT_BROWSER_PROFILE_ID),
-  );
+  // A saved password by its login (its sign-in address honoured); else a session row there.
+  const existing =
+    (yield* pickLogin(session.accounts, site, input)) ??
+    session.accounts.find(
+      ({ details, secrets }) =>
+        details.kind === "website" &&
+        secrets.password === undefined &&
+        sameSite(details.sites, site) &&
+        addressFits(details, input) &&
+        (input.username !== undefined
+          ? loginUserKey(details.username) === loginUserKey(input.username)
+          : (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === DEFAULT_BROWSER_PROFILE_ID),
+    );
   const answered = known(existing);
   if (answered) return answered;
   const account =
@@ -412,8 +505,144 @@ export const addSignIn = Effect.fn("AccountsAgent.addSignIn")(function* (
   return yield* signInHere(scope, account, input.reason, existing === undefined);
 });
 
+/**
+ * A website or university password or 2FA key the person gives in the private card, saved on
+ * that login: the one named, else the one for this site and username, else a new one. A value
+ * linked to 1Password is written there too; one in another store is updated where it lives.
+ */
+export const askForLoginSecret = Effect.fn("AccountsAgent.askForLoginSecret")(function* (
+  scope: AccountSessionScope,
+  input: Input & { readonly secret: "password" | "totp" },
+) {
+  const accounts = yield* AccountsService;
+  const session = yield* accounts.forSession(scope);
+  if (!session.agentAccess)
+    return {
+      status: "unavailable" as const,
+      message:
+        "Agent access to Accounts is off. The user can turn it on in Settings → Accounts & secrets.",
+    };
+  if (scope.unattended || scope.projectId === undefined)
+    return {
+      status: "unavailable" as const,
+      message: "No one can answer a card in this run. Ask the user when they are here.",
+    };
+  const site = input.site ?? input.institution;
+  // The named row; else the login by site, username and address (several are the agent's to
+  // choose); else a row there with no password yet.
+  const target =
+    input.accountId !== undefined
+      ? session.accounts.find(
+          ({ accountId, details }) => accountId === input.accountId && details.kind === "website",
+        )
+      : site === undefined
+        ? undefined
+        : ((yield* pickLogin(session.accounts, site, input)) ??
+          session.accounts.find(
+            ({ details, secrets }) =>
+              details.kind === "website" &&
+              details.origin !== "browser-session" &&
+              secrets.password === undefined &&
+              sameSite(details.sites, site) &&
+              addressFits(details, input) &&
+              loginUserKey(details.username) === loginUserKey(input.username),
+          ));
+  if (input.accountId !== undefined && !target)
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: "Choose a website or university account from scient_accounts_list.",
+    });
+  if (!target && (site === undefined || input.kind === "university"))
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message:
+        input.kind === "university"
+          ? "Connect the university first: call again without secret."
+          : "Name the site, e.g. site: github.com, or the account to replace.",
+    });
+  // Only the row the agent named is asked about. A login found by its identity is the same login:
+  // the person types its new value in the card, and nothing is read, so nothing is asked.
+  const named = input.accountId !== undefined;
+  if (named && target?.controls.access === "off" && !(yield* turnedOn(scope, target)))
+    return { status: "turned_off" as const, accountId: target.accountId, name: target.name };
+  const field = input.secret;
+  const source = target?.secrets[field]?.source;
+  if (
+    source !== undefined &&
+    source.type !== "scient" &&
+    source.type !== "1password" &&
+    source.type !== "keychain"
+  )
+    return { status: "linked" as const, accountId: target!.accountId, name: target!.name };
+  const name = target?.name ?? input.name;
+  const notKept = `The ${field === "totp" ? "2FA key" : "password"} was not kept. Ask the user to enter it again.`;
+  const asked = yield* askInCard(scope, {
+    label: field === "totp" ? `2FA key for “${name}”` : `Password for “${name}”`,
+    reason: input.reason,
+    kind: field,
+    ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
+    notKept,
+  });
+  if (asked.status !== "saved") return { status: asked.status, note: cardEndedNote(asked.status) };
+  const saved = yield* settleCard(
+    asked.requestId,
+    Effect.gen(function* () {
+      const current = yield* accounts.forSession(scope);
+      const still = target
+        ? current.accounts.find((account) => account.accountId === target.accountId)
+        : undefined;
+      if (
+        !current.agentAccess ||
+        (target && (!still || (named && still.controls.access === "off")))
+      )
+        return yield* fail(
+          `${notKept} Its access changed in Settings → Accounts & secrets meanwhile.`,
+        );
+      const secrets = {
+        // Naming Scient's store keeps a 1Password link and writes the new value there too.
+        [field]: {
+          type: "scient" as const,
+          value: asked.value,
+          ...(source?.type === "1password" || source?.type === "keychain"
+            ? { saveTo: [{ type: "scient" as const }] }
+            : {}),
+        },
+      };
+      return yield* (
+        still
+          ? accounts.save({
+              accountId: still.accountId,
+              name: still.name,
+              details: still.details,
+              secrets,
+            })
+          : accounts.save({
+              name,
+              details: {
+                kind: "website",
+                sites: [site!],
+                ...(input.loginUrl === undefined ? {} : { loginUrl: input.loginUrl }),
+                ...(input.username === undefined ? {} : { username: input.username }),
+              },
+              secrets,
+            })
+      ).pipe(Effect.mapError(() => fail(notKept)));
+    }),
+  );
+  const account = (yield* accounts.forSession(scope)).accounts.find(
+    (item) => item.accountId === saved.accountId,
+  );
+  return {
+    status: "saved" as const,
+    accountId: saved.accountId,
+    usage: account ? accountUsage(account) : [],
+  };
+});
+
 export const addAccount = Effect.fn("AccountsAgent.add")(function* (input: Input) {
   const scope = yield* accountSessionScope();
+  if ((input.kind === "website" || input.kind === "university") && input.secret)
+    return yield* askForLoginSecret(scope, { ...input, secret: input.secret });
   return input.kind === "website" || input.kind === "university"
     ? yield* addSignIn(scope, input)
     : yield* askForAccountKey(scope, input);

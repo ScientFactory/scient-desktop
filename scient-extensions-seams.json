@@ -533,6 +533,11 @@
       "purpose": "Release manifest of the built-in connector-authoring skill."
     },
     {
+      "path": "apps/server/src/scient/skills/built-ins/website-account-automation/scient.skill.json",
+      "anchor": "scient.website-account-automation",
+      "purpose": "Release manifest of the built-in website-account-automation skill."
+    },
+    {
       "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/http.mjs",
       "anchor": "export function createHttp",
       "purpose": "Template connector's polite HTTP helper, written by scient_connector_copy."
@@ -586,6 +591,16 @@
       "path": "packages/scient-analytics/fixtures/contract-v11.json",
       "anchor": "toolServerOwner",
       "purpose": "Generated conformance fixture for the tool-server owner on failed turns."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/keyUses.ts",
+      "anchor": "connector.auth.accountId",
+      "purpose": "A key's Used by names the connectors bound to it."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/AccountDialog.tsx",
+      "anchor": "import { extensionsInventory } from \"~/scient/extensions/extensionsState\";",
+      "purpose": "The key editor names the connectors bound to the key it edits."
     }
   ]
 }

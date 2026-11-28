@@ -12,10 +12,14 @@
 // When the session has ended, throw `signInExpired(...)` (session.fetch does it for you). The tool
 // error then starts with SCIENT_SIGN_IN_EXPIRED; Scient signs the user in again, rewrites the
 // cookie files, restarts this program and retries the call once.
+//
+// For a site that rotates its session cookie, declare `signIn.writeBack` and use session.read():
+// Scient makes the read itself and keeps the site's new cookie, so the next start needs no new
+// sign-in.
 
 import * as fs from "node:fs";
 
-import { SIGN_IN_EXPIRED, ToolError } from "./mcp.mjs";
+import { SIGN_IN_EXPIRED, ToolError, askScient } from "./mcp.mjs";
 import { snippet } from "./http.mjs";
 
 /** Paths that usually mean "you are being sent to sign in". Add the site's own when it differs. */
@@ -334,6 +338,46 @@ export function createSession({
     }
   }
 
+  /**
+   * A read Scient makes itself with the user's session: `operation` names a path the manifest's
+   * `signIn.writeBack.reads` declares; `query` adds parameters. Resolves to {status, contentType,
+   * body}. Throws signInExpired() when the site ended the session, and a plain ToolError when it
+   * couldn't be reached (not a sign-out) or refused the account.
+   */
+  async function read(operation, query) {
+    if (!site) throw notSignedIn();
+    const answer = await askScient("scient/readWithWebsiteSession", {
+      operation,
+      ...(query ? { query } : {}),
+    });
+    if (answer.outcome === "signed-out") throw signInExpired(site, "the site ended the session");
+    if (answer.outcome === "unreachable")
+      throw new ToolError(
+        `Scient couldn't reach ${site}: it may be down or need another network. The sign-in is not affected.`,
+      );
+    if (answer.outcome === "forbidden")
+      throw new ToolError(`${site} says the account has no access to this (403).`);
+    return { status: answer.status, contentType: answer.contentType, body: answer.body ?? "" };
+  }
+
+  /**
+   * A token the site mints from the user's session (a mobile-app or embed token), by a recipe the
+   * manifest's `signIn.tokens` declares. Scient asks the site and keeps it; `renew: true` mints a
+   * new one after the site refused the old. Never log or return it.
+   */
+  async function serviceToken(name, { renew = false } = {}) {
+    if (!site) throw notSignedIn();
+    const answer = await askScient("scient/serviceToken", { name, ...(renew ? { renew } : {}) });
+    if (answer.outcome === "signed-out") throw signInExpired(site, "the site ended the session");
+    if (answer.outcome === "unreachable")
+      throw new ToolError(
+        `Scient couldn't reach ${site}: it may be down or need another network. The sign-in is not affected.`,
+      );
+    if (answer.outcome !== "ok")
+      throw new ToolError(`${site} refused the account a ${name} token.`);
+    return answer.token;
+  }
+
   return {
     /** The site's origin, or undefined when Scient gave no sign-in. */
     site,
@@ -343,6 +387,8 @@ export function createSession({
     },
     fetch: sessionFetch,
     json,
+    read,
+    serviceToken,
     /** The Cookie header for a URL, for libraries that need it. Never log or return it. */
     cookieHeader: (url) => cookieHeader(new URL(url, site)),
   };

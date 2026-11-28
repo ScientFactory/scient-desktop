@@ -15,6 +15,8 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import { CONNECTOR_FORWARDED_REQUEST_HEADERS, ConnectorRuntime } from "../ExtensionsServices.ts";
 import { CONNECTOR_MAX_REQUEST_BYTES } from "./ConnectorOutbound.ts";
 import { connectorUnavailableResponse } from "./ConnectorRuntime.ts";
+import { deriveAccountSessionScope } from "../../accounts/agent/scope.ts";
+import { UNKNOWN_RUN } from "../../accounts/taskPinRules.ts";
 
 const CONNECTOR_PROXY_ROUTE_PREFIX = "/mcp/connectors";
 
@@ -139,6 +141,22 @@ const handler = Effect.gen(function* () {
     const value = request.headers[name];
     if (value !== undefined) headers[name] = value;
   }
+  // A run of a pinned scheduled task: its connector uses only the pinned sign-in. A run whose
+  // records can't be read may be one, so it uses none (`UNKNOWN_RUN`).
+  const records = yield* threads
+    .getProjectThreadRecords({ projectId: thread.projectId, threadId: scope.thread.threadId }, [
+      "runs",
+      "messages",
+    ])
+    .pipe(Effect.option);
+  const scheduledTaskId = Option.isSome(records)
+    ? deriveAccountSessionScope(
+        scope.thread.threadId,
+        thread.projectId,
+        records.value.runs,
+        records.value.messages,
+      ).scheduledTaskId
+    : UNKNOWN_RUN;
   yield* registry.touch(scope.thread.threadId);
   const response = yield* runtime.forward({
     connectorId,
@@ -146,7 +164,11 @@ const handler = Effect.gen(function* () {
     headers,
     body,
     scope,
-    location: { projectId: thread.projectId, worktreePath: thread.worktreePath },
+    location: {
+      projectId: thread.projectId,
+      worktreePath: thread.worktreePath,
+      ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
+    },
   });
   return toServerResponse(response);
 });

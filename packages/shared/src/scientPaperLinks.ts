@@ -89,6 +89,21 @@ export function institutionLinkFromButton(
 export const usesOpenAthens = (institution: { readonly entityId: string }) =>
   /openathens/iu.test(institution.entityId);
 
+/**
+ * What a library link is. OpenAthens' redirector names the university's domain and signs in
+ * through OpenAthens; any other link is a proxy that rewrites the article's address.
+ */
+export function libraryLink(proxyUrl: string) {
+  const url = parseUrl(proxyUrl.replace("{url}", ""));
+  if (url === null) return undefined;
+  if (url.hostname !== "go.openathens.net") return { kind: "proxy", host: url.hostname } as const;
+  // A stored link can hold any text: only a real host name names a university.
+  const domain = /^\/redirector\/([a-z0-9-]+(?:\.[a-z0-9-]+)+)\/?$/iu.exec(url.pathname)?.[1];
+  return domain
+    ? ({ kind: "openathens", domain: domain.toLowerCase() } as const)
+    : ({ kind: "proxy", host: url.hostname } as const);
+}
+
 /** OpenAthens' own link into any article, through the university's subscriptions. */
 export const openAthensLink = (domain: string, articleUrl: string) =>
   `https://go.openathens.net/redirector/${encodeURIComponent(domain)}?url=${encodeURIComponent(articleUrl)}`;
@@ -143,6 +158,11 @@ type WebsiteDetails = Extract<AccountDetails, { kind: "website" }>;
 export const universityDetails = (details: AccountDetails): WebsiteDetails | undefined =>
   details.kind === "website" && (details.institution || details.proxyUrl) ? details : undefined;
 
+/** A university whose sign-in OpenAthens runs: by its directory entity, or by its library link. */
+export const openAthensUniversity = (details: WebsiteDetails) =>
+  (details.institution !== undefined && usesOpenAthens(details.institution)) ||
+  (details.proxyUrl !== undefined && libraryLink(details.proxyUrl)?.kind === "openathens");
+
 /** The saved sign-ins that open papers, those in the directory first. */
 export const universitiesOf = (accounts: ReadonlyArray<AccountSummary>) => {
   const all = accounts.filter(({ details }) => universityDetails(details));
@@ -183,11 +203,22 @@ export function universityLinks(
  * publisher asks for them, and Scient closes the tab the moment the university answers.
  */
 export function universitySignInLink(details: WebsiteDetails): string | undefined {
-  const { institution } = details;
+  const { institution, proxyUrl } = details;
   if (institution && usesOpenAthens(institution))
     return `${OPEN_ATHENS_HOME}/auth?targetURL=${encodeURIComponent("/app/research")}&entityID=${encodeURIComponent(institution.entityId)}`;
+  const throughLink = proxyUrl?.replace("{url}", encodeURIComponent(SIGN_IN_PAGE));
+  // An OpenAthens link signs in through OpenAthens, whatever else the directory lists.
+  if (proxyUrl && libraryLink(proxyUrl)?.kind === "openathens") return throughLink;
   if (institution) return institutionLink(SIGN_IN_PAGE, institution.entityId);
-  return details.proxyUrl?.replace("{url}", encodeURIComponent(SIGN_IN_PAGE));
+  return throughLink;
+}
+
+/**
+ * The publisher's own steps of a university sign-in: its institutional login, and each page the
+ * sign-in comes back to, through a library's address included.
+ */
+export function isSignInProbe(url: string) {
+  return parseUrl(url)?.hostname === "fsso.springer.com" || signInReturn(url) !== undefined;
 }
 
 /**

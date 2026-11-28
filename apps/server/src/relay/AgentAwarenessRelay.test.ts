@@ -53,6 +53,10 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+// SCIENT-FORK:START — Scient Accounts: what Accounts says waits for the person.
+import { AccountsError } from "@t3tools/contracts";
+import { AccountsService } from "../scient/accounts/AccountsService.ts";
+// SCIENT-FORK:END
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
@@ -186,7 +190,9 @@ describe("startup agent activity", () => {
 
 const makeTestRelay = Effect.fnUntraced(function* (
   options: {
-    readonly respond?: (attempt: number) => Response;
+    // SCIENT-FORK:START — Scient Accounts: a relay answer can be held, as a slow relay holds it.
+    readonly respond?: (attempt: number) => Response | Promise<Response>;
+    // SCIENT-FORK:END
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
@@ -194,6 +200,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readProject?: (projectId: ProjectId) => Option.Option<Project>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    // SCIENT-FORK:START — Scient Accounts: what Accounts says waits for the person.
+    readonly accounts?: AccountsService["Service"];
+    /** Runs after a secret's value is read and before it is returned, as a slow store does. */
+    readonly beforeSecretReturns?: (name: string) => Effect.Effect<void>;
+    // SCIENT-FORK:END
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -219,7 +230,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
             }),
           );
         }
-        return Effect.succeed(Option.fromUndefinedOr(values.get(name)));
+        // SCIENT-FORK:START — Scient Accounts: a read can return its value after a relink.
+        const value = Option.fromUndefinedOr(values.get(name));
+        return (options.beforeSecretReturns?.(name) ?? Effect.void).pipe(Effect.as(value));
+        // SCIENT-FORK:END
       }),
     create: (name, value) => Effect.sync(() => void values.set(name, value)),
     set: (name, value) => Effect.sync(() => void values.set(name, value)),
@@ -360,6 +374,12 @@ const makeTestRelay = Effect.fnUntraced(function* (
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
+    // SCIENT-FORK:START — Scient Accounts: what Accounts says waits for the person.
+    (effect) =>
+      options.accounts === undefined
+        ? effect
+        : Effect.provideService(effect, AccountsService, options.accounts),
+    // SCIENT-FORK:END
   );
   // The relay generates and persists its own signing key pair; read it back so a
   // test can verify the proof it attaches to a publish.
@@ -1341,3 +1361,753 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(publications[1]?.state?.threadId, THREAD_ID);
   }),
 );
+
+// SCIENT-FORK:START — Scient Accounts: a background sign-in's notice reaches the phone.
+it.effect("pushes a background sign-in's notice, which has no chat, as needing approval", () =>
+  Effect.gen(function* () {
+    const renewal = ThreadId.make("scient-accounts-renewal");
+    const { relay, publications } = yield* makeTestRelay({
+      readShell: (threadId) => (threadId === renewal ? Effect.succeed(null) : Effect.never),
+      accounts: {
+        snapshot: Effect.succeed({ approvals: [], handoffs: [], needsYou: [] }),
+        changes: Stream.make({
+          approvals: [],
+          handoffs: [],
+          needsYou: [
+            {
+              needId: "sign-in:acc_gov",
+              name: "gov.il",
+              detail: "Waiting for a code",
+              accountId: "acc_gov",
+              threadId: renewal,
+            },
+          ],
+        }),
+      } as unknown as AccountsService["Service"],
+    });
+    // The Accounts change reaches the relay's queue, then the queue publishes.
+    yield* Effect.yieldNow;
+    yield* relay.drain;
+    // regression: a thread with no shell published nothing, so a locked phone saw only the SMS.
+    const pushed = publications.find((entry) => entry.state?.threadId === renewal);
+    assert.equal(pushed?.state?.phase, "waiting_for_approval");
+    assert.equal(pushed?.state?.detail, "gov.il: Waiting for a code");
+  }),
+);
+
+it.effect(
+  "pushes a code notice naming its site, unsent, even when the sign-in already worked",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const delivered: string[] = [];
+      const text = "gov.il: That code is Scient signing in to gov.il";
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: () => Effect.succeed(null),
+        accounts: {
+          snapshot: Effect.succeed({ approvals: [], handoffs: [], needsYou: [] }),
+          // The sign-in finished before the relay took the notice.
+          changes: Stream.make({
+            approvals: [],
+            handoffs: [],
+            needsYou: [
+              {
+                needId: "sign-in:acc_gov",
+                name: "gov.il",
+                detail: "That code is Scient signing in to gov.il",
+                accountId: "acc_gov",
+                threadId: ThreadId.make("scient-accounts-renewal"),
+              },
+            ],
+            codeNotices: [
+              { noticeId: "n1", accountId: "acc_gov", text, at: NOW, settled: "signed-in" },
+            ],
+          }),
+          codeNoticeDelivered: (noticeId: string) =>
+            Effect.sync(() => void delivered.push(noticeId)),
+        } as unknown as AccountsService["Service"],
+      });
+      yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+      yield* relay.drain;
+      const notice = publications.filter(
+        (entry) => entry.state?.threadId === "scient-accounts-notice-n1",
+      );
+      // regression: the push named no site, and a quick sign-in could take it back unsent.
+      assert.equal(notice[0]?.state?.phase, "waiting_for_approval");
+      assert.equal(notice[0]?.state?.threadTitle, text);
+      assert.deepEqual(delivered, ["n1"]);
+      // The same words in Needs you aren't pushed twice.
+      assert.isUndefined(
+        publications.find((entry) => entry.state?.threadId === "scient-accounts-renewal"),
+      );
+    }),
+);
+
+it.effect(
+  "keeps a notice's row unchanged through its outcome, then retires both after its time",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const cleared: string[] = [];
+      const text = "gov.il: That code is Scient signing in to gov.il";
+      const notice = { noticeId: "n2", accountId: "acc_gov", text, at: NOW };
+      const settled = {
+        ...notice,
+        delivered: true,
+        settled: "signed-in",
+        settledAt: "2026-09-04T12:00:03.000Z",
+      };
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: () => Effect.succeed(null),
+        accounts: {
+          snapshot: Effect.succeed({
+            approvals: [],
+            handoffs: [],
+            needsYou: [],
+            codeNotices: [notice],
+          }),
+          changes: Stream.make({
+            approvals: [],
+            handoffs: [],
+            needsYou: [],
+            codeNotices: [settled],
+          }),
+          codeNoticeDelivered: () => Effect.void,
+          codeNoticeCleared: (noticeId: string, row: string) =>
+            Effect.sync(() => void cleared.push(`${noticeId}:${row}`)),
+        } as unknown as AccountsService["Service"],
+      });
+      yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      const rows = (threadId: string) =>
+        publications.filter(
+          (entry) =>
+            entry.state?.threadId === threadId ||
+            (entry.state === null && entry.url.includes(threadId)),
+        );
+      // regression: the outcome replaced the notice's waiting phase, so a queued push was dropped.
+      const noticeRows = publications.filter(
+        (entry) => entry.state?.threadId === "scient-accounts-notice-n2",
+      );
+      assert.deepEqual(
+        noticeRows.map((entry) => entry.state?.phase),
+        ["waiting_for_approval"],
+      );
+      const outcome = publications.find(
+        (entry) => entry.state?.threadId === "scient-accounts-notice-n2-done",
+      );
+      assert.equal(outcome?.state?.phase, "completed");
+      assert.equal(outcome?.state?.threadTitle, `${text} · Signed in`);
+      // Silent, so it adds no second alert, and dated as it settled.
+      // regression: it was backdated three minutes past the relay's alert window instead.
+      assert.equal(outcome?.state?.silent, true);
+      assert.equal(outcome?.state?.updatedAt, "2026-09-04T12:00:03.000Z");
+      // Its time is up: both rows go, then Accounts lets the notice go.
+      yield* TestClock.adjust("30 minutes");
+      yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.isAtLeast(
+        rows("scient-accounts-notice-n2").filter((entry) => entry.state === null).length,
+        1,
+      );
+      // regression: only the notice row was acknowledged, so its outcome row's id could be lost.
+      assert.deepEqual([...new Set(cleared)].toSorted(), ["n2:notice", "n2:settled"]);
+    }),
+);
+
+it.effect("after a restart, retires a notice whose time ran out while it was down", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW) + 60 * 60 * 1000);
+    const cleared: string[] = [];
+    const old = {
+      noticeId: "n3",
+      accountId: "acc_gov",
+      text: "gov.il: x",
+      at: NOW,
+      delivered: true,
+    };
+    const { relay } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      accounts: {
+        snapshot: Effect.succeed({ approvals: [], handoffs: [], needsYou: [], codeNotices: [old] }),
+        changes: Stream.empty,
+        codeNoticeDelivered: () => Effect.void,
+        codeNoticeCleared: (noticeId: string, row: string) =>
+          Effect.sync(() => void cleared.push(`${noticeId}:${row}`)),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+    yield* TestClock.adjust("5 seconds");
+    yield* relay.drain;
+    // regression: a row published before the restart stood on the phone until it expired there.
+    assert.include(cleared, "n3:notice");
+  }),
+);
+
+it.effect("publishes the notice rows standing again after a relink", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n4", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        codeNoticeDelivered: () => Effect.void,
+      } as unknown as AccountsService["Service"],
+    });
+    yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+    yield* relay.drain;
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    // The link's own catch-up, as after a relink.
+    yield* relay.start();
+    yield* TestClock.adjust("1 second");
+    yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+    yield* relay.drain;
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n4",
+    );
+    // regression: catch-up after a relink republished chats only, so the notice row was lost there.
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+  }),
+);
+
+it.effect("retries a notice on its own queue, while the chats' queue is held up", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n5", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const { relay, publications } = yield* makeTestRelay({
+      // A chat whose read never ends holds the ordinary queue.
+      readShell: (threadId) => (threadId === THREAD_ID ? Effect.never : Effect.succeed(null)),
+      // The notice's first try fails.
+      respond: (attempt) =>
+        attempt === 1
+          ? new Response("unavailable", { status: 503 })
+          : Response.json({ ok: true, deliveries: [] }),
+      accounts: {
+        snapshot: Effect.succeed({ approvals: [], handoffs: [], needsYou: [] }),
+        changes: Stream.fromEffect(
+          Effect.succeed({ approvals: [], handoffs: [], needsYou: [], codeNotices: [notice] }).pipe(
+            Effect.delay("1 millis"),
+          ),
+        ),
+        codeNoticeDelivered: () => Effect.void,
+      } as unknown as AccountsService["Service"],
+    });
+    yield* relay.publishThread(THREAD_ID).pipe(Effect.forkChild);
+    yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+    yield* TestClock.adjust("1 millis");
+    yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+    yield* TestClock.adjust("1 second");
+    yield* Effect.repeat(Effect.yieldNow, { times: 20 });
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n5",
+    );
+    // regression: the retry went to the chats' queue and waited behind it.
+    assert.equal(rows.length, 2);
+  }),
+);
+/** Lets promises (a held relay answer) and the fibers waiting on them run, with no clock. */
+const settle = Effect.repeat(
+  Effect.promise(() => Promise.resolve()).pipe(Effect.andThen(Effect.yieldNow)),
+  { times: 200 },
+);
+
+it.effect("republishes the notice rows on a relink while the chats' catch-up is held", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n6", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      // The chat the catch-up publishes never finishes reading, so that catch-up never ends.
+      catchUpThreads: [shell()],
+      readShell: (threadId) => (threadId === THREAD_ID ? Effect.never : Effect.succeed(null)),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        codeNoticeDelivered: () => Effect.void,
+      } as unknown as AccountsService["Service"],
+    });
+    yield* relay.start();
+    yield* TestClock.adjust("1 second");
+    yield* settle;
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    yield* settle;
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n6",
+    );
+    // regression: the notice rows went again only from the catch-up, which the chat held.
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+  }),
+);
+
+it.effect("doesn't let a notice's answer from the old relay stand for the new one", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n7", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const delivered: string[] = [];
+    let release: (response: Response) => void = () => {};
+    const held = new Promise<Response>((resolve) => (release = resolve));
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      // The old relay takes its time over the notice row's first publish.
+      respond: (attempt) => (attempt === 1 ? held : Response.json({ ok: true, deliveries: [] })),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        codeNoticeDelivered: (noticeId: string) => Effect.sync(() => void delivered.push(noticeId)),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    assert.equal(publications.length, 1);
+    // Relinked meanwhile: the chats' next publish moves to the new relay.
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    yield* relay.publishThread(THREAD_ID);
+    // Then the old relay's answer comes, and the link's catch-up runs.
+    release(Response.json({ ok: true, deliveries: [] }));
+    yield* settle;
+    yield* relay.requestCatchUp();
+    yield* settle;
+    yield* relay.drain;
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n7",
+    );
+    // regression: the old answer recorded the row as published, so the new relay never got it.
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+    // Acknowledged once, for the new relay's answer.
+    assert.deepEqual(delivered, ["n7"]);
+  }),
+);
+it.effect("acknowledges nothing for an old relay's answer that comes after the new link", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n8", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    /** How many publishes had gone out at each acknowledgement. */
+    const delivered: number[] = [];
+    let release: (response: Response) => void = () => {};
+    const held = new Promise<Response>((resolve) => (release = resolve));
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      respond: (attempt) => (attempt === 1 ? held : Response.json({ ok: true, deliveries: [] })),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        codeNoticeDelivered: () => Effect.sync(() => void delivered.push(publications.length)),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    // The new link is committed while the old relay still holds the notice row's publish.
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    yield* relay.requestCatchUp();
+    release(Response.json({ ok: true, deliveries: [] }));
+    yield* settle;
+    yield* relay.drain;
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n8",
+    );
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+    // regression: no publish had read the new link yet, so the old answer was acknowledged.
+    assert.deepEqual(delivered, [2]);
+  }),
+);
+
+it.effect("lets no new link land while Accounts acknowledges a notice, and still reaches it", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n9", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const acknowledging = yield* Deferred.make<void>();
+    let acknowledgements = 0;
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        // The first acknowledgement takes its time.
+        codeNoticeDelivered: () =>
+          ++acknowledgements === 1 ? Deferred.await(acknowledging) : Effect.void,
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    // Relinked meanwhile; the chats' next publish reads the new link only once Accounts is done.
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    const chats = yield* relay.publishThread(THREAD_ID).pipe(Effect.forkChild);
+    yield* settle;
+    yield* Deferred.succeed(acknowledging, undefined);
+    yield* Fiber.join(chats);
+    yield* relay.requestCatchUp();
+    yield* settle;
+    yield* relay.drain;
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n9",
+    );
+    // regression: the old publish recorded its row after the reset, so nothing went to the new one.
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+  }),
+);
+it.effect("commits no acknowledgement from the old relay once the link changed under it", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n10", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const linkWritten = yield* Deferred.make<void>();
+    /** Acknowledgements Accounts wrote. */
+    const committed: string[] = [];
+    let release: (response: Response) => void = () => {};
+    const held = new Promise<Response>((resolve) => (release = resolve));
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      // The old relay takes the row, slowly; the new one refuses it for now.
+      respond: (attempt) => (attempt === 1 ? held : new Response("unavailable", { status: 503 })),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        // Accounts asks, inside its write, whether the link is still the one acknowledged.
+        codeNoticeDelivered: (noticeId: string, current?: () => boolean) =>
+          Effect.sync(() => void (current?.() !== false && committed.push(noticeId))),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    assert.equal(publications.length, 1);
+    // The new link is being written when the old relay's answer comes.
+    const relinking = yield* relay
+      .replacingLink(
+        secrets
+          .set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-2"))
+          .pipe(Effect.andThen(Deferred.await(linkWritten))),
+      )
+      .pipe(Effect.forkChild);
+    yield* settle;
+    release(Response.json({ ok: true, deliveries: [] }));
+    yield* settle;
+    yield* Deferred.succeed(linkWritten, undefined);
+    yield* Fiber.join(relinking);
+    const rowsOf = () =>
+      publications.filter((entry) => entry.state?.threadId === "scient-accounts-notice-n10");
+    // The acknowledgement runs off the queue: wait for the row's publish on the new link.
+    for (let tries = 0; tries < 50 && rowsOf().length < 2; tries++) yield* settle;
+    const rows = rowsOf();
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+    // regression: the old acknowledgement committed after the relink, while the new relay refused.
+    assert.deepEqual(committed, []);
+  }),
+);
+it.effect("changes the link only after a notice acknowledgement's durable write", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n11", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const writing = yield* Deferred.make<void>();
+    /** What happened, in order: Accounts' check, its write landing, and the link change. */
+    const events: string[] = [];
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        // Accounts checks the link, then its write to disk takes its time.
+        codeNoticeDelivered: (_noticeId: string, current?: () => boolean) =>
+          Effect.suspend(() => {
+            if (current?.() === false) return Effect.sync(() => void events.push("refused"));
+            events.push("checked");
+            return Deferred.await(writing).pipe(
+              Effect.andThen(Effect.sync(() => void events.push("written"))),
+            );
+          }),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    assert.deepEqual(events, ["checked"]);
+    // The link changes while the acknowledgement is being written.
+    const relinking = yield* relay
+      .replacingLink(
+        secrets
+          .set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-2"))
+          .pipe(Effect.andThen(Effect.sync(() => void events.push("relinked")))),
+      )
+      .pipe(Effect.forkChild);
+    yield* settle;
+    // regression: the old acknowledgement's write landed after the relink, and survived it.
+    assert.deepEqual(events, ["checked"]);
+    yield* Deferred.succeed(writing, undefined);
+    yield* Fiber.join(relinking);
+    assert.deepEqual(events, ["checked", "written", "relinked"]);
+    // The new link gets the row again, and its acknowledgement is its own.
+    yield* relay.requestCatchUp();
+    yield* settle;
+    yield* relay.drain;
+    const rows = publications.filter(
+      (entry) => entry.state?.threadId === "scient-accounts-notice-n11",
+    );
+    assert.deepEqual(
+      rows.map((entry) => entry.authorization),
+      ["Bearer credential-1", "Bearer credential-2"],
+    );
+  }),
+);
+it.effect("never pairs a link read before a relink with the generation after it", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n12", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const reading = yield* Deferred.make<void>();
+    const answer = yield* Deferred.make<void>();
+    let held = false;
+    /** The credential each acknowledgement was for: the newest publish's when Accounts wrote it. */
+    const acknowledged: Array<string | null> = [];
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      // The first read of the credential returns the old one only after the relink has run.
+      beforeSecretReturns: (name) =>
+        name === RELAY_ENVIRONMENT_CREDENTIAL_SECRET && !held
+          ? Effect.sync(() => void (held = true)).pipe(
+              Effect.andThen(Deferred.succeed(reading, undefined)),
+              Effect.andThen(Deferred.await(answer)),
+            )
+          : Effect.void,
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        codeNoticeDelivered: (_noticeId: string, current?: () => boolean) =>
+          Effect.sync(
+            () =>
+              void (
+                current?.() !== false &&
+                acknowledged.push(publications.at(-1)?.authorization ?? null)
+              ),
+          ),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* Deferred.await(reading);
+    const relinking = yield* relay
+      .replacingLink(
+        secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-2")),
+      )
+      .pipe(Effect.forkChild);
+    yield* settle;
+    yield* Deferred.succeed(answer, undefined);
+    yield* Fiber.join(relinking);
+    yield* settle;
+    yield* relay.drain;
+    // regression: the old credential, read across the relink, got the new generation, so its
+    // answer acknowledged the notice for the new link.
+    assert.deepEqual(acknowledged, ["Bearer credential-2"]);
+  }),
+);
+it.effect("lets a stuck acknowledgement hold neither the next notice nor a chat", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const stuck = { noticeId: "n13", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const next = { noticeId: "n14", accountId: "acc_gov", text: "gov.il: y", at: NOW };
+    const { relay, publications } = yield* makeTestRelay({
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [stuck, next],
+        }),
+        changes: Stream.empty,
+        // Accounts never finishes the first acknowledgement.
+        codeNoticeDelivered: (noticeId: string) =>
+          noticeId === "n13" ? Effect.never : Effect.void,
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    const chats = yield* relay.publishThread(THREAD_ID).pipe(Effect.forkChild);
+    yield* settle;
+    // regression: the notice queue and every link read waited on the stuck acknowledgement.
+    assert.isTrue(
+      publications.some((entry) => entry.state?.threadId === "scient-accounts-notice-n14"),
+    );
+    assert.isTrue(publications.some((entry) => entry.state?.threadId === THREAD_ID));
+    yield* Fiber.join(chats);
+  }),
+);
+it.effect("lets a waiting link change go before link reads that come after it", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n15", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const writing = yield* Deferred.make<void>();
+    const { relay, secrets, publications } = yield* makeTestRelay({
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        // Accounts takes its time over the acknowledgement.
+        codeNoticeDelivered: () => Deferred.await(writing),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    const relinking = yield* relay
+      .replacingLink(
+        secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-2")),
+      )
+      .pipe(Effect.forkChild);
+    yield* settle;
+    // A chat's publish reads the link while the change waits for the acknowledgement.
+    const chats = yield* relay.publishThread(THREAD_ID).pipe(Effect.forkChild);
+    yield* settle;
+    yield* Deferred.succeed(writing, undefined);
+    yield* Fiber.join(relinking);
+    yield* Fiber.join(chats);
+    // regression: new readers overtook the waiting change, so the chat went to the old link.
+    assert.deepEqual(
+      publications
+        .filter((entry) => entry.state?.threadId === THREAD_ID)
+        .map((entry) => entry.authorization),
+      ["Bearer credential-2"],
+    );
+  }),
+);
+
+it.effect("changes the link anyway once an acknowledgement is stuck past the bound", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n16", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    const writeEnds = yield* Deferred.make<void>();
+    const { relay, secrets } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        // Accounts' write can't be interrupted, and doesn't end while the link changes.
+        codeNoticeDelivered: () => Effect.uninterruptible(Deferred.await(writeEnds)),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    const relinking = yield* relay
+      .replacingLink(
+        secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-2")),
+      )
+      .pipe(Effect.forkChild);
+    yield* settle;
+    // regression: the change waited on Accounts' write for ever.
+    yield* TestClock.adjust("16 seconds");
+    yield* Fiber.join(relinking);
+    assert.equal(
+      new TextDecoder().decode(
+        Option.getOrThrow(yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)),
+      ),
+      "credential-2",
+    );
+    yield* Deferred.succeed(writeEnds, undefined);
+  }),
+);
+
+it.effect("retries an acknowledgement Accounts couldn't write until it lands", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const notice = { noticeId: "n17", accountId: "acc_gov", text: "gov.il: x", at: NOW };
+    let tries = 0;
+    let landed = false;
+    const { relay } = yield* makeTestRelay({
+      readShell: () => Effect.succeed(null),
+      accounts: {
+        snapshot: Effect.succeed({
+          approvals: [],
+          handoffs: [],
+          needsYou: [],
+          codeNotices: [notice],
+        }),
+        changes: Stream.empty,
+        // The write fails six times, more than the retry waits there are, then works.
+        codeNoticeDelivered: () =>
+          ++tries <= 6
+            ? Effect.fail(new AccountsError({ reason: "unavailable", message: "Synthetic: disk." }))
+            : Effect.sync(() => void (landed = true)),
+      } as unknown as AccountsService["Service"],
+    });
+    yield* settle;
+    for (let minute = 0; minute < 40; minute++) {
+      yield* TestClock.adjust("1 minute");
+      yield* settle;
+    }
+    // regression: write failures were swallowed as done, and the retries ran out.
+    assert.equal(tries, 7);
+    assert.isTrue(landed);
+    yield* relay.drain;
+  }),
+);
+// SCIENT-FORK:END

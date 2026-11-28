@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
@@ -6,8 +6,11 @@ import {
   type EnvironmentId,
   type Institution,
   type ThreadId,
+  type UniversitySignOutTarget,
 } from "@t3tools/contracts";
-import { universitiesOf } from "@t3tools/shared/scientPaperLinks";
+import { libraryLink, universitiesOf } from "@t3tools/shared/scientPaperLinks";
+import { glanceKey, type UniversityGroup } from "@t3tools/shared/scientUniversityGroups";
+import { siteMatchesUrl, siteOf } from "@t3tools/shared/scientSiteMatch";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronDownIcon, GraduationCapIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -15,12 +18,29 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { Spinner } from "~/components/ui/spinner";
+import { toastManager } from "~/components/ui/toast";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { libraryLinkTemplate, signedIntoUniversity } from "./accountsView";
+import { libraryLinkTemplate } from "./accountsView";
 import { accountsState } from "./accountsState";
 import { SiteFavicon } from "./AccountLogo";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
+import { useRemoveWithUndo } from "./removeWithUndo";
+import { useSiteSignOut } from "./siteSignOut";
+import {
+  lastEndOf,
+  openSignOut,
+  recentEnd,
+  signingIn,
+  unclearedHost,
+  shownUniversities,
+  signInRow,
+  UNIVERSITY_STATUS_LABELS,
+  universityStatus,
+  speaksUniversityProtocol,
+  universityWaiting,
+} from "./universityView";
 import { parseUrl } from "@t3tools/shared/url";
 
 const SEARCH_DELAY_MS = 300;
@@ -118,9 +138,22 @@ export function UniversityPicker({
     const pastedUrl = parseUrl(pasted);
     if (pastedUrl === null) return;
     const { hostname } = pastedUrl;
+    // Named after its university; an OpenAthens link also gets the directory's entry, if listed.
+    const kind = libraryLink(proxyUrl);
+    const asked = kind?.kind === "openathens" ? kind.domain : hostname;
+    const found = await search({ query: asked });
+    const institution = found.ok
+      ? found.value.find(({ domain }) => siteMatchesUrl(domain, `https://${asked}`))
+      : undefined;
     const saved = await save({
-      name: hostname,
-      details: { kind: "website", sites: [hostname], profileId, proxyUrl },
+      name: institution?.name ?? (kind?.kind === "openathens" ? kind.domain : hostname),
+      details: {
+        kind: "website",
+        sites: [kind?.kind === "openathens" ? kind.domain : hostname],
+        profileId,
+        proxyUrl,
+        ...(institution && kind?.kind === "openathens" ? { institution } : {}),
+      },
       secrets: {},
     });
     if (!saved.ok) return;
@@ -189,16 +222,117 @@ export function UniversityPicker({
   );
 }
 
+/**
+ * Signs every membership of a university out: the server records it and names the university's
+ * own hosts, which are cleared where the profile's cookies live.
+ */
+function useUniversitySignOut(environmentId: EnvironmentId) {
+  const signOutRows = useAccountCommand(accountsState.universitySignOut, environmentId);
+  const siteSignOut = useSiteSignOut(environmentId);
+  const gt = useGT();
+  const readSnapshot = useAccountCommand(accountsState.readSnapshot, environmentId);
+  return async (group: UniversityGroup) => {
+    const missed: string[] = [];
+    for (const membership of group.memberships) {
+      const accountId = membership.rows[0]!.accountId;
+      const started = await signOutRows({ accountId });
+      if (!started.ok) return;
+      const { opId } = started.value;
+      const cleared: Array<UniversitySignOutTarget> = [];
+      for (const target of started.value.sites) {
+        // A newer sign-in ended this sign-out: its session is not this sign-out's to clear.
+        const now = await readSnapshot({});
+        if (!now.ok || !now.value.universitySignOuts?.some((op) => op.opId === opId)) break;
+        if (await siteSignOut.signOut(target.profileId, target.site, true)) cleared.push(target);
+        else missed.push(target.site);
+      }
+      // What's left stays with the sign-out, shown and on offer until it is cleared.
+      if (opId) await signOutRows({ accountId, opId, cleared });
+    }
+    window.dispatchEvent(new Event("scient-accounts-session-changed"));
+    const host = missed.find((site) => siteOf(site) !== site);
+    if (missed.length)
+      toastManager.add({
+        type: "error",
+        title: host
+          ? gt("Couldn't fully sign out · {host}", { host })
+          : gt("Couldn't sign out of {name} everywhere", { name: group.name }),
+      });
+  };
+}
+
+/** Removes a university with all its rows at once; one Undo brings every row back. */
+export function useRemoveUniversity(environmentId: EnvironmentId) {
+  const { removeAccounts } = useRemoveWithUndo(environmentId);
+  return (group: UniversityGroup) => removeAccounts(group.rows, group.name);
+}
+
+/** Another of a university's rows to sign in through: by its username, else by its route. */
+function signInLabel(row: AccountSummary, group: UniversityGroup) {
+  const username = row.details.kind === "website" ? row.details.username : undefined;
+  if (username && group.memberships.length > 1) return msg("Sign in as {username}", { username });
+  return row.details.kind === "website" && row.details.proxyUrl
+    ? msg("Sign in through the library link")
+    : msg("Sign in through the university");
+}
+
+/** What each of a university's rows is, for its Edit item. */
+function routeLabel(row: AccountSummary) {
+  if (row.details.kind !== "website") return msg("Edit");
+  if (row.details.proxyUrl) return msg("Edit library link");
+  return msg("Edit university sign-in");
+}
+
+/**
+ * A university's Settings row stands for all of its rows: Sign out signs every membership out, and
+ * each other row keeps its own Edit.
+ */
+export function UniversityRowMenu({
+  environmentId,
+  group,
+  onEdit,
+}: {
+  environmentId: EnvironmentId;
+  group: UniversityGroup;
+  onEdit: (account: AccountSummary) => void;
+}) {
+  const { data } = useAccounts(environmentId);
+  const signOut = useUniversitySignOut(environmentId);
+  const messages = useMessages();
+  // While a sign-in runs, its end comes first; Sign out follows it.
+  const signedIn =
+    (group.rows.some(({ signIn }) => signIn?.state === "signed-in") ||
+      (data ? openSignOut(group, data) !== undefined : false)) &&
+    !(data ? signingIn(group, data) : false);
+  return (
+    <>
+      {signedIn && speaksUniversityProtocol(data) ? (
+        <MenuItem onClick={() => void signOut(group)}>
+          <T>Sign out</T>
+        </MenuItem>
+      ) : null}
+      {group.rows.slice(1).map((row) => (
+        <MenuItem key={row.accountId} onClick={() => onEdit(row)}>
+          {messages(routeLabel(row))}
+        </MenuItem>
+      ))}
+    </>
+  );
+}
+
 /** The server skips a university it saw recently; an older server ignores the glance and checks. */
 const GLANCE_AGAIN_MS = 2 * 60 * 1000;
-/** When this window last asked about each university, so an older server is asked at most as often. */
-const glancedAt = new Map<AccountId, number>();
+/**
+ * When this window last asked about each membership, route and profile, so an older server is
+ * asked at most as often.
+ */
+const glancedAt = new Map<string, number>();
 
 /**
  * The university slot beside the Sources title. Connected: the crest, answering whether Scient
- * can get papers through it now, with Sign in when one is needed. Opening it takes a glance, which
- * shows what was last seen until the answer changes. None connected: a quiet Connect your
- * university that opens the picker where it stands.
+ * can get papers through it now, naming the university that waits for a sign-in. Opening it takes
+ * a glance, which shows what was last seen until the answer changes. None connected: a quiet
+ * Connect your university that opens the picker where it stands.
  */
 export function UniversityCrest({
   environmentId,
@@ -210,26 +344,59 @@ export function UniversityCrest({
   const { data, canWrite } = useAccounts(environmentId);
   const startSignIn = useStableCallback(useSignIn(environmentId));
   const check = useAccountCommand(accountsState.check, environmentId);
+  const signOut = useUniversitySignOut(environmentId);
   const navigate = useNavigate();
-  const [signingIn, setSigningIn] = useState<ReadonlySet<AccountId>>(new Set());
-  const universities = universitiesOf(data?.accounts ?? []);
+  const messages = useMessages();
+  const [pressed, setPressed] = useState<
+    ReadonlyMap<string, { readonly lastEnd: string | undefined }>
+  >(new Map());
+  const [glancing, setGlancing] = useState<ReadonlySet<AccountId>>(new Set());
+  const [unclear, setUnclear] = useState<ReadonlySet<AccountId>>(new Set());
+  const [connecting, setConnecting] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const groups = shownUniversities(data);
+  const newServer = speaksUniversityProtocol(data);
+  const mark = (set: ReadonlySet<AccountId>, accountId: AccountId, on: boolean) => {
+    const next = new Set(set);
+    if (on) next.add(accountId);
+    else next.delete(accountId);
+    return next;
+  };
   const askAgain = useStableCallback((open: boolean) => {
     if (!open || !canWrite) return;
     const now = Date.now();
-    for (const { accountId } of universities) {
-      if (now - (glancedAt.get(accountId) ?? 0) < GLANCE_AGAIN_MS) continue;
-      glancedAt.set(accountId, now);
+    for (const row of groups.flatMap(({ rows }) => rows)) {
+      const key = glanceKey(row);
+      if (now - (glancedAt.get(key) ?? 0) < GLANCE_AGAIN_MS) continue;
+      glancedAt.set(key, now);
+      setGlancing((current) => mark(current, row.accountId, true));
       // A request that failed, or was turned away by a running check, is asked again next open.
-      void check({ accountId, glance: true }).then((result) => {
-        if (!result.ok || result.value.alreadyRunning) glancedAt.delete(accountId);
+      void check({ accountId: row.accountId, glance: true }).then((result) => {
+        if (!result.ok || result.value.alreadyRunning) glancedAt.delete(key);
+        setGlancing((current) => mark(current, row.accountId, false));
+        const couldNotTell = !result.ok || result.value.unclear === true;
+        setUnclear((current) => mark(current, row.accountId, couldNotTell));
       });
     }
   });
-  const [connecting, setConnecting] = useState(false);
   const gt = useGT();
-  const first = universities[0];
+  const statusOf = (group: UniversityGroup) =>
+    universityStatus(
+      group,
+      data ?? {},
+      pressed.get(group.key),
+      group.rows.some((row) => unclear.has(row.accountId)),
+    );
+  const picker = (
+    <UniversityPicker
+      environmentId={environmentId}
+      threadId={threadId}
+      autoFocus
+      onChosen={() => setConnecting(false)}
+    />
+  );
   if (!data) return null;
-  if (!first) {
+  if (groups.length === 0) {
     if (!canWrite) return null;
     return (
       <Popover open={connecting} onOpenChange={setConnecting}>
@@ -244,76 +411,125 @@ export function UniversityCrest({
           </span>
         </PopoverTrigger>
         <PopoverPopup align="end" width="md">
-          <UniversityPicker
-            environmentId={environmentId}
-            threadId={threadId}
-            autoFocus
-            onChosen={() => setConnecting(false)}
-          />
+          {picker}
         </PopoverPopup>
       </Popover>
     );
   }
-  const domainOf = (account: AccountSummary) =>
-    account.details.kind === "website"
-      ? (account.details.institution?.domain ?? account.details.sites[0] ?? "")
-      : "";
-  const waiting = universities.some((account) => !signedIntoUniversity(account));
-  const signIn = (accountId: AccountId) => {
-    setSigningIn((current) => new Set(current).add(accountId));
-    void startSignIn(accountId, { threadId });
+  const waiting = groups.find((group) => universityWaiting(statusOf(group)));
+  const shown = waiting ?? groups[0]!;
+  const signIn = (group: UniversityGroup, row = signInRow(group)) => {
+    const lastEnd = lastEndOf(group, data);
+    setPressed((current) => new Map(current).set(group.key, { lastEnd }));
+    void startSignIn(row.accountId, { threadId }).then((started) => {
+      // An older server keeps no end, so the press ends when the tab opens.
+      if (started && newServer) return;
+      setPressed((current) => {
+        const next = new Map(current);
+        next.delete(group.key);
+        return next;
+      });
+    });
   };
   return (
-    <Menu onOpenChange={askAgain}>
-      <MenuTrigger
-        render={
-          <Button
-            size="xs"
-            variant="ghost"
-            aria-label={
-              waiting
-                ? gt("University: {name}, sign in needed", { name: first.name })
-                : gt("University: {name}", { name: first.name })
-            }
-          />
-        }
-      >
-        <UniversityIcon site={domainOf(first)} className="size-5" />
-        {waiting && canWrite ? (
-          <span className="@max-[28rem]:hidden">
-            <T>Sign in</T>
-          </span>
-        ) : null}
-        <ChevronDownIcon className="size-3 text-muted-foreground" />
-      </MenuTrigger>
-      <MenuPopup align="end" side="bottom" className="max-w-72 min-w-56">
-        {universities.map((account) => {
-          const signedIn = signedIntoUniversity(account);
-          const underWay = !signedIn && signingIn.has(account.accountId);
-          const status = signedIn
-            ? gt("Signed in")
-            : underWay
-              ? gt("Signing in…")
-              : gt("Sign in needed");
-          return (
-            <div key={account.accountId}>
-              <div className="px-2 py-1.5">
-                <div className="truncate text-sm">{account.name}</div>
-                <div className="text-xs text-muted-foreground">{status}</div>
+    <>
+      <Menu onOpenChange={askAgain}>
+        <MenuTrigger
+          ref={anchor}
+          render={
+            <Button
+              size="xs"
+              variant="ghost"
+              aria-label={
+                waiting
+                  ? gt("University: {name}, sign in needed", { name: waiting.name })
+                  : gt("University: {name}", { name: shown.name })
+              }
+            />
+          }
+        >
+          <UniversityIcon site={shown.domain ?? ""} className="size-5" />
+          {waiting && canWrite ? (
+            <span className="@max-[28rem]:hidden">
+              <T>Sign in</T>
+            </span>
+          ) : null}
+          <ChevronDownIcon className="size-3 text-muted-foreground" />
+        </MenuTrigger>
+        <MenuPopup align="end" side="bottom" className="max-w-72 min-w-56">
+          {groups.map((group) => {
+            const status = statusOf(group);
+            const ended = status === "signed-in" ? recentEnd(group, data) : undefined;
+            const busy = group.rows.some((row) => glancing.has(row.accountId));
+            const preferred = signInRow(group);
+            return (
+              <div key={group.key}>
+                <div className="px-2 py-1.5">
+                  <div className="truncate text-sm">{group.name}</div>
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    {status === "sign-out-unfinished" && unclearedHost(openSignOut(group, data))
+                      ? gt("Couldn't fully sign out · {host}", {
+                          host: unclearedHost(openSignOut(group, data))!,
+                        })
+                      : messages(UNIVERSITY_STATUS_LABELS[status])}
+                    {ended && ended !== "signed-in"
+                      ? ` · ${messages(UNIVERSITY_STATUS_LABELS[ended])}`
+                      : null}
+                    {busy ? <Spinner size="xs" tone="muted" /> : null}
+                  </div>
+                </div>
+                {(status === "signed-in" || status === "sign-out-unfinished") && newServer ? (
+                  <MenuItem disabled={!canWrite} onClick={() => void signOut(group)}>
+                    <T>Sign out</T>
+                  </MenuItem>
+                ) : null}
+                {status === "signing-in" ? null : (
+                  <>
+                    {status === "signed-in" ? null : (
+                      <MenuItem disabled={!canWrite} onClick={() => signIn(group, preferred)}>
+                        <T>Sign in</T>
+                      </MenuItem>
+                    )}
+                    {group.rows
+                      .filter((row) =>
+                        status === "signed-in"
+                          ? row.signIn?.state !== "signed-in"
+                          : row !== preferred,
+                      )
+                      .map((row) => (
+                        <MenuItem
+                          key={row.accountId}
+                          disabled={!canWrite}
+                          onClick={() => signIn(group, row)}
+                        >
+                          {messages(signInLabel(row, group))}
+                        </MenuItem>
+                      ))}
+                  </>
+                )}
+                <MenuSeparator />
               </div>
-              {signedIn ? null : (
-                <MenuItem disabled={!canWrite} onClick={() => signIn(account.accountId)}>
-                  <T>Sign in</T>
-                </MenuItem>
-              )}
-            </div>
-          );
-        })}
-        <MenuSeparator />
-        <MenuItem onClick={() => void navigate({ to: "/settings/accounts" })}>
-          <T>Accounts & secrets</T>
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+            );
+          })}
+          {canWrite ? (
+            <MenuItem onClick={() => setConnecting(true)}>
+              <T>Add university</T>
+            </MenuItem>
+          ) : null}
+          <MenuItem
+            onClick={() =>
+              void navigate({ to: "/settings/accounts", search: { machine: environmentId } })
+            }
+          >
+            <T>Accounts & secrets</T>
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+      <Popover open={connecting} onOpenChange={setConnecting}>
+        <PopoverPopup anchor={anchor} align="end" width="md">
+          {picker}
+        </PopoverPopup>
+      </Popover>
+    </>
   );
 }

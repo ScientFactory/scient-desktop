@@ -1063,6 +1063,16 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // SCIENT-FORK:START — Scient Accounts: a running server drops a revoked link itself, in its
+  // relay's acknowledgement turn, for the CLI.
+  .add(
+    HttpApiEndpoint.post("dropRevokedLink", "/api/connect/drop-revoked-link", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Struct({ dropped: Schema.Boolean }),
+      error: EnvironmentHttpCloudErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  // SCIENT-FORK:END
   .add(
     HttpApiEndpoint.post("preferences", "/api/connect/preferences", {
       headers: OptionalBearerHeaders,
@@ -1105,6 +1115,7 @@ const {
   EnvironmentScientPdfHttpApi,
   EnvironmentScientAnalyticsHttpApi,
   EnvironmentScientKeepAwakeHttpApi,
+  EnvironmentScientAccountsHttpApi,
   EnvironmentScientThreadQueueHttpApi,
   EnvironmentScientConversationExportHttpApi,
   EnvironmentScientConversationImportHttpApi,
@@ -1176,6 +1187,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START
   .add(EnvironmentScientKeepAwakeHttpApi)
+  .add(EnvironmentScientAccountsHttpApi)
   .add(EnvironmentScientThreadQueueHttpApi)
   .add(EnvironmentScientConversationExportHttpApi)
   .add(EnvironmentScientConversationImportHttpApi)

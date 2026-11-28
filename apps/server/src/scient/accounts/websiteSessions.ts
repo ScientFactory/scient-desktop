@@ -4,7 +4,7 @@ import {
   type AccountId,
   type AccountSummary,
 } from "@t3tools/contracts";
-import { signedInMomentsAgo } from "./AccountDecisions.ts";
+import { isGoogleSessionRow, signedInMomentsAgo } from "./AccountDecisions.ts";
 
 /**
  * Sign-ins whose cookies are gone, to record as signed out: one last signed in, or unknown after
@@ -21,6 +21,8 @@ export function endedWebsiteSessions(
 ): ReadonlyArray<AccountId> {
   return accounts.flatMap((account) => {
     if (account.details.kind !== "website") return [];
+    // Google's own answer is the one writer of its rows (`googleSessionsSeen`), not its cookies.
+    if (isGoogleSessionRow(account)) return [];
     // Imported and copied rows are no evidence of a session, so its cookies leaving say nothing.
     if (account.signIn?.from !== undefined) return [];
     // Without a named profile, sign-ins and "Open site" use the user's default profile.

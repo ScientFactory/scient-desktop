@@ -9,6 +9,7 @@ import {
 import type { AccountsError } from "@t3tools/contracts";
 import { PreviewAccountCheckTimeoutError } from "../../../scient/accounts/agent/previewProfileAccess.ts";
 import { previewProfileFallback } from "../../../scient/accounts/agent/previewProfileFallback.ts";
+import { AccountsService } from "../../../scient/accounts/AccountsService.ts";
 import * as Clock from "effect/Clock";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
@@ -302,10 +303,16 @@ const handlers = {
           input.tabId === undefined ? {} : { tabId: input.tabId },
         );
         const profile = yield* authorizePreviewProfile(scope, status, input);
-        const opened = yield* recordProfileUse(
-          scope,
+        const accounts = yield* AccountsService;
+        // Counted as open while it opens: a Remove decided meanwhile waits for it, or refuses.
+        const opened = yield* accounts.admitProfileTab(
           profile.profileId,
-          openThenTarget({ ...input, profileId: profile.profileId }),
+          scope.threadId,
+          recordProfileUse(
+            scope,
+            profile.profileId,
+            openThenTarget({ ...input, profileId: profile.profileId }),
+          ),
         );
         const checked = yield* previewProfileFallback(scope, opened, {
           operation: "open",

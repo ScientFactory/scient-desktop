@@ -3,6 +3,7 @@ import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import {
   decideSignIn,
   decideSignInContinuation,
+  MANAGED_DEVICE_MESSAGE,
   MAX_SIGN_IN_STEPS,
   pageOffersNoSignIn,
   type SignInSubmission,
@@ -75,8 +76,16 @@ describe("account sign-in decisions", () => {
     ).toMatchObject({ type: "fill", submit: "#saved" });
     expect(
       decideSignIn(chooser, ["example.com"], { ...available, accountName: "new@example.com" }),
-    ).toMatchObject({ type: "needs-user", kind: "other" });
+    ).toMatchObject({ type: "needs-user", kind: "other", choose: "account" });
     expect(pageOffersNoSignIn(chooser, ["example.com"])).toBe(false);
+    // Google's chooser shows "Use another account" too: the person still chooses.
+    const withLink = { ...chooser, signInLink: "#use-another" };
+    expect(
+      decideSignIn(withLink, ["example.com"], { ...available, accountName: "new@example.com" }),
+    ).toMatchObject({ type: "needs-user", kind: "other", choose: "account" });
+    expect(
+      decideSignIn(withLink, ["example.com"], { ...available, accountName: "saved@example.com" }),
+    ).toMatchObject({ type: "fill", submit: "#saved" });
   });
 
   it("takes the password route past a passkey when a password is saved", () => {
@@ -106,6 +115,16 @@ describe("account sign-in decisions", () => {
         available,
       ),
     ).toEqual({ type: "fill", fields: [], submit: "#sign-in" });
+  });
+
+  it("stops once at a managed-device policy, naming the browser that can pass it", () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, submit: null, managedDevice: true },
+        ["example.com"],
+        available,
+      ),
+    ).toMatchObject({ type: "needs-user", kind: undefined, message: MANAGED_DEVICE_MESSAGE });
   });
 
   it('answers "Stay signed in?" with its Yes button', () => {

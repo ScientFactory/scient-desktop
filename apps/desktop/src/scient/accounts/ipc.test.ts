@@ -10,8 +10,16 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { PRIMARY_LOCAL_ENVIRONMENT_ID, type SessionCookie } from "@t3tools/contracts";
+import {
+  ACCOUNTS_DESKTOP_WRITE_CHECK_PATH,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type SessionCookie,
+} from "@t3tools/contracts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
@@ -22,9 +30,13 @@ import {
   fillMainHandler,
   forwardCapturedSignIn,
   signedInSites,
+  signOutKept,
+  undoDeadlines,
   withdrawFromMainHandler,
 } from "./ipc.ts";
 import { signOutMainSite } from "./mainFill.ts";
+import { inJarTurn } from "./jarTurns.ts";
+import { sealSignOut, setProfileGenerations, sweepSignOutSaves } from "./profileData.ts";
 import { trackMainInserts } from "./mainInserts.ts";
 
 vi.mock("./sessionCookies.ts", async (importOriginal) => ({
@@ -34,6 +46,22 @@ vi.mock("./sessionCookies.ts", async (importOriginal) => ({
     run: (send: (method: string, params?: object) => Promise<unknown>) => Promise<unknown>,
   ) => run(session.send),
 }));
+
+/** A protected store for the cases that keep an Undo; off, as on a computer without one. */
+const protectedStore = vi.hoisted(() => ({ on: false }));
+vi.mock("./protectedStore.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./protectedStore.ts")>();
+  return {
+    ...actual,
+    undoEncryption: () =>
+      protectedStore.on
+        ? {
+            encrypt: (plain: string) => Buffer.from(plain),
+            decrypt: (sealed: Buffer) => sealed.toString(),
+          }
+        : actual.undoEncryption(),
+  };
+});
 
 vi.mock("electron", () => ({
   BrowserWindow: {},
@@ -46,6 +74,7 @@ vi.mock("electron", () => ({
   ClipboardItem: {},
 }));
 
+const cookieValues = { last: "" };
 function fixture() {
   const sent: unknown[] = [];
   const frame = {};
@@ -67,6 +96,9 @@ function fixture() {
     getType: () => "webview",
     getURL: () => url,
     executeJavaScriptInIsolatedWorld: async (worldId: number) => worldId === 999,
+    // A filled password listens for the page's "Stay signed in?" step.
+    on: () => undefined,
+    removeListener: () => undefined,
   } as unknown as Electron.WebContents;
   let failCookies = false;
   let registered = true;
@@ -85,10 +117,12 @@ function fixture() {
               if (failCookies) throw new Error("Synthetic cookie failure");
               return [
                 {
+                  name: "session",
                   domain: ".example.test",
                   expirationDate: 2000,
                   httpOnly: true,
-                  value: NodeCrypto.randomBytes(16).toString("hex"),
+                  // A new value at every read, as a session the site rotates.
+                  value: (cookieValues.last = NodeCrypto.randomBytes(16).toString("hex")),
                 },
               ];
             },
@@ -229,9 +263,23 @@ it.effect("accepts fill only from the application main frame and rejects invalid
 it.effect("returns only cookie metadata and distinguishes denied reads from empty profiles", () =>
   Effect.gen(function* () {
     const f = fixture();
-    expect(
-      yield* f.run(cookieMetadata({ profileId: "work", environmentId: "remote" }, f.mainEvent)),
-    ).toEqual([{ domain: ".example.test", httpOnly: true, expires: 2000 }]);
+    const read = () =>
+      f.run(cookieMetadata({ profileId: "work", environmentId: "remote" }, f.mainEvent));
+    const first = yield* read();
+    // Its name and a fingerprint of its value, never the value: a rotation shows (round 6c).
+    expect(first).toEqual([
+      {
+        domain: ".example.test",
+        httpOnly: true,
+        expires: 2000,
+        name: "session",
+        path: "/",
+        digest: expect.stringMatching(/^[0-9a-f]{16}$/),
+      },
+    ]);
+    expect(JSON.stringify(first)).not.toContain(cookieValues.last);
+    const second = yield* read();
+    expect(second?.[0]?.digest).not.toBe(first?.[0]?.digest);
     expect(yield* f.run(cookieMetadata({ profileId: "default" }, f.guestEvent))).toBeNull();
     expect(yield* f.run(cookieMetadata({ profileId: "\u0000" }, f.mainEvent))).toBeNull();
     f.failCookieRead();
@@ -259,7 +307,36 @@ function fillFixture(
   };
   const frame = {};
   const mainContents = { id: 1, mainFrame: frame, isDestroyed: () => false };
+  /** This desktop's own backend (round 6f): what it answers when a write asks. */
+  const backend = { ok: true, checks: [] as unknown[] };
   const layer = Layer.mergeAll(
+    Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+      primary: Effect.succeed({
+        currentConfig: Effect.succeedSome({ httpBaseUrl: new URL("http://127.0.0.1:4100") }),
+      }),
+    } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]),
+    Layer.succeed(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+      getBearerToken: Effect.succeed("desktop-session"),
+      forgetBearerToken: Effect.void,
+    }),
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          const check = request.url.endsWith(ACCOUNTS_DESKTOP_WRITE_CHECK_PATH);
+          if (check && request.body._tag === "Uint8Array")
+            backend.checks.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+          return HttpClientResponse.fromWeb(
+            request,
+            check
+              ? new Response(JSON.stringify({ ok: backend.ok }), {
+                  headers: { "content-type": "application/json" },
+                })
+              : new Response("", { status: 500 }),
+          );
+        }),
+      ),
+    ),
     Layer.succeed(
       DesktopEnvironment.DesktopEnvironment,
       // Only the state folder: Main's copy records live there.
@@ -302,6 +379,7 @@ function fillFixture(
   const profile = (id: string) =>
     sessionFor(JSON.stringify([PRIMARY_LOCAL_ENVIRONMENT_ID, id]), true, "profile");
   return {
+    backend,
     main: () => sessionFor(PRIMARY_LOCAL_ENVIRONMENT_ID),
     profile,
     imports,
@@ -311,6 +389,19 @@ function fillFixture(
     stateDir,
     signOutMain: (site: string) =>
       signOutMainSite(site, PRIMARY_LOCAL_ENVIRONMENT_ID).pipe(Effect.provide(layer)),
+    /** The sign-out with Undo (round 6c), for Main too. */
+    signOutKept: (profileId: string, site: string, generation?: number) =>
+      signOutKept(
+        {
+          profileId,
+          site,
+          operationId: "op-out",
+          ...(generation === undefined ? {} : { generation }),
+        },
+        event as never,
+      ).pipe(Effect.provide(layer)),
+    undoDeadlines: (deadlines: Record<string, string | null>) =>
+      undoDeadlines({ deadlines }, event as never).pipe(Effect.provide(layer)),
     withdraw: (from: string, heldOnly?: true) =>
       withdrawFromMainHandler(heldOnly ? { from, heldOnly } : { from }, event as never).pipe(
         Effect.provide(layer),
@@ -638,6 +729,94 @@ describe("fillMain", () => {
     }),
   );
 
+  it.effect(
+    "writes an operation's part into the data it was done in, whatever Clear did since",
+    () =>
+      Effect.gen(function* () {
+        const f = fillFixture();
+        f.profile("work").put(jarCookie());
+        // Cleared after the sign-out was decided: the profile opens in generation 1 now.
+        setProfileGenerations(PRIMARY_LOCAL_ENVIRONMENT_ID, { work: 1 });
+        try {
+          expect(yield* f.signOutKept("work", "github.com", 0)).toMatchObject({ signedOut: true });
+          // Generation 0's jar, where it was decided, is the one signed out (round 6d).
+          expect(f.profile("work").jar.size).toBe(0);
+        } finally {
+          setProfileGenerations(PRIMARY_LOCAL_ENVIRONMENT_ID, {});
+        }
+      }),
+  );
+
+  it.effect("signs nothing out when its own backend says, at the write, it no longer stands", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      // Revoked after the claim: the desktop asks its own backend at the moment of the write.
+      f.backend.ok = false;
+      // regression: the desktop wrote on the renderer's earlier claim alone.
+      expect(yield* f.signOutKept("work", "github.com")).toBeNull();
+      expect(f.profile("work").jar.size).toBe(1);
+      expect(f.backend.checks).toEqual([{ operationId: "op-out", phase: "do" }]);
+      f.backend.ok = true;
+      expect(yield* f.signOutKept("work", "github.com")).toMatchObject({ signedOut: true });
+      expect(f.profile("work").jar.size).toBe(0);
+    }),
+  );
+
+  it("runs a jar's writes one at a time, each with its own check", async () => {
+    const jar = {};
+    const order: string[] = [];
+    let release = () => undefined as void;
+    const first = inJarTurn([jar], async () => {
+      order.push("first:start");
+      await new Promise<void>((resolve) => (release = resolve));
+      order.push("first:end");
+    });
+    const second = inJarTurn([jar], async () => void order.push("second"));
+    await vi.waitFor(() => expect(order).toEqual(["first:start"]));
+    release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first:start", "first:end", "second"]);
+  });
+
+  it.effect("keeps a sign-out's save across a restart until its receipt's Undo ends", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      sealSignOut(f.stateDir, "op-out", [jarCookie()], (plain) => Buffer.from(plain));
+      const save = NodePath.join(f.stateDir, "scient-sign-outs", "op-out.bin");
+      const made = NodeFS.statSync(save).mtimeMs;
+      // Its other desktops are still signing out: no deadline yet.
+      expect(yield* f.undoDeadlines({ "op-out": null })).toBe(true);
+      // regression: a restart two hours on swept it by its age, before its Undo had begun.
+      sweepSignOutSaves(f.stateDir, made + 2 * 60 * 60 * 1000);
+      expect(NodeFS.existsSync(save)).toBe(true);
+      const until = DateTime.formatIso(DateTime.makeUnsafe(made + 3 * 60 * 60 * 1000));
+      expect(yield* f.undoDeadlines({ "op-out": until })).toBe(true);
+      sweepSignOutSaves(f.stateDir, Date.parse(until) - 1);
+      expect(NodeFS.existsSync(save)).toBe(true);
+      sweepSignOutSaves(f.stateDir, Date.parse(until) + 1);
+      expect(NodeFS.existsSync(save)).toBe(false);
+    }),
+  );
+
+  it.effect("lets copies write a site again after Main's sign-out with Undo, as its own did", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      const main = f.main();
+      main.faults.corruptNextSet = true;
+      main.faults.onSet = () => {
+        main.faults.failDeletes = true;
+      };
+      expect((yield* f.copy({ from: "work" }))?.units[0]?.outcome).toBe("restore-failed");
+      main.faults.failDeletes = false;
+      main.jar.clear();
+      // Under Main's lock, kept for its Undo, and the site starts afresh for copies.
+      expect(yield* f.signOutKept("default", "github.com")).toMatchObject({ signedOut: true });
+      expect((yield* f.copy({ from: "work" }))?.units[0]?.outcome).toBe("copied");
+    }),
+  );
+
   it.effect("imports into Main through a throwaway partition the importer writes instead", () =>
     Effect.gen(function* () {
       const f = fillFixture();
@@ -660,6 +839,27 @@ describe("fillMain", () => {
       expect(f.imports[0]).toMatchObject({ persistent: false });
       expect(f.imports[0]?.scope.startsWith("scient-import-staging:")).toBe(true);
       expect(f.sessions.get(f.imports[0]!.scope)?.clearStorageData).toHaveBeenCalled();
+      expect(f.main().jar.size).toBe(1);
+    }),
+  );
+
+  it.effect("checks an agent's refresh of Main in Main's turn before it writes (6i)", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      const refresh = {
+        from: { importSourceId: "chrome", sourceProfileDirectory: "Default" },
+        operationId: "op-main",
+      };
+      // Stopped while the browser asked: Main is as it was.
+      f.backend.ok = false;
+      // regression: Main's fill carried no operation, so nothing checked it as it wrote.
+      expect(yield* f.copy(refresh)).toBeNull();
+      expect(f.backend.checks).toEqual([{ operationId: "op-main", phase: "do" }]);
+      expect(f.main().jar.size).toBe(0);
+      // Standing, it writes.
+      f.backend.ok = true;
+      const result = yield* f.copy(refresh);
+      expect(result?.units).toEqual([{ sites: ["github.com"], outcome: "copied" }]);
       expect(f.main().jar.size).toBe(1);
     }),
   );

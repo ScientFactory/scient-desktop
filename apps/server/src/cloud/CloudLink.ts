@@ -440,6 +440,10 @@ export class CloudLink extends Context.Service<
       CloudLinkInternalError
     >;
     readonly unlink: () => Effect.Effect<EnvironmentCloudRelayConfigResult, CloudLinkInternalError>;
+    // SCIENT-FORK:START — Scient Accounts: the CLI's drop of a revoked link, in the relay's turn.
+    /** Drops a link Scient Connect revoked, if any, in the relay's acknowledgement turn. */
+    readonly dropRevokedLink: () => Effect.Effect<boolean, CloudLinkInternalError>;
+    // SCIENT-FORK:END
     readonly updatePreferences: (
       input: EnvironmentCloudPreferencesRequest,
     ) => Effect.Effect<
@@ -816,7 +820,9 @@ const make = Effect.gen(function* () {
         ) {
           yield* setCliDesiredCloudLink(false).pipe(withSecrets);
         }
-        yield* dropRevokedCloudLink.pipe(withSecrets);
+        // SCIENT-FORK:START — Scient Accounts: the drop changes the link in the relay's acknowledgement turn.
+        yield* awarenessRelay.replacingLink(dropRevokedCloudLink.pipe(withSecrets));
+        // SCIENT-FORK:END
       }
       // SCIENT-FORK:START — scient/connect: a desktop sign-in moves the computer to its account.
       if (options?.replaceLinkedAccount !== true)
@@ -830,16 +836,22 @@ const make = Effect.gen(function* () {
       // Store runtime config last so partial writes cannot appear managed or respawn a stale tunnel.
       yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
 
-      yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
-      yield* secrets.set(
-        RELAY_ISSUER_SECRET,
-        stringToBytes(payload.relayIssuer ?? payload.relayUrl),
+      // SCIENT-FORK:START — Scient Accounts: the link changes in the relay's acknowledgement turn.
+      yield* awarenessRelay.replacingLink(
+        Effect.gen(function* () {
+          yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
+          yield* secrets.set(
+            RELAY_ISSUER_SECRET,
+            stringToBytes(payload.relayIssuer ?? payload.relayUrl),
+          );
+          yield* secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
+          yield* secrets.set(
+            RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+            stringToBytes(payload.environmentCredential),
+          );
+        }),
       );
-      yield* secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
-      yield* secrets.set(
-        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-        stringToBytes(payload.environmentCredential),
-      );
+      // SCIENT-FORK:END
       yield* secrets.remove(CLOUD_LINK_REVOKED);
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
       yield* awarenessRelay.requestCatchUp();
@@ -1431,6 +1443,17 @@ const make = Effect.gen(function* () {
     } satisfies EnvironmentCloudLinkStateResult;
   });
 
+  // SCIENT-FORK:START — Scient Accounts: the CLI's drop of a revoked link, in the relay's turn.
+  const dropRevokedLink = Effect.fn("environment.cloud.dropRevokedLink")(
+    function* () {
+      return yield* endpointRuntime.withLinkStateLock(
+        awarenessRelay.replacingLink(dropRevokedCloudLink.pipe(withSecrets)),
+      );
+    },
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("remove-relay-config")),
+  );
+  // SCIENT-FORK:END
+
   const linkState = Effect.fn("environment.cloud.linkState")(
     function* () {
       return yield* readCloudLinkState();
@@ -1443,21 +1466,25 @@ const make = Effect.gen(function* () {
       return yield* endpointRuntime.withLinkStateLock(
         Effect.gen(function* () {
           const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(null);
-          yield* Effect.all(
-            [
-              secrets.remove(CLOUD_LINKED_USER_ID),
-              secrets.remove(RELAY_URL_SECRET),
-              secrets.remove(RELAY_ISSUER_SECRET),
-              secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-              secrets.remove(CLOUD_MINT_PUBLIC_KEY),
-              secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
-              secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
-              secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
-              secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
-              secrets.remove(CLOUD_LINK_REVOKED),
-            ],
-            { concurrency: 10 },
+          // SCIENT-FORK:START — Scient Accounts: the link goes in the relay's acknowledgement turn.
+          yield* awarenessRelay.replacingLink(
+            Effect.all(
+              [
+                secrets.remove(CLOUD_LINKED_USER_ID),
+                secrets.remove(RELAY_URL_SECRET),
+                secrets.remove(RELAY_ISSUER_SECRET),
+                secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+                secrets.remove(CLOUD_MINT_PUBLIC_KEY),
+                secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+                secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+                secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
+                secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
+                secrets.remove(CLOUD_LINK_REVOKED),
+              ],
+              { concurrency: 10 },
+            ),
           );
+          // SCIENT-FORK:END
           yield* setCliDesiredCloudLink(false).pipe(withSecrets);
           return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
         }),
@@ -1798,6 +1825,9 @@ const make = Effect.gen(function* () {
       applyRelayConfig: refused,
       linkState,
       unlink,
+      // SCIENT-FORK:START — Scient Accounts: the CLI's drop of a revoked link, in the relay's turn.
+      dropRevokedLink,
+      // SCIENT-FORK:END
       updatePreferences: refused,
       updateLiveActivityPreference: refused,
       answerHealthRequest: refused,
@@ -1818,6 +1848,9 @@ const make = Effect.gen(function* () {
     applyRelayConfig,
     linkState,
     unlink,
+    // SCIENT-FORK:START — Scient Accounts: the CLI's drop of a revoked link, in the relay's turn.
+    dropRevokedLink,
+    // SCIENT-FORK:END
     updatePreferences,
     updateLiveActivityPreference,
     answerHealthRequest,

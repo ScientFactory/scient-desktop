@@ -60,6 +60,10 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
+// SCIENT-FORK:START — Scient Accounts: a generator can use a key saved in Accounts.
+import { referencedAccountId } from "@t3tools/contracts";
+import { TextGeneratorAccountKey } from "~/scient/accounts/TextGeneratorAccountKey";
+// SCIENT-FORK:END
 import { useSearchableSetting } from "./settingsSearch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -353,9 +357,8 @@ function TextGeneratorWizard({
               ? gt("Edit {name}", { name: textGeneratorDisplayName(existing, messages) })
               : gt("Add a text generator")
           }
-          description={gt(
-            "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
-          )}
+          // SCIENT-FORK:START — Scient: no explanation on the setup screen; the guide has it.
+          // SCIENT-FORK:END
         >
           <WizardSteps
             steps={STEPS.map((step) => messages(step))}
@@ -442,20 +445,36 @@ function TextGeneratorWizard({
                   <Label htmlFor="text-generator-key">
                     {keyRequired ? gt("API key") : gt("API key (optional)")}
                   </Label>
-                  <SecretSourceInput
-                    id="text-generator-key"
-                    aria-label={gt("API key")}
+                  {/* SCIENT-FORK:START — Scient Accounts: a key saved in Accounts, or a typed one. */}
+                  <TextGeneratorAccountKey
+                    environmentId={environmentId}
+                    baseUrl={baseUrl}
+                    kind={kind}
+                    generatorId={savedId ?? ""}
                     value={keyDraft}
-                    configured={storedKey !== ""}
-                    sources={secretSources}
-                    onChange={(event) => {
-                      setKeyDraft(event.target.value);
+                    onChange={(value) => {
+                      setKeyDraft(value);
+                      setKeyValid(true);
                       setCheckError(null);
                     }}
-                    onSecretChange={(secret) => setKeyDraft(secret ?? "")}
-                    autoFocus={existing === null && preset.id !== "custom"}
-                    onValidityChange={setKeyValid}
                   />
+                  {referencedAccountId(keyDraft) === undefined ? (
+                    <SecretSourceInput
+                      id="text-generator-key"
+                      aria-label={gt("API key")}
+                      value={keyDraft}
+                      configured={storedKey !== ""}
+                      sources={secretSources}
+                      onChange={(event) => {
+                        setKeyDraft(event.target.value);
+                        setCheckError(null);
+                      }}
+                      onSecretChange={(secret) => setKeyDraft(secret ?? "")}
+                      autoFocus={existing === null && preset.id !== "custom"}
+                      onValidityChange={setKeyValid}
+                    />
+                  ) : null}
+                  {/* SCIENT-FORK:END */}
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="text-generator-label">

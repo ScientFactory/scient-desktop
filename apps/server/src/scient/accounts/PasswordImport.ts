@@ -123,9 +123,10 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
       skipped++;
       continue;
     }
-    const site = url.hostname;
+    // A port is part of the login's boundary: it is kept as that exact origin.
+    const site = url.port ? `https://${url.hostname}:${url.port}` : url.hostname;
     if (
-      !getDomain(site, { allowPrivateDomains: true }) ||
+      !getDomain(url.hostname, { allowPrivateDomains: true }) ||
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
       url.password ||
@@ -145,7 +146,7 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
     }
     const changed = Option.map(DateTime.make(row[indices.changed] ?? ""), DateTime.formatIso);
     entries.push({
-      name: (row[indices.title]?.trim() || site).slice(0, 80),
+      name: (row[indices.title]?.trim() || url.hostname).slice(0, 80),
       site,
       loginUrl: url.href,
       username: row[indices.username] ?? "",

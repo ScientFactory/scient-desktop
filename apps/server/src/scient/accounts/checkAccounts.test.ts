@@ -1,9 +1,11 @@
 import {
   AccountId,
+  type AccountsError,
   EnvironmentId,
   type AccountsCheckInput,
   type AccountSummary,
   type PreviewAutomationStatus,
+  PreviewAutomationExecutionError,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import { describe, expect, it as plain } from "vite-plus/test";
@@ -17,7 +19,14 @@ import { AccountsService } from "./AccountsService.ts";
 import { fakeAccounts } from "./Accounts.testkit.ts";
 import type { ProfileDetection } from "./agent/profileDetection.ts";
 import { OPEN_ATHENS_CHECK_PAGE } from "@t3tools/shared/scientPaperLinks";
-import { checkAccounts, checkAddress, sessionState, worthChecking } from "./checkAccounts.ts";
+import {
+  checkAccounts,
+  checkAddress,
+  lookBeforeRun,
+  lookBeforeFetch,
+  sessionState,
+  worthChecking,
+} from "./checkAccounts.ts";
 
 const account: AccountSummary = {
   accountId: AccountId.make("acc_fixture1"),
@@ -122,6 +131,32 @@ describe("account session state", () => {
     expect(at("https://ezproxy.huji.ac.il/login")).toBe("signed-out");
   });
 
+  plain("a Microsoft account is asked on its own account page, not its sign-in page", () => {
+    const microsoft = (site: string): AccountSummary => ({
+      ...account,
+      details: { kind: "website", sites: [site], username: "dana@contoso.example" },
+    });
+    const work = checkAddress(microsoft("login.microsoftonline.com"))!;
+    expect(work).toBe("https://myaccount.microsoft.com/");
+    expect(checkAddress(microsoft("login.live.com"))).toBe("https://account.microsoft.com/");
+    // The account page opens signed in; signed out, Microsoft sends it to its sign-in page.
+    const signedIn = {
+      ...account,
+      signIn: { state: "signed-in" as const, at: "2026-11-26T00:00:00Z" },
+    };
+    expect(
+      sessionState(signedIn, work, { ...page, finalUrl: "https://myaccount.microsoft.com/" }, true),
+    ).toBe("signed-in");
+    expect(
+      sessionState(
+        signedIn,
+        work,
+        { ...page, finalUrl: "https://login.microsoftonline.com/common/oauth2" },
+        true,
+      ),
+    ).toBe("signed-out");
+  });
+
   plain("a whole run skips imported passwords nobody used", () => {
     const { lastUsedAt: _used, ...imported } = account;
     expect(worthChecking(imported)).toBe(false);
@@ -137,6 +172,13 @@ const run = (
   signInPage = true,
   shown: Partial<ProfileDetection> = {},
   input: AccountsCheckInput = {},
+  call: Effect.Effect<
+    unknown,
+    AccountsError,
+    AccountsService | PreviewAutomationBroker
+  > = checkAccounts(input, EnvironmentId.make("env-fixture")),
+  /** The accounts as read the n-th time, when they change during the look. */
+  readAt: (reads: number) => ReadonlyArray<AccountSummary> = () => accounts,
 ) => {
   const operations: string[] = [];
   let submitted = false;
@@ -176,10 +218,11 @@ const run = (
       }),
   });
   const fake = fakeAccounts({ accounts, values: { password: "synthetic-password" } });
-  return checkAccounts(input, EnvironmentId.make("env-fixture")).pipe(
+  let reads = 0;
+  return call.pipe(
     Effect.provideService(AccountsService, {
       ...fake.service,
-      snapshot: Effect.succeed({ accounts } as never),
+      snapshot: Effect.sync(() => ({ accounts: readAt(reads++) }) as never),
     }),
     Effect.provideService(PreviewAutomationBroker, broker),
     Effect.map((checked) => ({ checked, operations, checks: fake.checks, uses: fake.uses })),
@@ -203,11 +246,11 @@ it.effect("signs a signed-out account back in once per press, and closes up", ()
   }),
 );
 
-it.effect("types nothing for a sign-in that is Off, and leaves a limiting site alone", () =>
+it.effect("signs in with a sign-in that is Off, and leaves a limiting site alone", () =>
   Effect.gen(function* () {
+    // Check is the person's own press: Off governs agents only.
     const off = yield* run([account]);
-    expect(off.uses).toEqual([]);
-    expect(off.checks[0]?.detail).toContain("access doesn't let Scient type");
+    expect(off.uses[0]?.signInOutcome).toBe("signed-in");
     const at = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
     const limited = yield* run([
       {
@@ -225,6 +268,130 @@ it.effect("only records a session that is already live", () =>
     const { uses, checks } = yield* run([account], false);
     expect(uses).toEqual([]);
     expect(checks[0]?.state).toBe("unknown");
+  }),
+);
+
+it.effect("a pinned run's look says signed in once its own sign-in worked", () =>
+  Effect.gen(function* () {
+    const allowed = { ...account, controls: { ...account.controls, access: "allowed" as const } };
+    // regression: the look's signed-out stood after its sign-in worked, so the run was blocked.
+    const { checked, uses } = yield* run(
+      [allowed],
+      true,
+      {},
+      {},
+      lookBeforeRun(allowed, EnvironmentId.make("env-fixture"), "task:hours"),
+    );
+    expect(uses[0]?.signInOutcome).toBe("signed-in");
+    expect(checked).toMatchObject({ state: "signed-in", unreachable: false });
+  }),
+);
+
+it.effect(
+  "a pinned run takes a Google row's state from Google, never from a look at its pages",
+  () =>
+    Effect.gen(function* () {
+      const google: AccountSummary = {
+        ...account,
+        details: { kind: "website", sites: ["google.com"], username: "a@example.com" },
+        secrets: {},
+        signIn: { state: "signed-in", at: "2026-01-01T00:00:00.000Z" },
+      };
+      // regression: the look read accounts.google.com's sign-in page as signed out.
+      const { checked, operations } = yield* run(
+        [google],
+        true,
+        {},
+        {},
+        lookBeforeRun(google, EnvironmentId.make("env-fixture"), "task:hours"),
+      );
+      expect(checked).toMatchObject({ state: "signed-in" });
+      expect(operations).not.toContain("open");
+    }),
+);
+
+/** A broker whose every open fails as the server browser's navigation does (DNS, TLS, refused). */
+const unreachableBroker = (operations: string[]) => {
+  const navigation = new PreviewAutomationExecutionError({
+    operation: "open",
+    environmentId: EnvironmentId.make("env-fixture"),
+    threadId: "scient-accounts-renewal" as never,
+    clientId: "server-browser",
+    connectionId: "fixture-connection" as never,
+    requestId: "fixture-request",
+    timeoutMs: 15_000,
+    remoteTag: "PreviewAutomationExecutionError",
+    remoteMessageLength: 60,
+    remoteDetailKind: "object",
+    cause: {
+      _tag: "PreviewAutomationExecutionError",
+      message: "Navigation to https://example.com/ failed: net::ERR_NAME_NOT_RESOLVED",
+      detail: { failureClass: "navigation_network" },
+    },
+    reason: "Navigation to https://example.com/ failed: net::ERR_NAME_NOT_RESOLVED",
+  });
+  return PreviewAutomationBroker.of({
+    connect: () => Effect.succeed(Stream.empty),
+    focusHost: () => Effect.void,
+    respond: () => Effect.void,
+    invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+      Effect.suspend(() => {
+        operations.push(request.operation);
+        return request.operation === "open"
+          ? Effect.fail(navigation)
+          : Effect.succeed({ available: true, tabs: [] } as A);
+      }),
+  });
+};
+
+it.effect("a site the browser couldn't navigate to is unreachable, never signed out", () =>
+  Effect.gen(function* () {
+    const allowed = { ...account, controls: { ...account.controls, access: "allowed" as const } };
+    const fake = fakeAccounts({ accounts: [allowed], values: { password: "synthetic-password" } });
+    const operations: string[] = [];
+    // regression: the failed open folded to unknown with no mark, so a pinned run went ahead.
+    const state = yield* lookBeforeRun(
+      allowed,
+      EnvironmentId.make("env-fixture"),
+      "task:hours",
+    ).pipe(
+      Effect.provideService(AccountsService, fake.service),
+      Effect.provideService(PreviewAutomationBroker, unreachableBroker(operations)),
+    );
+    expect(state).toEqual({ state: "unknown", unreachable: true });
+    expect(fake.checks.at(-1)).toMatchObject({ state: "unknown", unreachable: true });
+    expect(operations).not.toContain("accountType");
+  }),
+);
+
+it.effect("a pinned run's failed visit to a university that stays signed in is unreachable", () =>
+  Effect.gen(function* () {
+    const kept: AccountSummary = {
+      ...shibboleth,
+      controls: { ...shibboleth.controls, access: "allowed" as const },
+      signIn: { state: "signed-in", at: "2026-01-01T00:00:00.000Z" },
+    };
+    const fake = fakeAccounts({ accounts: [kept], values: { password: "synthetic-password" } });
+    const look = yield* lookBeforeRun(kept, EnvironmentId.make("env-fixture"), "task:hours").pipe(
+      Effect.provideService(AccountsService, fake.service),
+      Effect.provideService(PreviewAutomationBroker, unreachableBroker([])),
+    );
+    // The row keeps its last signed-in; this visit reached nothing.
+    expect(fake.checks).toEqual([]);
+    // regression: the row's kept signed-in, with no unreachable mark, let the pinned run go ahead.
+    expect(look).toEqual({ state: "unknown", unreachable: true });
+  }),
+);
+
+it.effect("keeps a site it couldn't reach apart from a sign-out, and signs nothing in", () =>
+  Effect.gen(function* () {
+    const allowed = { ...account, controls: { ...account.controls, access: "allowed" as const } };
+    // The browser's own error page, with the session still in the profile.
+    const { uses, checks } = yield* run([allowed], false, {
+      finalUrl: "chrome-error://chromewebdata/",
+    });
+    expect(uses).toEqual([]);
+    expect(checks[0]).toMatchObject({ state: "unknown", unreachable: true });
   }),
 );
 
@@ -283,6 +450,75 @@ it.effect("a glance at a university only looks, at most every two minutes", () =
     yield* TestClock.adjust("2 minutes");
     const later = yield* run([typed], true, {}, glance);
     expect(later.checked).toEqual({ checked: 1 });
+  }),
+);
+
+it.effect("looks at a university before a paper goes through it, unless OpenAthens answers", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("env-fixture");
+    // Another membership than the glance above, so its look isn't the one just taken.
+    const fresh = {
+      ...shibboleth,
+      accountId: AccountId.make("acc_lookfirst1"),
+      details: { ...shibboleth.details, username: "staff@huji.ac.il" },
+    } as AccountSummary;
+    const looked = yield* run(
+      [fresh],
+      true,
+      { finalUrl: "https://idp.cc.huji.ac.il/login" },
+      {},
+      lookBeforeFetch(fresh, environmentId),
+    );
+    expect(looked.checks).toEqual([{ accountId: fresh.accountId, state: "signed-out" }]);
+    // OpenAthens says on its keep-alive visit whether the person is signed in.
+    const answered = yield* run(
+      [university],
+      true,
+      {},
+      {},
+      lookBeforeFetch(university, environmentId),
+    );
+    expect(answered.operations).toEqual([]);
+  }),
+);
+
+it.effect("never looks at a university the person signed out of: the look could sign them in", () =>
+  Effect.gen(function* () {
+    const out = {
+      ...shibboleth,
+      accountId: AccountId.make("acc_signedout01"),
+      details: { ...shibboleth.details, username: "left@huji.ac.il" },
+      signIn: { state: "signed-out", at: "2026-11-26T00:00:00.000Z", by: "action" },
+    } as AccountSummary;
+    const glanced = yield* run([out], true, {}, { accountId: out.accountId, glance: true });
+    expect(glanced.operations).toEqual([]);
+    const checked = yield* run([out], true, {}, { accountId: out.accountId });
+    expect(checked.operations).toEqual([]);
+  }),
+);
+
+it.effect("reads the person's sign-out again right before a look opens the page", () =>
+  Effect.gen(function* () {
+    const row = {
+      ...shibboleth,
+      accountId: AccountId.make("acc_outduring1"),
+      details: { ...shibboleth.details, username: "during@huji.ac.il" },
+    } as AccountSummary;
+    const out = {
+      ...row,
+      signIn: { state: "signed-out", at: "2026-11-26T00:00:00.000Z", by: "action" },
+    } as AccountSummary;
+    // Signed in when the glance started; signed out while the browser answered its status.
+    const looked = yield* run(
+      [row],
+      true,
+      {},
+      { accountId: row.accountId, glance: true },
+      undefined,
+      (reads) => (reads < 2 ? [row] : [out]),
+    );
+    expect(looked.operations).toContain("status");
+    expect(looked.operations).not.toContain("open");
   }),
 );
 

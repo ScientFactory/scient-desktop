@@ -155,6 +155,8 @@ const CloudDictationChoice = Schema.Struct({
   baseUrl: Schema.optionalKey(Schema.String),
   keyLabel: Schema.optionalKey(Schema.String),
   customModelConnectionId: Schema.optionalKey(Schema.String),
+  /** The Accounts key the engine uses directly, so Voice can open it there. */
+  accountId: Schema.optionalKey(Schema.String),
 });
 export type CloudDictationChoice = typeof CloudDictationChoice.Type;
 

@@ -461,8 +461,10 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
 
     await screen.getByRole("button", { name: "Add a provider…" }).click();
     await expect.element(page.getByRole("dialog", { name: "Add a cloud engine" })).toBeVisible();
-    await page.getByRole("combobox", { name: "Speech account" }).click();
-    await page.getByRole("option", { name: /Use the key from OpenAI connection/ }).click();
+    // A new engine starts on the matching Custom models connection's key.
+    await expect
+      .element(page.getByRole("combobox", { name: "Key" }))
+      .toHaveTextContent("Use the key from OpenAI connection (…OYkA)");
     if (screenshots) {
       await page.screenshot({
         path: `${screenshots}/add-cloud-engine-${theme}.png`,

@@ -144,10 +144,18 @@ export function PluginKeys({
                 !keys.data!.accounts.some((account) => account.ref === selection.ref)
                   ? [{ value: selection.ref, name: selection.name }]
                   : []),
-                ...keys.data!.accounts.map((account) => ({
-                  value: account.ref,
-                  name: account.name,
-                })),
+                ...keys.data!.accounts.flatMap((account) => {
+                  const summary = accounts.data?.accounts.find(
+                    ({ accountId }) => `account:${accountId}:token` === account.ref,
+                  );
+                  return [
+                    {
+                      value: account.ref,
+                      name: account.name,
+                      ...(summary ? { account: summary } : {}),
+                    },
+                  ];
+                }),
                 ...(key.accountRef &&
                 !keys.data!.accounts.some((account) => account.ref === key.accountRef)
                   ? [{ value: key.accountRef, name: gt("Unavailable account") }]

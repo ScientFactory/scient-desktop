@@ -4,8 +4,9 @@ Scient can read credentials from a secret provider, so the credential stays in y
 manager and Scient saves only a reference to it. Agents can also ask you for a secret in a
 private card instead of in the chat.
 
-The Secrets settings page is in preview and is not in every build yet. Secret requests from agents
-work everywhere.
+The Secrets settings page is in preview and is not in every build yet. Where
+[Accounts & secrets](./accounts.md) is available, it opens from **Accounts & secrets → Password
+stores → Secrets**. Secret requests from agents work everywhere.
 
 ## Secret providers
 

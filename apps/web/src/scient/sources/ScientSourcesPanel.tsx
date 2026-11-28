@@ -1676,22 +1676,19 @@ export function ScientSourcesPanel(props: {
               ...(doi ? { doi } : {}),
               ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
             });
-            if (!result.ok) return;
+            if (!result.ok) return undefined;
             if (result.value.status === "attached") {
               await sources.refreshOverview();
-              toastManager.add({
-                type: "success",
-                title: result.value.published
-                  ? gt("PDF attached")
-                  : gt("PDF attached: an accepted manuscript or preprint"),
-              });
-              return;
+              if (!result.value.published)
+                return gt("PDF attached: an accepted manuscript or preprint");
+              const university = result.value.through;
+              if (!university) return gt("PDF attached");
+              return result.value.route === "library"
+                ? gt("PDF attached through {university}''s library link", { university })
+                : gt("PDF attached through {university}", { university });
             }
-            // Anything waiting for the user is in Activity, with its action.
-            toastManager.add({
-              type: result.value.status === "needs-you" ? "info" : "error",
-              title: result.value.message,
-            });
+            // What it waits for has its action in the papers band above.
+            return result.value.message;
           }}
           onOpenPdf={props.onOpenPdf}
           annotations={

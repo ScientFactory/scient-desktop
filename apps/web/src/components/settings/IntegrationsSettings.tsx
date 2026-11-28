@@ -236,6 +236,10 @@ type TargetImportInput = {
   readonly keepSites?: ReadonlyArray<string>;
   /** False when the caller fills Main itself, once the import's rows exist. */
   readonly fillMain?: boolean;
+  /** Round 6e: an agent's refresh writes into the generation it was decided in. */
+  readonly targetGeneration?: number;
+  /** Round 6f: an agent's refresh, whose write asks this desktop's backend if it still stands. */
+  readonly operationId?: string;
 };
 
 type TargetImportOutcome = ImportOutcome & {
@@ -273,7 +277,15 @@ async function importIntoTarget(
   try {
     // Main is written only by the desktop's one coordinator, which fills what it lacks.
     if (input.target.profileId === DEFAULT_BROWSER_PROFILE_ID) {
-      const filled = await importIntoMain(environmentId, source.id, input.sourceProfileDirectory);
+      const filled = await importIntoMain(
+        environmentId,
+        source.id,
+        input.sourceProfileDirectory,
+        // An agent's refresh of Main is checked again in Main's turn (round 6i).
+        input.operationId === undefined
+          ? undefined
+          : { operationId: input.operationId, generation: input.targetGeneration },
+      );
       if (!filled) return { kind: "blocked", reason: "readFailed" };
       const summary = filled.importSummary;
       const protectedSkipped = summary?.skippedByReason?.appBoundEncryption ?? 0;
@@ -307,6 +319,8 @@ async function importIntoTarget(
       targetProfileId: input.target.profileId,
       // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
       ...(input.keepSites === undefined ? {} : { keepSites: input.keepSites }),
+      ...(input.targetGeneration === undefined ? {} : { targetGeneration: input.targetGeneration }),
+      ...(input.operationId === undefined ? {} : { operationId: input.operationId }),
       // SCIENT-FORK:END
     });
     if (

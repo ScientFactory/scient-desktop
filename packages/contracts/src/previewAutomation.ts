@@ -49,6 +49,8 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "drag",
   // SCIENT-FORK:START — Scient Accounts: server browser supports internal account operations.
   "accountCookies",
+  "accountClearCookies",
+  "accountWriteCookie",
   "accountType",
   "accountWaitForLoad",
   // SCIENT-FORK:END

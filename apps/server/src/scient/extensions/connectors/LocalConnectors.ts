@@ -32,7 +32,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import type { AccountsService } from "../../accounts/AccountsService.ts";
-import { type ConnectorSessionsShape, needsYouMessage } from "../../accounts/connectorSessions.ts";
+import {
+  type ConnectorSessionsShape,
+  needsYouMessage,
+  type SessionMark,
+} from "../../accounts/connectorSessions.ts";
 import { latestHistory } from "../../storage/FolderHistory.ts";
 import { downloadBundle } from "./LocalBundleDownload.ts";
 import type { ConnectorFetch } from "./ConnectorOutbound.ts";
@@ -78,6 +82,7 @@ import {
   resolveLocalLaunch,
 } from "./LocalConnectorLaunch.ts";
 import type { LocalStart } from "./LocalConnectorProcesses.ts";
+import { extractServiceToken, recipeKey, tokenNonce, tokenUrl } from "./serviceTokens.ts";
 
 const CONNECTORS_FOLDER = "connectors";
 const CONNECTOR_HISTORY_FOLDER = "connector-history";
@@ -192,6 +197,32 @@ const variablesOf = (entries: ReadonlyArray<LocalEnvironmentInput>) => {
 };
 
 const hostOf = (site: string) => (URL.canParse(site) ? new URL(site).host : site);
+
+/** A read's operation and its query parameters (text values only). */
+const readParams = (params: unknown) => {
+  const record = typeof params === "object" && params !== null ? params : {};
+  const operation =
+    "operation" in record && typeof record.operation === "string" ? record.operation : undefined;
+  const raw =
+    "query" in record && typeof record.query === "object" && record.query !== null
+      ? record.query
+      : {};
+  const query = Object.fromEntries(
+    Object.entries(raw).flatMap(([name, value]) =>
+      typeof value === "string" || typeof value === "number" ? [[name, String(value)]] : [],
+    ),
+  );
+  return { operation, query };
+};
+
+/** Which minted token, and whether to mint it again (the site refused the one kept). */
+const tokenParams = (params: unknown) => {
+  const record = typeof params === "object" && params !== null ? params : {};
+  return {
+    name: "name" in record && typeof record.name === "string" ? record.name : undefined,
+    renew: "renew" in record && record.renew === true,
+  };
+};
 
 /** The account id a record's `signIn` names. */
 const signInAccountOf = (local: Pick<LocalLaunchRecord, "signIn">) =>
@@ -894,7 +925,13 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     function* (
       record: ConnectorRecord,
       serverName: string,
-      location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
+      location:
+        | {
+            readonly projectId: ProjectId;
+            readonly worktreePath: string | null;
+            readonly scheduledTaskId?: string | undefined;
+          }
+        | undefined,
       mode: { readonly checking?: boolean } = {},
     ): Effect.fn.Return<CheckedStart, LocalLaunchError, FileSystem.FileSystem | Path.Path> {
       const local = record.local!;
@@ -953,6 +990,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
               accountId,
               site: asked.site,
               projectId: location?.projectId,
+              scheduledTaskId: location?.scheduledTaskId,
             })
             .pipe(Effect.result);
           if (prepared._tag === "Success") {
@@ -1064,6 +1102,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       return {
         launch,
         credentials: programCredentials(Object.values(built.secrets), session.hide),
+        liveCredentials: () => credentialsFor(record.connectorId),
         missing,
         ...(asked === undefined ? {} : { signInGeneration: generation }),
       } satisfies CheckedStart;
@@ -1078,6 +1117,9 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
   const signInAgain = Effect.fn("LocalConnectors.signInAgain")(function* (
     record: ConnectorRecord,
     seen: number | undefined,
+    location:
+      | { readonly projectId: ProjectId; readonly scheduledTaskId?: string | undefined }
+      | undefined,
   ) {
     const lock =
       signInLocks.get(record.connectorId) ??
@@ -1106,9 +1148,19 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
             type: "error" as const,
             message: `${record.displayName} has no sign-in to renew.`,
           };
-        const renewed = yield* options.sessions.value
-          .signInAgain({ connectorId: record.connectorId, accountId, site: asked.site })
-          .pipe(Effect.result);
+        const renewed = yield* (
+          options.sessions.value
+            // The project the session was started for, so renewal keeps the sign-in's scope.
+            .signInAgain({
+              connectorId: record.connectorId,
+              accountId,
+              site: asked.site,
+              ...(location === undefined
+                ? {}
+                : { projectId: location.projectId, scheduledTaskId: location.scheduledTaskId }),
+            })
+            .pipe(Effect.result)
+        );
         if (renewed._tag === "Success") {
           signInGenerations.set(record.connectorId, current + 1);
           return { type: "signed-in" as const };
@@ -1123,13 +1175,128 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     );
   });
 
+  /** Every key, cookie and minted token the program was handed, read live at each redaction. */
+  const credentialsFor = (connectorId: string) =>
+    programCredentials(started.get(connectorId) ?? [], startedCookies.get(connectorId) ?? []);
+
+  /** The service token minted for each connector and name, with what it was minted for. */
+  const serviceTokens = new Map<
+    string,
+    { readonly key: string; readonly token: string; readonly mark: SessionMark }
+  >();
+
+  /**
+   * The program's own request to Scient, about its signed-in site: a read Scient makes, named by
+   * an operation `signIn.writeBack.reads` declares (`scient/readWithWebsiteSession`), or a token
+   * the site mints from the session by a `signIn.tokens` recipe (`scient/serviceToken`).
+   */
+  const hostRequest = Effect.fn("LocalConnectors.hostRequest")(function* (
+    record: ConnectorRecord,
+    location:
+      | { readonly projectId: ProjectId; readonly scheduledTaskId?: string | undefined }
+      | undefined,
+    method: string,
+    params: unknown,
+  ) {
+    const local = record.local!;
+    const manifest = yield* manifestOf(local.directory).pipe(
+      Effect.mapError(() => ({ message: `${record.displayName}'s manifest can't be read.` })),
+    );
+    const asked = manifestSignIn(manifest);
+    const accountId = signInAccountOf(local);
+    if (
+      asked === undefined ||
+      "problem" in asked ||
+      accountId === undefined ||
+      Option.isNone(options.sessions)
+    )
+      return yield* Effect.fail({ message: `${record.displayName} has no sign-in to use.` });
+    const sessions = options.sessions.value;
+    const target = {
+      connectorId: record.connectorId,
+      accountId,
+      site: asked.site,
+      ...(location === undefined
+        ? {}
+        : { projectId: location.projectId, scheduledTaskId: location.scheduledTaskId }),
+    };
+    if (method === "scient/readWithWebsiteSession") {
+      const { operation, query } = readParams(params);
+      const declared = operation === undefined ? undefined : asked.writeBack?.reads[operation];
+      if (declared === undefined)
+        return yield* Effect.fail({
+          message: `Its manifest declares no read ${String(operation)} (signIn.writeBack.reads).`,
+        });
+      const url = new URL(declared);
+      for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
+      return yield* sessions
+        .readWithWebsiteSession(target, asked.writeBack, url.href)
+        .pipe(Effect.mapError((problem) => ({ message: problem.message })));
+    }
+    if (method === "scient/serviceToken") {
+      const { name, renew } = tokenParams(params);
+      const recipe = name === undefined ? undefined : asked.tokens?.[name];
+      if (name === undefined || recipe === undefined)
+        return yield* Effect.fail({
+          message: `Its manifest declares no token ${String(name)} (signIn.tokens).`,
+        });
+      // One token per sign-in, session and recipe: a new sign-in or an edited recipe mints anew.
+      const owner = `${record.connectorId}\u0000${name}`;
+      const key = [
+        owner,
+        accountId,
+        signInGenerations.get(record.connectorId) ?? 0,
+        recipeKey(recipe),
+      ].join("\u0000");
+      const refused = () => {
+        serviceTokens.delete(owner);
+        return Effect.fail({
+          message: `${hostOf(asked.site)}'s sign-in is no longer available to ${record.displayName}.`,
+        });
+      };
+      const kept = renew ? undefined : serviceTokens.get(owner);
+      if (kept?.key === key) {
+        // A kept token goes out only from the session it was minted from; another session mints.
+        const stands = yield* sessions.sessionStands(target, asked.writeBack, kept.mark);
+        if (stands === "refused") return yield* refused();
+        if (stands === "stands") return { outcome: "ok", token: kept.token };
+      }
+      const nonce = yield* Effect.sync(tokenNonce);
+      const minting = tokenUrl(recipe, nonce);
+      // The session the token comes from, as the minting page sees it, before the site is asked.
+      const mark = yield* sessions
+        .sessionMark(target, asked.writeBack, minting)
+        .pipe(Effect.mapError((problem) => ({ message: problem.message })));
+      const answer = yield* sessions
+        .readWithWebsiteSession(target, asked.writeBack, minting)
+        .pipe(Effect.mapError((problem) => ({ message: problem.message })));
+      if (answer.outcome !== "ok") return { outcome: answer.outcome };
+      const token = extractServiceToken(recipe, answer);
+      if (token === undefined)
+        return yield* Effect.fail({
+          message: `${hostOf(asked.site)}'s answer held no ${name} token. The site may have changed.`,
+        });
+      // The program may echo it: its output, errors and logs are checked against it from now.
+      const cookies = startedCookies.get(record.connectorId) ?? new Set<string>();
+      startedCookies.set(record.connectorId, cookies.add(token));
+      // Out only while the link allows it, no sign-out came, and the session is the one asked.
+      if ((yield* sessions.sessionStands(target, asked.writeBack, mark)) !== "stands")
+        return yield* refused();
+      serviceTokens.set(owner, { key, token, mark });
+      return { outcome: "ok", token };
+    }
+    return yield* Effect.fail({ message: `Scient has no ${method.slice(0, 80)}.` });
+  });
+
   /**
    * Whether running copies may keep their keys: checked again whenever Accounts changed since
    * they started. A key turned off, removed, out of the project's scope or changed returns false.
    */
   const stillAuthorized = Effect.fn("LocalConnectors.stillAuthorized")(function* (
     record: ConnectorRecord,
-    location: { readonly projectId: ProjectId } | undefined,
+    location:
+      | { readonly projectId: ProjectId; readonly scheduledTaskId?: string | undefined }
+      | undefined,
   ) {
     const local = record.local;
     const signInAccount = local === undefined ? undefined : signInAccountOf(local);
@@ -1254,6 +1421,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     adopt,
     start,
     signInAgain,
+    hostRequest,
     signInSiteOf,
     manifestOf,
     summarize,
@@ -1262,8 +1430,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     /** Key values the last start used, so the proxy redacts them if the program echoes one. */
     secretsFor: (connectorId: string) => [...(started.get(connectorId) ?? [])],
     /** Every key and session cookie its starts handed the program, read live for each answer. */
-    credentialsFor: (connectorId: string) =>
-      programCredentials(started.get(connectorId) ?? [], startedCookies.get(connectorId) ?? []),
+    credentialsFor,
     stillAuthorized,
   };
 });

@@ -147,6 +147,44 @@ it("discards a context whose helper never closes, and the waiting tab opens a fr
   await pool.close();
 });
 
+it("fences a held jar by its own close only, and says when that can't be confirmed (6i-6k)", async () => {
+  const never = () => new Promise<void>(() => undefined);
+  const { context } = stallingContext();
+  const closed = vi.fn(async () => undefined);
+  const { jar } = await openProfileCookieJar(
+    Object.assign(context, { close: closed, browser: () => null }),
+    () => false,
+    30_000,
+  );
+  await expect(jar.fence!()).resolves.toBe(true);
+  // regression: a quarantined context stayed open until its hold was released.
+  expect(closed).toHaveBeenCalledOnce();
+  // The context doesn't close, its browser does.
+  const { jar: browserCloses } = await openProfileCookieJar(
+    Object.assign(stallingContext().context, {
+      close: never,
+      browser: () => ({ close: async () => undefined }),
+    }),
+    () => false,
+    30_000,
+  );
+  const closing = browserCloses.fence!();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await expect(closing).resolves.toBe(true);
+  // Neither closes: unconfirmed, and nothing else is ended; its profile can be held instead.
+  const quarantineProfile = vi.fn(() => undefined);
+  const { jar: stuck } = await openProfileCookieJar(
+    Object.assign(stallingContext().context, { close: never, browser: () => ({ close: never }) }),
+    () => false,
+    30_000,
+    quarantineProfile,
+  );
+  const trying = stuck.fence!();
+  await vi.advanceTimersByTimeAsync(60_000);
+  await expect(trying).resolves.toBe(false);
+  expect(stuck.quarantineProfile).toBe(quarantineProfile);
+});
+
 /** A context whose helper pages answer cookie commands from one in-memory jar a page can write. */
 function jarContext() {
   const cookies: CdpCookie[] = [];

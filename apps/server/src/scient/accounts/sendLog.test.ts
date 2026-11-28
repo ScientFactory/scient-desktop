@@ -179,4 +179,15 @@ describe("deletions an offline computer still needs", () => {
     expect(online.send?.units).toHaveLength(1);
     expect(withShared(online, EnvironmentId.make("lab"), undefined).send?.units).toEqual([]);
   });
+
+  it("keeps each host a Sign out deletes apart from its siblings and from their site", () => {
+    let log = issueUnit(undefined, ["library-vendor.com"], "copy");
+    log = issueUnit(log, ["proxy.library-vendor.com"], "delete");
+    log = issueUnit(log, ["portal.library-vendor.com"], "delete");
+    expect(log.units.map(({ sites, kind }) => [sites, kind])).toEqual([
+      [["library-vendor.com"], "copy"],
+      [["proxy.library-vendor.com"], "delete"],
+      [["portal.library-vendor.com"], "delete"],
+    ]);
+  });
 });

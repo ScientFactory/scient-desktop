@@ -101,6 +101,7 @@ import type { RunTool } from "./PackageSource.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
+import { UNKNOWN_RUN } from "../../accounts/taskPinRules.ts";
 
 const decodeWorkspaceBinding = Schema.decodeEffect(WorkspaceBindingRecordV1);
 
@@ -651,6 +652,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly onConnectorLock?: (connectorId: string) => void;
     /** Receives the runtime's analytics events. */
     readonly analytics?: AnalyticsService["Service"];
+    /** Stands in for reading the calling thread's records (its runs and messages). */
+    readonly threadRecords?: () => Effect.Effect<unknown, string>;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -740,6 +743,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
           Layer.provideMerge(
             Layer.succeed(ThreadManagementService.ThreadManagementService, {
               getThreadShell: () => Effect.succeed({ projectId: threadProject }),
+              getProjectThreadRecords: () =>
+                options.threadRecords?.() ?? Effect.succeed({ runs: [], messages: [] }),
             } as unknown as ThreadManagementService.ThreadManagementService["Service"]),
           ),
         ),
@@ -1071,6 +1076,29 @@ describe("connector OAuth sign-in", () => {
           ["refresh_token", `${vendor.base}/noprm/mcp`],
         ]);
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("tells each sign-in flow's waiter how its own flow ended", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const added = yield* harness.addSecure();
+      const connectorId = added.connector.connectorId;
+      const signInEnded = harness.runtime.signInEnded!;
+      const first = yield* harness.authorize(connectorId);
+      const second = yield* harness.authorize(connectorId);
+      const stateOf = (flow: { readonly callback: URL }) =>
+        flow.callback.searchParams.get("state") ?? "";
+      const waitFirst = yield* Effect.forkChild(signInEnded(stateOf(first)));
+      const waitSecond = yield* Effect.forkChild(signInEnded(stateOf(second)));
+      yield* Effect.yieldNow;
+      yield* harness.send(new Request(second.callback.href));
+      expect(yield* Fiber.join(waitSecond)).toBe("connected");
+      // The other flow of the same connector is still open.
+      expect(waitFirst.pollUnsafe()).toBeUndefined();
+      yield* Fiber.interrupt(waitFirst);
+      // A waiter that starts just after its callback still hears the outcome.
+      expect(yield* signInEnded(stateOf(second))).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("never follows a typed loopback connector's metadata to another loopback origin", () =>
@@ -3005,10 +3033,27 @@ describe("bound connector credentials", () => {
     () =>
       Effect.gen(function* () {
         let token: string | undefined = NodeCrypto.randomUUID();
+        let usable = true;
+        let version = 1;
+        let rotateDuringRead = false;
+        let versionReadable = true;
+        const styles: Array<unknown> = [];
         const ref = accountTokenRef(AccountId.make("acc_synthetic01"));
         const bindings = Layer.mock(AccountsService)({
+          // The gate as the request leaves: turned off, or the key replaced, after the key was
+          // read, nothing goes.
+          rowVersion: () =>
+            versionReadable
+              ? Effect.sync(() => ({ updatedAt: String(version) }))
+              : Effect.fail(new AccountsError({ reason: "unavailable", message: "Unreadable." })),
+          authorizeUse: (_scope, _target, use) =>
+            usable && (use?.since === undefined || use.since.updatedAt === String(version))
+              ? Effect.void
+              : Effect.fail(new AccountsError({ reason: "denied", message: "Access changed." })),
           resolveBound: (candidate, consumer) =>
             Effect.suspend(() => {
+              if (rotateDuringRead) version++;
+              if (consumer.kind === "connector") styles.push(consumer.auth);
               if (
                 candidate !== ref ||
                 consumer.kind !== "connector" ||
@@ -3038,6 +3083,9 @@ describe("bound connector credentials", () => {
         expect(firstText).toContain("[redacted by Scient]");
         expect(vendor.upstream.at(-1)?.authorization === `Bearer ${token}`).toBe(true);
         expect(added.connector.auth).toMatchObject({ storage: "bound" });
+        // The choice is checked in the connector's style; a binding made already keeps its own.
+        expect(styles[0]).toEqual({ type: "bearer" });
+        expect(styles.at(-1)).toBeUndefined();
         expect(yield* connectorSecrets(harness.config)).toEqual([]);
         const state = yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8"));
         expect(state.includes(token)).toBe(false);
@@ -3060,6 +3108,23 @@ describe("bound connector credentials", () => {
             .slice(before)
             .every((request) => request.authorization === `Bearer ${token}`),
         ).toBe(true);
+        usable = false;
+        const gated = vendor.upstream.length;
+        const gatedCall = yield* harness.proxy(connectorId, toolCall(104));
+        expect(yield* readJson(gatedCall)).toMatchObject({ id: 104, error: { code: -32001 } });
+        expect(vendor.upstream.length).toBe(gated);
+        usable = true;
+        rotateDuringRead = true;
+        const rotating = yield* harness.proxy(connectorId, toolCall(105));
+        expect(yield* readJson(rotating)).toMatchObject({ id: 105, error: { code: -32001 } });
+        expect(vendor.upstream.length).toBe(gated);
+        rotateDuringRead = false;
+        // A version that can't be read: the key isn't sent unchecked.
+        versionReadable = false;
+        const unversioned = yield* harness.proxy(connectorId, toolCall(106));
+        expect(yield* readJson(unversioned)).toMatchObject({ id: 106, error: { code: -32001 } });
+        expect(vendor.upstream.length).toBe(gated);
+        versionReadable = true;
         token = undefined;
         const sent = vendor.upstream.length;
         yield* reloaded.test({ connectorId });
@@ -3070,6 +3135,79 @@ describe("bound connector credentials", () => {
         yield* reloaded.remove({ connectorId });
         expect(yield* connectorSecrets(harness.config)).toEqual([]);
       }).pipe(Effect.provide(testLayer)),
+  );
+  it.live("moves a typed key connector to a saved Accounts key in place", () =>
+    Effect.gen(function* () {
+      const saved = NodeCrypto.randomUUID();
+      const ref = accountTokenRef(AccountId.make("acc_synthetic02"));
+      const needsYou: Array<string> = [];
+      const asked: Array<ReadonlyArray<unknown>> = [];
+      const bindings = Layer.mock(AccountsService)({
+        authorizeUse: () => Effect.void,
+        rowVersion: () => Effect.succeed({ updatedAt: "2026-01-01T00:00:00.000Z" }),
+        resolveBound: (candidate, ...rest) => {
+          asked.push(rest);
+          return candidate === ref
+            ? Effect.succeed(Redacted.make(saved))
+            : Effect.fail(new AccountsError({ reason: "not-found", message: "Unavailable." }));
+        },
+        setNeedsYou: (need) => Effect.sync(() => void needsYou.push(`add ${need.detail}`)),
+        clearNeedsYou: () => Effect.sync(() => void needsYou.push("clear")),
+      });
+      const harness = yield* makeHarness().pipe(Effect.provide(bindings));
+      const typed = NodeCrypto.randomUUID();
+      vendor.validTokens.add(typed);
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: typed },
+      });
+      const connectorId = added.connector.connectorId;
+      // A key the service refuses leaves the working one in place.
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(harness.runtime.update({ connectorId, credentialRef: ref })),
+        ),
+      ).toBe(true);
+      expect((yield* harness.runtime.test({ connectorId })).outcome).toBe("ok");
+      vendor.validTokens.delete(typed);
+      yield* harness.runtime.test({ connectorId });
+      vendor.validTokens.add(saved);
+      const other = accountTokenRef(AccountId.make("acc_synthetic03"));
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(harness.runtime.update({ connectorId, credentialRef: other })),
+        ),
+      ).toBe(true);
+      asked.length = 0;
+      yield* harness.runtime.update({ connectorId, credentialRef: ref });
+      // The new key is read as any use reads it: in the connector's style, and agent Off applies.
+      expect(asked[0]).toEqual([
+        {
+          kind: "connector",
+          connectorId,
+          origin: new URL(vendor.base).origin,
+          auth: { type: "bearer" },
+        },
+      ]);
+      // The refused key raised one Needs you, and the switch that fixed it cleared it.
+      expect(needsYou).toEqual(["add Key missing", "clear"]);
+      expect((yield* harness.runtime.list()).connectors[0]).toMatchObject({
+        status: "connected",
+        auth: { storage: "bound", accountId: "acc_synthetic02" },
+      });
+      expect((yield* harness.runtime.test({ connectorId })).outcome).toBe("ok");
+      // The typed copy is gone with the switch.
+      expect(yield* connectorSecrets(harness.config)).toEqual([]);
+      // A plain-http service can take a typed key again, kept as its own.
+      const retyped = NodeCrypto.randomUUID();
+      vendor.validTokens.add(retyped);
+      yield* harness.runtime.update({ connectorId, credentialValue: retyped });
+      expect((yield* harness.runtime.list()).connectors[0]?.auth).toMatchObject({
+        storage: "owned",
+      });
+      vendor.validTokens.delete(saved);
+      expect((yield* harness.runtime.test({ connectorId })).outcome).toBe("ok");
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
@@ -3419,6 +3557,8 @@ const fakeKeyAccounts = (options: { readonly hosted?: boolean } = {}) => {
       controls: { access: "allowed" },
     }));
   const layer = Layer.mock(AccountsService)({
+    authorizeUse: () => Effect.void,
+    rowVersion: () => Effect.succeed({ updatedAt: "2026-01-01T00:00:00.000Z" }),
     snapshot: Effect.sync(() => ({ accounts: summaries() }) as never),
     bindingRevision: Effect.sync(() => revision),
     save: (input) =>
@@ -3436,7 +3576,11 @@ const fakeKeyAccounts = (options: { readonly hosted?: boolean } = {}) => {
         });
         return { accountId };
       }),
-    remove: (accountId) => Effect.sync(() => void keys.delete(accountId)),
+    remove: (accountId) =>
+      Effect.sync(() => {
+        keys.delete(accountId);
+        return { removalId: "synthetic-removal" };
+      }),
     resolveBound: (ref, consumer) =>
       Effect.suspend(() => {
         const accountId = ref.replace(/^account:/, "").replace(/:token$/, "");
@@ -4149,6 +4293,9 @@ const siteSignIns = (sites: Readonly<Record<string, string>>): ConnectorSessions
     signInAgain: () => ready,
     allowed: () => Effect.succeed(true),
     remove: () => Effect.void,
+    readWithWebsiteSession: () => Effect.die("unused"),
+    sessionMark: () => Effect.succeed({ sequence: 0, cookies: "", url: "" }),
+    sessionStands: () => Effect.succeed("stands" as const),
   };
 };
 
@@ -5027,6 +5174,110 @@ describe("connectors agents make and fix", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("hands a kept service token over only while the sign-in may still be used", () =>
+    Effect.gen(function* () {
+      let mints = 0;
+      let state: { usesLeft: number | undefined } | undefined;
+      const portal = yield* signedInPortal(["s6k9xq"], ["s6k9xq"], TWO_TOKENS_SERVER, {
+        signIn: { tokens: { app: { path: "/launch?nonce={nonce}", pattern: "token=([\\w-]+)" } } },
+        read: () =>
+          Effect.sync(() => {
+            mints += 1;
+            // The first token goes out; the person turns the sign-in off right after.
+            if (state) state.usesLeft = 1;
+            return {
+              outcome: "ok" as const,
+              status: 302,
+              location: "app://token=synthetic-service-token-0001",
+              kept: "unchanged" as const,
+            };
+          }),
+      });
+      state = portal.state;
+      const answered = yield* portal.harness
+        .proxy(portal.connectorId, toolCall(2), { session: portal.session })
+        .pipe(Effect.flatMap(readEvents));
+      // regression: the kept token went out again without asking whether it still may.
+      expect(JSON.stringify(answered)).toContain("token,refused");
+      expect(mints).toBe(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("a call whose run can't be read asks for its session as an unknown run", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["s6k9xq"], ["s6k9xq"], ECHO_SESSION_SERVER, {
+        unreadableRecords: true,
+      });
+      yield* portal.call(2);
+      // regression: it asked as no scheduled task at all, so a pinned run's pin bound nothing.
+      expect(portal.state.tasks.length).toBeGreaterThan(0);
+      expect(new Set(portal.state.tasks)).toEqual(new Set([UNKNOWN_RUN]));
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("withholds a kept service token once the site was signed out of", () =>
+    Effect.gen(function* () {
+      let mints = 0;
+      let state: { signOuts: number } | undefined;
+      const portal = yield* signedInPortal(["s6k9xq"], ["s6k9xq"], TWO_TOKENS_SERVER, {
+        signIn: { tokens: { app: { path: "/launch?nonce={nonce}", pattern: "token=([\\w-]+)" } } },
+        read: () =>
+          Effect.sync(() => {
+            mints += 1;
+            return {
+              outcome: "ok" as const,
+              status: 302,
+              location: "app://token=synthetic-service-token-0001",
+              kept: "unchanged" as const,
+            };
+          }),
+      });
+      state = portal.state;
+      const first = yield* portal.harness
+        .proxy(portal.connectorId, toolCall(2), { session: portal.session })
+        .pipe(Effect.flatMap(readEvents));
+      expect(JSON.stringify(first)).toContain("token,token");
+      // The person signs out in the browser; the link itself still allows the sign-in.
+      state.signOuts += 1;
+      const second = yield* portal.harness
+        .proxy(portal.connectorId, toolCall(3), { session: portal.session })
+        .pipe(Effect.flatMap(readEvents));
+      // regression: only the link was asked, so the kept token outlived the sign-out.
+      // The program keeps its answers across calls: the third ask is the first after the sign-out.
+      expect(JSON.stringify(second)).toContain("token,token,refused");
+      expect(mints).toBe(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("mints a new service token once the profile holds another session", () =>
+    Effect.gen(function* () {
+      let mints = 0;
+      let state: { cookies: string[] } | undefined;
+      const portal = yield* signedInPortal(["s6k9xq"], ["s6k9xq"], TWO_TOKENS_SERVER, {
+        signIn: { tokens: { app: { path: "/launch?nonce={nonce}", pattern: "token=([\\w-]+)" } } },
+        read: () =>
+          Effect.sync(() => {
+            mints += 1;
+            // Someone else signs in in the profile right after the first token.
+            if (state && mints === 1) state.cookies = ["other-person-session"];
+            return {
+              outcome: "ok" as const,
+              status: 302,
+              location: `app://token=synthetic-service-token-000${mints}`,
+              kept: "unchanged" as const,
+            };
+          }),
+      });
+      state = portal.state;
+      const answered = yield* portal.harness
+        .proxy(portal.connectorId, toolCall(2), { session: portal.session })
+        .pipe(Effect.flatMap(readEvents));
+      // regression: a token minted from the session before it was replaced kept going out.
+      expect(JSON.stringify(answered)).toContain("refused,token");
+      expect(mints).toBe(2);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("keeps a connector's session out of both checks, in any encoding and every field", () =>
     Effect.gen(function* () {
       const cookie = "portal-session-0123456789abcdef";
@@ -5100,6 +5351,12 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
   cookies: ReadonlyArray<string>,
   renewed: ReadonlyArray<string> = cookies,
   server: string = ECHO_SESSION_SERVER,
+  site: {
+    readonly signIn?: Readonly<Record<string, unknown>>;
+    readonly read?: ConnectorSessionsShape["readWithWebsiteSession"];
+    /** The calling thread's records can't be read. */
+    readonly unreadableRecords?: boolean;
+  } = {},
 ) {
   const SITE = "https://portal.example.edu";
   const state = {
@@ -5109,6 +5366,12 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
     project: undefined as string | undefined,
     removed: [] as string[],
     signIns: 0,
+    /** Uses the sign-in still allows before the person turns it off, while a call runs. */
+    usesLeft: undefined as number | undefined,
+    /** Sign-outs of the site so far, as Accounts' sign-out fence counts them. */
+    signOuts: 0,
+    /** Each use's scheduled task, as the connector asked for its session. */
+    tasks: [] as Array<string | undefined>,
   };
   const outOfScope = (projectId: string | undefined) =>
     state.project !== undefined && projectId !== undefined && projectId !== state.project;
@@ -5128,33 +5391,61 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
     name: "Portal",
     details: { kind: "website", sites: [SITE] },
   } as unknown as AccountSummary;
+  const allowed: ConnectorSessionsShape["allowed"] = (target) =>
+    Effect.sync(() => {
+      const still = !state.revoked && !outOfScope(target.projectId);
+      if (state.usesLeft !== undefined && --state.usesLeft <= 0) state.revoked = true;
+      return still;
+    });
   const signInSessions: ConnectorSessionsShape = {
     accountsFor: () => Effect.succeed([account]),
     account: () => Effect.succeed(state.revoked ? undefined : account),
-    prepare: (target) =>
-      state.revoked
+    prepare: (target) => {
+      state.tasks.push(target.scheduledTaskId);
+      return state.revoked
         ? Effect.fail({ reason: "needs-user", message: "Portal is turned off." })
         : outOfScope(target.projectId)
           ? Effect.fail({
               reason: "needs-user",
               message: "Portal is not available in this project.",
             })
-          : write,
+          : write;
+    },
     signInAgain: () =>
       Effect.suspend(() => {
         state.signIns += 1;
         state.cookies = [...renewed];
         return write;
       }),
-    allowed: (target) => Effect.succeed(!state.revoked && !outOfScope(target.projectId)),
+    allowed,
     remove: (connectorId) => Effect.sync(() => void state.removed.push(connectorId)),
+    readWithWebsiteSession: site.read ?? (() => Effect.die("unused")),
+    sessionMark: () =>
+      Effect.sync(() => ({
+        sequence: state.signOuts,
+        cookies: state.cookies.join("\n"),
+        url: SITE,
+      })),
+    sessionStands: (target, _slot, mark) =>
+      allowed(target).pipe(
+        Effect.map((still) =>
+          !still || state.signOuts !== mark.sequence
+            ? ("refused" as const)
+            : state.cookies.join("\n") === mark.cookies
+              ? ("stands" as const)
+              : ("changed" as const),
+        ),
+      ),
   };
-  const harness = yield* makeHarness({ signInSessions });
+  const harness = yield* makeHarness({
+    signInSessions,
+    ...(site.unreadableRecords ? { threadRecords: () => Effect.fail("unreadable") } : {}),
+  });
   const folder = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
   yield* writeConnectorFolder(folder, {
     version: "1.0.0",
     keyRequired: false,
-    meta: { signIn: { site: SITE } },
+    meta: { signIn: { site: SITE, ...site.signIn } },
   });
   yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), server));
   const added = yield* harness.runtime.add({
@@ -5169,6 +5460,29 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
     harness.proxy(connectorId, toolCall(id), { session }).pipe(Effect.flatMap(readEvents));
   return { harness, connectorId, folder, session, state, call };
 });
+
+/** Asks Scient for its service token twice in one call and says what each ask answered. */
+const TWO_TOKENS_SERVER = `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+let call;
+const answers = [];
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "portal", version: "1" } } });
+  else if (message.method === "tools/call") {
+    call = message.id;
+    send({ jsonrpc: "2.0", id: "ask-1", method: "scient/serviceToken", params: { name: "app" } });
+  } else if (typeof message.id === "string" && message.id.startsWith("ask-")) {
+    answers.push(message.result ? "token" : "refused");
+    if (answers.length === 1)
+      send({ jsonrpc: "2.0", id: "ask-2", method: "scient/serviceToken", params: { name: "app" } });
+    else send({ jsonrpc: "2.0", id: call, result: { content: [{ type: "text", text: answers.join(",") }] } });
+  } else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
 
 /** Puts its session cookie, base64-encoded, everywhere a check reports: a careless connector. */
 const LEAKY_SESSION_SERVER = `

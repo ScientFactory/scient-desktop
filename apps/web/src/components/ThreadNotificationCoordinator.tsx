@@ -1,7 +1,10 @@
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 // SCIENT-FORK:START — Account approvals and sign-in hand-offs use thread notifications.
-import { watchAccountNotifications } from "../scient/accounts/accountNotifications";
+import {
+  type AccountNotice,
+  watchAccountNotifications,
+} from "../scient/accounts/accountNotifications";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
 import { acquireNotificationPresenter } from "../scient/multiWindow/notificationPresenter";
@@ -91,6 +94,30 @@ export function startThreadNotifications(
     pending.set(notification.tag, { environmentId, threadId, notification });
     setNotificationBadge(pending.size);
   };
+  // SCIENT-FORK:START — account waits' notices, each under its own tag, withdrawn one by one.
+  const accountTag = (environmentId: EnvironmentId, waitId: string) =>
+    `scient-account:${environmentId}:${waitId}`;
+  const accountToasts = new Map<string, ToastId>();
+  const accountSystem = new Map<string, Notification>();
+  const withdrawAccountNotice = (tag: string) => {
+    const toastId = accountToasts.get(tag);
+    if (toastId !== undefined) toastManager.close(toastId);
+    accountToasts.delete(tag);
+    accountSystem.get(tag)?.close();
+    accountSystem.delete(tag);
+    if (pending.has(tag)) {
+      pending.get(tag)?.notification.close();
+      pending.delete(tag);
+      setNotificationBadge(pending.size);
+    }
+  };
+  /** Every account notice of one computer, or of all: for its removal, or a mode change. */
+  const withdrawAccountNotices = (environmentId?: EnvironmentId) => {
+    const prefix = environmentId === undefined ? "scient-account:" : accountTag(environmentId, "");
+    for (const tag of new Set([...accountToasts.keys(), ...accountSystem.keys()]))
+      if (tag.startsWith(prefix)) withdrawAccountNotice(tag);
+  };
+  // SCIENT-FORK:END
   // Toast ids by thread key, so hiding or opening a thread, or removing its environment, closes them.
   const openToasts = new Map<string, Array<ToastId>>();
   const forgetToast = (key: string, toastId: ToastId) => {
@@ -146,10 +173,16 @@ export function startThreadNotifications(
     // SCIENT-FORK:END
     kind: ThreadNotificationKind,
     // SCIENT-FORK:START — Account attention keeps shared notification settings and navigation.
-    accountNotice?: { title: string; body: string },
+    accountNotice?: AccountNotice,
     // SCIENT-FORK:END
   ) => {
     const { thread, status } = state;
+    // SCIENT-FORK:START — an account wait's notice replaces only its own earlier one.
+    const noticeTag = accountNotice
+      ? accountTag(environmentId, accountNotice.waitId)
+      : threadNotificationTag(environmentId, thread.id);
+    if (accountNotice) withdrawAccountNotice(noticeTag);
+    // SCIENT-FORK:END
     if (
       registry
         .get(environmentThreadShells.hiddenThreadKeysAtom)
@@ -212,8 +245,11 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: m(msg("Open thread")),
+          // SCIENT-FORK:START — an account notice may act before opening its chat.
+          children: accountNotice?.action?.label ?? m(msg("Open thread")),
           onClick: () => {
+            accountNotice?.action?.run?.();
+            // SCIENT-FORK:END
             toastManager.close(toastId);
             void router.navigate({
               to: "/$environmentId/$threadId",
@@ -223,6 +259,8 @@ export function startThreadNotifications(
         },
       });
       openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
+      // SCIENT-FORK: an account wait's toast is withdrawn by its own tag.
+      if (accountNotice) accountToasts.set(noticeTag, toastId);
       return;
     }
     // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
@@ -240,13 +278,16 @@ export function startThreadNotifications(
         // SCIENT-FORK:START — Account attention includes its safe instruction.
         body: accountNotice?.body ?? thread.title,
         // SCIENT-FORK:END
-        tag: threadNotificationTag(environmentId, thread.id),
+        // SCIENT-FORK: an account wait's notice has its own tag.
+        tag: noticeTag,
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.
         requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
       });
       trackNotification(environmentId, thread.id, notification);
       notification.addEventListener("click", () => {
+        // SCIENT-FORK: an account notice may act before opening its chat.
+        accountNotice?.action?.run?.();
         notification.close();
         window.focus();
         void window.desktopBridge?.revealWindow().catch(() => undefined);
@@ -259,6 +300,74 @@ export function startThreadNotifications(
       // Some browsers expose Notification but reject desktop presentation.
     }
   };
+
+  // SCIENT-FORK:START — a wait with no chat (Scient's own upkeep) is shown with Accounts.
+  const presentAccountsNotice = (environmentId: EnvironmentId, notice: AccountNotice) => {
+    const tag = accountTag(environmentId, notice.waitId);
+    withdrawAccountNotice(tag);
+    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    // Accounts of the computer the wait is on, not whichever this window shows.
+    const openAccounts = () =>
+      void router.navigate({ to: "/settings/accounts", search: { machine: environmentId } });
+    // A button that acts here (`stay`: save to a login, answer a new password) only from the
+    // toast; a system notification, without buttons, opens Accounts to choose there.
+    const press = (button: AccountNotice["action"]) => {
+      button?.run?.();
+      if (!button?.stay) openAccounts();
+    };
+    const focused = document.visibilityState === "visible" && document.hasFocus();
+    if (inAppNotificationsEnabled && focused) {
+      const toastId: ToastId = toastManager.add({
+        type: "warning",
+        title: notice.title,
+        description: notice.body,
+        data: {
+          hideCopyButton: true,
+          ...(notice.secondary
+            ? {
+                secondaryActionProps: {
+                  children: notice.secondary.label,
+                  onClick: () => {
+                    toastManager.close(toastId);
+                    press(notice.secondary);
+                  },
+                },
+              }
+            : {}),
+        },
+        actionProps: {
+          children: notice.action?.label ?? m(msg("Open Accounts")),
+          onClick: () => {
+            toastManager.close(toastId);
+            press(notice.action);
+          },
+        },
+      });
+      accountToasts.set(tag, toastId);
+      return;
+    }
+    if (
+      !presenter.isPresenter() ||
+      !hasDesktopNotifications(mode) ||
+      focused ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    )
+      return;
+    try {
+      const notification = new Notification(notice.title, { body: notice.body, tag, silent: true });
+      accountSystem.set(tag, notification);
+      notification.addEventListener("click", () => {
+        notification.close();
+        window.focus();
+        void window.desktopBridge?.revealWindow().catch(() => undefined);
+        press(notice.action?.stay ? undefined : notice.action);
+      });
+    } catch {
+      // Some browsers expose Notification but reject desktop presentation.
+    }
+  };
+  // SCIENT-FORK:END
 
   const observeThreads = (
     environmentId: EnvironmentId,
@@ -383,28 +492,31 @@ export function startThreadNotifications(
     const unsubscribeAccounts = watchAccountNotifications(
       registry,
       environmentId,
-      (threadId, title, body) => {
-        const state = entry.previous.get(threadId);
-        if (state) present(environmentId, state, "input", { title, body });
-        else {
-          const shell = registry.get(environmentShell.stateValueAtom(environmentId));
-          const raw = Option.isSome(shell.snapshot)
-            ? shell.snapshot.value.threads.find((thread) => thread.id === threadId)
+      (notice) => {
+        const state = notice.threadId ? entry.previous.get(notice.threadId) : undefined;
+        const shell = registry.get(environmentShell.stateValueAtom(environmentId));
+        const raw =
+          state === undefined && Option.isSome(shell.snapshot)
+            ? shell.snapshot.value.threads.find((thread) => thread.id === notice.threadId)
             : undefined;
-          if (raw)
-            present(
-              environmentId,
-              { thread: presentThreadShell(environmentId, raw, null), status: "input" },
-              "input",
-              { title, body },
-            );
-        }
+        if (state) present(environmentId, state, "input", notice);
+        else if (raw)
+          present(
+            environmentId,
+            { thread: presentThreadShell(environmentId, raw, null), status: "input" },
+            "input",
+            notice,
+          );
+        // Scient's own upkeep has no chat: its notice opens Accounts.
+        else presentAccountsNotice(environmentId, notice);
       },
+      (waitId) => withdrawAccountNotice(accountTag(environmentId, waitId)),
     );
     // SCIENT-FORK:END
     entry.unsubscribe = () => {
-      // SCIENT-FORK:START — Dispose the account observer with its environment.
+      // SCIENT-FORK:START — Dispose the account observer, and its notices, with its environment.
       unsubscribeAccounts();
+      withdrawAccountNotices(environmentId);
       // SCIENT-FORK:END
       unsubscribeShell();
       unsubscribeRequests();
@@ -451,6 +563,8 @@ export function startThreadNotifications(
     appliedMode = nextMode;
     stopModeListeners();
     clearPending();
+    // SCIENT-FORK: chat-less account notices follow the same mode.
+    withdrawAccountNotices();
     const stops: Array<() => void> = [];
     if (hasDesktopNotifications(nextMode)) {
       const unsubscribeBadgeClear = window.desktopBridge?.onNotificationBadgeClear(clearPending);

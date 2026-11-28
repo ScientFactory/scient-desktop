@@ -10,13 +10,22 @@ import { Effect, Option, Redacted } from "effect";
 import {
   customModelSecretName,
   prepareCustomModelSave,
+  resolveCustomModelKey,
   resolveCustomModels,
   saveCustomModel,
   withCustomModelKeyHints,
 } from "../../customModels.ts";
+import { ClientActivityLeases } from "./clientLeases.ts";
 import { makeAccountVault } from "./AccountVault.ts";
+import { ACCOUNTS_AWAIT_PERSON } from "./awaitPerson.ts";
 import { makeAccountsSecretStore } from "./AccountsSecretStore.ts";
-import { memoryStore, noKeychain, syntheticValue } from "./Accounts.testkit.ts";
+import {
+  memoryStore,
+  noKeychain,
+  recordingKeychain,
+  syntheticValue,
+  windowLeases,
+} from "./Accounts.testkit.ts";
 
 const make = Effect.fn("AccountsSecretStoreTest.make")(function* (
   storage: ReturnType<typeof memoryStore> = memoryStore(),
@@ -166,5 +175,49 @@ it.effect("preserves Custom models hints, retained keys, rotation, rollback and 
     );
     expect(f.blobs.has(keyName)).toBe(false);
     expect((yield* resolveCustomModels(catalog, pi, f.secrets))[0]?.apiKey).toBeNull();
+  }),
+);
+
+it.effect("a vault closed for the person says so, never to re-enter the key", () =>
+  Effect.gen(function* () {
+    const storage = memoryStore();
+    const { keychain, reads } = yield* recordingKeychain({ desktopBackgroundRunning: true });
+    const { leases, atWindow } = yield* windowLeases(true);
+    const open = Effect.suspend(() =>
+      makeAccountVault(storage.store, "/synthetic/custom-models", keychain).pipe(
+        Effect.provideService(ClientActivityLeases, leases),
+        Effect.flatMap((vault) => makeAccountsSecretStore(storage.store, vault)),
+      ),
+    );
+    const value = syntheticValue();
+    yield* (yield* open).create(customModelSecretName("sealed"), bytes(value));
+    reads.length = 0;
+    // A restart, and nobody at a window yet.
+    yield* atWindow(false);
+    const secrets = yield* open;
+    const sealed = { ...connection, credentialId: "sealed" };
+    const closed = yield* resolveCustomModelKey(sealed, secrets);
+    // regression: a store closed for the person read as a lost key: "Re-enter the API key".
+    expect(closed.credentialError).toBe(ACCOUNTS_AWAIT_PERSON);
+    // regression: so did an edit that keeps the sealed key…
+    const kept = yield* prepareCustomModelSave(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        customModels: { revision: 1, connections: [sealed] },
+      },
+      { revision: 1, connection },
+      secrets,
+    );
+    expect(kept.connection.credentialError).toBe(ACCOUNTS_AWAIT_PERSON);
+    // …and a key not yet sealed, whose sealing on read waits for the person too.
+    storage.blobs.set(customModelSecretName("unsealed"), bytes(syntheticValue()));
+    const unsealed = { ...connection, credentialId: "unsealed" };
+    expect((yield* resolveCustomModelKey(unsealed, secrets)).credentialError).toBe(
+      ACCOUNTS_AWAIT_PERSON,
+    );
+    expect(reads).toEqual([]);
+    yield* atWindow(true);
+    const resolved = yield* resolveCustomModelKey(sealed, secrets);
+    expect(resolved.apiKey && Redacted.value(resolved.apiKey)).toBe(value);
   }),
 );

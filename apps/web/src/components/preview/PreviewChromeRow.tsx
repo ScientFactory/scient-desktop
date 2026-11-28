@@ -1,6 +1,7 @@
 // SCIENT-FORK:START — Scient Accounts: desktop account controls for the owning tab.
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { BrowserAccountControls } from "~/scient/accounts/BrowserAccountControls";
+import { BrowserCodeInsert } from "~/scient/accounts/HandoffCodes";
 // SCIENT-FORK:END
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -40,8 +41,11 @@ interface Props {
         /** The tab's id in the conversation's browser, where the server reaches it. */
         previewTabId: string;
         profileId: string;
+        serverTab?: boolean;
       }
     | undefined;
+  /** The tab's id in the conversation's browser, on every client: a sign-in there may offer codes. */
+  codesTabId?: string | undefined;
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Browser: suggestions as you type.
   threadRef: ScopedThreadRef;
@@ -82,6 +86,7 @@ export function PreviewChromeRow({
   url,
   // SCIENT-FORK:START — Scient Accounts: receive the native tab account context.
   accountsTab,
+  codesTabId,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Browser: suggestions as you type.
   threadRef,
@@ -262,6 +267,9 @@ export function PreviewChromeRow({
             </Tooltip>
             {/* SCIENT-FORK:START — Scient Accounts: fill and capture stay anchored to this tab. */}
             {accountsTab ? <BrowserAccountControls {...accountsTab} url={url} /> : null}
+            {codesTabId ? (
+              <BrowserCodeInsert environmentId={threadRef.environmentId} tabId={codesTabId} />
+            ) : null}
             {/* SCIENT-FORK:END */}
             {onOpenInBrowser && !inputFocused ? (
               <InputGroupAddon align="inline-end">

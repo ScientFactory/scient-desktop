@@ -6,6 +6,7 @@
  * of it; the real session reaches a connector only through Scient's sign-in files.
  */
 import type { CDPSession, Page, Request, Response } from "playwright-core";
+import { typedSecrets } from "../accounts/agent/browserOperations.ts";
 
 import {
   type CheckedBody,
@@ -319,7 +320,12 @@ const makeNetworkStudy = (page: Page) => {
       passwords("tab"),
       ...[...new Set(kept.map((entry) => entry.request.url()))].map(cookiesFor),
     ]);
-    return knownMasker([...learned.flatMap((read) => read.secrets), ...now.flat()]);
+    // A code Scient typed sits in a text field the password read can't see.
+    return knownMasker([
+      ...learned.flatMap((read) => read.secrets),
+      ...now.flat(),
+      ...typedSecrets(page),
+    ]);
   };
 
   const shownUrl = (raw: string, shown: (text: string, cut?: boolean) => string) => {

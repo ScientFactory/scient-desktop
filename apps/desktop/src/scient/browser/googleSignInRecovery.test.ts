@@ -39,6 +39,22 @@ function tab(first: string) {
 }
 
 describe("followTabSignIn", () => {
+  it("offers the same way out when Google closes the connection mid-sign-in", () => {
+    const t = tab("https://idp.huji.ac.il/login");
+    t.start(OAUTH);
+    t.redirect(IDENTIFIER);
+    t.contents.emit("did-fail-load", {}, -100, "ERR_CONNECTION_CLOSED", IDENTIFIER, true);
+    expect(t.report).toHaveBeenCalledExactlyOnceWith({
+      page: "transit",
+      context: "tab",
+      restartUrl: "https://idp.huji.ac.il/",
+      pageUrl: IDENTIFIER,
+    });
+    // Another site failing to load is that site's own page.
+    t.contents.emit("did-fail-load", {}, -100, "ERR_CONNECTION_CLOSED", SITE, true);
+    expect(t.report).toHaveBeenCalledTimes(1);
+  });
+
   it("lets Google's sign-in pages load without reporting anything", () => {
     const t = tab(SITE);
     for (const url of [OAUTH, IDENTIFIER, PASSWORD]) {

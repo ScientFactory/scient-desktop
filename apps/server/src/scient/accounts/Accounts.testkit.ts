@@ -3,12 +3,19 @@ import { makeCliPasswordStores } from "./CliPasswordStores.ts";
 import * as NodeCrypto from "node:crypto";
 import {
   AccountId,
+  AuthSessionId,
+  RpcClientId,
+  type ClientActivityLease,
+  type HostPowerSnapshot,
   AccountsError,
   BUILT_IN_BROWSER_PROFILES,
   defaultAccountControls,
   type AccountActivityEntry,
   type AccountHandoff,
+  type AccountNeedsYou,
+  type BrowserProfileId,
   type AccountSignInAttempt,
+  type AccountSignInEnd,
   type AccountSaveInput,
   type AccountsSnapshot,
   type AccountSummary,
@@ -16,9 +23,10 @@ import {
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { Context, Effect, Layer, Option, Redacted, Stream } from "effect";
+import { Context, DateTime, Deferred, Effect, Layer, Option, Redacted, Ref, Stream } from "effect";
 import { ServerSecretStore, SecretStorePersistError } from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { ClientActivityLeases } from "./clientLeases.ts";
 import {
   AccountVault,
   makeAccountKeychain,
@@ -30,6 +38,7 @@ import { AccountSources } from "./AccountSources.ts";
 import { AccountsService } from "./AccountsService.ts";
 import * as AccountsServiceLive from "./AccountsServiceLive.ts";
 import * as SignInAttemptsStore from "./agent/signInAttempts.ts";
+import { signedOutOfSite } from "./signOuts.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
 
@@ -73,17 +82,77 @@ export const recordingKeychain = Effect.fn("AccountsTestkit.recordingKeychain")(
   return { keychain, reads };
 });
 
+/** A Scient window shown and in use until 2100: a person who can answer a keychain dialog. */
+const windowLease: ClientActivityLease = {
+  sessionId: AuthSessionId.make("synthetic-session"),
+  rpcClientId: RpcClientId.make(1),
+  clientId: "synthetic-window",
+  clientKind: "desktop-renderer",
+  visible: true,
+  focused: true,
+  recentlyInteracted: true,
+  scopes: [],
+  updatedAt: DateTime.makeUnsafe(0),
+  expiresAt: DateTime.makeUnsafe("2100-01-01T00:00:00.000Z"),
+};
+
+/** The host's power state, its lock as given. */
+const hostPowerLocked = (locked: boolean): HostPowerSnapshot => ({
+  source: "electron-main",
+  idle: "false",
+  idleSeconds: null,
+  locked: locked ? "true" : "false",
+  suspended: false,
+  onBattery: "unknown",
+  lowPowerMode: "unknown",
+  thermalState: "unknown",
+  stale: false,
+  updatedAt: DateTime.makeUnsafe(0),
+});
+
+/**
+ * The clients' shared leases and host power: `atWindow` puts someone at a Scient window or not,
+ * `client` reports that window's lease changed by `patch`, and `hostLocked` locks the computer.
+ */
+export const windowLeases = Effect.fn("AccountsTestkit.windowLeases")(function* (open = false) {
+  const leases: ClientActivityLeases["Service"] = {
+    leases: yield* Ref.make(new Map<string, ClientActivityLease>()),
+    hostPower: yield* Ref.make<Effect.Effect<HostPowerSnapshot> | undefined>(undefined),
+  };
+  const client = (patch: Partial<ClientActivityLease>) =>
+    Ref.set(leases.leases, new Map([[windowLease.clientId, { ...windowLease, ...patch }]]));
+  const atWindow = (present: boolean) => (present ? client({}) : Ref.set(leases.leases, new Map()));
+  const hostLocked = (locked: boolean) =>
+    Ref.set(leases.hostPower, Effect.succeed(hostPowerLocked(locked)));
+  yield* atWindow(open);
+  return { leases, atWindow, client, hostLocked };
+});
+
 export const memoryStore = () => {
   const blobs = new Map<string, Uint8Array>();
   const operations: string[] = [];
   let failWrite: string | undefined;
   let failRemove: string | undefined;
+  /** Writes to `failWrite` start failing only once a name with this prefix is written. */
+  let failAfter: string | undefined;
+  /** The next write to this name waits for `release`, once `entered` says it began. */
+  let pause:
+    | { name: string; entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> }
+    | undefined;
   const store = ServerSecretStore.of({
     listNames: Effect.sync(() => [...blobs.keys()]),
     get: (name) => Effect.sync(() => Option.fromUndefinedOr(blobs.get(name)?.slice())),
     set: (name, value) =>
       Effect.suspend(() => {
-        if (name === failWrite)
+        if (pause?.name === name) {
+          const held = pause;
+          pause = undefined;
+          return Deferred.succeed(held.entered, undefined).pipe(
+            Effect.andThen(Deferred.await(held.release)),
+            Effect.andThen(store.set(name, value)),
+          );
+        }
+        if (name === failWrite && failAfter === undefined)
           return Effect.fail(
             new SecretStorePersistError({
               resource: "synthetic record",
@@ -92,6 +161,7 @@ export const memoryStore = () => {
           );
         operations.push(`set:${name}`);
         blobs.set(name, value.slice());
+        if (failAfter !== undefined && name.startsWith(failAfter)) failAfter = undefined;
         return Effect.void;
       }),
     create: (name, value) =>
@@ -134,8 +204,19 @@ export const memoryStore = () => {
     failRemovalOf: (name: string | undefined) => {
       failRemove = name;
     },
-    failWritesTo: (name: string | undefined) => {
+    failWritesTo: (name: string | undefined, after?: string) => {
       failWrite = name;
+      failAfter = after;
+    },
+    /** Holds the next write to `name` until `release` (`entered` once it begins). */
+    pauseNextWriteTo: (name: string) => {
+      const held = {
+        name,
+        entered: Deferred.makeUnsafe<void>(),
+        release: Deferred.makeUnsafe<void>(),
+      };
+      pause = held;
+      return { entered: held.entered, release: held.release };
     },
   };
 };
@@ -150,13 +231,18 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
       readonly discover: SourceControlProviderRegistry["Service"]["discover"];
       readonly github: GitHubSourceControlCredential["Service"];
     };
+    /** The clients' activity leases the vault reads as it opens (`windowLeases`); none: nobody. */
+    readonly leases?: ClientActivityLeases["Service"];
   } = {},
 ) {
   const storage = options.storage ?? memoryStore();
+  const { leases } = options;
   const vault = yield* makeAccountVault(
     storage.store,
     "/synthetic/accounts-test",
     options.keychain ?? noKeychain,
+  ).pipe(
+    leases === undefined ? (effect) => effect : Effect.provideService(ClientActivityLeases, leases),
   );
   const sources = AccountSources.of({
     passwordStores: makeCliPasswordStores({ env: {}, platform: "linux", commonDirectories: [] }),
@@ -224,8 +310,13 @@ export function fakeAccounts(
     filledTab?: { accountId: AccountId; url: string };
   } = {},
 ) {
+  const claimed = new Set<string>();
   const handoffs = new Map<string, AccountHandoff>();
+  const chosen = new Map<string, string>();
+  const needs = new Map<string, Omit<AccountNeedsYou, "since">>();
+  const signOuts: Array<{ profileId: BrowserProfileId; site: string }> = [];
   const attempts = new Map<string, AccountSignInAttempt>();
+  const signInEnds = new Map<AccountId, AccountSignInEnd>();
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
@@ -261,13 +352,64 @@ export function fakeAccounts(
       Effect.sync(() => {
         attempts.delete(id);
       }),
+    setSignInEnd: (end) =>
+      Effect.sync(() => {
+        signInEnds.set(end.accountId, end);
+      }),
+    beginSignOut: () => unsupported,
+    settleSignOut: () => unsupported,
+    supersedeSignOuts: () => Effect.void,
+    renameIfUnchanged: () => unsupported,
     setPaperQueue: () => Effect.void,
     openWithoutPrompt: Effect.succeed(true),
     unattendedWaitsForPerson: Effect.succeed(false),
     showHandoff: () => unsupported,
+    useSavedInHandoff: () => Effect.void,
+    savedRequested: () => Effect.undefined,
     cancelHandoff: (id) =>
       Effect.sync(() => {
         cancelled.add(id);
+      }),
+    insertHandoffCode: (id, codeId) => Effect.sync(() => void chosen.set(id, codeId)),
+    // As the service does: a click claims its hand-off when it's made, so Scient's own claim loses.
+    claimHandoffCode: (id) =>
+      Effect.sync(() => {
+        if (chosen.has(id) || claimed.has(id)) return false;
+        claimed.add(id);
+        return true;
+      }),
+    setNeedsYou: (need) => Effect.sync(() => void needs.set(need.needId, need)),
+    rememberSignOut: (profileId, site) =>
+      Effect.sync(() => void signOuts.push({ profileId, site })),
+    signedOut: Effect.sync(() => [...signOuts]),
+    signOutSequence: Effect.sync(() => signOuts.length),
+    signOutsSince: (sequence) => Effect.sync(() => signOuts.slice(sequence)),
+    unlessSignedOutSince: (account, sequence, publish) =>
+      signedOutOfSite(account, signOuts) || signedOutOfSite(account, signOuts.slice(sequence))
+        ? Effect.succeed(false)
+        : publish.pipe(Effect.as(true)),
+    renewedAt: Effect.succeed({}),
+    renewed: () => Effect.void,
+    taskPins: Effect.succeed([]),
+    unreadableTaskPins: Effect.succeed([]),
+    addCodeNotice: () => Effect.succeed("notice-test"),
+    codeNoticeDelivered: () => Effect.void,
+    codeNoticeCleared: () => Effect.void,
+    settleCodeNotice: () => Effect.void,
+    withTaskEdit: (_taskId, effect) => effect,
+    taskPinOf: () => Effect.undefined,
+    signInFactors: Effect.succeed({}),
+    deferredRenewals: Effect.succeed([]),
+    setRenewalDeferred: () => Effect.void,
+    noteSignInFactor: () => Effect.void,
+    updateTaskPin: () => Effect.void,
+    clearNeedsYou: (needId) => Effect.sync(() => void needs.delete(needId)),
+    chosenHandoffCode: (id) =>
+      Effect.sync(() => {
+        const codeId = chosen.get(id);
+        chosen.delete(id);
+        if (codeId !== undefined) claimed.add(id);
+        return codeId;
       }),
     passwordStore: () => unsupported,
     externalIdentities: Effect.succeed({ identities: [], complete: true }),
@@ -301,6 +443,8 @@ export function fakeAccounts(
         return { accountId };
       }),
     remove: () => unsupported,
+    restore: () => unsupported,
+    agentRestore: () => unsupported,
     test: () => unsupported,
     recordCheck: (accountId, check) =>
       Effect.sync(() => {
@@ -314,8 +458,20 @@ export function fakeAccounts(
       }),
     setControls: () => unsupported,
     setAgentAccess: () => unsupported,
+    setRenewAutomatically: () => unsupported,
+    renewAutomatically: Effect.succeed(true),
     updateProfile: () => unsupported,
     removeProfile: () => unsupported,
+    profileStoreDone: () => unsupported,
+    claimProfileStore: () => Effect.succeed({ ok: true }),
+    desktopWriteCheck: () => Effect.succeed({ ok: false }),
+    attachProfileStore: () => Effect.void,
+    purgeProfiles: Effect.void,
+    admitProfileTab: (_profileId, _threadId, open) => open,
+    browserSources: Effect.succeed([]),
+    undoProfileOperation: () => unsupported,
+    operateProfile: () => unsupported,
+    reportProfiles: () => unsupported,
     chooseProfile: () => unsupported,
     mainFilled: () => unsupported,
     profileSignedOut: () => unsupported,
@@ -336,7 +492,20 @@ export function fakeAccounts(
     googleSessionsSeen: () => unsupported,
     sessionsSeen: () => unsupported,
     keepTyped: () => unsupported,
+    keepFound: () => unsupported,
+    takeBackupCode: () => unsupported,
+    holdPending: () => unsupported,
+    pending: () => unsupported,
     setCodeSources: () => unsupported,
+    agentEdit: () => unsupported,
+    agentControls: () => unsupported,
+    agentRemove: () => unsupported,
+    agentSaveOffer: () => unsupported,
+    recordChange: () => Effect.void,
+    checkCodeSources: unsupported,
+    undoPasswordUpdate: () => unsupported,
+    codeSourcesOn: Effect.succeed(false),
+    codeSourcesVersion: Effect.succeed(0),
     setKeyLink: () => Effect.void,
     respondApproval: () => unsupported,
     activity: () => Effect.succeed([]),
@@ -345,6 +514,25 @@ export function fakeAccounts(
     disconnectOnePassword: unsupported,
     importPasswords: () => unsupported,
     fillValues: () => unsupported,
+    reveal: () => unsupported,
+    usePassword: () => unsupported,
+    removePasswordVersion: () => unsupported,
+    restorePasswordVersion: () => unsupported,
+    neverAsk: () => unsupported,
+    startCard: () => Effect.void,
+    recordCard: () => Effect.void,
+    peek: () => Effect.succeed({ decision: "allowed" as const }),
+    passwordVersion: () => Effect.undefined,
+    rowVersion: () => Effect.undefined,
+    takeFallback: (() => {
+      const taken = new Set<string>();
+      return (key: string) =>
+        Effect.sync(() => {
+          if (taken.has(key)) return false;
+          taken.add(key);
+          return true;
+        });
+    })(),
     filledTab: () => Effect.succeed(options.filledTab),
     matchSignIn: () => unsupported,
     forSession: () =>
@@ -354,6 +542,10 @@ export function fakeAccounts(
         profiles: options.profiles ?? [],
         ...(options.profileChoices ? { profileChoices: options.profileChoices } : {}),
       }),
+    authorizeUse: () =>
+      options.denied
+        ? Effect.fail(new AccountsError({ reason: "denied", message: "Synthetic denial." }))
+        : Effect.void,
     authorize: (_scope, target, action) =>
       Effect.sync(() => {
         calls.push(`authorize:${target.type}:${action}`);
@@ -364,6 +556,7 @@ export function fakeAccounts(
     resolveBound: () => unsupported,
     listBindable: () => unsupported,
     resolveCustomModelAccountKey: () => unsupported,
+    resolveTextGeneratorKey: () => unsupported,
     resolveSpeechKey: () => Effect.die("Speech account resolution is unavailable in this fake"),
     resolveSecrets: (_id, fields) =>
       Effect.sync(() => {
@@ -381,5 +574,18 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses, handoffs, attempts, cancelled, saves, checks };
+  return {
+    service,
+    calls,
+    uses,
+    handoffs,
+    chosen,
+    needs,
+    signOuts,
+    attempts,
+    signInEnds,
+    cancelled,
+    saves,
+    checks,
+  };
 }

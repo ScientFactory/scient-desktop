@@ -242,6 +242,7 @@ it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
         }),
         Layer.mock(ThreadManagementService)({
           getThreadShell: () => Effect.succeed({ projectId } as never),
+          getProjectThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
         }),
       );
       const serverContext = yield* Layer.build(

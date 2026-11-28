@@ -38,6 +38,30 @@ export const needsSetup = (what) =>
       "Scient asks the user in a private card. Never ask for keys in chat.",
   );
 
+/** Requests this program sent Scient itself, by id, until Scient answers on stdin. */
+const askedScient = new Map();
+let askedCount = 0;
+
+/**
+ * Asks Scient, not the agent, to do something only it may, such as a read with the user's
+ * session (`scient/readWithWebsiteSession`). Resolves to the result; rejects with a ToolError.
+ */
+export const askScient = (method, params) =>
+  new Promise((resolve, reject) => {
+    const id = `scient-ask-${++askedCount}`;
+    askedScient.set(id, { resolve, reject });
+    process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+  });
+
+const answerFromScient = (message) => {
+  const asked = askedScient.get(message.id);
+  if (!asked) return;
+  askedScient.delete(message.id);
+  if (message.error)
+    asked.reject(new ToolError(String(message.error.message ?? "Scient refused.")));
+  else asked.resolve(message.result);
+};
+
 /** Logs go to stderr. Never write to stdout: it carries the protocol. */
 export const log = (...parts) => {
   process.stderr.write(`${parts.map((p) => (typeof p === "string" ? p : inspect(p))).join(" ")}\n`);
@@ -315,7 +339,8 @@ export function serve({ name, version, title, instructions, tools }) {
     if (message === null || typeof message !== "object" || Array.isArray(message)) {
       return failure(null, -32600, "Invalid request");
     }
-    if (typeof message.method !== "string") return undefined; // A response; we send no requests.
+    // A response: only Scient answers this program's requests.
+    if (typeof message.method !== "string") return void answerFromScient(message);
     if (message.id === undefined || message.id === null) {
       // A notification. Only cancellation matters to a tools-only server.
       if (message.method === "notifications/cancelled") {

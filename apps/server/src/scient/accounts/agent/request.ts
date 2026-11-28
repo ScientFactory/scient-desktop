@@ -111,6 +111,8 @@ export async function accountRequest(
   token: string,
   signal?: AbortSignal,
   transport = accountTransport(),
+  /** Asked before every fetch, the first and each redirect, so a use stopped meanwhile sends nothing. */
+  beforeFetch?: (url: URL) => Promise<void>,
 ) {
   try {
     if (!token) throw failure();
@@ -164,6 +166,7 @@ export async function accountRequest(
       : AbortSignal.timeout(60_000);
     for (let hop = 0; hop <= 5; hop++) {
       checkAccountRequest(url.href, sites, method, readOnly);
+      await beforeFetch?.(url);
       const response = await transport.fetch(url, {
         method,
         headers,

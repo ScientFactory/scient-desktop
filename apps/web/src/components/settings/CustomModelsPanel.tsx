@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
+import { Link } from "@tanstack/react-router";
 import {
   CustomModelError,
   acceptsCustomModelKey,
@@ -54,6 +55,10 @@ import {
 } from "../ui/empty";
 import { AccountDialog } from "~/scient/accounts/AccountDialog";
 import { useAccounts } from "~/scient/accounts/useAccounts";
+import { accountEditorLink } from "~/scient/accounts/accountsLink";
+import { customModelTarget } from "~/scient/accounts/keyUses";
+import { accountStatusLabel } from "~/scient/accounts/accountsView";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { CustomModelSavedKeyPicker } from "./CustomModelSavedKeyPicker";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -175,7 +180,6 @@ export function EditableCustomModelsContent({
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const accounts = useAccounts(environmentId);
   const [choosingKey, setChoosingKey] = useState<string | null>(null);
-  const [confirmingKey, setConfirmingKey] = useState<AccountSummary | null>(null);
   const [editingKey, setEditingKey] = useState<AccountSummary | null>(null);
   const [editor, setEditor] = useState<{
     target: EditorTarget;
@@ -288,6 +292,16 @@ export function EditableCustomModelsContent({
       Boolean(accounts.data.unavailableCustomModelKeyIds?.includes(connection.id))
     );
   };
+  const keyLine = (account: AccountSummary) => {
+    const state = accountStatusLabel(
+      account,
+      (iso) => formatRelativeTimeLabel(iso, undefined, messages),
+      messages,
+    );
+    return state
+      ? gt("Key: {name} · {state}", { name: account.name, state })
+      : gt("Key: {name}", { name: account.name });
+  };
   const keyConnection = catalog.connections.find(({ id }) => id === choosingKey);
   const onSave = async (input: CustomModelSaveInput) => {
     resultValue(await save({ environmentId, input }));
@@ -398,7 +412,12 @@ export function EditableCustomModelsContent({
         </Empty>
       ) : null}
       {catalog.connections.map((connection) => (
-        <section key={connection.id} aria-label={connection.name} className="space-y-1.5">
+        <section
+          key={connection.id}
+          id={customModelTarget(connection.id)}
+          aria-label={connection.name}
+          className="space-y-1.5"
+        >
           <div className="flex min-h-7 items-center justify-between gap-2 px-1">
             <h3 className="flex min-w-0 items-center gap-2 text-sm font-medium tracking-[-0.005em] text-foreground">
               <CustomModelConnectionIcon connection={connection} />
@@ -572,16 +591,25 @@ export function EditableCustomModelsContent({
           <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
             <span className="mr-auto">
               {keyMissing(connection)
-                ? gt("Reconnect")
+                ? gt("Key unavailable")
                 : accountFor(connection)
-                  ? gt("API key · {label}", { label: accountFor(connection)!.name })
+                  ? keyLine(accountFor(connection)!)
                   : connection.accountId
                     ? gt("Checking saved key…")
                     : connection.credentialId
                       ? gt("API key saved")
                       : gt("No key needed")}
             </span>
-            {dedicated(connection) ? (
+            {keyMissing(connection) && !dedicated(connection) && accounts.data ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={busy || !accounts.canWrite}
+                onClick={() => setChoosingKey(connection.id)}
+              >
+                <T>Reconnect</T>
+              </Button>
+            ) : dedicated(connection) ? (
               <Button
                 size="xs"
                 variant="outline"
@@ -605,9 +633,18 @@ export function EditableCustomModelsContent({
                 size="xs"
                 variant="ghost"
                 disabled={!accounts.canWrite}
-                onClick={() => setConfirmingKey(accountFor(connection)!)}
+                onClick={() => setEditingKey(accountFor(connection)!)}
               >
                 <T>Manage key…</T>
+              </Button>
+            ) : null}
+            {connection.accountId && accountFor(connection) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                render={<Link {...accountEditorLink(environmentId, connection.accountId)} />}
+              >
+                <T>Open in Accounts</T>
               </Button>
             ) : null}
           </div>
@@ -640,47 +677,6 @@ export function EditableCustomModelsContent({
           onClose={() => setChoosingKey(null)}
         />
       ) : null}
-      {confirmingKey ? (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setConfirmingKey(null);
-          }}
-        >
-          <DialogPopup>
-            <DialogHeader>
-              <DialogTitle>{gt("Replace {name}?", { name: confirmingKey.name })}</DialogTitle>
-              <DialogDescription>
-                <T>These connections will use the replacement key.</T>
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel>
-              <ul className="list-disc pl-5 text-sm text-muted-foreground">
-                {(accounts.data?.keyConsumers ?? [])
-                  .filter(({ accountId }) => accountId === confirmingKey.accountId)
-                  .map(({ kind, id, name }) => (
-                    <li key={kind + ":" + id}>
-                      {kind === "custom-model" ? gt("Custom models") : gt("Transcription")} · {name}
-                    </li>
-                  ))}
-              </ul>
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setConfirmingKey(null)}>
-                  <T>Cancel</T>
-                </Button>
-                <Button
-                  onClick={() => {
-                    setEditingKey(confirmingKey);
-                    setConfirmingKey(null);
-                  }}
-                >
-                  <T>Continue</T>
-                </Button>
-              </div>
-            </DialogPanel>
-          </DialogPopup>
-        </Dialog>
-      ) : null}
       {editingKey && accounts.data ? (
         <AccountDialog
           environmentId={environmentId}
@@ -699,7 +695,7 @@ export function EditableCustomModelsContent({
           {...(accounts.canWrite && accountFor(managing.connection)
             ? {
                 onManageKey: () => {
-                  setConfirmingKey(accountFor(managing.connection)!);
+                  setEditingKey(accountFor(managing.connection)!);
                   setManaging(null);
                 },
               }
