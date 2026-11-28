@@ -420,7 +420,12 @@ it("fills the login whose username fits the box, and none when no saved username
 });
 
 it("fills the newest saved password of the username, and never one the site refused", () => {
-  const row = (changedAt?: string, signIn?: AccountSummary["signIn"]) => ({
+  const row = (
+    changedAt?: string,
+    signIn?: AccountSummary["signIn"],
+  ): Pick<AccountSummary, "details" | "signIn"> & {
+    secrets: { password: NonNullable<AccountSummary["secrets"]["password"]> };
+  } => ({
     details: { kind: "website" as const, sites: ["idp.example.edu"], username: "a@example.edu" },
     secrets: {
       password: {
@@ -439,6 +444,24 @@ it("fills the newest saved password of the username, and never one the site refu
   const refused = row(undefined, { state: "password-rejected", at: "2025-03-01T00:00:00.000Z" });
   expect(fillChoice([row(), refused, worked], box).account).toBe(worked);
   expect(fillChoice([refused], box).account).toBeUndefined();
+  // A dated import must not outrank a password replaced here after that import.
+  const replaced = row();
+  replaced.secrets.password = {
+    ...replaced.secrets.password,
+    previousAt: "2026-01-01T00:00:00.000Z",
+  };
+  expect(fillChoice([older, replaced], box).account).toBe(replaced);
+  // Signing out changes the session state, not whether its saved password was refused.
+  const signedOut = row("2026-02-01T00:00:00.000Z", {
+    state: "signed-out",
+    at: "2026-03-01T00:00:00.000Z",
+    by: "action",
+  });
+  signedOut.secrets.password = {
+    ...signedOut.secrets.password,
+    refusedAt: "2026-02-02T00:00:00.000Z",
+  };
+  expect(fillChoice([signedOut, newer], box).account).toBe(newer);
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {

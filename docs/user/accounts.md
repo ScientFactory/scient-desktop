@@ -35,8 +35,9 @@ password**, and **Show** and **Copy** work for both, on any device. Each use is 
 Activity. A login you remove stays removed when a browser profile is refreshed; importing it again
 brings it back.
 
-A password box in a browser tab shows an eye while you type in it; click it to see what you typed.
-A filled password has no eye: use **Show password** in the key's menu.
+The eye appears while you type into an empty password box and hides when you leave the box.
+It does not appear for an autofilled password. For a saved password, use **Show password** in the
+key's menu when available, or in **Settings → Accounts & secrets → Saved passwords**.
 
 When an agent needs a key you haven't saved, it asks in a private card and keeps your answer here.
 A key you give an agent in the chat is kept as it is, with no card. Each one is a new key, even for

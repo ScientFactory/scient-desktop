@@ -100,7 +100,11 @@ export function fillChoice<Account extends Pick<AccountSummary, "details" | "sec
   matches: ReadonlyArray<Account>,
   boxes: ReadonlyArray<LoginBox>,
 ) {
-  const usable = matches.filter((match) => match.signIn?.state !== "password-rejected");
+  const usable = matches.filter(
+    (match) =>
+      match.signIn?.state !== "password-rejected" &&
+      match.secrets.password?.refusedAt === undefined,
+  );
   const name = ({ details }: Account) =>
     details.kind === "website" ? details.username : undefined;
   const fits = (box: LoginBox | undefined, exact: boolean) => (account: Account) => {
@@ -113,7 +117,7 @@ export function fillChoice<Account extends Pick<AccountSummary, "details" | "sec
     usable.find(fits(boxes[1], false)) ??
     (boxes.length === 0 ? usable[0] : undefined);
   const recency = (account: Account) => [
-    account.secrets["password"]?.changedAt ?? "",
+    account.secrets.password?.changedAt ?? account.secrets.password?.previousAt ?? "",
     account.signIn?.state === "signed-in" ? account.signIn.at : "",
     account.secrets["password"]?.verifiedAt ?? "",
   ];
