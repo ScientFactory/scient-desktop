@@ -21,6 +21,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 // SCIENT-FORK:START — Scient background running.
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+import { backgroundRunningInEffect } from "../scient/backgroundRunning/backgroundRunningInEffect.ts";
 import { vi } from "vite-plus/test";
 
 const quitGuard = vi.hoisted(() => ({
@@ -537,6 +538,67 @@ describe("DesktopLifecycle", () => {
           Effect.ensuring(Effect.sync(() => (quitGuard.prompt = "none"))),
         );
         assert.deepEqual(quitGuard.sources, [source]);
+      }),
+  );
+
+  it.effect.each([
+    { platform: "win32", atStart: null, changedTo: true, windowless: false },
+    { platform: "linux", atStart: true, changedTo: false, windowless: true },
+  ] satisfies ReadonlyArray<{
+    platform: NodeJS.Platform;
+    atStart: boolean | null;
+    changedTo: boolean;
+    windowless: boolean;
+  }>)(
+    "closing the last window follows the setting this start applied, not a later change: %o",
+    ({ platform, atStart, changedTo, windowless }) =>
+      Effect.gen(function* () {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        const quitRequested = yield* Deferred.make<void>();
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(
+            layerElectronApp(
+              appListeners,
+              Deferred.succeed(quitRequested, undefined).pipe(Effect.asVoid),
+            ),
+          ),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(layerElectronWindow()),
+          Layer.provideMerge(layerDesktopWindow()),
+          Layer.provideMerge(
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              platform,
+              isDevelopment: false,
+              appImagePath: Option.none(),
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+          Layer.provideMerge(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              keepRunningInBackground: atStart,
+            }),
+          ),
+        );
+        const result = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+            // The backend launch reads it first; its keychain deferral is fixed from then on.
+            yield* backgroundRunningInEffect;
+            yield* (yield* DesktopAppSettings.DesktopAppSettings).setKeepRunningInBackground(
+              changedTo,
+            );
+            appListeners.get("window-all-closed")?.();
+            if (!windowless) yield* Deferred.await(quitRequested);
+            else yield* Effect.yieldNow;
+            return {
+              background: yield* Ref.get((yield* DesktopState.DesktopState).background),
+              quit: yield* Deferred.isDone(quitRequested),
+            };
+          }),
+        ).pipe(Effect.provide(layer));
+        assert.deepEqual(result, { background: windowless, quit: !windowless });
       }),
   );
 

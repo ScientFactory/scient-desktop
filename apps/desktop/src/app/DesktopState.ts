@@ -20,6 +20,8 @@ export class DesktopState extends Context.Service<
     readonly quitting: Ref.Ref<boolean>;
     // SCIENT-FORK: running with no window by the person's choice; opens none on its own.
     readonly background: Ref.Ref<boolean>;
+    // SCIENT-FORK: background running as this process applies it, fixed at its first read.
+    readonly backgroundRunningInEffect: Ref.Ref<boolean | undefined>;
     // Set by DesktopUpdates.configure, which runs before the first backend start.
     readonly canInstallUpdates: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
@@ -32,6 +34,7 @@ const make = Effect.all({
   quitting: Ref.make(false),
   // SCIENT-FORK: running with no window by the person's choice.
   background: Ref.make(false),
+  backgroundRunningInEffect: Ref.make<boolean | undefined>(undefined),
   canInstallUpdates: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
   databaseMigrationProgress: Ref.make<DatabaseMigrationProgress | null>(null),

@@ -22,6 +22,7 @@ import { makeIpcMethod, makeSyncIpcMethod } from "../../ipc/DesktopIpc.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopBackgroundFacts from "./DesktopBackgroundFacts.ts";
+import { backgroundRunningInEffect } from "./backgroundRunningInEffect.ts";
 
 export interface BackgroundTrayActions {
   readonly open: () => void;
@@ -86,18 +87,23 @@ export const make = Effect.fn("DesktopBackgroundRunning.make")(function* (setTra
           ),
         );
       });
+      // The tray follows background running as this process applies it, not later changes.
       yield* syncTray(
-        DesktopAppSettings.keepsRunningInBackground(yield* appSettings.get, environment.platform),
+        yield* backgroundRunningInEffect.pipe(
+          Effect.provideService(DesktopState.DesktopState, state),
+          Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+          Effect.provideService(DesktopAppSettings.DesktopAppSettings, appSettings),
+        ),
       );
       yield* facts.summaries(
         appSettings.get.pipe(Effect.map((settings) => settings.keepRunningInBackground)),
       );
       yield* Effect.addFinalizer(() => setTray(null));
     }).pipe(Effect.withSpan("DesktopBackgroundRunning.start")),
+    // The choice takes effect at the next start, for window closing, the tray and Accounts alike.
     setEnabled: Effect.fn("DesktopBackgroundRunning.setEnabled")(function* (enabled) {
       const previous = (yield* appSettings.get).keepRunningInBackground;
       const { changed } = yield* appSettings.setKeepRunningInBackground(enabled);
-      yield* syncTray(enabled);
       if (changed) yield* facts.settingChanged({ enabled, previous });
     }),
   });

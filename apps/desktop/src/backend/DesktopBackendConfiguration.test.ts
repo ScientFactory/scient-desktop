@@ -1137,6 +1137,10 @@ describe("DesktopBackendConfiguration", () => {
         Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           const primary = yield* configuration.resolvePrimary;
+          // A backend started after the switch changed keeps this start's value, as windows do.
+          yield* (yield* DesktopAppSettings.DesktopAppSettings).setKeepRunningInBackground(
+            primary.bootstrap.desktopBackgroundRunning !== true,
+          );
           const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
           // Providers and terminals inherit the backend's environment: the setting stays out of it.
           for (const env of [primary.env, wsl.env]) {

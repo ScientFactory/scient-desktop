@@ -25,6 +25,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 // SCIENT-FORK:START — Scient keeps running in the background.
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+import { backgroundRunningInEffect } from "../scient/backgroundRunning/backgroundRunningInEffect.ts";
 
 /** Background-running analytics, when the app provides them. */
 const recordBackground = (
@@ -193,11 +194,7 @@ function handleBeforeQuit(
       const state = yield* DesktopState.DesktopState;
       if (yield* Ref.get(state.quitting)) return true;
       // Only running with no window needs the count read at Quit; otherwise the app reports it.
-      const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
-      const settings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
-      const source = DesktopAppSettings.keepsRunningInBackground(settings, platform)
-        ? "read"
-        : "reported";
+      const source = (yield* backgroundRunningInEffect) ? "read" : "reported";
       // The windowless period as Quit began: a window shown during the check must not hide it.
       const facts = yield* Effect.serviceOption(DesktopBackgroundFacts.DesktopBackgroundFacts);
       const snapshot = Option.isSome(facts) ? yield* facts.value.quitStarted : undefined;
@@ -384,12 +381,7 @@ export const make = DesktopLifecycle.of({
           const state = yield* DesktopState.DesktopState;
           if (yield* Ref.get(state.quitting)) return;
           // SCIENT-FORK:START — Scient keeps running in the background with no window.
-          const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-          const keepRunning = DesktopAppSettings.keepsRunningInBackground(
-            yield* appSettings.get,
-            environment.platform,
-          );
-          if (keepRunning) {
+          if (yield* backgroundRunningInEffect) {
             yield* Ref.set(state.background, true);
             yield* recordBackground((facts) => facts.windowlessStarted);
             return;

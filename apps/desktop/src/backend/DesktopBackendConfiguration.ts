@@ -38,6 +38,9 @@ import {
   scientAnalyticsMetadata,
   SCIENT_ANALYTICS_METADATA_ENV_NAMES,
 } from "./scientAnalyticsMetadata.ts";
+// SCIENT-FORK:START — background running as this desktop process applies it.
+import { backgroundRunningInEffect } from "../scient/backgroundRunning/backgroundRunningInEffect.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient launch environment and bundled SyncTeX navigator.
 import {
   resolveSyncTexNavigatorPath,
@@ -951,10 +954,12 @@ export const make = Effect.gen(function* () {
       bootstrapSecret,
       observabilitySettings,
       hostScope: yield* hostScope,
-      // SCIENT-FORK:START — the effective background running setting.
-      desktopBackgroundRunning: DesktopAppSettings.keepsRunningInBackground(
-        yield* settings.get,
-        environment.platform,
+      // SCIENT-FORK:START — background running as this desktop process applies it, so a backend
+      // started after the switch changed still agrees with window closing.
+      desktopBackgroundRunning: yield* backgroundRunningInEffect.pipe(
+        Effect.provideService(DesktopState.DesktopState, desktopState),
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+        Effect.provideService(DesktopAppSettings.DesktopAppSettings, settings),
       ),
       // SCIENT-FORK:END
     } satisfies SharedBootstrapInput;

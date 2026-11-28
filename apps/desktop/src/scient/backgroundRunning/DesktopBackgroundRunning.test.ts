@@ -111,23 +111,29 @@ const events = (recorded: ReadonlyArray<RecordedFact>) =>
   recorded.filter((fact) => fact.name === "app.background.event").map((fact) => fact.properties);
 
 describe("DesktopBackgroundRunning", () => {
-  it.effect("the switch saves the setting, shows or removes the tray and reports the change", () =>
-    Effect.gen(function* () {
-      const harness = yield* setup();
-      assert.isNotNull(harness.trays.at(-1));
-      yield* harness.background.setEnabled(false);
-      assert.isFalse((yield* harness.settings.get).keepRunningInBackground);
-      assert.isNull(harness.trays.at(-1));
-      yield* harness.background.setEnabled(true);
-      assert.isTrue((yield* harness.settings.get).keepRunningInBackground);
-      assert.isNotNull(harness.trays.at(-1));
-      // Saving the value already stored is no change.
-      yield* harness.background.setEnabled(true);
-      assert.deepEqual(events(harness.recorded), [
-        { kind: "setting-changed", platform: "windows", enabled: false, previousSetBy: "person" },
-        { kind: "setting-changed", platform: "windows", enabled: true, previousSetBy: "person" },
-      ]);
-    }).pipe(Effect.scoped),
+  it.effect(
+    "the switch saves the choice for the next start; the tray stays as this start applied it",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* setup();
+        assert.isNotNull(harness.trays.at(-1));
+        yield* harness.background.setEnabled(false);
+        assert.isFalse((yield* harness.settings.get).keepRunningInBackground);
+        assert.isFalse(yield* harness.readSwitch);
+        // The backend this start launched still defers its keychain, so window closing and the tray
+        // keep this start's behaviour.
+        assert.isNotNull(harness.trays.at(-1));
+        assert.isTrue(yield* Ref.get(harness.state.backgroundRunningInEffect));
+        yield* harness.background.setEnabled(true);
+        assert.isTrue((yield* harness.settings.get).keepRunningInBackground);
+        assert.isNotNull(harness.trays.at(-1));
+        // Saving the value already stored is no change.
+        yield* harness.background.setEnabled(true);
+        assert.deepEqual(events(harness.recorded), [
+          { kind: "setting-changed", platform: "windows", enabled: false, previousSetBy: "person" },
+          { kind: "setting-changed", platform: "windows", enabled: true, previousSetBy: "person" },
+        ]);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("shows a tray on Windows and Linux only", () =>
@@ -164,12 +170,13 @@ describe("DesktopBackgroundRunning", () => {
   );
 
   it.effect(
-    "turning it on with nothing stored shows the tray and reports the default it left",
+    "turning it on with nothing stored shows no tray until the next start, and reports the default it left",
     () =>
       Effect.gen(function* () {
         const harness = yield* setup({ platform: "linux", keepRunningInBackground: null });
         yield* harness.background.setEnabled(true);
-        assert.isNotNull(harness.trays.at(-1));
+        assert.isNull(harness.trays.at(-1));
+        assert.isTrue(yield* harness.readSwitch);
         assert.deepEqual(events(harness.recorded), [
           { kind: "setting-changed", platform: "linux", enabled: true, previousSetBy: "default" },
         ]);
