@@ -36,6 +36,7 @@
     "report:client": "node scripts/metrics/web/client-metrics.ts",
     "lint": "vp lint --report-unused-disable-directives",
     "i18n:untranslated": "node scripts/i18n-untranslated.ts",
+    "i18n:translate": "node scripts/i18n-translate.ts",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
     "knip:check": "vp run knip:check:all",
     "knip:check:files": "knip --include files,dependencies --no-config-hints",
@@ -101,6 +102,7 @@
   "devDependencies": {
     "@coderabbitai/config": "1.2.0",
     "@effect/tsgo": "0.67.1",
+    "@generaltranslation/icu": "0.1.2",
     "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",
     "knip": "6.34.0",

@@ -433,6 +433,9 @@ importers:
       '@effect/tsgo':
         specifier: 0.67.1
         version: 0.67.1
+      '@generaltranslation/icu':
+        specifier: 0.1.2
+        version: 0.1.2
       '@shadcn/lint':
         specifier: 0.1.5
         version: 0.1.5
