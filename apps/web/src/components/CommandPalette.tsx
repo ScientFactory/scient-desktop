@@ -3557,6 +3557,7 @@ function OpenCommandPaletteDialog(props: {
         "aria-describedby": inputAccessory ? submitButtonId : undefined,
         ...(isSubmenu
           ? {
+              startAddonInteractive: true,
               startAddon: (
                 <button
                   type="button"
