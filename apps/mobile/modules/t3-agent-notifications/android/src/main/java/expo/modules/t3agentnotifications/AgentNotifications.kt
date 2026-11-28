@@ -394,8 +394,9 @@ object AgentNotifications {
     val accountsPath = threadPath?.split("/")
       ?.takeIf { it.size == 4 && Uri.decode(it[3]).startsWith("scient-") }
       ?.let { "/settings/environments/${it[2]}/accounts" }
+    val opened = accountsPath ?: threadPath
     // SCIENT-FORK:END
-    val route = (accountsPath ?: threadPath)?.takeUnless { it.contains('?') || it.contains('#') } ?: "/"
+    val route = opened?.takeUnless { it.contains('?') || it.contains('#') } ?: "/"
     val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
       ?: return null
     intent.setAction(Intent.ACTION_VIEW).setData(Uri.parse("$scheme:/$route"))

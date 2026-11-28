@@ -222,8 +222,11 @@ it.effect("a scheduled run nobody is there for never opens Accounts with a dialo
       expect(reads).toEqual([]);
       expect(storage.blobs.size).toBe(0);
     }).pipe(
-      Effect.provide(scheduler(realGate(fresh), sentFresh)),
-      Effect.provide(SqlitePersistence.layerMemory),
+      Effect.provide(
+        scheduler(realGate(fresh), sentFresh).pipe(
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+        ),
+      ),
     );
 
     const accountId = yield* savedPin(storage, keychain, hourly.id);
