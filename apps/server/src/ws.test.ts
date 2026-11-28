@@ -124,6 +124,8 @@ import * as PreviewManager from "./preview/Manager.ts";
 // SCIENT-FORK:START — Scient Browser: history.
 import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK: Scient WhatsApp link.
+import { WhatsAppService } from "./scient/whatsapp/WhatsAppService.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -945,6 +947,8 @@ const layerUnusedConfigRpcDependencies = Layer.mergeAll(
   // SCIENT-FORK:START — Scient Browser: history.
   Layer.mock(BrowserHistory)({}),
   // SCIENT-FORK:END
+  // SCIENT-FORK: Scient WhatsApp link.
+  Layer.mock(WhatsAppService)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
   Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({}),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),

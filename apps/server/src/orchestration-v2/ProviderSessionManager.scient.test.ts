@@ -151,6 +151,7 @@ it.effect.each(
                 "threads:read",
                 // SCIENT-FORK:START — Scient Accounts: keep credential-policy fixtures complete.
                 "accounts",
+                "whatsapp",
                 // SCIENT-FORK:END
                 "skills:read",
                 ...(stalePolicy === "excess-device-grant" ? ["device" as const] : []),
@@ -3045,6 +3046,7 @@ it.effect(
             "skills:write",
             "threads:read",
             "accounts",
+            "whatsapp",
             "skills:read",
           ]),
         );

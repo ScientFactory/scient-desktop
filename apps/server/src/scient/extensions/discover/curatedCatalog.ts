@@ -848,6 +848,21 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     icon: CURATED_ICONS["granola"],
   },
   {
+    // Verified 2026-11-28: GET 405; initialize 401 with an OAuth challenge (resource metadata,
+    // scopes business_management whatsapp_business_management whatsapp_business_messaging) and
+    // dynamic client registration. Not in the MCP Registry.
+    id: "whatsapp-business",
+    accountRequired: true,
+    displayName: "WhatsApp Business",
+    tagline: "Meta's tools for WhatsApp Business accounts",
+    description:
+      "Meta's own tools for the WhatsApp Business Platform: set up business phone numbers, manage message templates and send messages. They can't read your chats; to work with your own WhatsApp, link it as a device from the WhatsApp page.",
+    url: "https://mcp.facebook.com/whatsapp_business_tools",
+    categories: ["communication"],
+    websiteUrl: "https://business.whatsapp.com",
+    icon: CURATED_ICONS["whatsapp-business"],
+  },
+  {
     // sign-in: 401 OAuth
     id: "todoist",
     accountRequired: true,

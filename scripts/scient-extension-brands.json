@@ -4069,6 +4069,26 @@
     }
   },
   {
+    "key": "whatsapp-business",
+    "names": ["WhatsApp", "WhatsApp Business"],
+    "website": "https://www.whatsapp.com",
+    "source": {
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/whatsapp.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#25D366",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://about.meta.com/brand/resources/whatsapp/whatsapp-brand",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "sourceFormat": "svg",
+      "outputBytes": 4830
+    }
+  },
+  {
     "key": "windsor-ai",
     "names": ["windsor-ai"],
     "website": "https://windsor.ai",

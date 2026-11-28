@@ -43,6 +43,7 @@ require a cosmetic folder migration.
   - [Scient Agent](./user/providers-scient-agent.md)
 - [Permission modes](./user/permission-modes.md)
 - [Extensions and connected services](./user/extensions.md)
+- [WhatsApp](./user/whatsapp.md)
 - [Accounts and saved sign-ins](./user/accounts.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Multiple windows](./user/multiple-windows.md)

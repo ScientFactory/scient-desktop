@@ -47,11 +47,13 @@ import { providerInventoryMessage } from "./providerInventoryCopy";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem } from "./AccountServicePages";
 import {
+  ACCOUNT_SERVICES,
   type AccountService,
   accountServiceForApp,
   accountServiceOfServer,
   installedAccountServices,
 } from "./accountServices";
+import { isWhatsAppInstalled, useWhatsAppStatus } from "./whatsAppState";
 import { AgentSkills } from "../skills/AgentSkills";
 import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
 import { ProjectSkills } from "../skills/ProjectSkills";
@@ -153,6 +155,10 @@ function YoursTable({
   const [expanded, setExpanded] = useState(false);
   const { environmentId, canWrite, inventory, inventoryError, providerInventory } =
     useExtensionsEnvironment();
+  const { status: whatsApp } = useWhatsAppStatus(canWrite ? environmentId : null);
+  const scientServices = ACCOUNT_SERVICES.filter(
+    (service) => service.scientSetup === "whatsapp" && isWhatsAppInstalled(whatsApp?.state),
+  );
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waitingForConnection = useRef(false);
   const refreshAgents = () => {
@@ -187,7 +193,7 @@ function YoursTable({
     ...plugins
       .filter((plugin) => plugin.origin !== "built-in")
       .map((plugin) => <PluginItem key={plugin.pluginId} plugin={plugin} />),
-    ...accountServices.map((service) => (
+    ...[...scientServices, ...accountServices].map((service) => (
       <AccountServiceItem key={`account:${service.id}`} service={service} />
     )),
     ...agentRows(groups, accountServices),

@@ -981,6 +981,9 @@ export const layerWithOptions = (
               "skills:write",
               // SCIENT-FORK:END
               "threads:read",
+              // SCIENT-FORK:START — WhatsApp tools; each call fails until the user links WhatsApp.
+              "whatsapp",
+              // SCIENT-FORK:END
             ]);
             if (scientSkillDeliveryForProvider(adapter.driver) === "mcp")
               capabilities.add("skills:read");

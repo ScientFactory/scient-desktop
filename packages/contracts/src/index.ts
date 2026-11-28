@@ -119,6 +119,7 @@ export * from "./scientSkills.ts";
 export * from "./scient/secrets.ts";
 export * from "./scient/connectHost.ts";
 export * from "./scient/extensions.ts";
+export * from "./scient/whatsapp.ts";
 export * from "./scient/nativeSubagentControl.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Accounts contracts (new files, no upstream edits).

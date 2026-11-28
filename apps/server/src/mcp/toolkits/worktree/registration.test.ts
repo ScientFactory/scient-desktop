@@ -2,6 +2,9 @@ import { TranscriptionJobs } from "../../../transcription/TranscriptionJobs.ts";
 // SCIENT-FORK:START — Scient Accounts: keep MCP fixtures away from native credential stores.
 import * as AccountsTestkit from "../../../scient/accounts/Accounts.testkit.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — the MCP layer registers WhatsApp tools.
+import { WhatsAppService } from "../../../scient/whatsapp/WhatsAppService.ts";
+// SCIENT-FORK:END
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
@@ -108,6 +111,8 @@ const StubServicesLive = Layer.mergeAll(
   // Every MCP request asks which thread it serves, to list forge tools only where they work.
   Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
   Layer.mock(DeviceService.DeviceService)({}),
+  // SCIENT-FORK: the MCP layer registers WhatsApp tools.
+  Layer.mock(WhatsAppService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
@@ -264,6 +269,8 @@ it.effect.each(
       const unlisted = new Set([
         ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
         ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
+        // SCIENT-FORK: WhatsApp tools need the whatsapp grant.
+        ...McpHttpServer.hostMcpToolGrants.whatsapp.map((tool) => tool.name),
         "tool_search",
         "tool_call",
         "scient_background_wait",

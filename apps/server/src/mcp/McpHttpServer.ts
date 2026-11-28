@@ -215,6 +215,10 @@ import {
   DeviceStandardToolkit,
   DeviceToolkit,
 } from "./toolkits/device/tools.ts";
+// SCIENT-FORK:START — WhatsApp agent tools.
+import * as WhatsAppHandlers from "./toolkits/whatsapp/handlers.ts";
+import { WhatsAppToolkit } from "./toolkits/whatsapp/tools.ts";
+// SCIENT-FORK:END
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
@@ -2033,6 +2037,10 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+// SCIENT-FORK:START — WhatsApp agent tools: the user's account, gated by the `whatsapp` grant.
+export const layerWhatsAppToolkit = toolkitRegistration(WhatsAppToolkit, WhatsAppHandlers.layer);
+// SCIENT-FORK:END
+
 // SCIENT-FORK:START — every listed tool has a declared owner; a session sees what its grants allow.
 // Every route of these tools reaches readCaller/loadCaller (or forwarding, which does).
 // Pull-request tools are not gated: forwarded to a linked environment, they need only
@@ -2062,6 +2070,8 @@ const worktreeTools = [
 const deviceTools = Object.values(DeviceToolkit.tools);
 // Every issue tool route checks the `issues` grant, and none forwards to a linked environment.
 const issueTools = Object.values(IssuesToolkit.tools);
+// Every WhatsApp tool checks the `whatsapp` grant, and none forwards to a linked environment.
+const whatsappTools = Object.values(WhatsAppToolkit.tools);
 const toolCallProxy = Tool.make(McpToolExposure.TOOL_CALL, {
   description: "Invoke a Scient MCP tool by exact name. Use tool_search to find its schema.",
   parameters: Schema.Struct({
@@ -2078,6 +2088,7 @@ export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...Object.values(HtmlRenderToolkit.tools),
   ...Object.values(HtmlPreviewToolkit.tools),
   ...deviceTools,
+  ...whatsappTools,
   // send_to_user acts only on the caller's own thread, so it needs no grant.
   ...Object.values(MessageToolkit.tools),
   // A deferring client lists tool_search; it needs no grant.
@@ -2090,6 +2101,7 @@ export const hostMcpToolGrants = {
   worktree: worktreeTools,
   device: deviceTools,
   issues: issueTools,
+  whatsapp: whatsappTools,
 };
 const layerScientToolList = makeScientToolListLayer(hostMcpTools, hostMcpToolGrants);
 const scientHostToolVisibility = hostToolVisibility(hostMcpTools, hostMcpToolGrants);
@@ -2128,7 +2140,7 @@ export const layerInProcessMcpServer = McpServer.middleware<{
 // SCIENT-FORK:START — Scient's server name and request-scoped tool discovery.
 /** One line clients show for this server: Codex as its namespace, Scient Agent as its catalog row. */
 const SCIENT_MCP_INSTRUCTIONS =
-  "Scient workspace tools: papers and sources, Compute, notebooks, documents and PDF builds, Overleaf, browser preview, devices, skills, connectors, accounts, projects, threads and delegation.";
+  "Scient workspace tools: papers and sources, Compute, notebooks, documents and PDF builds, Overleaf, browser preview, devices, WhatsApp, skills, connectors, accounts, projects, threads and delegation.";
 
 export const makeLayerMcpTransport =
   (toolList: ReturnType<typeof makeScientToolListLayer>) =>
@@ -2192,6 +2204,8 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerIssuesToolkit,
   layerDeviceToolkit,
+  // SCIENT-FORK: WhatsApp agent tools.
+  layerWhatsAppToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,
 );

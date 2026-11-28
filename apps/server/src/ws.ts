@@ -401,6 +401,9 @@ import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
 import { searchSuggestions } from "./scient/browserHistory/searchSuggestions.ts";
 import { FetchHttpClient } from "effect/http";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient WhatsApp link.
+import { WhatsAppService } from "./scient/whatsapp/WhatsAppService.ts";
+// SCIENT-FORK:END
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
@@ -1766,6 +1769,9 @@ export const layerWsRpc = (
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient Browser: history.
       const browserHistory = yield* BrowserHistory;
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Scient WhatsApp link.
+      const whatsapp = yield* WhatsAppService;
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
@@ -4254,6 +4260,13 @@ export const layerWsRpc = (
         [WS_METHODS.browserHistorySuggest]: (input) => browserHistory.suggest(input),
         [WS_METHODS.browserSearchSuggest]: (input) =>
           searchSuggestions(input).pipe(Effect.provide(FetchHttpClient.layer)),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — Scient WhatsApp link.
+        [WS_METHODS.whatsappStatus]: () => whatsapp.status,
+        [WS_METHODS.whatsappSubscribeStatus]: () => whatsapp.changes,
+        [WS_METHODS.whatsappStartLink]: () => whatsapp.startLink,
+        [WS_METHODS.whatsappCancelLink]: () => whatsapp.cancelLink,
+        [WS_METHODS.whatsappUnlink]: () => whatsapp.unlink,
         // SCIENT-FORK:END
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
       });

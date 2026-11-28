@@ -95,6 +95,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDocumentBindingChanges
   // SCIENT-FORK:START — Scient Extensions change stream.
   | typeof WS_METHODS.extensionsSubscribeChanges
+  // Scient WhatsApp link status.
+  | typeof WS_METHODS.whatsappSubscribeStatus
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts change stream.
   | typeof WS_METHODS.accountsSubscribeChanges

@@ -56,6 +56,11 @@ export interface AccountService {
   readonly stores?:
     | { readonly claude?: string; readonly codex?: string; readonly antigravity?: string }
     | undefined;
+  /**
+   * A service Scient itself runs and sets up on its page, rather than each agent through its
+   * account or store: WhatsApp, linked as a device of this computer.
+   */
+  readonly scientSetup?: "whatsapp" | undefined;
 }
 
 const comparable = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -207,6 +212,16 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     categoryPageOnly: ["communication"],
     websiteUrl: "https://telegram.org",
     stores: { claude: "telegram@claude-plugins-official" },
+  },
+  {
+    id: "whatsapp",
+    name: "WhatsApp",
+    tagline: msg("Read, search and send your WhatsApp messages"),
+    description: msg("Link once with your phone, like WhatsApp Desktop."),
+    categories: ["most-used", "communication"],
+    categoryPageOnly: ["communication"],
+    websiteUrl: "https://www.whatsapp.com",
+    scientSetup: "whatsapp",
   },
   {
     id: "zoom",
