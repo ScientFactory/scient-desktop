@@ -229,6 +229,7 @@ export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSession
     instanceId: ProviderInstanceId,
     providerSessionId: ProviderSessionId,
     cause: Schema.optional(Schema.Defect()),
+    sessionBusy: Schema.optional(Schema.Literal(true)),
   },
 ) {
   override get message(): string {
@@ -4195,6 +4196,7 @@ export const layerWithOptions = (
                     return yield* new ProviderSessionOpenError({
                       instanceId: input.modelSelection.instanceId,
                       providerSessionId: input.providerSessionId,
+                      ...(retiring.state === "failed" ? {} : { sessionBusy: true as const }),
                       cause:
                         retiring.state === "failed"
                           ? "The prior native close failed; exact-owner recovery is required."
@@ -4236,6 +4238,7 @@ export const layerWithOptions = (
                       return yield* new ProviderSessionOpenError({
                         instanceId: input.modelSelection.instanceId,
                         providerSessionId: input.providerSessionId,
+                        sessionBusy: true,
                         cause: "The live provider session is logically closing.",
                       });
                     if (existing.runtime.instanceId !== input.modelSelection.instanceId) {

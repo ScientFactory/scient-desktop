@@ -37,8 +37,11 @@ describe("Oh My Pi session lock", () => {
       const lockPath = makeRoot("holder");
       const registry = makeOmpSessionLockRegistry();
       const first = yield* acquireOmpSessionLock(ompTarget, lockPath, registry);
-      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, registry).pipe(Effect.flip)).toBe(
-        "This Oh My Pi conversation is already open.",
+      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, registry).pipe(Effect.flip)).toEqual(
+        {
+          reason: "busy",
+          detail: "This Oh My Pi conversation is already open.",
+        },
       );
       yield* releaseOmpSessionLock(first, registry);
       expect(NodeFS.existsSync(lockPath)).toBe(false);
@@ -66,7 +69,7 @@ describe("Oh My Pi session lock", () => {
         yield* acquireOmpSessionLock(ompTarget, lockPath, makeOmpSessionLockRegistry()).pipe(
           Effect.flip,
         ),
-      ).toBe("This Oh My Pi conversation is already open.");
+      ).toMatchObject({ reason: "busy" });
       expect(NodeFS.readFileSync(lockPath, "utf8")).toBe("1:foreign-owner:token\n");
       cleanup(lockPath);
     }),
@@ -98,9 +101,11 @@ describe("Oh My Pi session lock", () => {
       const other = makeOmpSessionLockRegistry();
       const otherHandle = yield* acquireOmpSessionLock(ompTarget, lockPath, other);
       // Another adapter in this server process may own a live session here.
-      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, mine).pipe(Effect.flip)).toBe(
-        "This Oh My Pi conversation is already open.",
-      );
+      expect(
+        yield* acquireOmpSessionLock(ompTarget, lockPath, mine).pipe(Effect.flip),
+      ).toMatchObject({
+        reason: "busy",
+      });
       yield* releaseOmpSessionLock(otherHandle, other);
 
       // A record this adapter wrote but no longer tracks has no live owner.
@@ -108,9 +113,11 @@ describe("Oh My Pi session lock", () => {
       const reclaimed = yield* acquireOmpSessionLock(ompTarget, lockPath, mine);
       expect(NodeFS.readFileSync(lockPath, "utf8").trim()).toBe(reclaimed.token);
       // While the handle is registered, the adapter's own record is live.
-      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, mine).pipe(Effect.flip)).toBe(
-        "This Oh My Pi conversation is already open.",
-      );
+      expect(
+        yield* acquireOmpSessionLock(ompTarget, lockPath, mine).pipe(Effect.flip),
+      ).toMatchObject({
+        reason: "busy",
+      });
       yield* releaseOmpSessionLock(reclaimed, mine);
       cleanup(lockPath);
     }),

@@ -813,6 +813,16 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         const lockPath = path.join(h.processSessionDir, ".session.lock");
         const token = yield* fs.readFileString(lockPath);
         yield* Scope.close(nativeScope, Exit.void);
+        const blocked = yield* h.adapter
+          .openSession({
+            ...h.openInput,
+            providerSessionId: ProviderSessionId.make("omp-v2-replacement"),
+          })
+          .pipe(Effect.flip);
+        assert.include(blocked.cause, {
+          code: "session_busy",
+          detail: "This Oh My Pi conversation is already open.",
+        });
         assert.equal(yield* fs.readFileString(lockPath), token);
         yield* fs.remove(lockPath);
       }),

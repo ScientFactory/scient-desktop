@@ -340,7 +340,15 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           });
         let ownedShutdown: OmpRpcProcess["shutdown"] | undefined;
         const sessionLock = yield* Effect.acquireRelease(
-          acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks),
+          acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks).pipe(
+            Effect.mapError(
+              ({ reason, detail }) =>
+                new NativeSessionOperationError({
+                  detail,
+                  ...(reason === "busy" ? { code: "session_busy" } : {}),
+                }),
+            ),
+          ),
           (lock) =>
             Effect.gen(function* () {
               if (ownedShutdown !== undefined) {

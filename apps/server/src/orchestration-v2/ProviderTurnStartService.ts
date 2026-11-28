@@ -77,6 +77,7 @@ import {
   CLAUDE_PROVIDER,
   CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
 } from "./Adapters/ClaudeAdapterV2.ts";
+import { NativeSessionOperationError } from "./Adapters/NativeSessionAdapterV2.ts";
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -240,6 +241,7 @@ const isProviderAdapterTurnStartError = Schema.is(ProviderAdapter.ProviderAdapte
 const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
+const isNativeSessionOperationError = Schema.is(NativeSessionOperationError);
 
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
@@ -595,7 +597,7 @@ export const layer: Layer.Layer<
         readonly attempt: OrchestrationV2RunAttempt;
         readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly signal: string;
-        readonly status: "completed" | "failed";
+        readonly status: "completed" | "failed" | "cancelled";
         readonly now: DateTime.Utc;
         readonly startedAt?: DateTime.Utc;
         readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
@@ -1274,10 +1276,37 @@ export const layer: Layer.Layer<
       // SCIENT-FORK:END provider-enabled-at-open
       if (sessionResult._tag === "Failure") {
         const failure = sessionResult.failure;
-        const requiresSignIn =
-          "cause" in failure &&
-          isProviderAdapterOpenSessionError(failure.cause) &&
-          failure.cause.requiresSignIn === true;
+        const adapterFailure =
+          "cause" in failure && isProviderAdapterOpenSessionError(failure.cause) && failure.cause;
+        // Idle compaction is optional. A physical lock can still be held after a
+        // session is logically retired, so leave its owner and the history alone.
+        if (
+          message.idleCompaction === "beforeCacheExpires" &&
+          ((failure._tag === "ProviderSessionOpenError" && failure.sessionBusy === true) ||
+            (adapterFailure &&
+              isNativeSessionOperationError(adapterFailure.cause) &&
+              adapterFailure.cause.code === "session_busy"))
+        ) {
+          yield* settleRunBeforeStart({
+            run,
+            rootNode,
+            attempt,
+            turnItems: projection.turnItems,
+            signal: "idle-compaction-session-busy",
+            status: "cancelled",
+            now: yield* DateTime.now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: {
+              type: "compaction",
+              title: "Background compaction skipped",
+              driver: providerThread.driver,
+              summary: "The agent session was busy. The conversation history was left as is.",
+            },
+          });
+          return;
+        }
+        const requiresSignIn = adapterFailure && adapterFailure.requiresSignIn === true;
         // A disposed buffered generation cannot be recreated by retrying session startup.
         const bufferedGenerationLost =
           providerWork !== undefined && failure._tag === "ProviderTurnStartError";
