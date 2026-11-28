@@ -40,7 +40,8 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi model discovery", () => {
               XAI_API_KEY: "synthetic-catalog-key",
             },
           });
-          const extensionPath = NodePath.join(root, "unknown-context.mjs");
+          // The restricted Scient Agent probe admits this host extension filename.
+          const extensionPath = NodePath.join(root, "scient-custom-models.mjs");
           // A non-finite capacity survives registration and serializes to the same
           // null field returned by native discovered-model caches.
           NodeFS.writeFileSync(
