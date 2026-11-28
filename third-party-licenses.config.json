@@ -1065,6 +1065,23 @@
       "version": "3.11"
     },
     {
+      "bundles": ["server"],
+      "includeInBundles": ["web"],
+      "license": "MIT",
+      "name": "wacli",
+      "sourceUrl": "https://github.com/openclaw/wacli/archive/refs/tags/v0.26.1.tar.gz",
+      "version": "0.26.1",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 Peter Steinberger"],
+          "preamble": [
+            "wacli\n\nScient downloads the official wacli 0.26.1 release from GitHub when you link WhatsApp; Scient does not bundle it. The program is built from https://github.com/openclaw/wacli/tree/v0.26.1, whose go.mod lists the Go libraries compiled into it under their own licenses, including whatsmeow (MPL-2.0, https://github.com/tulir/whatsmeow) and libsignal-protocol-go (GPL-3.0, https://github.com/tulir/libsignal-protocol-go)."
+          ]
+        }
+      ]
+    },
+    {
       "bundles": ["server", "web"],
       "license": "CC-BY-SA-3.0",
       "name": "Citation Style Language styles and locales",

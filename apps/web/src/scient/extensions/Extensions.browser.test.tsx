@@ -15,6 +15,7 @@ import {
   type ServerProvider,
   type ProviderStoreEntry,
   type ProviderRuntimeSummary,
+  type WhatsAppStatus,
 } from "@t3tools/contracts";
 import type * as AtomReact from "@effect/atom-react";
 import type * as TanStackRouter from "@tanstack/react-router";
@@ -65,6 +66,7 @@ const state = vi.hoisted(() => ({
   publishRevision: (_environmentId: string, _revision: number) => {},
   providersByEnvironment: {} as Record<string, ServerProvider[]>,
   inventory: null as ExtensionsInventory | null,
+  whatsApp: null as WhatsAppStatus | null,
   catalog: null as DiscoverCatalog | null,
   catalogError: null as string | null,
   discoverPages: {} as Record<string, DiscoverPageResult>,
@@ -173,6 +175,7 @@ vi.mock("../../state/server", async () => {
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => state.primaryEnvironmentId,
   usePrimaryEnvironment: () => null,
+  useEnvironment: () => null,
   useEnvironmentHttpBaseUrl: (environmentId: string | null) =>
     environmentId === null ? null : (state.httpBaseUrls[environmentId] ?? null),
 }));
@@ -225,6 +228,10 @@ vi.mock("../../state/query", async () => {
   const { ExtensionsError: NotFound } = await import("@t3tools/contracts");
   const CauseModule = await import("effect/Cause");
   return {
+    useEnvironmentSubscription: (atom: unknown) => {
+      useStateVersion();
+      return { data: atom === null ? null : state.whatsApp, error: null };
+    },
     formatEnvironmentQueryError: (cause: Cause.Cause<unknown>) => {
       const error = CauseModule.squash(cause);
       return error instanceof Error ? error.message : "The environment request failed.";
@@ -766,6 +773,7 @@ function setup() {
     ],
   };
   state.inventory = inventory();
+  state.whatsApp = null;
   state.catalog = catalog;
   state.catalogError = null;
   state.discoverPages = {};
@@ -862,6 +870,7 @@ describe("Discover", () => {
       "Microsoft Teams",
       "iMessage",
       "Telegram",
+      "WhatsApp",
       "Figma",
       "Zotero",
       "Linear",
@@ -879,6 +888,30 @@ describe("Discover", () => {
       "/settings/extensions/item/connector/con_linear0001",
     );
     expect(fixture.row("Notion").textContent).toContain("Notes and docs");
+  });
+
+  it("opens WhatsApp's device setup from both Discover lists without agent routes", async () => {
+    await using fixture = setup();
+    state.whatsApp = {
+      state: { _tag: "Unlinked" },
+      deviceName: "My Computer",
+      platformSupported: true,
+    };
+    const detailPath = "/settings/extensions/item/account/whatsapp";
+    await fixture.render(<DiscoverPage />);
+    expect(linkIn(fixture.row("WhatsApp"), "WhatsApp")?.getAttribute("href")).toBe(detailPath);
+
+    await fixture.render(<CategoryPage category="communication" />);
+    expect(linkIn(fixture.row("WhatsApp"), "WhatsApp")?.getAttribute("href")).toBe(detailPath);
+
+    await fixture.render(<AccountServiceDetailPage serviceId="whatsapp" />);
+    await expect.element(page.getByRole("button", { name: "Link", exact: true })).toBeVisible();
+    await expect
+      .element(page.getByRole("heading", { name: "Your agents" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("link", { name: /^WhatsApp Business/ }))
+      .toHaveAttribute("href", "/settings/extensions/item/server/scient.curated/whatsapp-business");
   });
 
   it("ends each field section on a full row, at most four rows, and leaves the rest to its page", async () => {
@@ -1413,6 +1446,7 @@ describe("Discover", () => {
       "Microsoft Teams",
       "iMessage",
       "Telegram",
+      "WhatsApp",
       "Figma",
       "Zotero",
       "Notion",
@@ -1460,6 +1494,29 @@ describe("Discover", () => {
 });
 
 describe("Installed", () => {
+  it("lists WhatsApp while linking or linked and removes it when unlinked", async () => {
+    await using fixture = setup();
+    const device = { deviceName: "My Computer", platformSupported: true };
+    state.whatsApp = { ...device, state: { _tag: "Unlinked" } };
+    await fixture.render(<InstalledPage />);
+    expect(fixture.rowNames()).not.toContain("WhatsApp");
+
+    state.whatsApp = { ...device, state: { _tag: "Installing" } };
+    await fixture.render(<InstalledPage />);
+    expect(fixture.row("WhatsApp").textContent).toContain("Linking…");
+
+    state.whatsApp = {
+      ...device,
+      state: { _tag: "Linked", account: "+15550101000", connection: "connected" },
+    };
+    await fixture.render(<InstalledPage />);
+    expect(fixture.row("WhatsApp").textContent).toContain("Linked");
+
+    state.whatsApp = { ...device, state: { _tag: "Unlinked" } };
+    await fixture.render(<InstalledPage />);
+    expect(fixture.rowNames()).not.toContain("WhatsApp");
+  });
+
   it("rejects late results after an environment switch", async () => {
     await using fixture = setup();
     const local = Promise.withResolvers<unknown>();

@@ -14,8 +14,17 @@ import { AboutCard, DetailLayout, DetailHeader, DetailSection } from "./Extensio
 import { ExtensionRow } from "./ExtensionRow";
 import { ExtensionsPage, MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import { AddServicePlugin, ServiceAgents, useAccountService } from "./ServiceAgents";
+import { WhatsAppDetail, WhatsAppServiceItem } from "./WhatsAppSetup";
 
 export function AccountServiceItem({ service }: { readonly service: AccountService }) {
+  return service.scientSetup === "whatsapp" ? (
+    <WhatsAppServiceItem service={service} />
+  ) : (
+    <AgentAccountServiceItem service={service} />
+  );
+}
+
+function AgentAccountServiceItem({ service }: { readonly service: AccountService }) {
   const gt = useGT();
   const messages = useMessages();
   const { audience, connect, step, providers, reread } = useAccountService(service);
@@ -69,13 +78,36 @@ export function accountServicesFor(
   );
 }
 
-function AccountServiceDetail({ service }: { readonly service: AccountService }) {
+function AgentAccountServiceSetup({ service }: { readonly service: AccountService }) {
   const gt = useGT();
-  const messages = useMessages();
   const { routes, open } = useAccountService(service);
   const accountRoutes = routes.filter(isAccountRoute);
   const chatgptPage = accountRoutes.find((route) => route.family === "chatgpt")?.page;
   const claudePage = accountRoutes.find((route) => route.family === "claude")?.page;
+  return (
+    <DetailSection title={gt("Your agents")}>
+      <ServiceAgents service={service} />
+      <div className="flex flex-wrap gap-2">
+        {chatgptPage ? (
+          <Button variant="ghost-muted" size="sm" onClick={() => open(chatgptPage)}>
+            <ExternalLinkIcon aria-hidden />
+            <T>Manage in ChatGPT</T>
+          </Button>
+        ) : null}
+        {claudePage ? (
+          <Button variant="ghost-muted" size="sm" onClick={() => open(claudePage)}>
+            <ExternalLinkIcon aria-hidden />
+            <T>Manage on claude.ai</T>
+          </Button>
+        ) : null}
+      </div>
+    </DetailSection>
+  );
+}
+
+function AccountServiceDetail({ service }: { readonly service: AccountService }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <DetailLayout
       back="installed"
@@ -88,23 +120,7 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
       }
       description={messages(service.description)}
     >
-      <DetailSection title={gt("Your agents")}>
-        <ServiceAgents service={service} />
-        <div className="flex flex-wrap gap-2">
-          {chatgptPage ? (
-            <Button variant="ghost-muted" size="sm" onClick={() => open(chatgptPage)}>
-              <ExternalLinkIcon aria-hidden />
-              <T>Manage in ChatGPT</T>
-            </Button>
-          ) : null}
-          {claudePage ? (
-            <Button variant="ghost-muted" size="sm" onClick={() => open(claudePage)}>
-              <ExternalLinkIcon aria-hidden />
-              <T>Manage on claude.ai</T>
-            </Button>
-          ) : null}
-        </div>
-      </DetailSection>
+      <AgentAccountServiceSetup service={service} />
       {service.websiteUrl ? (
         <AboutCard rows={[[gt("Website"), service.websiteUrl.replace(/^https:\/\//, "")]]} />
       ) : null}
@@ -119,7 +135,12 @@ function AccountServiceDetailContent({ serviceId }: { readonly serviceId: string
   const service = accountServicesFrom(
     providerInventory.providers.length > 0 ? providerInventory.providers : providers,
   ).find((candidate) => candidate.id === serviceId);
-  if (service) return <AccountServiceDetail service={service} />;
+  if (service)
+    return service.scientSetup === "whatsapp" ? (
+      <WhatsAppDetail service={service} />
+    ) : (
+      <AccountServiceDetail service={service} />
+    );
   return (
     <MutedLine>
       {["ready", "partial", "error"].includes(providerInventory.phase)
@@ -130,8 +151,11 @@ function AccountServiceDetailContent({ serviceId }: { readonly serviceId: string
 }
 
 export function AccountServiceDetailPage({ serviceId }: { readonly serviceId: string }) {
+  const hasScientSetup = ACCOUNT_SERVICES.some(
+    (service) => service.id === serviceId && service.scientSetup !== undefined,
+  );
   return (
-    <ExtensionsPage loadProviderInventory>
+    <ExtensionsPage loadProviderInventory={!hasScientSetup}>
       <AccountServiceDetailContent serviceId={serviceId} />
     </ExtensionsPage>
   );

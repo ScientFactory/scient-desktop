@@ -11,7 +11,7 @@ extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
   (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, Microsoft Teams,
-  iMessage, Telegram, Figma, Zotero, GitHub, Slack, Notion, Dropbox, Linear, PubMed,
+  iMessage, Telegram, WhatsApp, Figma, Zotero, GitHub, Slack, Notion, Dropbox, Linear, PubMed,
   Semantic Scholar, Hugging Face, Exa, Canva, Playwright, Context7, Vercel and Cloudflare), then
   one section per kind of work: Papers & literature, Biology & medicine, Code & developer tools,
   AI & machine learning, Data & databases, Cloud, DevOps & security, and more. Categories with
@@ -28,6 +28,8 @@ extensions.
 
 Select any row to open its page. Its back link returns to the list you opened it
 from.
+
+To give your agents access to your messages, see [Link WhatsApp as a device](./whatsapp.md).
 
 ## Add a connected service
 

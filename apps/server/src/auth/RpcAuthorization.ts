@@ -519,6 +519,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.browserHistorySuggest]: AuthPreviewOperateScope,
   [WS_METHODS.browserSearchSuggest]: AuthPreviewOperateScope,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient WhatsApp: the status carries the live QR code, which links
+  // whichever phone scans it to this server, so reading it needs the same grant as linking.
+  [WS_METHODS.whatsappStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.whatsappSubscribeStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.whatsappStartLink]: AuthSettingsWriteScope,
+  [WS_METHODS.whatsappCancelLink]: AuthSettingsWriteScope,
+  [WS_METHODS.whatsappUnlink]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,

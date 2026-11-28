@@ -283,6 +283,13 @@ const RPC_AGGREGATES = {
   [WS_METHODS.browserHistorySuggest]: "preview",
   [WS_METHODS.browserSearchSuggest]: "preview",
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient WhatsApp.
+  [WS_METHODS.whatsappStatus]: "extensions",
+  [WS_METHODS.whatsappSubscribeStatus]: "subscribe",
+  [WS_METHODS.whatsappStartLink]: "extensions",
+  [WS_METHODS.whatsappCancelLink]: "extensions",
+  [WS_METHODS.whatsappUnlink]: "extensions",
+  // SCIENT-FORK:END
   [WS_METHODS.subscribePreviewEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",
   [WS_METHODS.previewStopLocalServer]: "preview",

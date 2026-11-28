@@ -776,6 +776,7 @@ function CategoryContents({
   const visiblePicks = curated.filter((entry) =>
     matchesQuery(query, [entry.title, entry.description, entry.name]),
   );
+  const services = accountServicesFor(category, query, messages);
   const ready = picks.data !== null || picks.error !== null;
   // A service several stores list shows once, in the first store's section; its page then lists
   // every agent's copy.
@@ -804,14 +805,14 @@ function CategoryContents({
           </MutedLine>
         ) : null}
         <ExtensionGrid label={gt("Scient’s picks")}>
-          {accountServicesFor(category, query, messages).map((service) => (
+          {services.map((service) => (
             <AccountServiceItem key={`account:${service.id}`} service={service} />
           ))}
           {visiblePicks.map((entry) => (
             <EntryItem key={entry.name} entry={entry} />
           ))}
         </ExtensionGrid>
-        {ready && !visiblePicks.length ? (
+        {ready && services.length === 0 && visiblePicks.length === 0 ? (
           <MutedLine>
             <T>No picks match this search.</T>
           </MutedLine>

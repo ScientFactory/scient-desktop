@@ -1967,6 +1967,20 @@ function scientToolSummaryLabel(
               { count },
             ),
           );
+    case "scient-whatsapp":
+      return done
+        ? resolve(
+            msg(
+              "{count, plural, one {Used WhatsApp {count} time} other {Used WhatsApp {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to use WhatsApp {count} time} other {Tried to use WhatsApp {count} times}}",
+              { count },
+            ),
+          );
   }
 }
 // SCIENT-FORK:END

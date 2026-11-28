@@ -128,6 +128,10 @@ import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+// SCIENT-FORK:START — Scient WhatsApp link.
+import * as WacliInstallLive from "./scient/whatsapp/WacliInstallLive.ts";
+import * as WhatsAppServiceLive from "./scient/whatsapp/WhatsAppServiceLive.ts";
+// SCIENT-FORK:END
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -645,6 +649,10 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
+// SCIENT-FORK:START — one WhatsApp link for the server: RPC routes and agent tools share it.
+const layerWhatsApp = WhatsAppServiceLive.layer.pipe(Layer.provide(WacliInstallLive.layer));
+// SCIENT-FORK:END
+
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
@@ -914,7 +922,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  // SCIENT-FORK: WhatsApp beside devices, for the same RPC routes and MCP tools.
+  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice, layerWhatsApp)),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(Layer.mergeAll(Keybindings.layer, UsageLimitSources.layer)),
   Layer.provideMerge(ProviderRegistry.layer),

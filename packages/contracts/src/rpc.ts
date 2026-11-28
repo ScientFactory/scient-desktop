@@ -709,6 +709,16 @@ import {
 } from "./scient/browserHistoryRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient WhatsApp link.
+import {
+  SCIENT_WHATSAPP_WS_METHODS,
+  WsWhatsAppCancelLinkRpc,
+  WsWhatsAppStartLinkRpc,
+  WsWhatsAppStatusRpc,
+  WsWhatsAppSubscribeStatusRpc,
+  WsWhatsAppUnlinkRpc,
+} from "./scient/whatsapp.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient file opening RPCs.
 import {
   SCIENT_FILE_OPENING_WS_METHODS,
@@ -821,6 +831,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient Browser: history.
   ...SCIENT_BROWSER_HISTORY_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient WhatsApp link.
+  ...SCIENT_WHATSAPP_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -3319,6 +3333,13 @@ export const WsInteractiveRpcGroup = RpcGroup.make(
   WsBrowserHistoryClearRpc,
   WsBrowserHistorySuggestRpc,
   WsBrowserSearchSuggestRpc,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient WhatsApp link.
+  WsWhatsAppStatusRpc,
+  WsWhatsAppSubscribeStatusRpc,
+  WsWhatsAppStartLinkRpc,
+  WsWhatsAppCancelLinkRpc,
+  WsWhatsAppUnlinkRpc,
   // SCIENT-FORK:END
   WsSubscribePreviewEventsRpc,
 );

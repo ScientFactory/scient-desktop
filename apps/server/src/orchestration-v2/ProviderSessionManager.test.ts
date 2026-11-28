@@ -2972,6 +2972,9 @@ it.effect(
             // SCIENT-FORK:START — Scient Accounts: provider sessions receive account tools.
             "accounts",
             // SCIENT-FORK:END
+            // SCIENT-FORK:START — every provider session receives the WhatsApp tools.
+            "whatsapp",
+            // SCIENT-FORK:END
           ]),
         );
 
@@ -3107,6 +3110,9 @@ it.effect(
             // SCIENT-FORK:END
             // SCIENT-FORK:START — Scient Accounts: browser-disabled sessions retain account tools.
             "accounts",
+            // SCIENT-FORK:END
+            // SCIENT-FORK:START — every provider session receives the WhatsApp tools.
+            "whatsapp",
             // SCIENT-FORK:END
           ]),
         );

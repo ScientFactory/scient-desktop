@@ -106,6 +106,8 @@ import {
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+// SCIENT-FORK: Scient WhatsApp link.
+import { WhatsAppService } from "./scient/whatsapp/WhatsAppService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
 import * as ThreadMcpStatusRegistry from "./mcpApps/ThreadMcpStatusRegistry.ts";
@@ -1191,6 +1193,8 @@ export const buildAppUnderTest = (options?: {
               currentReadiness: () => Effect.succeed(null),
               sessionsForThread: () => Effect.succeed([]),
             }),
+            // SCIENT-FORK: no WhatsApp link in server tests.
+            Layer.mock(WhatsAppService)({}),
           ),
         ),
         Layer.provide(serverSettingsLayer),

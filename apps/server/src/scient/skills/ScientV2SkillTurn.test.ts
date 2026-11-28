@@ -285,6 +285,9 @@ it.live.each(
           // SCIENT-FORK:START — Scient Accounts: retain account grants during skill-scope changes.
           "accounts",
           // SCIENT-FORK:END
+          // SCIENT-FORK:START — Scient WhatsApp: retain the WhatsApp grant during skill-scope changes.
+          "whatsapp",
+          // SCIENT-FORK:END
         ] as const;
         const expectedCapabilities = new Set([
           ...genericCapabilities,

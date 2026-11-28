@@ -87,6 +87,7 @@ import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 import { AccountsService } from "../scient/accounts/AccountsService.ts";
 import { OverleafSync } from "../scient/overleaf/OverleafSync.ts";
 import { ScientServerSettings } from "../scientServerSettings.ts";
+import { WhatsAppService } from "../scient/whatsapp/WhatsAppService.ts";
 // SCIENT-FORK:END
 
 // Registration only stores tool definitions, so the handlers' services are never called.
@@ -152,6 +153,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(WorkspacePaths)({}),
   Layer.mock(AccountsService)({}),
   Layer.mock(OverleafSync)({}),
+  Layer.mock(WhatsAppService)({}),
   Layer.mock(ScientServerSettings)({
     committedCustomModels: () => ({ revision: 0, connections: [] }),
   }),

@@ -44,6 +44,8 @@ const ALL_MCP_CAPABILITIES = [
   "sources:write",
   // The handoff-summary reader retains its own read-only grant alongside native orchestration tools.
   "threads:read",
+  /** Read, search and send the user's linked WhatsApp. */
+  "whatsapp",
   // SCIENT-FORK:END
   "background-wait",
 ] as const;

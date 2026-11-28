@@ -31,7 +31,6 @@ export const MOST_USED_SERVER_IDS = [
   "exa",
   "canva",
   "playwright",
-  "context7",
   "vercel",
   "cloudflare",
 ] as const;
@@ -581,7 +580,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Fetch current, version-specific documentation and code examples for libraries and frameworks. Helps agents avoid outdated APIs.",
     url: "https://mcp.context7.com/mcp",
     registry: { name: "io.github.upstash/context7", version: "4.4.4" },
-    categories: ["most-used", "code"],
+    categories: ["code"],
     websiteUrl: "https://context7.com",
     icon: CURATED_ICONS["context7"],
   },
@@ -846,6 +845,20 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["communication"],
     websiteUrl: "https://www.granola.ai",
     icon: CURATED_ICONS["granola"],
+  },
+  {
+    // Verified 2026-11-28: GET 405; initialize 401 with an OAuth challenge (resource metadata,
+    // scopes business_management whatsapp_business_management whatsapp_business_messaging) and
+    // dynamic client registration. Not in the MCP Registry.
+    id: "whatsapp-business",
+    accountRequired: true,
+    displayName: "WhatsApp Business",
+    tagline: "Meta's tools for WhatsApp Business accounts",
+    description: "Numbers, message templates and sending. It can't read your chats.",
+    url: "https://mcp.facebook.com/whatsapp_business_tools",
+    categories: ["communication"],
+    websiteUrl: "https://business.whatsapp.com",
+    icon: CURATED_ICONS["whatsapp-business"],
   },
   {
     // sign-in: 401 OAuth
