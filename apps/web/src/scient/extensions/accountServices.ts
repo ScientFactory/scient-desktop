@@ -102,6 +102,9 @@ export function claudeConnectorFor(
   return claudeConnectors.get(comparable(CLAUDE_NAMES[key] ?? name));
 }
 
+/** Meta's WhatsApp Business Tools in the curated catalog: WhatsApp's page and its page link to each other. */
+export const WHATSAPP_BUSINESS_SERVER = "scient.curated/whatsapp-business";
+
 export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
   {
     id: "gmail",

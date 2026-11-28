@@ -31,7 +31,6 @@ export const MOST_USED_SERVER_IDS = [
   "exa",
   "canva",
   "playwright",
-  "context7",
   "vercel",
   "cloudflare",
 ] as const;
@@ -581,7 +580,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Fetch current, version-specific documentation and code examples for libraries and frameworks. Helps agents avoid outdated APIs.",
     url: "https://mcp.context7.com/mcp",
     registry: { name: "io.github.upstash/context7", version: "4.4.4" },
-    categories: ["most-used", "code"],
+    categories: ["code"],
     websiteUrl: "https://context7.com",
     icon: CURATED_ICONS["context7"],
   },
@@ -856,7 +855,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     displayName: "WhatsApp Business",
     tagline: "Meta's tools for WhatsApp Business accounts",
     description:
-      "Meta's own tools for the WhatsApp Business Platform: set up business phone numbers, manage message templates and send messages. They can't read your chats; to work with your own WhatsApp, link it as a device from the WhatsApp page.",
+      "Set up business numbers, manage message templates and send messages. It can't read your chats.",
     url: "https://mcp.facebook.com/whatsapp_business_tools",
     categories: ["communication"],
     websiteUrl: "https://business.whatsapp.com",

@@ -77,6 +77,7 @@ import {
 } from "./ExtensionsPage";
 import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
 import { extensionsDiscoverEntry } from "./extensionsState";
+import { WHATSAPP_BUSINESS_SERVER } from "./accountServices";
 import {
   type ProviderExtensionGroup,
   providerExtensionAudience,
@@ -656,6 +657,33 @@ function AvailabilityRows({
   );
 }
 
+/** On WhatsApp Business's page: the way to a person's own WhatsApp, which Business can't read. */
+function OwnWhatsAppSection({ entryName }: { readonly entryName: string | undefined }) {
+  const gt = useGT();
+  if (entryName !== WHATSAPP_BUSINESS_SERVER) return null;
+  return (
+    <DetailSection title={gt("Your own WhatsApp")}>
+      <MutedLine>
+        <T>To read and send your own messages, link WhatsApp instead.</T>
+      </MutedLine>
+      <div>
+        <Button
+          size="sm"
+          variant="outline"
+          render={
+            <Link
+              to="/settings/extensions/item/account/$serviceId"
+              params={{ serviceId: "whatsapp" }}
+            />
+          }
+        >
+          <T>Open</T>
+        </Button>
+      </div>
+    </DetailSection>
+  );
+}
+
 /** A connected service, optionally with the catalog or registry entry it came from. */
 function ConnectorDetail({
   connector,
@@ -922,6 +950,7 @@ function ConnectorDetail({
           <ActionFeedback feedback={actions.feedback} waitingForSignIn={actions.waitingForSignIn} />
         </div>
       </DetailSection>
+      <OwnWhatsAppSection entryName={entry?.name} />
       <ToolsSection
         canTest={allowed.canTest}
         locked={actions.locked}
@@ -1126,6 +1155,7 @@ function ServerDetail({
         </>
       }
     >
+      <OwnWhatsAppSection entryName={entry.name} />
       <DetailSection title={gt("Tools")}>
         <MutedCard>
           {entry.accountRequired === false

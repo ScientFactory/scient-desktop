@@ -44,7 +44,11 @@ import { Spinner } from "../../components/ui/spinner";
 import { m } from "../../i18n/messages";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { type AccountService, accountServiceTagline } from "./accountServices";
+import {
+  type AccountService,
+  accountServiceTagline,
+  WHATSAPP_BUSINESS_SERVER,
+} from "./accountServices";
 import { DetailSection } from "./ExtensionDetailPages";
 import { ActionError } from "./ExtensionsFeedback";
 import { ExtensionRow } from "./ExtensionRow";
@@ -57,9 +61,6 @@ import {
   unlinkWhatsApp,
   useWhatsAppStatus,
 } from "./whatsAppState";
-
-/** Meta's WhatsApp Business Tools in the curated catalog (`scient.curated/<id>`). */
-const WHATSAPP_BUSINESS_SERVER = "scient.curated/whatsapp-business";
 
 const isWhatsAppError = Schema.is(WhatsAppError);
 const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
