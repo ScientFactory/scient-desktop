@@ -391,7 +391,8 @@ function setup() {
   return now;
 }
 
-it("reads no agent history until Find my projects is pressed, which can also allow usage stats", async () => {
+// SCIENT-FORK:START — usage access is on by default, so only clearing the usage box saves an answer.
+it("reads no agent history until Find my projects is pressed and leaves usage access on", async () => {
   using _now = setup();
   appAtomRegistry.set(state.config as Atom.Writable<unknown>, {
     settings: { providerInstances: {} },
@@ -402,6 +403,25 @@ it("reads no agent history until Find my projects is pressed, which can also all
 
   await click("Find my projects");
   expect(state.scan).toHaveBeenCalledWith({ environmentId: primaryId });
+  expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+  await vi.waitFor(() => button("Import 2 projects and start"));
+});
+
+it("turns usage access off for the agents when the usage box is cleared, even if allowed", async () => {
+  using _now = setup();
+  appAtomRegistry.set(state.config as Atom.Writable<unknown>, {
+    settings: {
+      providerInstances: {
+        [readyClaude.instanceId]: { driver: readyClaude.driver, usageAccess: "allowed" },
+      },
+    },
+  });
+  await using _screen = await mountWelcome({ findProjects: false });
+  const usageBox = document.getElementById(`welcome-usage-access-${primaryId}`);
+  expect(usageBox).not.toBeNull();
+  await act(async () => usageBox!.click());
+
+  await click("Find my projects");
   expect(state.mutateProviderInstance).toHaveBeenCalledWith({
     environmentId: primaryId,
     input: {
@@ -409,12 +429,12 @@ it("reads no agent history until Find my projects is pressed, which can also all
       providerInstanceMutation: {
         operation: "upsert",
         instanceId: readyClaude.instanceId,
-        instance: { driver: readyClaude.driver, usageAccess: "allowed" },
+        instance: { driver: readyClaude.driver, usageAccess: "denied" },
       },
     },
   });
-  await vi.waitFor(() => button("Import 2 projects and start"));
 });
+// SCIENT-FORK:END
 
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
   using _now = setup();

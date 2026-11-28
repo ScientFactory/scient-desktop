@@ -946,7 +946,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   const makeClaudeResetRegistry = (
     claim: { result: string; usageFailsAfterClaim: boolean },
-    usageAccess: "allowed" | undefined,
+    usageAccess: "allowed" | "denied" | undefined,
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1024,13 +1024,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       Effect.provide(layerTest),
     );
 
+  // SCIENT-FORK:START — usage access is on unless turned off, so an unanswered instance is read.
   it.live.skipIf(windowsHost)(
-    "reads Claude's sign-in for its organization and reset credits only once usage access is allowed",
+    "reads Claude's sign-in for its organization and reset credits unless usage access is off",
     () =>
       Effect.gen(function* () {
         const { registry, mutator, instanceId, entry, usageReads } = yield* makeClaudeResetRegistry(
           { result: "reset", usageFailsAfterClaim: false },
-          undefined,
+          "denied",
         );
         const instance = yield* registry.getInstance(instanceId);
         const before = yield* instance!.snapshot.refresh;
@@ -1039,21 +1040,23 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(before.auth.workspaceId).toBeUndefined();
         expect(usageReads()).toBe(0);
 
-        // The limits-only refresh waits for usage access too.
+        // The limits-only refresh respects the switch too.
         yield* instance!.snapshot.refreshUsage!;
         const limitsOnly = yield* instance!.snapshot.getSnapshot;
         expect(limitsOnly.usageLimits?.resetCredits).toBeUndefined();
         expect(limitsOnly.auth.workspaceId).toBeUndefined();
         expect(usageReads()).toBe(0);
 
-        yield* mutator.reconcile({ [instanceId]: { ...entry, usageAccess: "allowed" } });
-        // Granting access keeps the running instance, so its sessions survive.
+        const { usageAccess: _denied, ...unanswered } = entry;
+        yield* mutator.reconcile({ [instanceId]: unanswered });
+        // Changing access keeps the running instance, so its sessions survive.
         expect(yield* registry.getInstance(instanceId)).toBe(instance);
         const after = yield* instance!.snapshot.refresh;
         expect(after.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
         expect(after.auth.workspaceId).toBe("fake-org");
       }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
   );
+  // SCIENT-FORK:END
 
   it.live.skipIf(windowsHost)("refreshes Claude usage after redeeming a reset", () =>
     Effect.gen(function* () {

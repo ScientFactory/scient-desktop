@@ -413,9 +413,12 @@ export const make = Effect.gen(function* () {
       entries.push([defaultId, { driver: driver.driverKind }]);
     }
     const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
-    // SCIENT-FORK:START — Scient Agent's history is Scient's own state, so it needs no grant.
+    // SCIENT-FORK:START — Scient Agent's history is Scient's own state, so it needs no grant, and
+    // other agents are read unless the user turned that off, so nobody is asked.
     const grantOf = (instance: (typeof entries)[number][1]) =>
-      driver.driverKind === scientAgentTarget.driverKind ? "allowed" : instance.usageAccess;
+      driver.driverKind === scientAgentTarget.driverKind || instance.usageAccess !== "denied"
+        ? "allowed"
+        : instance.usageAccess;
     // SCIENT-FORK:END
     return yield* Effect.forEach(
       entries.filter(
