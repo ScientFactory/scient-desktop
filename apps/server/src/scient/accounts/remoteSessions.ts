@@ -419,7 +419,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     return { deleted: yield* exclusive(forget(source)) };
   });
 
-  // Unattended: a sweep never opens a store that needs the keychain; that waits for the person.
+  // Unattended: a sweep never opens a store that waits for the person (`openWithoutPrompt`).
   // Skipped then, it runs once the store opens, or at the next daily sweep or binding.
   const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
     if (!(yield* accounts.openWithoutPrompt)) return;

@@ -20,8 +20,7 @@ import { SessionStore, type SessionCredentialChange } from "../../auth/SessionSt
 import { ServerConfig } from "../../config.ts";
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
-import type { AccountKeychain } from "./AccountVault.ts";
-import { makeHarness, memoryStore, website } from "./Accounts.testkit.ts";
+import { makeHarness, memoryStore, recordingKeychain, website } from "./Accounts.testkit.ts";
 import { AccountsService } from "./AccountsService.ts";
 import type { ProfileCookieJar } from "./profileCookieJar.ts";
 import { makeRemoteSessions } from "./remoteSessions.ts";
@@ -816,42 +815,46 @@ it.effect("agrees with the desktop's sender on revisions: link, sign out, link a
   }),
 );
 
-it.effect("the start sweep never opens a store that would need the person", () =>
-  Effect.gen(function* () {
-    const storage = memoryStore();
-    const items = new Map<string, Redacted.Redacted<string>>();
-    const prompts: string[] = [];
-    let needsPerson = false;
-    const keychain: AccountKeychain = {
-      read: (account) =>
-        Effect.sync(() => {
-          prompts.push(account);
-          return items.get(account) ?? null;
-        }),
-      readWithoutPrompt: (account) =>
-        Effect.succeed(needsPerson ? "needs-person" : (items.get(account) ?? null)),
-      write: (account, value) =>
-        Effect.sync(() => {
-          items.set(account, value);
-        }),
-    };
-    // A computer that has stored accounts before.
-    yield* (yield* makeHarness({ storage, keychain })).service.save(website());
-    needsPerson = true;
-    prompts.length = 0;
-    const { service } = yield* makeHarness({ storage, keychain });
-    const remote = yield* makeRemoteSessions.pipe(
-      Effect.provideService(AccountsService, service),
-      Effect.provideService(ServerBrowser, browserFixture().browser),
-      Effect.provideService(ServerConfig, { devUrl: undefined } as ServerConfig["Service"]),
-      Effect.provideService(SessionStore, {
-        streamChanges: Stream.empty,
-      } as unknown as SessionStore["Service"]),
-      Effect.provideService(AuthSessionRepository, {
-        getById: () => Effect.succeedNone,
-      } as unknown as AuthSessionRepository["Service"]),
-    );
-    yield* remote.sweep();
-    expect(prompts).toEqual([]);
-  }),
+it.effect.each([
+  { host: "a desktop running in the background", mode: "desktop", backgroundRunning: true },
+  { host: "a desktop that quits with its last window", mode: "desktop", backgroundRunning: false },
+  { host: "a server without a desktop", mode: "web", backgroundRunning: true },
+] as const)(
+  "the start sweep on $host waits for the person only while Scient may run windowless",
+  (host) =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { keychain, reads } = yield* recordingKeychain(host);
+      // A computer that stored accounts before, and a desktop whose session here was revoked since.
+      const before = yield* makeHarness({ storage, keychain });
+      yield* before.service.save(website());
+      const sender = {
+        source: MAC,
+        label: "MacBook",
+        keyHash: "synthetic-key-hash",
+        sessionId: desktop.sessionId,
+        seenAt: DateTime.formatIso(yield* DateTime.now),
+      };
+      yield* before.service.setRemoteSender(MAC, sender);
+      reads.length = 0;
+
+      const { service } = yield* makeHarness({ storage, keychain });
+      const remote = yield* makeRemoteSessions.pipe(
+        Effect.provideService(AccountsService, service),
+        Effect.provideService(ServerBrowser, browserFixture().browser),
+        Effect.provideService(ServerConfig, { devUrl: undefined } as ServerConfig["Service"]),
+        Effect.provideService(SessionStore, {
+          streamChanges: Stream.empty,
+        } as unknown as SessionStore["Service"]),
+        Effect.provideService(AuthSessionRepository, {
+          getById: () => Effect.succeedSome({ revokedAt: DateTime.nowUnsafe() }),
+        } as unknown as AuthSessionRepository["Service"]),
+      );
+      yield* remote.sweep();
+      // A store that could need the person waits for its next foreground use; otherwise the sweep
+      // opens it and forgets the revoked desktop.
+      const opens = !(host.mode === "desktop" && host.backgroundRunning);
+      expect(reads).toHaveLength(opens ? 1 : 0);
+      expect(yield* service.remoteSenders).toEqual(opens ? [] : [sender]);
+    }),
 );

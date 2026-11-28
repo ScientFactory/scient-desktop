@@ -15,9 +15,17 @@ import {
   type BrowserProfileChoices,
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { Context, Effect, Layer, Option, Redacted, Stream } from "effect";
 import { ServerSecretStore, SecretStorePersistError } from "../../auth/ServerSecretStore.ts";
-import { AccountVault, makeAccountVault, type AccountKeychain } from "./AccountVault.ts";
+import { ServerConfig, type RuntimeMode } from "../../config.ts";
+import {
+  AccountVault,
+  DESKTOP_BACKGROUND_RUNNING_ENV,
+  makeAccountKeychain,
+  makeAccountVault,
+  type AccountKeychain,
+} from "./AccountVault.ts";
 import * as AccountPersistence from "./AccountPersistence.ts";
 import { AccountSources } from "./AccountSources.ts";
 import { AccountsService } from "./AccountsService.ts";
@@ -34,6 +42,36 @@ export const noKeychain: AccountKeychain = {
   readWithoutPrompt: () => Effect.fail(unavailable()),
   write: () => Effect.fail(unavailable()),
 };
+
+/**
+ * A keychain in memory on Linux that records every read, with unattended reads as a backend in
+ * `mode` allows them while the desktop's background running is `backgroundRunning`.
+ */
+export const recordingKeychain = Effect.fn("AccountsTestkit.recordingKeychain")(function* (host: {
+  readonly mode: RuntimeMode;
+  readonly backgroundRunning: boolean;
+}) {
+  const items = new Map<string, Redacted.Redacted<string>>();
+  const reads: string[] = [];
+  const keychain = yield* makeAccountKeychain({
+    read: (account) =>
+      Effect.sync(() => {
+        reads.push(account);
+        return items.get(account) ?? null;
+      }),
+    write: (account, value) =>
+      Effect.sync(() => {
+        items.set(account, value);
+      }),
+  }).pipe(
+    Effect.provideService(ServerConfig, { mode: host.mode } as ServerConfig["Service"]),
+    Effect.provideService(HostProcess.Environment, {
+      [DESKTOP_BACKGROUND_RUNNING_ENV]: String(host.backgroundRunning),
+    }),
+    Effect.provideService(HostProcess.Platform, "linux"),
+  );
+  return { keychain, reads };
+});
 
 export const memoryStore = () => {
   const blobs = new Map<string, Uint8Array>();

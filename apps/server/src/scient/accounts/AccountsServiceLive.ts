@@ -1291,7 +1291,7 @@ export const layer = Layer.effect(
           )
           .pipe(Effect.ignore),
       ),
-      // Never waits: an open under way, or one that would read the keychain, answers false.
+      // Never waits: an open under way, or one that needs the person, answers false.
       openWithoutPrompt: Effect.suspend(() =>
         initialized
           ? Effect.succeed(true)
@@ -2643,8 +2643,8 @@ export const layer = Layer.effect(
     });
     if (sources.modelCatalog) {
       const migrate = migrateModelKeys.pipe(Effect.ignore);
-      // Provider probes resolve saved model keys unattended: they never open the store, and
-      // resolve again once the person's first use has opened it.
+      // Provider probes resolve saved model keys unattended: when that cannot open the store,
+      // they resolve again once the person's first use has opened it.
       const resolveWhenOpen: CustomModelAccountResolver = (accountId, origin, protocol) =>
         service.openWithoutPrompt.pipe(
           Effect.flatMap((open) =>

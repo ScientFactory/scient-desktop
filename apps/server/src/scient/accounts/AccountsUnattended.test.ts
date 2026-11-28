@@ -1,34 +1,52 @@
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Redacted } from "effect";
 import type { CustomModelAccountResolver } from "../../customModels.ts";
-import type { AccountKeychain } from "./AccountVault.ts";
-import { makeHarness, memoryStore, website } from "./Accounts.testkit.ts";
+import { makeHarness, memoryStore, recordingKeychain, website } from "./Accounts.testkit.ts";
+
+const backgroundRunning = { mode: "desktop", backgroundRunning: true } as const;
+const origin = "http://127.0.0.1:8080";
+const modelKey = {
+  name: "Synthetic model key",
+  details: {
+    kind: "api-key" as const,
+    sites: [origin],
+    auth: { type: "bearer" as const },
+    purpose: "custom-models" as const,
+  },
+  secrets: { token: { type: "scient" as const, value: "synthetic-model-key" } },
+};
+
+/** A model catalog that keeps every resolver Accounts installs; `reinstalled` on the second. */
+const modelCatalogFixture = Effect.fn("AccountsUnattendedTest.modelCatalog")(function* () {
+  const resolvers: Array<CustomModelAccountResolver> = [];
+  const reinstalled = yield* Deferred.make<void>();
+  const modelCatalog = {
+    connections: Effect.succeed([]),
+    readLegacy: () => Effect.undefined,
+    removeLegacy: () => Effect.void,
+    setBinding: () => Effect.succeed(true),
+    installResolver: (resolve: CustomModelAccountResolver) =>
+      Effect.sync(() => void resolvers.push(resolve)).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            resolvers.length > 1 ? Deferred.succeed(reinstalled, undefined) : Effect.void,
+          ),
+        ),
+        Effect.asVoid,
+      ),
+  };
+  return { resolvers, reinstalled, modelCatalog };
+});
 
 it.effect("work before the person's first use of Accounts shows no prompt and loses nothing", () =>
   Effect.gen(function* () {
     const storage = memoryStore();
-    const items = new Map<string, Redacted.Redacted<string>>();
-    const prompts: string[] = [];
-    let needsPerson = false;
-    const keychain: AccountKeychain = {
-      read: (account) =>
-        Effect.sync(() => {
-          prompts.push(account);
-          return items.get(account) ?? null;
-        }),
-      readWithoutPrompt: (account) =>
-        Effect.succeed(needsPerson ? "needs-person" : (items.get(account) ?? null)),
-      write: (account, value) =>
-        Effect.sync(() => {
-          items.set(account, value);
-        }),
-    };
+    const { keychain, reads } = yield* recordingKeychain(backgroundRunning);
     const before = yield* makeHarness({ storage, keychain });
     const { accountId } = yield* before.service.save(website());
     const records = new Map(storage.blobs);
-    prompts.length = 0;
+    reads.length = 0;
 
-    needsPerson = true;
     const { service } = yield* makeHarness({ storage, keychain });
     // What runs before any foreground use: paper recovery, then unattended work that asks first.
     yield* service.setPaperQueue({
@@ -40,12 +58,12 @@ it.effect("work before the person's first use of Accounts shows no prompt and lo
       paused: [],
     });
     expect(yield* service.openWithoutPrompt).toBe(false);
-    expect(prompts).toEqual([]);
+    expect(reads).toEqual([]);
     expect(new Map(storage.blobs)).toEqual(records);
 
     // The next foreground use opens the store, with everything in it.
     const snapshot = yield* service.snapshot;
-    expect(prompts).toHaveLength(1);
+    expect(reads).toHaveLength(1);
     expect(snapshot.accounts.map((account) => account.accountId)).toEqual([accountId]);
     expect(snapshot.paperQueues?.map((queue) => queue.root)).toEqual(["/synthetic/project"]);
   }),
@@ -56,51 +74,11 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const storage = memoryStore();
-      const items = new Map<string, Redacted.Redacted<string>>();
-      const keychainReads: string[] = [];
-      const keychain: AccountKeychain = {
-        read: (account) =>
-          Effect.sync(() => {
-            keychainReads.push(account);
-            return items.get(account) ?? null;
-          }),
-        // What macOS answers now: unattended work never touches the keychain.
-        readWithoutPrompt: () => Effect.succeed("needs-person"),
-        write: (account, value) =>
-          Effect.sync(() => {
-            items.set(account, value);
-          }),
-      };
-      const resolvers: Array<CustomModelAccountResolver> = [];
-      const reinstalled = yield* Deferred.make<void>();
-      const modelCatalog = {
-        connections: Effect.succeed([]),
-        readLegacy: () => Effect.undefined,
-        removeLegacy: () => Effect.void,
-        setBinding: () => Effect.succeed(true),
-        installResolver: (resolve: CustomModelAccountResolver) =>
-          Effect.sync(() => void resolvers.push(resolve)).pipe(
-            Effect.andThen(
-              Effect.suspend(() =>
-                resolvers.length > 1 ? Deferred.succeed(reinstalled, undefined) : Effect.void,
-              ),
-            ),
-            Effect.asVoid,
-          ),
-      };
-      const origin = "http://127.0.0.1:8080";
+      const { keychain, reads } = yield* recordingKeychain(backgroundRunning);
+      const { resolvers, reinstalled, modelCatalog } = yield* modelCatalogFixture();
       const before = yield* makeHarness({ storage, keychain, sourceOverrides: { modelCatalog } });
-      const { accountId } = yield* before.service.save({
-        name: "Synthetic model key",
-        details: {
-          kind: "api-key",
-          sites: [origin],
-          auth: { type: "bearer" },
-          purpose: "custom-models",
-        },
-        secrets: { token: { type: "scient", value: "synthetic-model-key" } },
-      });
-      keychainReads.length = 0;
+      const { accountId } = yield* before.service.save(modelKey);
+      reads.length = 0;
       resolvers.length = 0;
 
       // Provider probes resolve the linked model's key before any foreground use.
@@ -112,14 +90,41 @@ it.effect(
       const probe = resolvers[0]!;
       const refused = yield* probe(accountId, origin, "openai-completions").pipe(Effect.flip);
       expect(refused.reason).toBe("unavailable");
-      expect(keychainReads).toEqual([]);
+      expect(reads).toEqual([]);
 
       // The person's first use opens the store; the key resolves again without a second prompt.
       yield* service.snapshot;
-      expect(keychainReads).toHaveLength(1);
+      expect(reads).toHaveLength(1);
       yield* Deferred.await(reinstalled);
       const { token } = yield* resolvers[1]!(accountId, origin, "openai-completions");
       expect(Redacted.value(token)).toBe("synthetic-model-key");
-      expect(keychainReads).toHaveLength(1);
+      expect(reads).toHaveLength(1);
     }),
+);
+
+it.effect.each([
+  { host: "a desktop that quits with its last window", mode: "desktop", backgroundRunning: false },
+  { host: "a server without a desktop", mode: "web", backgroundRunning: true },
+] as const)("on $host, unattended work opens the store as any use does", (host) =>
+  Effect.gen(function* () {
+    const storage = memoryStore();
+    const { keychain, reads } = yield* recordingKeychain(host);
+    const { resolvers, modelCatalog } = yield* modelCatalogFixture();
+    const before = yield* makeHarness({ storage, keychain, sourceOverrides: { modelCatalog } });
+    const { accountId } = yield* before.service.save(modelKey);
+
+    // A provider probe at start opens the store to resolve the linked model's key.
+    reads.length = 0;
+    resolvers.length = 0;
+    yield* makeHarness({ storage, keychain, sourceOverrides: { modelCatalog } });
+    const { token } = yield* resolvers[0]!(accountId, origin, "openai-completions");
+    expect(Redacted.value(token)).toBe("synthetic-model-key");
+    expect(reads).toHaveLength(1);
+
+    // So does other unattended work, such as renewal.
+    reads.length = 0;
+    const { service } = yield* makeHarness({ storage, keychain });
+    expect(yield* service.openWithoutPrompt).toBe(true);
+    expect(reads).toHaveLength(1);
+  }),
 );

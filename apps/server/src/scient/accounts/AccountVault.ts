@@ -20,7 +20,7 @@ export interface AccountKeychain {
   readonly read: (
     account: string,
   ) => Effect.Effect<Redacted.Redacted<string> | null, AccountsError>;
-  /** Never shows a dialog and, on macOS and Linux, never touches the keychain. */
+  /** Unattended work's read; `makeAccountKeychain` decides when it answers "needs-person". */
   readonly readWithoutPrompt: (
     account: string,
   ) => Effect.Effect<KeychainReadWithoutPrompt, AccountsError>;
@@ -30,9 +30,32 @@ export interface AccountKeychain {
   ) => Effect.Effect<void, AccountsError>;
 }
 
+/** Set by the desktop at each backend launch: "true" while Scient may keep running windowless. */
+export const DESKTOP_BACKGROUND_RUNNING_ENV = "SCIENT_DESKTOP_BACKGROUND_RUNNING";
+
+/**
+ * Credential Manager never asks. A macOS keychain item whose access list no longer trusts this
+ * executable asks, and a Secret Service collection can ask to be unlocked: while the desktop may
+ * run with no window, those open only with one. Otherwise unattended work reads as any use does.
+ */
+export const makeAccountKeychain = Effect.fn("AccountKeychain.make")(function* (
+  keychain: Omit<AccountKeychain, "readWithoutPrompt">,
+) {
+  const backgroundRunning =
+    (yield* ServerConfig).mode === "desktop" &&
+    (yield* HostProcess.Environment)[DESKTOP_BACKGROUND_RUNNING_ENV] === "true";
+  const waitsForPerson = backgroundRunning && (yield* HostProcess.Platform) !== "win32";
+  return {
+    ...keychain,
+    readWithoutPrompt: waitsForPerson
+      ? () => Effect.succeed("needs-person" as const)
+      : keychain.read,
+  } satisfies AccountKeychain;
+});
+
 const KEYCHAIN_SERVICE = "Scient Accounts";
 
-const nativeKeychain: AccountKeychain = {
+const nativeKeychain: Omit<AccountKeychain, "readWithoutPrompt"> = {
   read: Effect.fn("AccountKeychain.read")((account) =>
     Effect.tryPromise({
       try: async () => {
@@ -45,13 +68,6 @@ const nativeKeychain: AccountKeychain = {
       catch: unavailable,
     }),
   ),
-  readWithoutPrompt: Effect.fn("AccountKeychain.readWithoutPrompt")(function* (account) {
-    // Credential Manager never asks. A macOS keychain item whose access list no longer trusts
-    // this executable asks, and a Secret Service collection can ask to be unlocked: those open
-    // only with a window.
-    if ((yield* HostProcess.Platform) === "win32") return yield* nativeKeychain.read(account);
-    return "needs-person" as const;
-  }),
   write: Effect.fn("AccountKeychain.write")((account, key) =>
     Effect.tryPromise({
       try: async () => {
@@ -105,7 +121,7 @@ export class AccountVault extends Context.Service<
   AccountVault,
   {
     readonly protection: Effect.Effect<"keychain" | "file", AccountsError>;
-    /** Opens a vault set up before without any dialog; false when that needs the person. */
+    /** Opens a vault set up before for unattended work; false when that needs the person. */
     readonly openWithoutPrompt: Effect.Effect<boolean, AccountsError>;
     readonly encrypt: (
       name: string,
@@ -189,9 +205,9 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
       return loaded;
     }),
   );
-  // Unattended work opens only a vault set up before, and never with a dialog: when reading its
-  // key would ask, nothing is read or written and the next foreground use opens it. It never
-  // waits behind another open either.
+  // Unattended work opens only a vault set up before, reading its key only as `readWithoutPrompt`
+  // allows: when that needs the person, nothing is read or written and the next foreground use
+  // opens it. It never waits behind another open either.
   const openWithoutPrompt = Effect.suspend(() =>
     loaded
       ? Effect.succeed(true)
@@ -244,7 +260,7 @@ export const layer = Layer.effect(
     return yield* makeAccountVault(
       yield* ServerSecretStore,
       (yield* ServerConfig).stateDir,
-      nativeKeychain,
+      yield* makeAccountKeychain(nativeKeychain),
     );
   }),
 );

@@ -120,8 +120,9 @@ export interface AccountsServiceShape {
   /** The state of a project's papers, shown as a band and a card. */
   readonly setPaperQueue: (queue: PaperQueueSummary) => Effect.Effect<void>;
   /**
-   * For unattended work such as renewal: opens the store without any dialog. False when that
-   * needs the person: skip the work; the next foreground use opens the store and `changes` emits.
+   * For unattended work such as renewal: opens the store, with no dialog while the desktop may
+   * run with no window. False when that needs the person: skip the work; the next foreground use
+   * opens the store and `changes` emits.
    */
   readonly openWithoutPrompt: Effect.Effect<boolean, AccountsError>;
   readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;

@@ -306,6 +306,9 @@ interface SharedBootstrapInput {
   readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
   readonly hostScope: string;
+  // SCIENT-FORK:START — the effective background running setting when this launch resolved.
+  readonly keepsRunningInBackground: boolean;
+  // SCIENT-FORK:END
 }
 
 // Matches the server's DESKTOP_HOST_SCOPE_ENV.
@@ -671,8 +674,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ...scientAnalyticsMetadata(environment, env),
         ELECTRON_RUN_AS_NODE: "1",
-        // SCIENT-FORK:START — Scient state directory and safety envelope.
-        ...scientPrimaryBackendEnv(environment),
+        // SCIENT-FORK:START — Scient state directory, safety envelope and background running.
+        ...scientPrimaryBackendEnv(environment, input),
         // SCIENT-FORK:END
         T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
@@ -816,8 +819,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...backendChildEnvPatch(),
       ...forwardedEnv,
       ...scientAnalyticsMetadata(environment, env),
-      // SCIENT-FORK:START — Scient WSL state directory and safety envelope.
-      ...scientWslBackendEnv(environment),
+      // SCIENT-FORK:START — Scient WSL state directory, safety envelope and background running.
+      ...scientWslBackendEnv(environment, input),
       // SCIENT-FORK:END
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
@@ -944,6 +947,12 @@ export const make = Effect.gen(function* () {
       bootstrapSecret,
       observabilitySettings,
       hostScope: yield* hostScope,
+      // SCIENT-FORK:START — the effective background running setting.
+      keepsRunningInBackground: DesktopAppSettings.keepsRunningInBackground(
+        yield* settings.get,
+        environment.platform,
+      ),
+      // SCIENT-FORK:END
     } satisfies SharedBootstrapInput;
   });
 
