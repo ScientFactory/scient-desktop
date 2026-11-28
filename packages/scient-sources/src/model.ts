@@ -52,8 +52,9 @@ export const ScientSourceIdentifier = Schema.Struct({
 });
 export type ScientSourceIdentifier = typeof ScientSourceIdentifier.Type;
 
+// Above the largest consortium author lists; a record file's 2 MiB limit is the nearer bound.
 const BoundedCreators = Schema.Array(ScientSourceCreator).pipe(
-  Schema.check(Schema.isMaxLength(256)),
+  Schema.check(Schema.isMaxLength(20_000)),
 );
 const BoundedIdentifiers = Schema.Array(ScientSourceIdentifier).pipe(
   Schema.check(Schema.isMaxLength(256)),
@@ -75,6 +76,244 @@ export function scientCreatorRoleIncomplete(
 ): boolean {
   const wanted = role.toLowerCase();
   return roles?.some((entry) => entry.toLowerCase() === wanted) ?? false;
+}
+
+/** How many creators, identifiers or tags a pin's or review's saved copy keeps. */
+export const SCIENT_SAVED_COPY_LIST_LIMIT = 256;
+
+/** A saved copy's whole creator count, present only when its `creators` hold the first ones. */
+export const ScientSavedCopyCreatorCount = Schema.Int.check(Schema.isGreaterThan(0));
+
+type JsonRecord = Record<string, unknown>;
+const isRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const STAMPED_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  creators: ["creatorType", "givenName", "familyName", "literalName"],
+  identifiers: ["scheme", "value"],
+};
+
+/**
+ * A stamp of the list an `overflow` continues, over its fields in a fixed order (FNV-1a and the
+ * text's length): a list an older Scient replaced no longer matches, so its stale rest is dropped.
+ */
+function listStamp(name: string, list: ReadonlyArray<unknown>): string {
+  const fields = STAMPED_FIELDS[name];
+  const text = JSON.stringify(
+    list.map((item) =>
+      fields && isRecord(item) ? fields.map((field) => item[field] ?? null) : item,
+    ),
+  );
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16).padStart(8, "0")}:${text.length}`;
+}
+
+/**
+ * A saved copy as written: lists past 256 go in `overflow`, which older Scient versions skip while
+ * they read the first 256. A role cut there is marked incomplete for them, and `overflow` names it
+ * (`markedRoles`) so this version unmarks it. Pass `markRoles` false for a review entry.
+ */
+export function scientSavedCopyHead(
+  work: {
+    readonly creators: ReadonlyArray<ScientSourceCreator>;
+    readonly incompleteCreatorRoles?: ReadonlyArray<string>;
+    readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
+    readonly tags?: ReadonlyArray<string>;
+  },
+  markRoles = true,
+): {
+  readonly creators: ReadonlyArray<ScientSourceCreator>;
+  readonly incompleteCreatorRoles?: ReadonlyArray<string>;
+  readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
+  readonly tags?: ReadonlyArray<string>;
+  readonly overflow?: JsonRecord;
+} {
+  const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
+  const overflow: JsonRecord = {};
+  const follows: JsonRecord = {};
+  const cut = <T>(name: string, list: ReadonlyArray<T>) => {
+    const head = list.slice(0, limit);
+    if (list.length > limit) {
+      overflow[name] = list.slice(limit);
+      follows[name] = listStamp(name, head);
+    }
+    return head;
+  };
+  const creators = cut("creators", work.creators);
+  const identifiers = cut("identifiers", work.identifiers);
+  const tags = work.tags === undefined ? undefined : cut("tags", work.tags);
+  const marked: string[] = [];
+  for (const { creatorType } of markRoles ? work.creators.slice(limit) : []) {
+    if (
+      !scientCreatorRoleIncomplete(work.incompleteCreatorRoles, creatorType) &&
+      !scientCreatorRoleIncomplete(marked, creatorType)
+    ) {
+      marked.push(creatorType);
+    }
+  }
+  if (marked.length > 0) overflow["markedRoles"] = marked;
+  if (Object.keys(follows).length > 0) overflow["follows"] = follows;
+  const roles = withIncompleteCreatorRoles(work.incompleteCreatorRoles, marked);
+  return {
+    creators,
+    ...(roles?.length ? { incompleteCreatorRoles: roles } : {}),
+    identifiers,
+    ...(tags !== undefined ? { tags } : {}),
+    ...(Object.keys(overflow).length > 0 ? { overflow } : {}),
+  };
+}
+
+/** A written saved copy with its `overflow` joined back on; a stale one is dropped. */
+export function joinScientSavedCopy(raw: unknown): unknown {
+  if (!isRecord(raw) || !("overflow" in raw)) return raw;
+  const { overflow, ...work } = raw;
+  if (!isRecord(overflow)) return work;
+  // Only the exact list it was written after continues in `overflow`.
+  const follows = isRecord(overflow["follows"]) ? overflow["follows"] : {};
+  const joined = (name: string) => {
+    const head = work[name];
+    const rest = overflow[name];
+    if (!Array.isArray(rest) || !Array.isArray(head) || follows[name] !== listStamp(name, head))
+      return false;
+    work[name] = [...head, ...rest];
+    return true;
+  };
+  const creators = joined("creators");
+  joined("identifiers");
+  joined("tags");
+  const marked = overflow["markedRoles"];
+  const roles = work["incompleteCreatorRoles"];
+  if (creators && Array.isArray(marked) && Array.isArray(roles)) {
+    const kept = roles.filter(
+      (role) =>
+        typeof role !== "string" ||
+        !marked.some(
+          (entry) => typeof entry === "string" && scientCreatorRoleIncomplete([entry], role),
+        ),
+    );
+    if (kept.length > 0) work["incompleteCreatorRoles"] = kept;
+    else delete work["incompleteCreatorRoles"];
+  }
+  return work;
+}
+
+/** A saved copy as stored, without a `creatorCount` it cannot use: one bad count never hides it. */
+export function withUsableCreatorCount(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || !("creatorCount" in raw)) return raw;
+  const { creatorCount, ...rest } = raw as Record<string, unknown>;
+  const listed = Array.isArray(rest["creators"]) ? rest["creators"].length : 0;
+  return Number.isSafeInteger(creatorCount) && (creatorCount as number) > listed ? raw : rest;
+}
+
+/** A saved copy's creators, with what it knows of the whole list. */
+export interface ScientSavedRoster {
+  readonly creators: ReadonlyArray<ScientSourceCreator>;
+  readonly creatorCount?: number;
+  readonly incompleteCreatorRoles?: ReadonlyArray<string>;
+}
+
+const sameCreator = (left: ScientSourceCreator, right: ScientSourceCreator) =>
+  left.creatorType === right.creatorType &&
+  left.givenName === right.givenName &&
+  left.familyName === right.familyName &&
+  left.literalName === right.literalName;
+
+/**
+ * The copy's own roster when rebuilding it from `record` would drop names only the copy holds:
+ * the record's list is the copy's own (filled from it), or a shortened record's list is how the
+ * copy's begins. Otherwise null: the record's list is the one to keep.
+ */
+export function scientFullerSavedRoster(
+  record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
+  copy: ScientSavedRoster | null,
+): ScientSavedRoster | null {
+  if (!copy) return null;
+  if (record.creators === copy.creators) return copy;
+  const names = record.creators;
+  return names.length <= copy.creators.length &&
+    knownLength(copy) > names.length &&
+    stillShortOf(record, copy)
+    ? copy
+    : null;
+}
+
+/** The record marks its list short, begins as the copy does, and lists fewer than the copy knows. */
+export function scientRecordShortOfSavedCopy(
+  record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
+  copy: ScientSavedRoster,
+): boolean {
+  return stillShortOf(record, copy) && knownLength(copy) > record.creators.length;
+}
+
+const knownLength = (copy: ScientSavedRoster) =>
+  Math.max(copy.creators.length, copy.creatorCount ?? 0);
+
+/** The record marks its list short and begins as the copy does: both are cuts of one list. */
+const stillShortOf = (
+  record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
+  copy: ScientSavedRoster,
+) => {
+  const shared = Math.min(record.creators.length, copy.creators.length);
+  return (
+    (record.incompleteCreatorRoles?.length ?? 0) > 0 &&
+    shared > 0 &&
+    record.creators
+      .slice(0, shared)
+      .every((creator, index) => sameCreator(creator, copy.creators[index]!))
+  );
+};
+
+/**
+ * The roster a saved copy keeps when rebuilt from `record`: the record's first 256 names, the
+ * whole count when there were more, and the cut roles marked incomplete (citations end them with
+ * "et al."); or the copy's own, as `scientFullerSavedRoster` decides.
+ */
+export function scientSavedCopyRoster(
+  record: Pick<ScientSourceRecord, "creators" | "incompleteCreatorRoles">,
+  copy: ScientSavedRoster | null,
+): ScientSavedRoster {
+  const fuller = scientFullerSavedRoster(record, copy);
+  const limit = SCIENT_SAVED_COPY_LIST_LIMIT;
+  const kept = fuller?.creators ?? record.creators.slice(0, limit);
+  // A short record listing more names than the cut copy still lacks the copy's known total.
+  const whole = fuller
+    ? knownLength(fuller)
+    : copy && stillShortOf(record, copy)
+      ? Math.max(record.creators.length, knownLength(copy))
+      : record.creators.length;
+  const shortenedRoles: string[] = [];
+  for (const { creatorType } of fuller ? [] : record.creators.slice(limit)) {
+    if (!scientCreatorRoleIncomplete(shortenedRoles, creatorType)) shortenedRoles.push(creatorType);
+  }
+  const incompleteCreatorRoles = withIncompleteCreatorRoles(
+    fuller ? fuller.incompleteCreatorRoles : record.incompleteCreatorRoles,
+    shortenedRoles,
+  );
+  return {
+    creators: kept,
+    ...(whole > kept.length ? { creatorCount: whole } : {}),
+    ...(incompleteCreatorRoles?.length ? { incompleteCreatorRoles } : {}),
+  };
+}
+
+/** A record's list for a saved copy: the first 256, unless it is the copy's own list. */
+export function scientSavedCopyList<T>(
+  list: ReadonlyArray<T>,
+  copyList: ReadonlyArray<T> | undefined,
+): ReadonlyArray<T> {
+  return list === copyList ? list : list.slice(0, SCIENT_SAVED_COPY_LIST_LIMIT);
+}
+
+/** `roles` with `added` the list lacks, within the 16 a record keeps. */
+function withIncompleteCreatorRoles(
+  roles: ReadonlyArray<string> | undefined,
+  added: ReadonlyArray<string>,
+): ReadonlyArray<string> | undefined {
+  const fresh = added.filter((role) => !scientCreatorRoleIncomplete(roles, role));
+  return fresh.length === 0 ? roles : [...(roles ?? []), ...fresh].slice(0, 16);
 }
 
 export const ScientSourceAbstractSection = Schema.Struct({

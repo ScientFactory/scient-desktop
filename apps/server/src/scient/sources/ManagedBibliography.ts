@@ -27,6 +27,7 @@ import type { ScientSourceActor, ScientSourceRecord } from "@scientfactory/scien
 import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
 import {
   listScientProjectPinnedWorks,
+  readScientProjectUnreadPinKeys,
   resolveScientProjectPins,
 } from "@scientfactory/scient-sources/project-pins";
 import * as Schema from "effect/Schema";
@@ -245,6 +246,8 @@ interface BibliographyInput {
   readonly load: () => Promise<ReadonlyArray<ScientSourceRecord> | null>;
   /** Keys whose render would come only from a snapshot older than its citation fields. */
   readonly keepWritten?: () => ReadonlySet<string>;
+  /** Keys with no record to render whose written entries stay (pins this version cannot read). */
+  readonly unrendered?: () => ReadonlyArray<string>;
 }
 
 /** The entries Scient last wrote for these keys, to write again instead of a poorer render. */
@@ -269,9 +272,15 @@ async function syncInLane(
       citedSourceCount: 0,
     };
   }
+  const unrendered = input.unrendered?.() ?? [];
   const rendered = renderManagedBibliography(
     records,
-    await keptWrittenEntries(root, input.copies, input.keepWritten?.() ?? new Set()),
+    await keptWrittenEntries(
+      root,
+      input.copies,
+      new Set([...(input.keepWritten?.() ?? []), ...unrendered]),
+    ),
+    unrendered,
   );
   const files: ManagedBibliographyFileStatus[] = [];
   for (const name of MANAGED_BIBLIOGRAPHY_FILES) {
@@ -342,10 +351,12 @@ export async function syncPinnedBibliography(input: {
   const canonical = await canonicalizeScientSourceRoot(input.root);
   const library = input.library;
   let incomplete = new Set<string>();
+  let unread: ReadonlyArray<string> = [];
   return inLane(canonical, () =>
     syncInLane(canonical, new Set(input.replaceEdited ?? []), {
       copies: PINNED_COPY_DIRECTORY,
       keepWritten: () => incomplete,
+      unrendered: () => unread,
       load: async () => {
         if (library && input.access === "write") {
           await resolveScientProjectPins({
@@ -359,6 +370,7 @@ export async function syncPinnedBibliography(input: {
         incomplete = new Set(
           works.filter((work) => work.incompleteSnapshot).map((work) => work.citationKey),
         );
+        unread = await readScientProjectUnreadPinKeys(canonical);
         return works.map((work) => work.record);
       },
     }),

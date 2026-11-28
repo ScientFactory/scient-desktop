@@ -125,6 +125,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.GET_RESTART_READINESS_TOKEN_CHANNEL),
   reportWorkspaceReady: (input) =>
     ipcRenderer.invoke(IpcChannels.REPORT_WORKSPACE_READY_CHANNEL, input),
+  reportWorkspaceSettled: (input) =>
+    ipcRenderer.invoke(IpcChannels.REPORT_WORKSPACE_SETTLED_CHANNEL, input),
   onPrepareUpdateSave: (listener) => {
     const handle = (_event: Electron.IpcRendererEvent, input: unknown) => {
       if (typeof input !== "object" || input === null) return;
@@ -599,9 +601,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     exportPdf: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL, { tabId }),
     renderHtmlPdf: (sourceUrl) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL, { sourceUrl }),
-    // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+    // SCIENT-FORK:START — Scient Library page read, and the tab hover-card thumbnail.
     readLibraryPage: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_LIBRARY_PAGE_CHANNEL, { tabId }),
+    captureTabThumbnail: (tabId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_TAB_THUMBNAIL_CHANNEL, { tabId, url }),
     // SCIENT-FORK:END
     revealArtifact: (path) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),

@@ -25,6 +25,7 @@ import { atomicWrite } from "./ledger.ts";
 import { sampleRate } from "./windows.ts";
 
 const Provider = CloudEngineBindingFields.provider;
+const OPENAI_ORIGIN = "https://api.openai.com";
 const id = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/));
 const configFields = {
   ...CloudEngineBindingFields,
@@ -148,6 +149,13 @@ export class CloudEngines extends Context.Service<
       id: string,
       projectId?: ProjectId,
     ) => Effect.Effect<Resolved, CloudEngineError>;
+    /**
+     * The key of an OpenAI speech engine the user agreed to send audio to, for a spoken
+     * conversation with OpenAI's realtime models; none without one.
+     */
+    readonly realtimeKey: (
+      projectId?: ProjectId,
+    ) => Effect.Effect<Redacted.Redacted<string> | undefined, CloudEngineError>;
   }
 >()("t3/transcription/CloudEngines") {}
 
@@ -544,8 +552,22 @@ export const layer = Layer.effect(
           }),
         ),
       );
+    const realtimeKey = Effect.fn("CloudEngines.realtimeKey")(function* (projectId?: ProjectId) {
+      const config = (yield* read).find(
+        (entry) => entry.provider === "openai" && entry.uploadConsent,
+      );
+      if (!config) return undefined;
+      const { token } = yield* resolveKey(
+        config,
+        OPENAI_ORIGIN,
+        { provider: "openai", jobId: "lesson-talk" },
+        projectId,
+      );
+      return token;
+    });
     return CloudEngines.of({
       execute,
+      realtimeKey,
       resolve: Effect.fn("CloudEngines.resolveForProject")((id, projectId) =>
         resolve(id, true, projectId),
       ),

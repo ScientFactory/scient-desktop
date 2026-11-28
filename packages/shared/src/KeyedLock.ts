@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
+import type * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -8,6 +9,15 @@ export interface KeyedLock<Key> {
   readonly withLock: <A, E, R>(key: Key, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly activeKeys: Effect.Effect<ReadonlyArray<Key>>;
 }
+
+// SCIENT-FORK:START — physical session retirement can skip a busy attachment.
+interface TryKeyedLock<Key> extends KeyedLock<Key> {
+  readonly tryWithLock: <A, E, R>(
+    key: Key,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
+}
+// SCIENT-FORK:END
 
 interface LockEntry {
   readonly semaphore: Semaphore.Semaphore;
@@ -18,7 +28,7 @@ interface LockEntry {
  * Not reentrant: taking a key while already holding it deadlocks.
  */
 export const make = Effect.fn("KeyedLock.make")(function* <Key>(): Effect.fn.Return<
-  KeyedLock<Key>
+  TryKeyedLock<Key>
 > {
   const locks = yield* Ref.make<ReadonlyMap<Key, LockEntry>>(new Map());
 
@@ -53,8 +63,16 @@ export const make = Effect.fn("KeyedLock.make")(function* <Key>(): Effect.fn.Ret
         (semaphore) => semaphore.withPermit(effect),
         () => release(key),
       ),
+    // SCIENT-FORK:START — reuse the same lock entry and release it even on failure.
+    tryWithLock: (key, effect) =>
+      Effect.acquireUseRelease(
+        acquire(key),
+        (semaphore) => semaphore.withPermitsIfAvailable(1)(effect),
+        () => release(key),
+      ),
+    // SCIENT-FORK:END
     activeKeys: Effect.map(Ref.get(locks), (current) => Array.from(current.keys())),
-  } satisfies KeyedLock<Key>;
+  } satisfies TryKeyedLock<Key>;
 });
 
 export interface KeyedRunner<Key> {

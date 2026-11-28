@@ -16,6 +16,7 @@ import {
   type ThreadId,
   TranscriptionWord,
   TranscriptionWords,
+  type RecordingEngineSelection,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Clock from "effect/Clock";
@@ -46,6 +47,9 @@ import { isCloudResponseError } from "./cloud.ts";
 import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { moveToTrash, type TrashHost } from "../scient/workspace/WorkspaceTrash.ts";
 import * as SpeechModelStore from "../speech/SpeechModelStore.ts";
 import {
   atomicWrite,
@@ -69,6 +73,7 @@ import {
 import { mergeWords, recognitionTerms, wordKey } from "./words.ts";
 import { createOverrideRateTable, lookupRate } from "../usage/usagePricing.ts";
 import { decodePcm, probeRecordingDuration, recordingDuration } from "./media.ts";
+import { type DiscoveredMedia, discoverProjectMedia } from "./mediaDiscovery.ts";
 import { sampleSpeechLanguage } from "./languageSample.ts";
 import { scoreSpeech } from "./windows.ts";
 import { relistenPass } from "./relisten.ts";
@@ -90,10 +95,16 @@ import {
 } from "./subtitleMedia.ts";
 import {
   finishCapture,
+  isCaptureFinished,
+  readCaptions,
   recoverCaptures,
+  saveCaption,
   saveCaptureChunk,
   touchCapture,
 } from "./RecordingCapture.ts";
+import { connectLessonTalk, LessonTalkError, lessonInstructions } from "./lessonTalk.ts";
+
+const isLessonTalkError = Schema.is(LessonTalkError);
 import {
   prepareImportedTranscript,
   prepareSubtitles,
@@ -164,6 +175,9 @@ export const BatchStartRequest = Schema.Struct({
 const captureId = Schema.String.check(
   Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/),
 );
+const lessonLanguage = Schema.String.check(
+  Schema.isPattern(/^(?:auto|[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$/),
+);
 const captureIndex = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThan(100_000_000),
@@ -180,6 +194,7 @@ export const Request = Schema.Union([
     project: path,
     includeCreated: Schema.optionalKey(Schema.Boolean),
     query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
+    source: Schema.optionalKey(path),
   }),
   Schema.Struct({ action: Schema.Literal("sample-language"), project: path, source: path }),
   Schema.Struct({ action: Schema.Literal("media-list"), project: path }),
@@ -196,8 +211,50 @@ export const Request = Schema.Union([
   }),
   Schema.Struct({ action: Schema.Literal("capture-recover"), project: path }),
   Schema.Struct({ action: Schema.Literal("capture-touch"), project: path, id: captureId }),
-  Schema.Struct({ action: Schema.Literal("capture-finish"), project: path, id: captureId }),
-  Schema.Struct({ action: Schema.Literal("media-register"), project: path, source: path }),
+  /** A lesson's start: keeps its lease and names the engine its live captions use. */
+  Schema.Struct({
+    action: Schema.Literal("capture-start"),
+    project: path,
+    id: captureId,
+    language: Schema.optionalKey(lessonLanguage),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("capture-caption"),
+    project: path,
+    id: captureId,
+    window: captureIndex,
+    start: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    end: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    text: Schema.String.check(Schema.isMaxLength(20_000)),
+  }),
+  /** A spoken question with the user's OpenAI key: the window's offer, answered by OpenAI. */
+  Schema.Struct({
+    action: Schema.Literal("capture-talk"),
+    project: path,
+    id: captureId,
+    sdpOffer: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64_000)),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("capture-finish"),
+    project: path,
+    id: captureId,
+    /** Recorded as a lesson: transcribe it with the recording default, then make its notes. */
+    lesson: Schema.optionalKey(Schema.Struct({ language: lessonLanguage })),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("media-register"),
+    project: path,
+    source: path,
+    onlyInProject: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("recording-rename"),
+    project: path,
+    source: path,
+    /** Shown in place of the file name; empty goes back to the file name. */
+    title: Schema.String.check(Schema.isMaxLength(200)),
+  }),
+  Schema.Struct({ action: Schema.Literal("recording-trash"), project: path, source: path }),
   Schema.Struct({ action: Schema.Literal("revision"), project: path, id: RevisionId }),
   Schema.Struct({ action: Schema.Literal("inventory"), project: path, ...InventoryInput.fields }),
   Schema.Struct({
@@ -266,6 +323,7 @@ const RecordingSource = Schema.Struct({
   created: Schema.Number,
   duration: Schema.optionalKey(Schema.Number),
   queued: Schema.optionalKey(Schema.Boolean),
+  title: Schema.optionalKey(Schema.String),
 });
 const decodeRecordingSource = Schema.decodeUnknownSync(RecordingSource);
 type RecordingSource = typeof RecordingSource.Type;
@@ -327,12 +385,17 @@ type JobOptions = {
   projectOnly?: boolean;
   waitSeconds?: number;
   threadId?: ThreadId;
+  /** A lesson's transcription: its notes follow when it completes. */
+  lesson?: boolean;
 };
 
 export type SettledTranscription = {
-  threadId: ThreadId;
+  /** The thread that started the job, told when it settles. */
+  threadId?: ThreadId;
   id: string;
   stage: "completed" | "failed" | "canceled";
+  /** A lesson's job, with its project folder, so its notes can be made. */
+  lesson?: { project: string };
 };
 
 export class TranscriptionJobs extends Context.Service<
@@ -345,7 +408,20 @@ export class TranscriptionJobs extends Context.Service<
       | Status
       | Status[]
       | { media: RecordingSource[] }
-      | { captured: true; source?: string }
+      | {
+          captured: true;
+          source?: string;
+          transcription?: "started" | "queued" | "unavailable";
+        }
+      | {
+          captured: true;
+          language: string;
+          captions?: RecordingEngineSelection;
+          transcription?: "unavailable";
+          talk: { openai: boolean };
+        }
+      | { sdpAnswer: string }
+      | { trashed: true }
       | { detectedLanguage: string | null }
       | Published
       | typeof EngineInventory.Type
@@ -499,6 +575,8 @@ const make = Effect.gen(function* () {
   };
   type Active = {
     root: string;
+    /** The recording the job reads, once known; Trash leaves it alone. */
+    source?: string;
     id?: string;
     status?: Status;
     controller: AbortController;
@@ -506,7 +584,15 @@ const make = Effect.gen(function* () {
     paused?: boolean;
   };
   let active: Active | undefined;
+  /** Moves to the Trash in progress; no job starts meanwhile. */
+  let trashing = 0;
   const queuedSources = new Set<string>();
+  const trashHost: TrashHost = {
+    platform: yield* HostProcess.Platform,
+    homeDirectory: yield* HostProcess.HomeDirectory,
+    environment: yield* HostProcess.Environment,
+    userId: yield* HostProcess.UserId,
+  };
   const jobsScope = yield* Scope.make();
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
@@ -549,6 +635,36 @@ const make = Effect.gen(function* () {
     } catch {
       return undefined;
     }
+  };
+  // A found file's duration is listed once probed; the listing never waits for the probe, and
+  // the entry, set before the probe, keeps later polls from queueing it again.
+  const foundDurations = new Map<string, { fingerprint: string; value?: number }>();
+  const probedDuration = (project: string, file: DiscoveredMedia) => {
+    const fingerprint = `${file.size}:${file.mtime}`;
+    const known = foundDurations.get(file.source);
+    if (known?.fingerprint === fingerprint) return known.value;
+    if (foundDurations.size >= 4096) {
+      const oldest = foundDurations.keys().next();
+      if (!oldest.done) foundDurations.delete(oldest.value);
+    }
+    const entry: { fingerprint: string; value?: number } = { fingerprint };
+    foundDurations.set(file.source, entry);
+    void durationFor(project, file.source).then((value) => {
+      if (value !== undefined) entry.value = value;
+    });
+    return undefined;
+  };
+  const discoveries = new Map<string, { at: number; files: Promise<DiscoveredMedia[]> }>();
+  const discoveredMedia = (project: string, now: number) => {
+    const cached = discoveries.get(project);
+    if (cached && now - cached.at < 10_000) return cached.files;
+    if (!cached && discoveries.size >= 64) {
+      const oldest = discoveries.keys().next();
+      if (!oldest.done) discoveries.delete(oldest.value);
+    }
+    const files = discoverProjectMedia(project).catch(() => []);
+    discoveries.set(project, { at: now, files });
+    return files;
   };
   const settled = yield* PubSub.unbounded<SettledTranscription>();
   const requireCloudUpload = Effect.fn("TranscriptionJobs.requireCloudUpload")(function* () {
@@ -807,6 +923,14 @@ const make = Effect.gen(function* () {
         if (opts?.scoped && NodePath.relative(input.project, project) !== "")
           throw invalid("The registered project path has changed.");
         const root = NodePath.join(project, "Transcripts");
+        const projectId = async () => {
+          const registered = await run(projects.findActiveByWorkspaceRoot(input.project));
+          const match =
+            Option.isNone(registered) && input.project !== project
+              ? await run(projects.findActiveByWorkspaceRoot(project))
+              : registered;
+          return Option.isSome(match) ? match.value.projectId : undefined;
+        };
         const rootStat = await NodeFSP.lstat(root).catch((error: unknown) => {
           if (missing(error)) return undefined;
           throw error;
@@ -819,7 +943,12 @@ const make = Effect.gen(function* () {
           if (!inside(project, source) || !(await NodeFSP.stat(source)).isFile())
             throw invalid("The recording must live in the project.");
           const speechStatus = await run(speech.status);
-          if (active || !speechStatus.supported || speechStatus.state === "transcribing")
+          if (
+            active ||
+            trashing ||
+            !speechStatus.supported ||
+            speechStatus.state === "transcribing"
+          )
             return { detectedLanguage: null };
           const controller = new AbortController();
           const sampling: Active = { root, controller };
@@ -861,6 +990,19 @@ const make = Effect.gen(function* () {
             if (active === sampling) active = undefined;
           }
         }
+        const mediaRecordPath = (source: string) =>
+          NodePath.join(
+            root,
+            `recording-${NodeCrypto.createHash("sha256").update(source).digest("hex")}.json`,
+          );
+        const readMediaRecord = (source: string) =>
+          NodeFSP.readFile(mediaRecordPath(source), "utf8").then(
+            (text) => decodeRecordingSource(JSON.parse(text)),
+            (error: unknown) => {
+              if (missing(error)) return undefined;
+              throw error;
+            },
+          );
         const registerMedia = async (path: string) => {
           if (!NodePath.isAbsolute(path)) throw invalid("Expected an absolute media path.");
           const source = await NodeFSP.realpath(path);
@@ -880,19 +1022,154 @@ const make = Effect.gen(function* () {
               ? { duration }
               : {}),
           };
-          const key = NodeCrypto.createHash("sha256").update(source).digest("hex");
+          // A move to the Trash may have finished while the length was measured.
+          if (
+            !(await NodeFSP.stat(source).then(
+              (file) => file.isFile(),
+              () => false,
+            ))
+          )
+            throw invalid("The recording is no longer in the project.");
+          const title = (await readMediaRecord(source))?.title;
+          const record = { ...media, ...(title ? { title } : {}) };
           await NodeFSP.mkdir(root, { recursive: true });
-          await atomicWrite(NodePath.join(root, `recording-${key}.json`), JSON.stringify(media));
-          return media;
+          await atomicWrite(mediaRecordPath(source), JSON.stringify(record));
+          return record;
         };
-        if (input.action === "media-register")
+        if (input.action === "media-register") {
+          // A file outside the project registers nothing, so the caller can copy it in instead.
+          if (input.onlyInProject) {
+            const source = await NodeFSP.realpath(input.source).catch(() => undefined);
+            if (!source || !inside(project, source)) return { media: [] };
+          }
           return { media: [await registerMedia(input.source)] };
+        }
+        if (input.action === "recording-rename") {
+          if (!NodePath.isAbsolute(input.source)) throw invalid("Expected an absolute media path.");
+          const source = await NodeFSP.realpath(input.source);
+          if (!inside(project, source)) throw invalid("The recording must live in the project.");
+          const { title: _previous, ...media } =
+            (await readMediaRecord(source)) ?? (await registerMedia(source));
+          const title = input.title.trim();
+          await atomicWrite(
+            mediaRecordPath(source),
+            JSON.stringify({ ...media, ...(title ? { title } : {}) }),
+          );
+          return { media: [{ ...media, ...(title ? { title } : {}) }] };
+        }
+        if (input.action === "recording-trash") {
+          if (!NodePath.isAbsolute(input.source)) throw invalid("Expected an absolute media path.");
+          trashing += 1;
+          try {
+            // The file may already be gone; its transcripts still go.
+            const source = await NodeFSP.realpath(input.source).catch(() =>
+              NodePath.resolve(input.source),
+            );
+            if (!inside(project, source)) throw invalid("The recording must live in the project.");
+            // A job whose recording is not known yet, or a review being saved, may be using it.
+            if (
+              queuedSources.has(source) ||
+              pendingReviews.size > 0 ||
+              (active?.root === root &&
+                (active.source === undefined ||
+                  active.source === source ||
+                  active.status?.job.source === source))
+            )
+              throw invalid("Stop transcribing this recording first.");
+            const revisions = rootStat
+              ? (
+                  await Promise.all(
+                    (await NodeFSP.readdir(root, { withFileTypes: true }))
+                      .filter((entry) => entry.isDirectory() && revision.test(entry.name))
+                      .map(async (entry) => {
+                        const job = await readJson<Job>(
+                          NodePath.join(root, entry.name),
+                          "job.json",
+                        ).catch(() => undefined);
+                        return job?.source === source ? NodePath.join(root, entry.name) : undefined;
+                      }),
+                  )
+                ).filter((directory) => directory !== undefined)
+              : [];
+            const file = await NodeFSP.stat(source).then(
+              (stat) => (stat.isFile() ? [source] : []),
+              () => [],
+            );
+            const outcomes = await moveToTrash(trashHost, [...file, ...revisions]);
+            const failed = outcomes.find((outcome) => !outcome.ok);
+            if (failed && !failed.ok) throw new Error(failed.message);
+            await NodeFSP.rm(mediaRecordPath(source), { force: true });
+            // The next listing walks the project again, so the file does not come back.
+            discoveries.delete(project);
+            return { trashed: true as const };
+          } finally {
+            trashing -= 1;
+          }
+        }
+        if (input.action === "capture-start") {
+          await run(
+            captureGate.withPermit(Effect.promise(() => touchCapture(root, input.id, nowMs))),
+          );
+          const language = input.language ?? "auto";
+          const engine = await run(
+            resolveDefaultEngine(project, { language }, false).pipe(Effect.option),
+          );
+          const captions = Option.isNone(engine)
+            ? undefined
+            : engine.value.engine === "local"
+              ? { kind: "local" as const, modelId: engine.value.model }
+              : engine.value.engine === "cloud" &&
+                  engine.value.cloudEngineId &&
+                  // Dictation carries no project, so a key kept for this project can't caption.
+                  Option.isSome(
+                    await run(cloud.resolve(engine.value.cloudEngineId).pipe(Effect.option)),
+                  )
+                ? { kind: "cloud" as const, engineId: engine.value.cloudEngineId }
+                : engine.value.engine === "chatgpt" && engine.value.providerInstanceId
+                  ? { kind: "chatgpt" as const, instanceId: engine.value.providerInstanceId }
+                  : undefined;
+          const key = await run(
+            cloud.realtimeKey(await projectId()).pipe(Effect.orElseSucceed(() => undefined)),
+          );
+          return {
+            captured: true as const,
+            language,
+            ...(captions ? { captions } : {}),
+            ...(Option.isSome(engine) ? {} : { transcription: "unavailable" as const }),
+            talk: { openai: key !== undefined },
+          };
+        }
+        if (input.action === "capture-talk") {
+          const key = await run(
+            cloud.realtimeKey(await projectId()).pipe(Effect.orElseSucceed(() => undefined)),
+          );
+          if (!key) throw invalid("Add an OpenAI speech engine to talk with your key.");
+          try {
+            const sdpAnswer = await connectLessonTalk({
+              key: Redacted.value(key),
+              sdpOffer: input.sdpOffer,
+              instructions: lessonInstructions(await readCaptions(root, input.id)),
+              signal: AbortSignal.timeout(20_000),
+            });
+            return { sdpAnswer };
+          } catch (cause) {
+            throw new TranscriptionError({
+              code: "model-unavailable",
+              detail: isLessonTalkError(cause)
+                ? cause.message
+                : "OpenAI could not start the conversation.",
+            });
+          }
+        }
         if (
           input.action === "capture-chunk" ||
           input.action === "capture-touch" ||
+          input.action === "capture-caption" ||
           input.action === "capture-finish"
         ) {
-          return await run(
+          if (input.action !== "capture-finish" && isCaptureFinished(input.id))
+            throw invalid("This recording was already saved.");
+          const result = await run(
             captureGate.withPermit(
               Effect.promise(async () => {
                 if (input.action === "capture-chunk") {
@@ -903,11 +1180,28 @@ const make = Effect.gen(function* () {
                   await touchCapture(root, input.id, nowMs);
                   return { captured: true as const };
                 }
+                if (input.action === "capture-caption") {
+                  await saveCaption(root, input.id, {
+                    window: input.window,
+                    start: input.start,
+                    end: Math.max(input.start, input.end),
+                    text: input.text.trim(),
+                  });
+                  return { captured: true as const };
+                }
                 const source = await finishCapture(root, input.id, registerMedia);
                 return { captured: true as const, ...(source ? { source } : {}) };
               }),
             ),
           );
+          if (input.action !== "capture-finish" || !input.lesson || !("source" in result))
+            return result;
+          const transcription = await run(
+            startLesson(project, result.source, input.lesson.language).pipe(
+              Effect.orElseSucceed(() => "unavailable" as const),
+            ),
+          );
+          return { ...result, transcription };
         }
         if (input.action === "capture-recover" || input.action === "media-list") {
           if (rootStat && !agent)
@@ -917,8 +1211,7 @@ const make = Effect.gen(function* () {
               ),
             );
           if (input.action === "capture-recover") return { captured: true as const };
-          if (!rootStat) return { media: [] };
-          const entries = await NodeFSP.readdir(root, { withFileTypes: true });
+          const entries = rootStat ? await NodeFSP.readdir(root, { withFileTypes: true }) : [];
           const media = await Promise.all(
             entries
               .filter(
@@ -928,6 +1221,14 @@ const make = Effect.gen(function* () {
                 try {
                   const record = decodeRecordingSource(await readJson<unknown>(root, entry.name));
                   if (!inside(project, record.source)) return undefined;
+                  // A record outlives its file when the file is moved or deleted outside Scient.
+                  if (
+                    !(await NodeFSP.stat(record.source).then(
+                      (file) => file.isFile(),
+                      () => false,
+                    ))
+                  )
+                    return undefined;
                   const duration = record.duration ?? (await durationFor(project, record.source));
                   return {
                     ...record,
@@ -939,7 +1240,22 @@ const make = Effect.gen(function* () {
                 }
               }),
           );
-          return { media: media.filter((record) => record !== undefined) };
+          const registered = media.filter((record) => record !== undefined);
+          const known = new Set(registered.map(({ source }) => source));
+          const found = (await discoveredMedia(project, nowMs)).flatMap((file) => {
+            if (known.has(file.source)) return [];
+            const duration = probedDuration(project, file);
+            return [
+              {
+                source: file.source,
+                size: file.size,
+                created: file.created,
+                ...(duration === undefined ? {} : { duration }),
+                queued: queuedSources.has(file.source),
+              },
+            ];
+          });
+          return { media: [...registered, ...found] };
         }
         const status = async (id: string): Promise<Status> => {
           if (active?.root === root && active.id === id && active.status) return active.status;
@@ -983,14 +1299,6 @@ const make = Effect.gen(function* () {
           }
         };
 
-        const projectId = async () => {
-          const registered = await run(projects.findActiveByWorkspaceRoot(input.project));
-          const match =
-            Option.isNone(registered) && input.project !== project
-              ? await run(projects.findActiveByWorkspaceRoot(project))
-              : registered;
-          return Option.isSome(match) ? match.value.projectId : undefined;
-        };
         const projectWords = () => readProjectWords(root, projectId);
         const readWords = async (directory: string) =>
           (await (directory === root ? serializeWords(projectWords) : readWordsFile(directory)))
@@ -1296,7 +1604,7 @@ const make = Effect.gen(function* () {
         };
         if (input.action === "review-accept" || input.action === "review-reject") {
           const requested = await completedRevision(input.id);
-          if (active) throw busy();
+          if (active || trashing) throw busy();
           const recording = requested.parent.job.recording ?? requested.parent.job.id;
           const key = NodePath.join(root, recording);
           const operation = async () => {
@@ -1463,6 +1771,11 @@ const make = Effect.gen(function* () {
           } satisfies Published;
         }
         if (input.action === "list") {
+          const source =
+            input.source === undefined
+              ? undefined
+              : await NodeFSP.realpath(input.source).catch(() => null);
+          if (source === null) return [];
           const entries = await NodeFSP.readdir(root, { withFileTypes: true });
           const revisions = await Promise.all(
             entries
@@ -1470,6 +1783,7 @@ const make = Effect.gen(function* () {
               .map(async (entry) => {
                 try {
                   const current = await status(entry.name);
+                  if (source !== undefined && current.job.source !== source) return undefined;
                   if (!input.includeCreated) return current;
                   const metadata = await NodeFSP.stat(NodePath.join(root, entry.name, "job.json"));
                   const corrected =
@@ -1541,7 +1855,7 @@ const make = Effect.gen(function* () {
           );
         }
         if (input.action === "use-subtitles" || input.action === "import-transcript") {
-          if (active) throw busy();
+          if (active || trashing) throw busy();
           const imported = input.action === "import-transcript" ? input : undefined;
           const requestedSource = input.source ?? imported?.file;
           const standalone = imported !== undefined && imported.source === undefined;
@@ -1558,12 +1872,16 @@ const make = Effect.gen(function* () {
             throw invalid("Expected an absolute subtitle path.");
           if (imported && "file" in selection && !inside(project, selection.file))
             throw invalid("The transcript must live in the project.");
+          // Checked again: another job or a move to the Trash may have begun while this resolved.
+          if (active || trashing) throw busy();
           const controller = new AbortController();
           const current: Active = { root, controller };
           active = current;
           const signal = controller.signal;
+          current.source = NodePath.resolve(requestedSource);
           try {
             const source = await NodeFSP.realpath(requestedSource);
+            current.source = source;
             if ((imported && !inside(project, source)) || !(await NodeFSP.stat(source)).isFile())
               throw invalid("Expected a regular project file.");
             const previous = imported?.previousId ? await status(imported.previousId) : undefined;
@@ -1664,12 +1982,13 @@ const make = Effect.gen(function* () {
           }
         }
         if (input.action === "correct") {
-          if (active || pendingReviews.size > 0) throw busy();
+          if (active || trashing || pendingReviews.size > 0) throw busy();
           const controller = new AbortController();
           const current: Active = { root, controller };
           active = current;
           try {
             const parent = await status(input.id);
+            current.source = parent.job.source;
             if (parent.state.stage !== "completed")
               throw invalid("Select a completed transcript revision.");
             const published = await readJson<Published>(
@@ -1758,7 +2077,7 @@ const make = Effect.gen(function* () {
           if (input.action === "status") await wait(active, input.id);
           return status(input.id);
         }
-        if (active || pendingReviews.size > 0) throw busy();
+        if (active || trashing || pendingReviews.size > 0) throw busy();
         if (input.action !== "start") throw invalid("Invalid transcription action.");
         if (input.mode === "thorough" && !input.estimateId)
           throw invalid("Preview Thorough correction and provide its estimate ID.");
@@ -1825,7 +2144,9 @@ const make = Effect.gen(function* () {
               detail: cloudEngine.failure.detail,
             });
           }
+          current.source = NodePath.resolve(sourcePath);
           const source = await NodeFSP.realpath(sourcePath);
+          current.source = source;
           if ((opts?.scoped || opts?.projectOnly) && !inside(NodePath.dirname(root), source))
             throw invalid("The audio file must resolve inside this project.");
           const bound = cloudEngine?._tag === "Success" ? cloudEngine.success : undefined;
@@ -2001,6 +2322,7 @@ const make = Effect.gen(function* () {
                 words,
                 correction,
                 ...(previous ? { previousRevision: previous.job.id } : {}),
+                ...(opts?.lesson ? { lesson: true as const } : {}),
               };
           const update = (state: State) => {
             current.status = { ...current.status, job, state };
@@ -2134,7 +2456,8 @@ const make = Effect.gen(function* () {
                       id === undefined
                         ? null
                         : userSettings.projectSettingsOverrides[id]?.recordingNotesRecipe;
-                    if (recipe?.trim()) {
+                    // A lesson's notes come from its own thread once it settles.
+                    if (recipe?.trim() && !job.lesson) {
                       try {
                         const published = await readJson<Published>(directory, "transcript.json");
                         const transcript = published.segments.map(({ text }) => text).join("\n");
@@ -2197,15 +2520,22 @@ const make = Effect.gen(function* () {
                 await atomicWrite(NodePath.join(directory, "state.json"), JSON.stringify(state));
                 update(state);
                 if (
-                  userSettings.recordingDefaults?.notify !== false &&
-                  opts?.threadId &&
-                  (state.stage === "completed" ||
-                    state.stage === "failed" ||
-                    state.stage === "canceled")
+                  state.stage === "completed" ||
+                  state.stage === "failed" ||
+                  state.stage === "canceled"
                 ) {
-                  await run(
-                    PubSub.publish(settled, { threadId: opts.threadId, id, stage: state.stage }),
-                  );
+                  const threadId =
+                    userSettings.recordingDefaults?.notify !== false ? opts?.threadId : undefined;
+                  const lesson = job.lesson ? { project: input.project } : undefined;
+                  if (threadId || lesson)
+                    await run(
+                      PubSub.publish(settled, {
+                        id,
+                        stage: state.stage,
+                        ...(threadId ? { threadId } : {}),
+                        ...(lesson ? { lesson } : {}),
+                      }),
+                    );
                 }
               });
             }),
@@ -2264,11 +2594,16 @@ const make = Effect.gen(function* () {
     Effect.mapError(() => new DictationWordsError({ message: "Could not open or save Words." })),
   );
 
-  const startScoped = Effect.fn("TranscriptionJobs.startScoped")(function* (
+  /**
+   * The engine and model a recording uses when its start names none: the recording default for
+   * its language, else an installed local model. `agent` also requires agent cloud uploads.
+   */
+  const resolveDefaultEngine = Effect.fn("TranscriptionJobs.resolveDefaultEngine")(function* (
     project: string,
-    input: ScopedStart,
-    waitSeconds: number,
-    threadId?: ThreadId,
+    input: Partial<
+      Pick<StartInput, "engine" | "model" | "language" | "cloudEngineId" | "providerInstanceId">
+    >,
+    agent: boolean,
   ) {
     const language = input.language ?? "auto";
     const settings = yield* serverSettings.getSettings.pipe(Effect.mapError(failureResponse));
@@ -2289,7 +2624,7 @@ const make = Effect.gen(function* () {
         detail:
           "Your recording default needs attention. Reconnect it or choose another engine in Transcription settings.",
       });
-    if (engine !== "local") yield* requireCloudUpload();
+    if (agent && engine !== "local") yield* requireCloudUpload();
     if (selection?.kind === "local") {
       const candidate = getTranscriptionModel(selection.modelId);
       if (
@@ -2301,7 +2636,15 @@ const make = Effect.gen(function* () {
       }
       model = candidate.id;
     } else if (selection?.kind === "cloud") {
-      const resolved = yield* cloud.resolve(selection.engineId).pipe(Effect.mapError(unavailable));
+      const registered = yield* projects
+        .findActiveByWorkspaceRoot(project)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const resolved = yield* cloud
+        .resolve(
+          selection.engineId,
+          Option.isSome(registered) ? registered.value.projectId : undefined,
+        )
+        .pipe(Effect.mapError(unavailable));
       cloudEngineId = selection.engineId;
       model = resolved.model;
     } else if (selection?.kind === "chatgpt") {
@@ -2338,6 +2681,17 @@ const make = Effect.gen(function* () {
         code: "model-unavailable",
         detail: "Select or install a model from scient_transcription_engines.",
       });
+    return { language, engine, model, cloudEngineId, providerInstanceId, defaults };
+  });
+
+  const startScoped = Effect.fn("TranscriptionJobs.startScoped")(function* (
+    project: string,
+    input: ScopedStart,
+    waitSeconds: number,
+    threadId?: ThreadId,
+  ) {
+    const { language, engine, model, cloudEngineId, providerInstanceId, defaults } =
+      yield* resolveDefaultEngine(project, input, true);
     const started = yield* execute(
       {
         ...input,
@@ -2362,6 +2716,47 @@ const make = Effect.gen(function* () {
       return yield* invalid("Expected a transcription job.");
     }
     return started;
+  });
+  /** Transcribes a finished lesson with the recording default; waits its turn when one is running. */
+  const startLesson = Effect.fn("TranscriptionJobs.startLesson")(function* (
+    project: string,
+    source: string,
+    language: string,
+  ): Effect.fn.Return<"started" | "queued", TranscriptionError> {
+    const resolved = yield* resolveDefaultEngine(project, { language }, false);
+    const request = {
+      action: "start" as const,
+      project,
+      source,
+      engine: resolved.engine,
+      model: resolved.model,
+      language: resolved.language,
+      ...(resolved.cloudEngineId ? { cloudEngineId: resolved.cloudEngineId } : {}),
+      ...(resolved.providerInstanceId ? { providerInstanceId: resolved.providerInstanceId } : {}),
+      // Thorough asks for a cost estimate first, so nobody is there to approve it: use Quick.
+      mode: resolved.defaults?.correction === "off" ? ("off" as const) : ("quick" as const),
+    };
+    const attempt = execute(request, { lesson: true }).pipe(Effect.result);
+    const first = yield* attempt;
+    if (first._tag === "Success") return "started" as const;
+    if (first.failure.code !== "busy") return yield* first.failure;
+    queuedSources.add(source);
+    yield* Effect.forkIn(
+      Effect.gen(function* () {
+        let failure = first.failure;
+        while (failure.code === "busy") {
+          const done = active?.done;
+          if (done) yield* Effect.promise(() => done.catch(() => undefined));
+          else yield* Effect.sleep("500 millis");
+          const next = yield* attempt;
+          if (next._tag === "Success") return;
+          failure = next.failure;
+        }
+        yield* Effect.logWarning("Lesson transcription could not start", { code: failure.code });
+      }).pipe(Effect.ensuring(Effect.sync(() => queuedSources.delete(source)))),
+      jobsScope,
+    );
+    return "queued" as const;
   });
   const enqueue = Effect.fn("TranscriptionJobs.enqueue")(function* (
     input: typeof BatchStartRequest.Type,

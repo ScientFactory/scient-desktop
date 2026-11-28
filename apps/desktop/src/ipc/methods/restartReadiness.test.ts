@@ -8,12 +8,24 @@ vi.mock("electron", () => ({}));
 
 import { DesktopRestartTiming } from "../../app/DesktopRestartTiming.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
-import { getToken, reportReady } from "./restartReadiness.ts";
+import type { DesktopUpdateFactProperties } from "../../scient/updateOutcomes/DesktopUpdateFacts.ts";
+import {
+  DesktopStartupTiming,
+  makeStartupTiming,
+} from "../../scient/startupTiming/DesktopStartupTiming.ts";
+import { getToken, reportReady, reportSettled } from "./restartReadiness.ts";
 
-function fixture(destroyed = false) {
+function fixture(
+  destroyed = false,
+  startup?: (clock: { now: number }) => DesktopStartupTiming["Service"],
+) {
   const mainFrame = {};
   const token = { attemptId: "attempt-1", launchId: "launch-1" };
+  const clock = { now: 0 };
   const acknowledgements: unknown[] = [];
+  const restartSampledAt: number[] = [];
+  const startupReports: unknown[] = [];
+  const settlements: unknown[] = [];
   const window = {
     isDestroyed: () => destroyed,
     webContents: { id: 41, mainFrame },
@@ -25,11 +37,37 @@ function fixture(destroyed = false) {
       workspaceReady: (ack) =>
         Effect.sync(() => {
           acknowledgements.push(ack);
+          restartSampledAt.push(clock.now);
+          // Restart logging and attempt-file cleanup.
+          clock.now += 100;
+          return true;
+        }),
+      workspaceSettled: (ack) =>
+        Effect.sync(() => {
+          settlements.push(ack);
           return true;
         }),
     }),
+    startup === undefined
+      ? Layer.mock(DesktopStartupTiming, {
+          workspaceReady: (input) =>
+            Effect.sync(() => {
+              startupReports.push(input);
+              return Effect.void;
+            }),
+        })
+      : Layer.succeed(DesktopStartupTiming, startup(clock)),
   );
-  return { layer, mainFrame, token, acknowledgements };
+  return {
+    layer,
+    mainFrame,
+    token,
+    clock,
+    acknowledgements,
+    restartSampledAt,
+    startupReports,
+    settlements,
+  };
 }
 
 it.effect("accepts only a registered app top frame and forwards no renderer timestamps", () =>
@@ -56,6 +94,32 @@ it.effect("accepts only a registered app top frame and forwards no renderer time
   }),
 );
 
+it.effect("forwards what the restored workspace let the user reach, only from the app frame", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const app = { sender: { id: 41 }, senderFrame: f.mainFrame };
+    const preview = { sender: { id: 99 }, senderFrame: f.mainFrame };
+    const interaction = {
+      projectControlsVisible: true,
+      composerUsable: true,
+      windowUnlocked: false,
+    };
+    yield* reportReady
+      .handler({ ...f.token, projectRestored: true, interaction }, app)
+      .pipe(Effect.provide(f.layer));
+    assert.deepEqual(f.acknowledgements, [{ ...f.token, projectRestored: true, interaction }]);
+    assert.isFalse(
+      yield* reportSettled
+        .handler({ ...f.token, interaction }, preview)
+        .pipe(Effect.provide(f.layer)),
+    );
+    assert.isTrue(
+      yield* reportSettled.handler({ ...f.token, interaction }, app).pipe(Effect.provide(f.layer)),
+    );
+    assert.deepEqual(f.settlements, [{ ...f.token, interaction }]);
+  }),
+);
+
 it.effect.each(["preview", "subframe", "destroyed", "missing-event"] as const)(
   "rejects readiness from %s without releasing an attempt token",
   (kind) =>
@@ -75,5 +139,49 @@ it.effect.each(["preview", "subframe", "destroyed", "missing-event"] as const)(
           .pipe(Effect.provide(f.layer)),
       );
       assert.deepEqual(f.acknowledgements, []);
+      assert.deepEqual(f.startupReports, []);
     }),
+);
+
+it.effect("ends startup timing on every launch, and a restart measurement only with a token", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const event = { sender: { id: 41 }, senderFrame: f.mainFrame };
+    assert.isFalse(
+      yield* reportReady.handler({ projectRestored: false }, event).pipe(Effect.provide(f.layer)),
+    );
+    assert.deepEqual(f.startupReports, [{ projectRestored: false }]);
+    assert.deepEqual(f.acknowledgements, []);
+  }),
+);
+
+it.effect("takes both ready times on receipt, before either measurement logs or writes", () =>
+  Effect.gen(function* () {
+    const recorded: DesktopUpdateFactProperties[] = [];
+    const f = fixture(false, (clock) =>
+      makeStartupTiming({
+        launchKind: "later",
+        platform: "darwin",
+        architecture: "arm64",
+        sinceProcessStart: Effect.sync(() => clock.now),
+        record: (properties) =>
+          Effect.sync(() => {
+            recorded.push(properties);
+            clock.now += 100;
+          }),
+      }),
+    );
+    f.clock.now = 1_950;
+    const event = { sender: { id: 41 }, senderFrame: f.mainFrame };
+    assert.isTrue(
+      yield* reportReady
+        .handler({ ...f.token, projectRestored: true }, event)
+        .pipe(Effect.provide(f.layer)),
+    );
+    assert.deepEqual(f.restartSampledAt, [1_950]);
+    assert.deepEqual(
+      recorded.map((properties) => properties.uiReadyBucket),
+      ["under-2s"],
+    );
+  }),
 );

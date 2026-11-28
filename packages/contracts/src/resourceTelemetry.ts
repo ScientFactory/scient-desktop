@@ -66,6 +66,7 @@ export const ResourceMonitorCapabilities = Schema.Struct({
   ioBytes: Schema.Boolean,
   processStartTime: Schema.Boolean,
   processTree: Schema.Boolean,
+  processIdentities: Schema.optionalKey(Schema.Boolean),
 });
 export type ResourceMonitorCapabilities = typeof ResourceMonitorCapabilities.Type;
 
@@ -114,6 +115,7 @@ export type ResourceMonitorSampleNowCommand = typeof ResourceMonitorSampleNowCom
 export const ResourceMonitorProcessTableCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("processTable"),
+  identities: Schema.optionalKey(Schema.Boolean),
   requestId: TrimmedNonEmptyString,
 });
 export type ResourceMonitorProcessTableCommand = typeof ResourceMonitorProcessTableCommand.Type;
@@ -186,6 +188,8 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
 export type ResourceMonitorSnapshotEvent = typeof ResourceMonitorSnapshotEvent.Type;
 
 export const ResourceMonitorProcessTableEntry = Schema.Struct({
+  pgid: Schema.optionalKey(NonNegativeInt),
+  startTimeMicros: Schema.optionalKey(NonNegativeInt),
   pid: PositiveInt,
   ppid: NonNegativeInt,
   name: Schema.String,
@@ -285,11 +289,12 @@ export const DesktopUpdateRemoteOutcome = Schema.Literals([
 ]);
 export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
 
-// SCIENT-FORK:START — update facts the desktop journaled, delivered to one backend's analytics.
+// SCIENT-FORK:START — update and startup facts the desktop journaled, delivered to one backend's
+// analytics.
 export const DESKTOP_UPDATE_FACTS_LIMIT = 64;
 export const DesktopUpdateFact = Schema.Struct({
   id: TrimmedNonEmptyString,
-  name: Schema.Literals(["app.update.outcome", "app.update.summary"]),
+  name: Schema.Literals(["app.update.outcome", "app.update.summary", "app.startup.timing"]),
   occurredAt: TrimmedNonEmptyString,
   appVersion: TrimmedNonEmptyString,
   buildChannel: Schema.Literals(["stable", "beta", "nightly", "development", "unknown"]),

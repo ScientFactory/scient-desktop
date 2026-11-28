@@ -109,7 +109,8 @@ async function setup(_fixture: _Fixture, h264 = false, platform: "ios" | "androi
     );
     stack.use(stubGlobal("EncodedVideoChunk", vi.fn()));
   } else {
-    // Without WebCodecs the iOS client streams MJPEG.
+    // Without WebCodecs and WebRTC the iOS client goes straight to MJPEG. The WebRTC trial
+    // that precedes MJPEG when WebRTC exists is covered by the client-runtime stream tests.
     const videoDecoder = Object.getOwnPropertyDescriptor(globalThis, "VideoDecoder");
     if (videoDecoder) {
       Reflect.deleteProperty(globalThis, "VideoDecoder");
@@ -117,6 +118,7 @@ async function setup(_fixture: _Fixture, h264 = false, platform: "ios" | "androi
         Object.defineProperty(globalThis, "VideoDecoder", videoDecoder);
       });
     }
+    stack.use(stubGlobal("RTCPeerConnection", undefined));
   }
   stack.use(
     stubGlobal("fetch", (url: string, init: RequestInit) => {

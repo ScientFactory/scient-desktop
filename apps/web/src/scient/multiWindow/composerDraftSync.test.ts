@@ -17,6 +17,7 @@ import {
   DraftId,
   type ComposerFileAttachment,
 } from "../../composerDraftStore";
+import { parseStoredState } from "./crossWindowMerge";
 
 // Each window reloads the draft store and its own modules; the immutable contracts module is
 // evaluated once and shared, as it would be by any two copies of the same app build.
@@ -94,6 +95,45 @@ function storedPrompts(storage: SharedLocalStorage): Record<string, string> {
     ]),
   );
 }
+
+// The envelope version the previous build saves; its windows read only that version.
+const PREVIOUS_BUILD_VERSION = 9;
+
+/** Adds a draft the way the previous build's window does, keeping every draft already saved. */
+function saveAsPreviousBuild(storage: SharedLocalStorage, thread: string, prompt: string): void {
+  const raw = storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+  const stored = parseStoredState(raw, PREVIOUS_BUILD_VERSION) as StoredDrafts["state"] | null;
+  const state = stored ?? {
+    draftsByThreadKey: {},
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  };
+  state.draftsByThreadKey[threadKey(thread)] = { prompt };
+  storage.setItem(
+    COMPOSER_DRAFT_STORAGE_KEY,
+    JSON.stringify({ version: PREVIOUS_BUILD_VERSION, state }),
+  );
+}
+
+describe("composer drafts across app builds", () => {
+  it("keeps drafts the previous build saves around this build's staggered writes", async () => {
+    const storage = sharedLocalStorage();
+    saveAsPreviousBuild(storage, "previous-a", "saved by the previous build");
+    using appWindow = await openDraftWindow(storage);
+
+    saveAsPreviousBuild(storage, "previous-b", "saved while the current build was open");
+    appWindow.setPrompt("current-a", "written by this build");
+    appWindow.flush();
+    saveAsPreviousBuild(storage, "previous-c", "saved after the current build flushed");
+
+    expect(storedPrompts(storage)).toEqual({
+      [threadKey("previous-a")]: "saved by the previous build",
+      [threadKey("previous-b")]: "saved while the current build was open",
+      [threadKey("current-a")]: "written by this build",
+      [threadKey("previous-c")]: "saved after the current build flushed",
+    });
+  });
+});
 
 describe("composer drafts across app windows", () => {
   it("keeps drafts another window wrote, including when this window deletes its own", async () => {

@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { render } from "../../../test/render";
 import lectureVideoUrl from "../../../test/fixtures/recording-lecture.mp4?url";
 import "../../index.css";
@@ -30,6 +30,7 @@ const fixtures = vi.hoisted(() => {
     openPanel: vi.fn(),
     maximize: vi.fn(),
     setMaximized: vi.fn(),
+    importFile: vi.fn(),
   };
 });
 
@@ -97,6 +98,7 @@ vi.mock("./CorrectionModelPicker", () => ({
   ),
 }));
 vi.mock("./copyRecording", () => ({ copyRecording: {} }));
+vi.mock("./serverPlatform", () => ({ useRecycleBin: () => false }));
 vi.mock("../../state/entities", () => ({
   readThreadShell: fixtures.readThread,
   useProjects: () => [
@@ -119,7 +121,7 @@ vi.mock("../../state/use-atom-query-runner", () => ({
     value: { relativeUrl: lectureVideoUrl },
   }),
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => fixtures.importFile }));
 
 function PanelHarness({ fromThread }: { fromThread?: string } = {}) {
   const [tab, setTab] = useState<{
@@ -275,8 +277,8 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
   await expect.element(screen.getByText(/Hebrew/).first()).toBeVisible();
   await expect.element(screen.getByText(/Whisper Large v3/)).not.toBeInTheDocument();
   expect(
-    screen.getByText("Lecture 4.mp4", { exact: true }).element().getBoundingClientRect().left,
-  ).toBe(screen.getByText("Unstarted.m4a", { exact: true }).element().getBoundingClientRect().left);
+    screen.getByText("Lecture 4", { exact: true }).element().getBoundingClientRect().left,
+  ).toBe(screen.getByText("Unstarted", { exact: true }).element().getBoundingClientRect().left);
   await capture("recordings");
   const search = screen.getByRole("textbox", { name: "Search recordings and transcripts" });
   await search.fill("unmatched search");
@@ -377,7 +379,7 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
   expect(await attachment.file.text()).toContain(`Transcripts/${fixtures.job.id}/transcript.json`);
   await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
   await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
-  await expect.element(screen.getByRole("heading", { name: "Lecture 4.mp4" })).toBeVisible();
+  await expect.element(screen.getByRole("heading", { name: "Lecture 4" })).toBeVisible();
   await expect
     .element(screen.getByText("Lecture 4.mp4 · 0:00–0:29", { exact: true }))
     .toBeVisible();
@@ -424,7 +426,7 @@ it("opens a recording in the chat that opened its project recordings", async () 
         <PanelHarness fromThread="current-chat" />
       </div>,
     );
-    await screen.getByRole("button", { name: /Lecture 4\.mp4/ }).click();
+    await screen.getByRole("button", { name: /Lecture 4/ }).click();
     await expect
       .poll(() => fixtures.openPanel.mock.calls.at(-1)?.[0].threadId)
       .toBe("current-chat");
@@ -657,6 +659,93 @@ it("queues two selected recordings with one engine choice", async () => {
     model: "local",
     language: "auto",
   });
+});
+
+it("renames a recording in its row, shows its info and moves it to the Trash", async () => {
+  const source = "/class/Recording 2026-11-26T08-36-24-088Z 71650286.weba";
+  let title: string | undefined;
+  fixtures.command.mockReset().mockImplementation(async (action: string, _project, input) => {
+    if (action === "list") return [];
+    if (action === "media-list")
+      return title === "gone"
+        ? { media: [] }
+        : { media: [{ source, size: 140_000, created: 1, duration: 17, title }] };
+    if (action === "recording-rename") {
+      title = (input as { title: string }).title;
+      return { media: [] };
+    }
+    if (action === "recording-trash") {
+      title = "gone";
+      return { trashed: true };
+    }
+    return {};
+  });
+  await using screen = await render(
+    <div className="h-screen">
+      <PanelHarness />
+    </div>,
+  );
+  await screen.getByRole("button", { name: "Recording actions" }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const name = screen.getByRole("textbox", { name: "Name" });
+  // A recording Scient made is named by the time it started, not by its file name.
+  expect((name.element() as HTMLInputElement).value).toMatch(/^Recording \d/);
+  await name.fill("Week 3");
+  await userEvent.keyboard("{Enter}");
+  expect(fixtures.command).toHaveBeenCalledWith("recording-rename", "/class", {
+    source,
+    title: "Week 3",
+  });
+  await expect.element(screen.getByText("Week 3", { exact: true })).toBeVisible();
+
+  await screen.getByRole("button", { name: "Recording actions" }).click();
+  await page.getByRole("menuitem", { name: "Info" }).click();
+  await expect.element(page.getByText("137 KB")).toBeVisible();
+  await expect.element(page.getByText("WEBA")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+
+  await screen.getByRole("button", { name: "Recording actions" }).click();
+  await page.getByRole("menuitem", { name: "Move to Trash" }).click();
+  expect(fixtures.command).toHaveBeenCalledWith("recording-trash", "/class", { source });
+  await expect.element(screen.getByText("Week 3", { exact: true })).not.toBeInTheDocument();
+});
+
+it("adds a file already in the project where it is, without copying it", async () => {
+  const source = "/class/Downloads/Talk.mp4";
+  vi.stubGlobal("desktopBridge", {
+    getPathForFile: () => source,
+    getLocalEnvironmentBootstraps: () => [],
+  });
+  fixtures.importFile.mockReset();
+  fixtures.command.mockReset().mockImplementation(async (action: string) => {
+    if (action === "list") return [];
+    if (action === "media-list") return { media: [] };
+    if (action === "media-register") return { media: [{ source, size: 5, created: 1 }] };
+    if (action === "inventory")
+      return {
+        local: [],
+        chatgpt: { enabled: false, signedIn: false },
+        cloud: [],
+        recommendations: {},
+      };
+    return { detectedLanguage: null };
+  });
+  try {
+    await using screen = await render(<RecordingsPage lockedProject="class" />);
+    const picker = screen.container.querySelector<HTMLInputElement>('input[accept^="audio/"]')!;
+    const files = new DataTransfer();
+    files.items.add(new File(["video"], "Talk.mp4", { type: "video/mp4" }));
+    picker.files = files.files;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(fixtures.command).toHaveBeenCalledWith("media-register", "/class", {
+      source,
+      onlyInProject: true,
+    });
+    expect(fixtures.importFile).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it("groups independent runs of the same source and opens the newest version with older versions available", async () => {

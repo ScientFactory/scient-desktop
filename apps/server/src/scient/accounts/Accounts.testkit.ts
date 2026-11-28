@@ -140,6 +140,12 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
               Layer.mock(SourceControlProviderRegistry)({
                 resolveLink: () => undefined,
                 discover: options.sourceControl.discover,
+                discoverProvider: (kind) =>
+                  options.sourceControl!.discover.pipe(
+                    Effect.map((items) =>
+                      Option.fromUndefinedOr(items.find((item) => item.kind === kind)),
+                    ),
+                  ),
               }),
               Layer.succeed(GitHubSourceControlCredential, options.sourceControl.github),
             ),
@@ -218,6 +224,7 @@ export function fakeAccounts(
         cancelled.add(id);
       }),
     passwordStore: () => unsupported,
+    externalIdentities: Effect.succeed({ identities: [], complete: true }),
     snapshot: Effect.sync(
       () =>
         ({

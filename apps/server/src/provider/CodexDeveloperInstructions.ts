@@ -3,7 +3,7 @@ import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app
 // SCIENT-FORK:START Scient instruction owners
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
-import { SCIENT_ORCHESTRATION_SECTIONS } from "./ScientProviderInstructions.ts";
+import { scientOrchestrationSections } from "./ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 // SCIENT-FORK:END Scient instruction owners
 
@@ -42,12 +42,13 @@ export function buildCodexAdditionalContext(
    * composer never infers tool availability from a server URL.
    */
   capabilities?: ReadonlySet<McpCapability>,
+  nativeSubagents?: boolean,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     // SCIENT-FORK:START Scient additional context entries
     ...Object.fromEntries(
-      SCIENT_ORCHESTRATION_SECTIONS.map((section, index) => [
+      scientOrchestrationSections(nativeSubagents).map((section, index) => [
         `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
         { kind: "application" as const, value: section },
       ]),

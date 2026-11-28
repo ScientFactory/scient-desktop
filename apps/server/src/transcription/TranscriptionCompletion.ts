@@ -1,11 +1,27 @@
-import { CommandId, MessageId } from "@t3tools/contracts";
+import { CommandId, MessageId, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { TranscriptionJobs, type SettledTranscription } from "./TranscriptionJobs.ts";
+import * as Notes from "./RecordingNotes.ts";
+import { RevisionId, TranscriptionJobs, type SettledTranscription } from "./TranscriptionJobs.ts";
 
-export const completionCommand = ({ threadId, id, stage }: SettledTranscription) => {
+const isRevisionId = Schema.is(RevisionId);
+
+/** A completed lesson gets its notes, written by a thread of their own. */
+const makeLessonNotes = ({ id, stage, lesson }: SettledTranscription) =>
+  lesson && stage === "completed" && isRevisionId(id)
+    ? Notes.execute({ action: "make", project: lesson.project, id, recipe: "lesson" }).pipe(
+        Effect.catchCause(() => Effect.logWarning("Could not make the lesson notes", { id })),
+      )
+    : Effect.void;
+
+export const completionCommand = ({
+  threadId,
+  id,
+  stage,
+}: SettledTranscription & { threadId: ThreadId }) => {
   const key = `transcription:${threadId}:${id}:${stage}`;
   const summary = `Transcription ${stage}.`;
   return {
@@ -32,16 +48,20 @@ export const layer = Layer.effectDiscard(
     const threads = yield* ThreadManagementService;
     const subscription = yield* jobs.subscribeSettled();
     yield* Stream.fromSubscription(subscription).pipe(
-      Stream.runForEach((settled) =>
-        threads.dispatch(completionCommand(settled)).pipe(
-          Effect.catchCause(() =>
-            Effect.logWarning("Could not notify the transcription thread", {
-              id: settled.id,
-              stage: settled.stage,
-            }),
-          ),
-        ),
-      ),
+      Stream.runForEach((settled) => {
+        const { threadId } = settled;
+        const notify = threadId
+          ? threads.dispatch(completionCommand({ ...settled, threadId })).pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("Could not notify the transcription thread", {
+                  id: settled.id,
+                  stage: settled.stage,
+                }),
+              ),
+            )
+          : Effect.void;
+        return notify.pipe(Effect.andThen(makeLessonNotes(settled)));
+      }),
       Effect.forkScoped,
     );
   }),

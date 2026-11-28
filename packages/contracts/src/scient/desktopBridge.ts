@@ -31,6 +31,16 @@ export type DesktopAssetCopyResult = AssetCopyResultType;
 export const DesktopPdfBytesCopyRequestSchema = PdfBytesCopyRequest;
 export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
+/** What the restored workspace lets the user reach; booleans only, for the local restart trace. */
+interface WorkspaceInteraction {
+  /** The restored project's own control is visible, enabled, not inert and not covered. */
+  readonly projectControlsVisible: boolean;
+  /** The chat composer is editable, visible, not inert and not covered. */
+  readonly composerUsable: boolean;
+  /** The window is not locked for a restart (`document.body.inert`). */
+  readonly windowUnlocked: boolean;
+}
+
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
   /** Local restart measurement; absent when no matching update restart is pending. */
@@ -38,10 +48,21 @@ export interface ScientDesktopBridge {
     readonly attemptId: string;
     readonly launchId: string;
   } | null>;
+  /**
+   * The workspace is connected, hydrated and local. Ends this launch's startup timing; with a
+   * restart token it also ends that update restart's measurement.
+   */
   reportWorkspaceReady?: (input: {
+    readonly attemptId?: string;
+    readonly launchId?: string;
+    readonly projectRestored: boolean;
+    readonly interaction?: WorkspaceInteraction;
+  }) => Promise<boolean>;
+  /** The workspace that completed an update restart, observed again once it has settled. */
+  reportWorkspaceSettled?: (input: {
     readonly attemptId: string;
     readonly launchId: string;
-    readonly projectRestored: boolean;
+    readonly interaction: WorkspaceInteraction;
   }) => Promise<boolean>;
   onPrepareUpdateSave?: (
     listener: (input: { readonly requestId: string; readonly lockForRestart: boolean }) => void,

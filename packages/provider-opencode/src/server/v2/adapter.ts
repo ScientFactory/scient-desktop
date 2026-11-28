@@ -52,6 +52,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as P from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
@@ -990,6 +991,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
+    const commandStarts = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
@@ -2506,6 +2508,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     ) {
       const turn = state.active;
       if (turn === undefined) return;
+      const promptDropped = terminal.status === "interrupted" && turn.unsent;
       state.active = undefined;
       for (const inboxID of turn.steers) state.strandedSteers.add(inboxID);
       for (const entry of pending.values()) {
@@ -2572,6 +2575,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         ...turn.providerTurn,
         status: terminal.status,
         completedAt,
+        ...(promptDropped ? { promptDropped: true } : {}),
         turnTokenUsage: turnTokenUsage(turn, terminal.status),
         ...(lastStep === undefined
           ? {}
@@ -2625,6 +2629,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         providerTurnId: turn.providerTurn.id,
         runOrdinal: turn.input.runOrdinal,
         threadDisposition,
+        ...(promptDropped ? { promptDropped: true as const } : {}),
         ...retainedRequestsOf(turn),
       };
       yield* emit(
@@ -3555,6 +3560,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             else state.unsettledStarted = true;
           }
           busy.add(sessionId);
+          const commandStart = commandStarts.get(sessionId);
+          if (commandStart !== undefined) yield* Deferred.succeed(commandStart, undefined);
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
           busy.delete(sessionId);
         }
@@ -5017,10 +5024,32 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             );
             return yield* finishControl;
           }
-          yield* client.session.command({ sessionID, ...command }).pipe(
-            // SCIENT-FORK: native acceptance.
-            Effect.tap(() => markTurnAccepted(state, turn)),
+          // The reply waits for the whole execution, which may wait on a question this turn must answer.
+          const commandStart = yield* Deferred.make<void>();
+          commandStarts.set(sessionId, commandStart);
+          const reply = yield* client.session.command({ sessionID, ...command }).pipe(
+            Effect.tapCause((cause) =>
+              Deferred.isDoneUnsafe(commandStart)
+                ? Effect.logWarning("OpenCode command failed after it started.", cause)
+                : Effect.void,
+            ),
+            Effect.exit,
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (commandStarts.get(sessionId) === commandStart) commandStarts.delete(sessionId);
+              }),
+            ),
+            Effect.forkIn(sessionScope),
           );
+          const replied = yield* Effect.raceFirst(
+            Fiber.join(reply).pipe(Effect.asSome),
+            Deferred.await(commandStart).pipe(Effect.as(Option.none())),
+          );
+          // Once started, the execution's events own the turn.
+          if (Option.isNone(replied)) return;
+          yield* replied.value;
+          // SCIENT-FORK: native acceptance when the command finishes without a start event.
+          yield* markTurnAccepted(state, turn);
           // A command that never prompts the model starts no execution, so no event ends its turn.
           const idle = () => state.active === turn && !busy.has(sessionId);
           if (!idle()) return;
@@ -5125,13 +5154,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             policy,
             threadInput.threadId,
           );
-          const title = threadInput.title?.trim() || undefined;
-          // A session created with a title is never titled by OpenCode's own model.
+          // A session created with a title is never titled by OpenCode's own model, so leave it unset.
           const created = yield* client.session.create({
             location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
             model,
             permissions,
-            ...(title === undefined ? {} : { title }),
           });
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
@@ -5159,7 +5186,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               id: created.id,
               model: created.model,
               agent: created.agent,
-              title: title ?? created.title,
+              title: created.title,
               permissions,
             },
             directory,
@@ -5311,10 +5338,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               }
               // Refresh stale mode rules; running subagent updates are best effort because they outlive this turn.
               yield* writeRules(state, turnInput.runtimePolicy);
-              yield* writeTitle(state, turnInput.appThread.title).pipe(
-                Effect.timeout(REQUEST_REPLY_TIMEOUT),
-                Effect.ignore({ log: true }),
-              );
+              // A root thread's seed or generated title is left to OpenCode, which titles the session itself.
+              if (
+                turnInput.appThread.titleRenamed === true ||
+                turnInput.appThread.lineage.parentThreadId !== null
+              ) {
+                yield* writeTitle(state, turnInput.appThread.title).pipe(
+                  Effect.timeout(REQUEST_REPLY_TIMEOUT),
+                  Effect.ignore({ log: true }),
+                );
+              }
               for (const call of runningCalls(state)) {
                 if (call.child === undefined) continue;
                 yield* writeRules(call.child, turnInput.runtimePolicy).pipe(

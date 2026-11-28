@@ -1,3 +1,6 @@
+import { useAtomCommand } from "../../state/use-atom-command";
+import { isSkillReloadCommand } from "@t3tools/client-runtime/providerSkills";
+import * as Equal from "effect/Equal";
 import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -94,7 +97,8 @@ import {
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
-import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { readPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -121,7 +125,7 @@ import {
   previewAnnotationContextReference,
   responseContextReference,
 } from "../../lib/composerContextRecords";
-import { environmentServerConfigsAtom } from "../../state/server";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
@@ -145,7 +149,11 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
+import {
+  countPreparingComposerImages,
+  holdComposerSend,
+  watchComposerSendEdits,
+} from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
@@ -155,7 +163,12 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
-import { draftSendState, prepareTurnAttachments, restoreComposerDraft } from "./chatViewSend";
+import {
+  draftFanoutSelectionsAtom,
+  draftSendState,
+  prepareTurnAttachments,
+  restoreComposerDraft,
+} from "./chatViewSend";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -320,6 +333,9 @@ export interface ComposerSendInput {
  * shows and comes back if the send fails.
  */
 export function useComposerSend(input: ComposerSendInput) {
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
   const {
     environmentId,
     routeThreadKey,
@@ -1107,6 +1123,7 @@ export function useComposerSend(input: ComposerSendInput) {
         }
         if (scientFeedbackCommand) {
           clearComposerDraftContent(composerDraftTarget);
+          if (replyTo) useComposerDraftStore.getState().setReplyTo(composerDraftTarget, replyTo);
           if (isCurrentRouteThread()) {
             promptRef.current = "";
             composerRef.current?.resetCursorState();
@@ -1159,6 +1176,8 @@ export function useComposerSend(input: ComposerSendInput) {
                 },
                 clearDraft: () => {
                   clearComposerDraftContent(composerDraftTarget);
+                  if (replyTo)
+                    useComposerDraftStore.getState().setReplyTo(composerDraftTarget, replyTo);
                   if (isCurrentRouteThread()) {
                     promptRef.current = "";
                     composerRef.current?.resetCursorState();
@@ -1299,10 +1318,23 @@ export function useComposerSend(input: ComposerSendInput) {
         // across it like any other wait before a send.
         // SCIENT-FORK:START — the send holds sendInFlightRef; a projectless draft has no layout.
         if (activeProject && (baseBranchForWorktree || multipleModelSelections !== null)) {
+          // The commands are read as they are now, which takes a round trip, so the send shows as sending.
+          const showsWait = isCurrentRouteThread();
+          if (showsWait) {
+            beginLocalDispatch({
+              preparingWorktree: true,
+              submissionIntent:
+                submissionIntent === "background" && !isLocalDraftThread
+                  ? "foreground"
+                  : submissionIntent,
+            });
+          }
           const layoutApproval = await ensureWorktreeLayoutApproved({
             environmentId,
             projectId: activeProject.id,
             projectTitle: activeProject.title,
+          }).finally(() => {
+            if (showsWait && isCurrentRouteThread()) resetLocalDispatch();
           });
           if (layoutApproval.status === "cancelled") return;
           if (layoutApproval.status === "blocked") {
@@ -1977,6 +2009,16 @@ export function useComposerSend(input: ComposerSendInput) {
               failure = startResult;
             } else {
               turnStartSucceeded = true;
+              if (isSkillReloadCommand(trimmed)) {
+                void refreshProviders({
+                  environmentId,
+                  input: {
+                    instanceId: ctxSelectedModelSelection.instanceId,
+                    cwd: activeThread.worktreePath ?? activeProject?.workspaceRoot,
+                    fresh: true,
+                  },
+                });
+              }
               if (checkoutPullRequestUrl) {
                 linkCheckoutPullRequest(
                   scopeThreadRef(activeThread.environmentId, threadIdForSend),
@@ -2157,17 +2199,44 @@ export function useComposerSend(input: ComposerSendInput) {
     onError: setThreadError,
   });
   // SCIENT-FORK:END
+  const reportDraftChangedBeforeSend = () => {
+    if (currentRouteThreadKeyRef.current !== routeThreadKey || !activeThread) return;
+    setThreadError(
+      activeThread.id,
+      m(msg("Draft changed while preparing this message. Review it and send again.")),
+    );
+  };
+  const waitBeforeSend = async <T>(pending: Promise<T>) => {
+    const finishWatching = watchComposerSendEdits(composerDraftTarget);
+    const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
+    const fanoutSelections = appAtomRegistry.get(fanoutSelectionsAtom);
+    sendInFlightRef.current = true;
+    const result = await pending
+      .catch((error: unknown) => {
+        finishWatching();
+        return Promise.reject(error);
+      })
+      .finally(() => {
+        sendInFlightRef.current = false;
+      });
+    const watchedStatus = finishWatching();
+    const draftStatus =
+      watchedStatus === "ready" &&
+      !Equal.equals(fanoutSelections, appAtomRegistry.get(fanoutSelectionsAtom))
+        ? "edited"
+        : watchedStatus;
+    const sameRoute = currentRouteThreadKeyRef.current === routeThreadKey;
+    if (draftStatus === "edited") reportDraftChangedBeforeSend();
+    return { result, draftReady: draftStatus === "ready", sameRoute };
+  };
   const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null
         : refreshBeforeSend();
     if (refresh === null) return onSend(...args);
-    sendInFlightRef.current = true;
-    const ready = await refresh.finally(() => {
-      sendInFlightRef.current = false;
-    });
-    if (ready) return onSendLatest(...args);
+    const { result: ready, draftReady } = await waitBeforeSend(refresh);
+    if (ready && draftReady) return onSendLatest(...args);
   };
   const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
@@ -2209,10 +2278,9 @@ export function useComposerSend(input: ComposerSendInput) {
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
-    sendInFlightRef.current = true;
-    await workspaceDefault.finally(() => {
-      sendInFlightRef.current = false;
-    });
+    const { result, draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
+    if (result === "moved") reportDraftChangedBeforeSend();
+    if (result === false || result === "moved" || !draftReady || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
   return { onSend: onSendWithRouting };

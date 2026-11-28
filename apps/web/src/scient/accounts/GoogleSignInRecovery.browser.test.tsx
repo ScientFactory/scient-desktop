@@ -5,6 +5,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render, stubGlobal } from "../../../test/render";
+import { BrowserSurfaceSlot } from "../../browser/BrowserSurfaceSlot";
+import { RightPanelSheet } from "../../components/RightPanelSheet";
 import { GoogleSignInBlockedNotice } from "./GoogleSignInRecovery";
 
 vi.mock("../analytics/accountBrowserAnalytics", async (importOriginal) => ({
@@ -95,4 +97,27 @@ it("shows the site again in the tab once the sign-in window brought the sign-in"
   );
   await page.getByRole("button", { name: "Sign in in a Chrome window" }).click();
   await expect.poll(() => onSignedIn.mock.calls).toEqual([["https://www.overleaf.com/"]]);
+});
+
+it("keeps its actions clickable over a sheet's pointer-transparent browser overlay", async () => {
+  using f = setup();
+  await using _screen = await render(
+    <RightPanelSheet open animationDurationMs={0} onClose={() => undefined}>
+      <BrowserSurfaceSlot tabId="google-sign-in-tab" visible className="h-96 w-80">
+        <GoogleSignInBlockedNotice
+          environmentId={environmentId}
+          profile={work}
+          restartUrl="https://www.overleaf.com/"
+          onOpenExternal={f.openExternal}
+          onSignedIn={() => undefined}
+          onDismiss={() => undefined}
+        />
+      </BrowserSurfaceSlot>
+    </RightPanelSheet>,
+  );
+  await page.getByRole("button", { name: "Open in my browser" }).click();
+  expect(f.openExternal).toHaveBeenCalledWith("https://www.overleaf.com/");
+  await page.getByRole("button", { name: "Sign in in a Chrome window" }).click();
+  await expect.element(page.getByRole("heading", { name: "Sign in in Edge" })).toBeVisible();
+  expect(f.chromeSignIn).toHaveBeenCalledOnce();
 });

@@ -15,7 +15,7 @@ import {
 } from "react";
 import { cn } from "~/lib/utils";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
-import { Button, type ButtonVariant } from "~/components/ui/button";
+import { Button, type ButtonSize, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
@@ -119,6 +119,7 @@ function DialogPopup({
   children,
   showCloseButton = true,
   showBackdrop = true,
+  closeButtonSize = "icon",
   bottomStickOnMobile = true,
   variant = "default",
   mediaControlsPlacement = "outside",
@@ -134,6 +135,7 @@ function DialogPopup({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   showBackdrop?: boolean;
+  closeButtonSize?: ButtonSize;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media" | "paper";
   mediaControlsPlacement?: "inside" | "outside";
@@ -186,7 +188,7 @@ function DialogPopup({
             aria-label={gt("Close", { $context: "button, closes the dialog" })}
             className="absolute end-2 top-2"
             // SCIENT-FORK:START — use the shared single-edge focus treatment on Close.
-            render={<Button size="icon" variant="ghost" focus="edge" />}
+            render={<Button size={closeButtonSize} variant="ghost" focus="edge" />}
             // SCIENT-FORK:END
           >
             <XIcon />
@@ -278,7 +280,7 @@ function DialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
+        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:flex-wrap sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
         variant === "default" && "border-t bg-muted/72 py-4",
         variant === "bare" && "py-4",
         padding === "compact" && "px-4 pb-4 pt-0",

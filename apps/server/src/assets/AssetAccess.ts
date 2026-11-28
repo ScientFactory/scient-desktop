@@ -574,18 +574,17 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       ),
     );
     if (!canonicalFile) {
-      // A symlink inside the workspace that leads out of it still names a
-      // viewable file. Serve its target on its own, exactly like an absolute
-      // media path: one exact file, no workspace sibling access, never writable.
-      const hostFile = yield* resolveCanonicalFile(resolved.absolutePath).pipe(
-        Effect.orElseSucceed(() => null),
+      // A link out of the root gets the single-file grant an absolute path would.
+      const linkedFile = yield* resolveCanonicalFile(resolved.absolutePath).pipe(
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
       );
-      if (hostFile !== null) {
+      if (linkedFile) {
         const hosted = yield* finalizeAbsoluteMediaFileAsset({
-          requestedPath: resolved.absolutePath,
-          workspaceRoot: input.workspaceRoot,
-          resource: input.resource,
-          expiresAt: input.expiresAt,
+          ...input,
+          requestedPath: linkedFile,
+          expectedCanonicalPath: linkedFile,
         });
         return { ...hosted, sourcePath: resolved.relativePath };
       }

@@ -19,6 +19,7 @@ import {
   getClientSettings,
   isClientSettingsHydrated,
   persistClientSettingsPatch,
+  persistClientSettingsUpdate,
 } from "./useSettings";
 
 /** This window of the desktop app; `otherWindowSaved` delivers another window's save notice. */
@@ -134,5 +135,66 @@ describe("client settings saved by another desktop window", () => {
       diffLayout: "split",
       wordWrap: false,
     });
+  });
+
+  it("are not overwritten when that read fails", async () => {
+    using _desktop = setup({
+      request: (_name: string, callback: () => Promise<unknown>) => callback(),
+    } as unknown as Pick<LockManager, "request">);
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    // Another window saved since; this window cannot read it.
+    const failure = new Error("Could not read desktop client settings.");
+    persistenceMocks.getClientSettings.mockRejectedValue(failure);
+
+    await expect(
+      persistClientSettingsUpdate((current) => ({ ...current, wordWrap: false })),
+    ).rejects.toBe(failure);
+
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+  });
+
+  it("keep later patches immediate after a patch queued before hydration fails that read", async () => {
+    const lock = Promise.withResolvers<void>();
+    using _desktop = setup({
+      request: (_name: string, callback: () => Promise<unknown>) => lock.promise.then(callback),
+    } as unknown as Pick<LockManager, "request">);
+    const hydrationRead = Promise.withResolvers<ClientSettings | null>();
+    persistenceMocks.getClientSettings
+      .mockReturnValueOnce(hydrationRead.promise)
+      .mockRejectedValueOnce(new Error("Could not read desktop client settings."));
+
+    const hydration = ensureClientSettingsHydrated();
+    const beforeHydration = persistClientSettingsPatch({ wordWrap: false });
+    hydrationRead.resolve(DEFAULT_CLIENT_SETTINGS);
+    await hydration;
+    lock.resolve();
+    await beforeHydration;
+
+    void persistClientSettingsPatch({ timestampFormat: "12-hour" });
+    expect(getClientSettings().timestampFormat).toBe("12-hour");
+  });
+
+  it("replace a stale hydration read before a patch queued during hydration saves", async () => {
+    using _desktop = setup({
+      request: (_name: string, callback: () => Promise<unknown>) => callback(),
+    } as unknown as Pick<LockManager, "request">);
+    const hydrationRead = Promise.withResolvers<ClientSettings | null>();
+    persistenceMocks.getClientSettings
+      .mockReturnValueOnce(hydrationRead.promise)
+      // Another window saved after the hydration read began; its notice has not arrived.
+      .mockResolvedValueOnce({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
+
+    const hydration = ensureClientSettingsHydrated();
+    const patch = persistClientSettingsPatch({ wordWrap: false });
+    await patch;
+    hydrationRead.resolve(DEFAULT_CLIENT_SETTINGS);
+    await hydration;
+
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith({
+      ...DEFAULT_CLIENT_SETTINGS,
+      diffLayout: "split",
+      wordWrap: false,
+    });
+    expect(getClientSettings().diffLayout).toBe("split");
   });
 });

@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import { historicalMessage } from "./ScientHistoricalContext.ts";
 // SCIENT-FORK:END
 import {
+  handoffByteCap,
   handoffCoverage,
   renderHistory,
   selectHistory,
@@ -537,7 +538,7 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
   function* () {
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const tokenCap = (yield* genericContextHandoffPolicy).tokenCap;
+    const historyBudget = handoffByteCap((yield* genericContextHandoffPolicy).tokenCap);
     const forceBytePolicy = (yield* ContextHandoffPolicyOverride) === "byte";
 
     const prepareLegacyImport = Effect.fn("orchestrationV2.contextHandoff.prepareLegacyImport")(
@@ -579,7 +580,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
                 return message === null ? [] : [message];
               }),
               coverage,
-              budget: tokenCap,
+              budget: historyBudget,
             });
         // SCIENT-FORK:END
         return {
@@ -670,7 +671,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
                 return message === null ? [] : [message];
               }),
               coverage,
-              budget: tokenCap,
+              budget: historyBudget,
             });
         // SCIENT-FORK:END
         return {
@@ -774,7 +775,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
                     ];
               }),
               coverage,
-              budget: tokenCap,
+              budget: historyBudget,
             });
       // SCIENT-FORK:END
       return {

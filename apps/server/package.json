@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -65,6 +65,7 @@
     "@scientfactory/scient-markdown": "workspace:*",
     "@scientfactory/scient-skills": "workspace:*",
     "@scientfactory/scient-sources": "workspace:*",
+    "@t3tools/issue-tracker-jira": "workspace:*",
     "@t3tools/issue-tracker-linear": "workspace:*",
     "@t3tools/provider-acp": "workspace:*",
     "@t3tools/provider-acp-registry": "workspace:*",
@@ -88,6 +89,7 @@
     "@t3tools/source-control-tanstack-source": "workspace:*",
     "@unified-latex/unified-latex-util-parse": "1.8.4",
     "character-entities": "2.0.2",
+    "character-entities-legacy": "3.0.0",
     "diff": "8.0.3",
     "effect": "catalog:",
     "fast-xml-parser": "5.8.0",

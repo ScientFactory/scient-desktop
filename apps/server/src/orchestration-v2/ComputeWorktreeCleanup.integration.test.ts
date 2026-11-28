@@ -1,3 +1,4 @@
+import * as PendingSettleScripts from "./PendingSettleScripts.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -12,6 +13,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import { makeLinkedWorktreeCleanupFixture } from "../testUtils/linkedWorktreeCleanupFixture.ts";
 import { threadCreated, THREAD_ID } from "../../integration/TransferBudgetV2Fixture.integration.ts";
 import { ServerConfig } from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
@@ -157,8 +159,11 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const now = yield* DateTime.now;
       const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
-      yield* fs.makeDirectory(worktreePath, { recursive: true });
-      yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
+      const {
+        execute: executeWorktreeGit,
+        moves,
+        removals,
+      } = yield* makeLinkedWorktreeCleanupFixture(config.baseDir, worktreePath);
       const created = threadCreated(ProviderDriverKind.make("codex"));
       yield* sink.commitProjectCommand({
         commandId: CommandId.make("cleanup-project"),
@@ -247,8 +252,6 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
       let sweepRead = yield* Deferred.make<void>();
       let completed = false;
 
-      const removals: string[] = [];
-      const moves: string[][] = [];
       const settings = yield* Settings.ServerSettingsService.pipe(
         Effect.provide(
           Settings.layerTest({
@@ -265,6 +268,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
       );
       const changes = yield* PubSub.unbounded<ServerSettings>();
       const cleanupLayer = StorageCleanup.layer.pipe(
+        Layer.provide(PendingSettleScripts.layer),
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, {
@@ -321,33 +325,12 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                         : ["symbolic-ref", "--quiet", "HEAD"],
                     );
                   }
-                  if (input.operation === "StorageCleanup.cleanupGit") {
-                    const args = [...input.args];
-                    assert.isFalse(args.includes("--force"));
-                    if (args[1] === "move") {
-                      assert.equal(args[0], "worktree");
-                      assert.lengthOf(args, 4);
-                      const source = args[2]!;
-                      const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
-                      yield* fs.rename(source, destination);
-                      moves.push(args);
-                    } else {
-                      const isolatedPath = moves[0]![3]!;
-                      assert.deepEqual(args, [
-                        "-c",
-                        "status.showUntrackedFiles=normal",
-                        "worktree",
-                        "remove",
-                        "--",
-                        isolatedPath,
-                      ]);
-                      assert.isFalse(yield* fs.exists(worktreePath));
-                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
-                      removals.push(isolatedPath);
-                      yield* fs.remove(isolatedPath, { recursive: true });
-                    }
+                  if (
+                    input.operation === "StorageCleanup.cleanupGit" ||
+                    input.operation === "StorageCleanup.worktreeAdminDir" ||
+                    input.operation === "StorageCleanup.worktreeRepository"
+                  ) {
+                    return yield* executeWorktreeGit(input);
                   }
                   return {
                     exitCode: ChildProcessSpawner.ExitCode(0),

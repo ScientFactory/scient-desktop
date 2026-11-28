@@ -294,6 +294,34 @@
       }
     },
     {
+      "repositoryUrl": "https://github.com/facebook/metro",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/react/metro",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/dmtrKovalenko/fff",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Dmitriy Kovalenko"]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/anomalyco/opencode",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 opencode"]
+      }
+    },
+    {
       "license": "MIT",
       "name": "@electron-webauthn/types",
       "sourceUrl": "https://github.com/iamEvanYT/electron-webauthn",
@@ -393,20 +421,6 @@
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019 zhangyuang"]
-      }
-    },
-    {
-      "repositoryUrl": "https://github.com/facebook/metro",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
-      "repositoryUrl": "https://github.com/react/metro",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
       }
     },
     {
@@ -512,13 +526,6 @@
       "generatedNotice": {
         "licenseId": "ISC",
         "copyrights": ["Copyright (c) 2014-2015, Felix Boehm <me@feedic.com>"]
-      }
-    },
-    {
-      "repositoryUrl": "https://github.com/dmtrKovalenko/fff",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) 2025 Dmitriy Kovalenko"]
       }
     },
     {
@@ -708,13 +715,6 @@
       }
     },
     {
-      "repositoryUrl": "https://github.com/anomalyco/opencode",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) 2025 opencode"]
-      }
-    },
-    {
       "license": "MIT",
       "name": "fastdom",
       "sourceUrl": "https://github.com/wilsonpage/fastdom",
@@ -772,24 +772,6 @@
       "sourceUrl": "https://github.com/NaturalIntelligence/fast-xml-parser"
     },
     {
-      "name": "@betteroffice/xlsx",
-      "version": "0.5.1",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
-      "name": "@betteroffice/pptx",
-      "version": "0.5.1",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
       "name": "character-entities",
       "version": "2.0.2",
       "license": "MIT",
@@ -820,39 +802,6 @@
       "sourceUrl": "https://github.com/mozilla/pdf.js"
     },
     {
-      "name": "@betteroffice/fonts",
-      "version": "0.4.0",
-      "license": "Apache-2.0 AND OFL-1.1",
-      "generatedNotices": [
-        {
-          "licenseId": "Apache-2.0"
-        },
-        {
-          "licenseId": "OFL-1.1",
-          "copyrights": [
-            "Copyright 2013 The Carlito Project Authors (https://github.com/googlefonts/carlito), with Reserved Font Name \"Carlito\""
-          ]
-        }
-      ]
-    },
-    {
-      "name": "@betteroffice/fonts-cjk",
-      "version": "0.4.0",
-      "license": "Apache-2.0 AND OFL-1.1",
-      "generatedNotices": [
-        {
-          "licenseId": "Apache-2.0"
-        },
-        {
-          "licenseId": "OFL-1.1",
-          "copyrights": [
-            "Copyright 2014-2021 Adobe (https://adobe.com/), with Reserved Font Name 'Source'",
-            "Copyright 2017-2024 Adobe (https://adobe.com/), with Reserved Font Name 'Source'"
-          ]
-        }
-      ]
-    },
-    {
       "name": "sql.js",
       "license": "MIT",
       "sourceUrl": "https://github.com/sql-js/sql.js"
@@ -866,15 +815,6 @@
       "name": "iobuffer",
       "license": "MIT",
       "sourceUrl": "https://github.com/image-js/iobuffer"
-    },
-    {
-      "name": "@betteroffice/docx",
-      "version": "0.5.1",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
     }
   ],
   "customNotices": [
@@ -899,7 +839,10 @@
       "name": "GitHub gemoji alias data",
       "sourceUrl": "https://github.com/github/gemoji/blob/fadaeaf1f1a9be82b321316a6c5502e43138b2f6/db/emoji.json",
       "generatedNotices": [
-        { "licenseId": "MIT", "copyrights": ["Copyright (c) 2019 GitHub, Inc."] }
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2019 GitHub, Inc."]
+        }
       ]
     },
     {

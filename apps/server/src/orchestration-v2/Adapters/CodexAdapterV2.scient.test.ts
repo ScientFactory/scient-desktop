@@ -883,10 +883,16 @@ describe("CodexAdapterV2 post-settle continuation (GuidanceCompaction)", () => {
           assert.equal(packet.collaborationMode.settings.model, "gpt-5.4");
           assert.equal(packet.collaborationMode.settings.reasoning_effort, "high");
           const contextKeys = Object.keys(packet.additionalContext);
-          assert.deepEqual(contextKeys.slice(-2), ["t3_code_runtime", "scient_awareness"]);
-          assert.isNotEmpty(contextKeys.slice(0, -2));
+          const runtimeIndex = contextKeys.indexOf("t3_code_runtime");
+          const awarenessKeys = contextKeys.filter((key) => key.startsWith("scient_awareness"));
+          // Awareness spans several entries once it passes Codex's per-entry cap.
+          assert.isNotEmpty(awarenessKeys);
+          assert.deepEqual(contextKeys.slice(runtimeIndex), ["t3_code_runtime", ...awarenessKeys]);
+          assert.isNotEmpty(contextKeys.slice(0, runtimeIndex));
           assert.isTrue(
-            contextKeys.slice(0, -2).every((key) => key.startsWith("t3_code_orchestration_")),
+            contextKeys
+              .slice(0, runtimeIndex)
+              .every((key) => key.startsWith("t3_code_orchestration_")),
           );
           const orchestration = Object.entries(packet.additionalContext)
             .filter(([key]) => key.startsWith("t3_code_orchestration_"))
@@ -895,7 +901,9 @@ describe("CodexAdapterV2 post-settle continuation (GuidanceCompaction)", () => {
             .join("\n\n");
           assert.equal(orchestration, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
           assert.include(orchestration, "delegate_task");
-          const awareness = packet.additionalContext.scient_awareness?.value ?? "";
+          const awareness = awarenessKeys
+            .map((key) => packet.additionalContext[key]?.value ?? "")
+            .join("\n\n");
           for (const required of [
             "preview_status",
             "preview_open",
@@ -2217,7 +2225,7 @@ describe("CodexAdapterV2 runtime policy (Policy)", () => {
           model: "gpt-5.4",
           options: [{ id: "serviceTier", value: "priority" }],
         },
-        omitServiceTier: true,
+        subscriptionSharing: true,
       });
       assert.equal(managed.serviceTier, undefined);
 
@@ -2233,7 +2241,7 @@ describe("CodexAdapterV2 runtime policy (Policy)", () => {
             options,
           },
           defaultServiceTier: "default",
-          omitServiceTier: omit,
+          subscriptionSharing: omit,
         }).pipe(Effect.map((built) => built.serviceTier));
       assert.equal(yield* speed([]), "default");
       assert.equal(yield* speed([{ id: "serviceTier", value: "priority" }]), "priority");
@@ -5088,19 +5096,19 @@ describe("Codex restored Sessions", () => {
       {
         name: "a handoff unload waits for the withheld thread/closed",
         idleFirst: false,
-        awaitRelease: true,
+        awaitClosed: true,
       },
       {
         name: "an idle unload returns on the unsubscribe reply",
         idleFirst: false,
-        awaitRelease: false,
+        awaitClosed: false,
       },
       {
         name: "a handoff after an idle unsubscribe waits for that pending thread/closed",
         idleFirst: true,
-        awaitRelease: true,
+        awaitClosed: true,
       },
-    ])("$name", ({ idleFirst, awaitRelease }) =>
+    ])("$name", ({ idleFirst, awaitClosed }) =>
       Effect.gen(function* () {
         const nativeThreadId = "handoff-thread";
         const closed = {
@@ -5116,7 +5124,7 @@ describe("Codex restored Sessions", () => {
           { type: "emit_inbound" as const, frame: { id, result: { status } } },
         ];
         const transcript = makeCodexReplayTranscript({
-          scenario: `handoff-release-${idleFirst}-${awaitRelease}`,
+          scenario: `handoff-release-${idleFirst}-${awaitClosed}`,
           entries: [
             ...codexReplayPreamble({
               nativeThreadId,
@@ -5153,7 +5161,7 @@ describe("Codex restored Sessions", () => {
         const done = yield* Ref.make(false);
         const unload = yield* harness.runtime.unloadThread!({
           providerThread: harness.providerThread,
-          awaitRelease,
+          awaitClosed,
         }).pipe(Effect.andThen(Ref.set(done, true)), Effect.forkChild);
         yield* Deferred.await(withheld);
         // Codex has acknowledged the unsubscribe but still holds the writer.
@@ -5161,7 +5169,7 @@ describe("Codex restored Sessions", () => {
         const doneBeforeClose = yield* Ref.get(done);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(unload);
-        assert.equal(doneBeforeClose, !awaitRelease);
+        assert.equal(doneBeforeClose, !awaitClosed);
       }).pipe(Effect.scoped, Effect.provide(adapterServices)),
     );
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   analyzeWindowsPayloadInventory,
   unexpectedWindowsNativeFiles,
+  unexpectedWindowsServerAsarEntries,
   windowsCursorFiles,
   windowsTranscribeFiles,
 } from "./windows-payload.ts";
@@ -95,7 +96,7 @@ it("does not grant additional allowance to a large dependency spill", () => {
   assert.equal(result.counts.core, 20_000);
 });
 
-it("counts the server compile cache apart from the core budget, up to its cap", () => {
+it("counts the server compile cache apart from the core budget, up to its limit", () => {
   const cache = (count: number) =>
     Array.from({ length: count }, (_, index) => `resources/server-compile-cache/${index}`);
   const core = ["resources/app.asar", "Scient.exe"];
@@ -104,6 +105,57 @@ it("counts the server compile cache apart from the core budget, up to its cap", 
   assert.equal(result.counts.compileCache, 39);
   assert.equal(result.counts.core, 2);
   assert.equal(result.allowance, base + 39);
-  const oversized = analyzeWindowsPayloadInventory({ files: [...core, ...cache(70)], arch: "x64" });
-  assert.equal(oversized.allowance, base + 64);
+  const full = analyzeWindowsPayloadInventory({ files: [...core, ...cache(64)], arch: "x64" });
+  assert.deepEqual(full.unexpectedFiles, []);
+  const oversized = analyzeWindowsPayloadInventory({ files: [...core, ...cache(65)], arch: "x64" });
+  assert.equal(oversized.unexpectedFiles.length, 1);
+  assert.match(oversized.unexpectedFiles[0] ?? "", /^resources\/server-compile-cache\//);
+});
+
+it("validates slim Windows payloads without Linux Cursor helpers or Linux natives", () => {
+  const slimCursorFiles = windowsCursorFiles("x64", false).map(
+    (file) => `resources/node_modules/@cursor/${file}`,
+  );
+  assert.equal(slimCursorFiles.length, 11);
+  assert.isFalse(slimCursorFiles.some((file) => file.includes("sdk-linux-")));
+
+  const slimOk = analyzeWindowsPayloadInventory({
+    files: [...slimCursorFiles, ...speechFiles],
+    arch: "x64",
+    linuxBackend: false,
+  });
+  assert.deepStrictEqual(slimOk.missingFiles, []);
+  assert.deepStrictEqual(slimOk.unexpectedFiles, []);
+  assert.equal(slimOk.allowance, 11 + 13);
+
+  const injectedLinux = [
+    "resources/node_modules/@cursor/sdk-linux-x64/bin/rg",
+    "resources/server.asar.unpacked/node_modules/node-pty/prebuilds/linux-x64/pty.node",
+  ];
+  const slimRejected = analyzeWindowsPayloadInventory({
+    files: [...slimCursorFiles, ...speechFiles, ...injectedLinux],
+    arch: "x64",
+    linuxBackend: false,
+  });
+  assert.deepStrictEqual(slimRejected.unexpectedFiles, injectedLinux);
+
+  const asarEntries = [
+    "/apps/server/dist/bin.mjs",
+    "/apps/server/dist/synctex-runtime/linux-x64/synctex",
+    "/node_modules/helper/src/linux-x64.js",
+    "/node_modules/helper/docs/build-for-darwin-arm64.md",
+    "/node_modules/@napi-rs/canvas-win32-x64-msvc/canvas.win32-x64-msvc.node",
+    "/node_modules/@napi-rs/canvas-linux-x64-gnu/canvas.linux-x64-gnu.node",
+    "/node_modules/@koromix/koffi-linux-x64/linux_x64/koffi.node",
+    "/node_modules/koffi/prebuilds/linux_x64/koffi.node",
+    "/node_modules/node-pty/prebuilds/linux-x64/pty.node",
+  ];
+  assert.deepStrictEqual(unexpectedWindowsServerAsarEntries(asarEntries, "x64", true), []);
+  assert.deepStrictEqual(unexpectedWindowsServerAsarEntries(asarEntries, "x64", false), [
+    "/apps/server/dist/synctex-runtime/linux-x64/synctex",
+    "/node_modules/@napi-rs/canvas-linux-x64-gnu/canvas.linux-x64-gnu.node",
+    "/node_modules/@koromix/koffi-linux-x64/linux_x64/koffi.node",
+    "/node_modules/koffi/prebuilds/linux_x64/koffi.node",
+    "/node_modules/node-pty/prebuilds/linux-x64/pty.node",
+  ]);
 });

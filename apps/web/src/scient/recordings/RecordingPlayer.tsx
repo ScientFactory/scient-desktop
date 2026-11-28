@@ -47,6 +47,7 @@ export function RecordingPlayer({
   theater,
   onTheater,
   caption,
+  knownDuration,
 }: {
   onReady: (element: HTMLMediaElement) => void;
   onMedia: (element: HTMLMediaElement | null) => void;
@@ -60,6 +61,8 @@ export function RecordingPlayer({
   onTheater: () => void;
   caption: string;
   frontier?: number | undefined;
+  /** The length Scient measured, for files that do not say how long they are. */
+  knownDuration?: number | undefined;
 }) {
   const gt = useGT();
   const media = useRef<HTMLMediaElement | null>(null);
@@ -131,7 +134,8 @@ export function RecordingPlayer({
     hideControls.current = setTimeout(() => setControlsVisible(false), 2500);
   };
   const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
+  const [mediaDuration, setDuration] = useState(0);
+  const duration = mediaDuration || knownDuration || 0;
   const [rate, setRate] = useState("1");
   const [error, setError] = useState(false);
   const loaded = useRef(false);

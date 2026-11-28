@@ -27,24 +27,76 @@ at a time.
 | `use-subtitles`      | Absolute media `source` and `subtitles` selection                                                                                                                               |
 | `list`               | None                                                                                                                                                                            |
 
-`list` accepts `includeCreated` to include revision timestamps and sort newest first. With `query`, it also returns a short matching excerpt from a completed transcript.
+`list` accepts `includeCreated` to include revision timestamps and sort newest first. With `query`, it also returns a short matching excerpt from a completed transcript. With `source`, it returns only that file's revisions.
 `inventory` accepts an optional `language` and `details` flag. It returns
 engine availability and recommendations without account secrets.
 `revision` takes a revision `id`. A completed revision returns the published
 segments and correction review items. An unfinished revision returns segments
 from complete checkpoint records without modifying the ledger.
 
-The Recordings UI registers copied media with `media-register` and reads it
-with `media-list`. These registrations stay in the project if the dialog is
-dismissed. `start-batch` accepts up to 20 recordings in one project and runs
+The Recordings UI registers added media with `media-register` and reads it
+with `media-list`. Add first registers each file with `onlyInProject`, which
+resolves real paths and registers nothing for a file outside the project; those
+files are then copied in and registered. These registrations stay in the
+project if the dialog is dismissed. `media-list` also returns audio and video
+files found in the project that were never registered, from a bounded walk
+(20,000 entries, depth 12, 500 files) that skips hidden folders, `node_modules`,
+`__pycache__`, `venv`, the project's `Transcripts` folder and symbolic links.
+Each project's walk is reused for 10 seconds, so the page's 3-second poll does
+not rescan. A found file's duration appears once its background probe finishes.
+`recording-rename` stores a shown `title` in the media record; an empty title
+returns to the file name, and registering again keeps it. `recording-trash`
+moves the media file, every revision directory whose `job.json` names that
+source, and their notes to the host's Trash, then removes the media record. It
+refuses while the source is queued or transcribing. `start-batch` accepts up to 20 recordings in one project and runs
 them serially through the same job admission and checkpoint pipeline. Pending
 batch requests live in process memory. `pause` stops the active job with its
 checkpoints intact. An explicit resume fails if its original settings,
 vocabulary or source have changed. An explicit rerun gets a fresh revision.
 
+### Lessons
+
+A microphone capture can be a lesson. `capture-start` takes the capture `id`
+and the recording `language`, renews the capture lease and returns the
+recording default engine for that language as `captions`
+(`{ kind: "local", modelId }`, `{ kind: "cloud", engineId }` or
+`{ kind: "chatgpt", instanceId }`), or `transcription: "unavailable"` when no
+engine can transcribe. Dictation carries no project, so a cloud default whose
+key is kept for one project gets no captions; its job still uses that key.
+`talk.openai` says whether an OpenAI speech engine with
+upload consent exists.
+
+The window cuts its own microphone stream into clips at a pause after 10
+seconds, or at 30 seconds, and sends each to `voice.dictate` with that engine.
+One clip is transcribed at a time and one waits; a newer clip replaces the
+waiting one. `capture-caption` saves each result by window index under the
+capture directory and rewrites `captions.md` there. Captions are provisional
+and are deleted with the capture.
+
+`capture-finish` with `lesson: { language }` publishes the recording, then
+starts a normal transcription job with the recording default, as
+`transcription: "started"`, or `"queued"` behind the running job. The job is
+marked `lesson` in `job.json`. It uses Quick correction when the default is
+Thorough, because nobody is there to approve an estimate. When it completes, the server makes notes with
+the `lesson` recipe, which reads the whole transcript section by section. A
+nonempty project notes recipe replaces the built-in lesson instruction. The
+direct `notes.md` generator skips lesson jobs. Finishing keeps every saved
+chunk in index order, so a lost chunk costs only its own audio. The window
+keeps the lease while it saves, and the server refuses later chunks, captions
+and touches for a capture it has already published.
+
+`capture-talk` takes the window's WebRTC offer, resolves the key of the first
+OpenAI speech engine with upload consent, and posts the offer to
+`https://api.openai.com/v1/realtime/calls` with `gpt-realtime-2.1`. Its
+instructions carry the latest captions that fit in 24,000 bytes. The key stays
+on the server; the window reads the call's events on its own data channel. For
+ChatGPT, notes `lesson-talk` with the capture ID launches a **Lesson questions**
+project thread that knows the captions path, and the window holds a Scient
+Agent live voice call in its own agent for that thread.
+
 The authenticated notes endpoint, `POST /api/transcription/notes`, uses the same
 grants and resolves a registered project before accessing revisions. Each notes
-recipe launches a project-root thread with the Transcripts skill. Its manifest
+recipe (`summary`, `study-notes`, `action-items` or `lesson`) launches a project-root thread with the Transcripts skill. Its manifest
 associates the thread and Markdown output with the recording's root revision,
 so notes stay visible when the user switches transcript versions. Ask drafts store their thread ID, source revision and source-time range alongside the recording.
 

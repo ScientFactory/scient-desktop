@@ -21,6 +21,8 @@ Logs emitted inside an active span (`Effect.log*`) attach as span events unless 
 
 Event-loop stalls (>2 s) write `server.eventLoop.stall` spans and append to `event-loop-stalls.ndjson` beside the trace file. SQLite spans carry `db.connection` (`writer`/`reader`) and `db.lock_wait_ms` (queue wait off the event loop—subtract it before blaming query speed). Metrics live only in-process unless OTLP export is enabled.
 
+At trace level Info or above (the default), with timing enabled, the local server file samples routine spans: SQLite, workflow runs (step code, retry schedules, cleanup and the agent threads a run starts are excluded; spans an author adds in the workflow body itself are sampled), and spans marked with `routineSpan` from `@t3tools/shared/observability` (high-volume lookups and sweeps). A routine span that succeeds in under 10 ms without events is kept only when its own span ID ends in `00` (about one in 256). The key is per span, not per trace or parent, because background fibers share the server's boot trace and recurring ticks reuse one parent span. Counts and averages for these spans in the local file and Settings → Diagnostics are therefore a biased sample. `T3CODE_TRACE_MIN_LEVEL=Debug` keeps everything. This sampling does not apply to OTLP export.
+
 ## Local OTLP stack (Grafana LGTM)
 
 ```sh
@@ -70,8 +72,12 @@ file, stdout logs and `t3 trace summary`. Activation needs a separate reviewed d
 Desktop update restarts emit local `desktop-restart` component logs (message `restart timing`) as
 span events in `desktop.trace.ndjson` and on stdout, never to a network endpoint. Each event carries
 a random `attemptId`, `fromVersion` and `targetVersion`; the sequence is `confirmed`,
-`shutdown-started`, `native-handoff`, `launched`, `backend-ready`, `workspace-ready` (or
-`abandoned` with a `reason`). The attempt lives at
+`shutdown-started`, `native-handoff`, `launched`, `backend-ready`, `workspace-ready`,
+`workspace-settled` (or `abandoned` with a `reason`). `workspace-ready` and, about a second later,
+`workspace-settled` record whether the restored workspace was reachable: `projectControlsVisible`,
+`composerUsable` and `windowUnlocked` (booleans the renderer observed: the project's breadcrumb
+control and the chat composer must be visible, enabled, not inert and not covered). Ordinary
+launches without an update restart skip this observation. The attempt lives at
 `<desktop baseDir>/runtime/desktop-restart-attempt.json`, expires after 15 minutes, and is claimed by
 the first eligible launch. Cross-process durations use wall-clock time and include time the app was
 closed; negative or out-of-window differences invalidate the attempt rather than reporting zero. The

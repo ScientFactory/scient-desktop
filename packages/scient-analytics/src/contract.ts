@@ -24,6 +24,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.diagnostics",
   "app.update.outcome",
   "app.update.summary",
+  "app.startup.timing",
   "server.boot.heartbeat",
   "install.owner_observed",
   "install.account_observed",
@@ -1134,6 +1135,42 @@ function updateSummaryProperties(input: Readonly<Record<string, unknown>>) {
   };
 }
 
+/** Doubling steps the desktop computes before it journals a time; nothing finer is accepted. */
+const STARTUP_BUCKETS = ["under-2s", "2-4s", "4-8s", "8-15s", "15-30s", "30-60s", "over-60s"];
+const LAUNCH_KINDS = ["first-after-install", "first-after-update", "later"];
+
+function startupTimingProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const backendReadyBucket = property(input, "backendReadyBucket");
+  const windowShownBucket = property(input, "windowShownBucket");
+  return {
+    launchKind: closedCategory(property(input, "launchKind"), LAUNCH_KINDS),
+    platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
+    architecture: closedCategory(property(input, "architecture"), [...ARCHITECTURE_VALUES]),
+    uiReadyBucket: closedCategory(property(input, "uiReadyBucket"), STARTUP_BUCKETS),
+    ...(backendReadyBucket === undefined
+      ? {}
+      : { backendReadyBucket: closedCategory(backendReadyBucket, STARTUP_BUCKETS) }),
+    ...(windowShownBucket === undefined
+      ? {}
+      : { windowShownBucket: closedCategory(windowShownBucket, STARTUP_BUCKETS) }),
+    projectRestored: normalizedBoolean(property(input, "projectRestored")),
+  };
+}
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * The time an event is sent with, in epoch ms. Startup timing shares its session with
+ * `app.session.started`, so an exact time would give the gap between them to the millisecond; it
+ * is sent by the hour.
+ */
+export function exportedOccurredAtMs(name: string, occurredAtMs: number): number {
+  return name === "app.startup.timing"
+    ? Math.floor(occurredAtMs / HOUR_MS) * HOUR_MS
+    : occurredAtMs;
+}
+
 function turnTerminalStatus(value: unknown): string {
   if (value === "cancelled" || value === "interrupted") return "stopped";
   return normalizedEnum(value, new Set(["completed", "failed", "stopped"]), "other");
@@ -1443,6 +1480,13 @@ function normalizeEvent(
         privacyLevel: "essential",
         priority: "summary",
         properties: updateSummaryProperties(input),
+      };
+    case "app.startup.timing":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "core",
+        properties: startupTimingProperties(input),
       };
     case "app.session.started":
       return {

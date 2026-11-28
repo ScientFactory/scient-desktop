@@ -788,21 +788,21 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // SCIENT-FORK:START: Scient Extensions: connector tools follow the same exposure.
     if (exposureChanged) registerConnectorTools();
     // SCIENT-FORK:END
-    const active = pi.getActiveTools();
     // Completion gateways can silently drop calls to undeclared tools named
     // in history or guidance. Eagerly load bridge schemas, including after tree
     // restores, while retaining deferred exposure for Pi's allowlist rules.
     // Pi still applies --tools/--exclude-tools to this active loadout.
+    const eagerSchemas = ctx.model?.api === "openai-completions";
     const required = [
       ...(hasToolSearch ? ["tool_search"] : []),
-      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => modelToolName(tool.name)) : []),
-      // SCIENT-FORK:START: Scient Extensions: declare connector tools to completion gateways too.
-      // Only projected names, which every model API accepts.
-      ...(ctx.model?.api === "openai-completions" ? connectorToolOwners.keys() : []),
-      // SCIENT-FORK:END
+      ...(eagerSchemas ? catalog.map((tool) => modelToolName(tool.name)) : []),
+      // SCIENT-FORK: Scient Extensions declares the projected connector names.
+      ...(eagerSchemas ? connectorToolOwners.keys() : []),
     ];
-    const missing = required.filter((name) => !active.includes(name));
-    if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
+    const current = pi.getActiveTools();
+    const missing = required.filter((name) => !current.includes(name));
+    if (missing.length > 0) pi.setActiveTools([...current, ...missing]);
+
   };
 
   // Tree navigation restores its saved loadout after session_start.

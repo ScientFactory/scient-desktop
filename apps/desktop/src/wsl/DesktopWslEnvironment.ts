@@ -1192,9 +1192,22 @@ const wslServiceRegistered = Effect.scoped(
   Effect.orElseSucceed(() => false),
 );
 
+// SCIENT-FORK:START — read explicit slim-package WSL capability metadata from packaged package.json.
+const WslPackageMetadata = Schema.Struct({
+  scientWslRuntimeOmitted: Schema.optional(Schema.Boolean),
+});
+const decodeWslPackageMetadata = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(WslPackageMetadata),
+);
+// SCIENT-FORK:END
+
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
+  options?: {
+    readonly isPackaged?: boolean;
+    readonly appRoot?: string;
+  },
 ): Effect.fn.Return<
   boolean,
   never,
@@ -1206,6 +1219,22 @@ export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable"
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
+  // SCIENT-FORK:START — slim Windows packages declare scientWslRuntimeOmitted in app package.json.
+  // Check package capability before probing wsl.exe or the Windows registry while preserving
+  // mounted-only WSL builds that keep the Linux sidecar without a tarball.
+  if (options?.isPackaged === true && options.appRoot) {
+    const omitted = yield* fileSystem
+      .readFileString(path.join(options.appRoot, "package.json"))
+      .pipe(
+        Effect.flatMap(decodeWslPackageMetadata),
+        Effect.map((parsed) => parsed.scientWslRuntimeOmitted === true),
+        Effect.orElseSucceed(() => false),
+      );
+    if (omitted) {
+      return false;
+    }
+  }
+  // SCIENT-FORK:END
   const wslExePath = path.join(windir, "System32", "wsl.exe");
   if (!(yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false)))) {
     return false;
@@ -1321,7 +1350,10 @@ export const layer = Layer.effect(
       effect.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
     // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
-    const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
+    const wslAvailable = yield* makeIsAvailable(environment.platform, windir, {
+      isPackaged: environment.isPackaged,
+      appRoot: environment.appRoot,
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Path.Path, environment.path),

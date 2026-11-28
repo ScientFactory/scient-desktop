@@ -5,6 +5,7 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -22,7 +23,15 @@ import {
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  antigravityAccountFingerprint,
+  antigravitySummaryWindows,
+  antigravityUserAgent,
+} from "../provider/antigravityUsageLimits.ts";
+import {
+  makeUnavailableUsageLimits,
+  makeUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 
 /** A hub with its management key already read from wherever the setting keeps it. */
 export interface CliproxyHub {
@@ -36,6 +45,7 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  project_id: Schema.optional(Schema.String),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -63,6 +73,7 @@ const CodexUsage = Schema.Struct({
     }),
   ),
 });
+const OPTIONAL_HUB_CALL_TIMEOUT = "2 seconds";
 // The usage endpoint can report a window without a utilization, as the CLI's own schema allows.
 const ClaudeWindow = Schema.Struct({
   utilization: Schema.NullOr(Schema.Number),
@@ -118,6 +129,7 @@ const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(Credit
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
@@ -195,12 +207,16 @@ type HubCall = (
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
-  readonly header: (account: AuthFile) => Record<string, string>;
+  readonly header: (
+    account: AuthFile,
+    platform: NodeJS.Platform,
+    architecture: NodeJS.Architecture,
+  ) => Record<string, string>;
   readonly read: (input: {
     readonly account: AuthFile;
     readonly call: HubCall;
     readonly checkedAt: string;
-  }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError>;
+  }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError, Digest.Digest>;
 }
 
 const listedIdentity = (account: AuthFile) => ({
@@ -235,7 +251,17 @@ const CODEX_HUB: HubProvider = {
       : {}),
   }),
   read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-    const usage = yield* decodeCodexUsage(yield* call(`${CODEX_BASE}/usage`));
+    const [usage, available] = yield* Effect.all(
+      [
+        call(`${CODEX_BASE}/usage`).pipe(Effect.flatMap(decodeCodexUsage)),
+        credits(call).pipe(
+          Effect.timeoutOption(OPTIONAL_HUB_CALL_TIMEOUT),
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      ],
+      { concurrency: 2 },
+    );
     const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
       window
         ? {
@@ -246,7 +272,6 @@ const CODEX_HUB: HubProvider = {
               : { windowDurationMins: window.limit_window_seconds / 60 }),
           }
         : null;
-    const available = yield* credits(call).pipe(Effect.orElseSucceed(() => undefined));
     const next = available?.[0];
     const planType =
       usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type;
@@ -281,6 +306,8 @@ const CODEX_HUB: HubProvider = {
 };
 
 const GROK_CLI_VERSION = "1.0.77";
+const ANTIGRAVITY_SUMMARY_URL =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 
 // Keyed by the auth-files `provider`; accounts of any other provider are skipped.
 const HUB_PROVIDERS = new Map<string, HubProvider>([
@@ -347,11 +374,49 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
       }),
     },
   ],
+  [
+    "antigravity",
+    {
+      driver: ProviderDriverKind.make("antigravity"),
+      header: (_account, platform, architecture) => ({
+        Authorization: "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "User-Agent": antigravityUserAgent(platform, architecture),
+      }),
+      read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
+        const project = account.project_id?.trim();
+        if (!project) {
+          return yield* new UsageLimitSourceError({ detail: "No Antigravity project reported." });
+        }
+        const requestedAt = DateTime.toEpochMillis(yield* DateTime.now);
+        const summary = yield* call(ANTIGRAVITY_SUMMARY_URL, { project });
+        const windows = yield* antigravitySummaryWindows(yield* decodeJson(summary), requestedAt);
+        if (windows.length === 0) {
+          return yield* new UsageLimitSourceError({ detail: "No Antigravity quota reported." });
+        }
+        // Local Antigravity reports no e-mail, so the Google account fingerprint is what pools the two.
+        const fingerprint = yield* call("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
+          Effect.flatMap(decodeJson),
+          Effect.flatMap(antigravityAccountFingerprint),
+          Effect.option,
+        );
+        const usageLimits = makeUsageLimits({ checkedAt, windows });
+        return Option.match(fingerprint, {
+          onNone: () => ({ ...listedIdentity(account), usageLimits }),
+          onSome: (credentialFingerprint) => ({
+            usageLimits: { ...usageLimits, credentialFingerprint },
+          }),
+        });
+      }),
+    },
+  ],
 ]);
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const digest = yield* Digest.Digest;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     hub: CliproxyHub,
@@ -431,8 +496,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const call: HubCall = (url, data) => apiCall(hub, account, provider.header(account), url, data);
+    const call: HubCall = (url, data) =>
+      apiCall(hub, account, provider.header(account, platform, architecture), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
+      Effect.provideService(Digest.Digest, digest),
       Effect.catch((error) =>
         Effect.succeed({
           ...listedIdentity(account),
@@ -452,7 +519,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     hub: CliproxyHub,
-  ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
+  ): Effect.fn.Return<
+    {
+      readonly accounts: ReadonlyArray<UsageLimitSourceAccount>;
+      readonly unreadProviders: ReadonlyArray<string>;
+    },
+    UsageLimitSourceError
+  > {
     const accounts = yield* authFiles(hub).pipe(
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
@@ -464,12 +537,21 @@ export const makeCliproxyApi = Effect.gen(function* () {
       const provider = HUB_PROVIDERS.get(account.provider);
       return provider && !account.disabled ? [{ account, provider }] : [];
     });
+    const unreadProviders = [
+      ...new Set(
+        accounts.flatMap((account) =>
+          account.disabled || HUB_PROVIDERS.has(account.provider) || !account.provider.trim()
+            ? []
+            : [account.provider.trim()],
+        ),
+      ),
+    ].toSorted();
     // Model lists are optional, so their lookups run apart from the quota reads and stop at one
     // short deadline; a slow lookup must not push a refresh past its budget.
     const [readings, models] = yield* Effect.all(
       [
         Effect.forEach(readable, ({ account, provider }) => readAccount(hub, account, provider), {
-          concurrency: 4,
+          concurrency: 16,
         }),
         Effect.forEach(
           readable,
@@ -483,10 +565,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
-    return readings.map((reading, index) => {
-      const listed = models[index];
-      return listed && Option.isSome(listed) ? { ...reading, models: listed.value } : reading;
-    });
+    return {
+      accounts: readings.map((reading, index) => {
+        const listed = models[index];
+        return listed && Option.isSome(listed) ? { ...reading, models: listed.value } : reading;
+      }),
+      unreadProviders,
+    };
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
@@ -504,7 +589,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       const body = yield* apiCall(
         hub,
         account,
-        CODEX_HUB.header(account),
+        CODEX_HUB.header(account, platform, architecture),
         `${CREDIT_URL}/consume`,
         {
           redeem_request_id: yield* creditRedeemRequestId(

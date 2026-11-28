@@ -4,12 +4,23 @@ import { useEffect } from "react";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentShellStatus } from "../../state/shell";
-import { workspaceReadiness } from "./workspaceReadiness";
+import {
+  observeWorkspaceInteraction,
+  reportDesktopWorkspaceReady,
+  RESTART_SETTLE_MS,
+  workspaceReadiness,
+} from "./workspaceReadiness";
+
+const startup = { reported: false };
 
 export function DesktopWorkspaceReadiness(props: {
   readonly environmentId: EnvironmentId | null;
   readonly initialized: boolean;
   readonly projectRestored: boolean;
+  /** The restored project, whose own control must be reachable. */
+  readonly projectId?: string | null;
+  /** Ends startup timing only; an update restart ends where its workspace is restored. */
+  readonly startupOnly?: boolean;
 }) {
   const primary = usePrimaryEnvironment();
   const shell = useEnvironmentShellStatus(primary?.environmentId ?? null);
@@ -26,21 +37,25 @@ export function DesktopWorkspaceReadiness(props: {
     liveSnapshot: shell === "live",
   });
   const bridge = window.desktopBridge;
+  const startupOnly = props.startupOnly === true;
+  const projectId = props.projectId ?? null;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native restart owner
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges a committed, connected and hydrated local workspace to the native startup and restart owners
   useEffect(() => {
-    if (!ready || !bridge?.getRestartReadinessToken || !bridge.reportWorkspaceReady) return;
+    if (!ready || !bridge) return;
     let current = true;
-    void bridge
-      .getRestartReadinessToken()
-      .then(async (token) => {
-        if (!current || token === null) return;
-        await bridge.reportWorkspaceReady?.({ ...token, projectRestored: props.projectRestored });
-      })
-      .catch(() => undefined);
+    void reportDesktopWorkspaceReady({
+      bridge,
+      startupOnly,
+      projectRestored: props.projectRestored,
+      startup,
+      isCurrent: () => current,
+      observe: () => observeWorkspaceInteraction(document, projectId),
+      settle: () => new Promise((resolve) => setTimeout(resolve, RESTART_SETTLE_MS)),
+    }).catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [bridge, ready, props.projectRestored]);
+  }, [bridge, ready, startupOnly, props.projectRestored, projectId]);
   return null;
 }

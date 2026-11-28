@@ -267,6 +267,7 @@ import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as WorkflowForge from "./workflows/WorkflowForge.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -893,6 +894,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(
       ProjectStore.layer,
       ThreadSearch.layer,
+      PendingSettleScripts.layer,
       layerTaskFolders,
       LayoutCommandApprovalWrites.layer,
       MilestoneHub.layer,
@@ -916,7 +918,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ProviderRegistry.layer),
   // hydration adds default instances to `providerInstances` on boot.
   Layer.provideMerge(
-    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
+    ProviderInstanceRegistryHydration.layer.pipe(
+      Layer.provide(SqlitePersistence.layerConfig),
+      Layer.provide(layerNativeTelemetry),
+    ),
   ),
   // One gate and MCP status registry for the server, below hydration so adapters share them.
   Layer.provideMerge(Layer.merge(ProviderInstallationGate.layer, ThreadMcpStatusRegistry.layer)),

@@ -6,23 +6,23 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "6d21ad2b25075b8246120aba5d478ba946a44fa8",
-  "reviewedThrough": "6d21ad2b25075b8246120aba5d478ba946a44fa8",
-  "reviewedAt": "2026-11-26",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261126-31d95f850b.md",
+  "integrationBase": "241d46c562fa9a0e1bfc58de181a704dd43ac8f7",
+  "reviewedThrough": "241d46c562fa9a0e1bfc58de181a704dd43ac8f7",
+  "reviewedAt": "2026-11-28",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261128-241d46c562.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "d89b2ef401e4c5523de5bab396310b0ad9ef94e8",
-  "lastRefreshPreviousOfficialTip": "31d95f850bd8f1dfb68676500606d44b923e4883",
-  "lastRefreshOfficialTip": "6d21ad2b25075b8246120aba5d478ba946a44fa8",
+  "lastRefreshBase": "f78ade1dee02d9024562aabec9919accfcf0f727",
+  "lastRefreshPreviousOfficialTip": "d838e95660cb0d9f6784796385d636f4719cfabd",
+  "lastRefreshOfficialTip": "241d46c562fa9a0e1bfc58de181a704dd43ac8f7",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 251,
-  "lastRefreshMerge": "8a0c77466e9c7e93d4dc9061cd351efe3e2b2e33",
-  "lastRefreshBranch": "codex/t3-sync-31d95f850b-20261126",
+  "lastRefreshRangeCount": 112,
+  "lastRefreshMerge": "fee9d6734e041eb9d3838868a533b348f55d6f73",
+  "lastRefreshBranch": "codex/t3-sync-241d46c562-20261128",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,5 +43,5 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshVerifiedAt": "2026-10-30T12:00:00Z"
+  "lastRefreshVerifiedAt": "2026-11-28T03:34:00Z"
 }

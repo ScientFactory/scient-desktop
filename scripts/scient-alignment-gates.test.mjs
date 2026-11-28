@@ -10,6 +10,7 @@ import {
   acquireGatesLock,
   baselinePath,
   claimGatesSlot,
+  commandEnvFor,
   main,
   serverWorkers,
 } from "./scient-alignment-gates.mjs";
@@ -35,6 +36,7 @@ if (args.includes("test:desktop-smoke") && !process.env.FAKE_SMOKE_IGNORES_HOME)
   NodeFS.writeFileSync(NodePath.join(process.env.SCIENT_NEXT_HOME, "dev", "state"), "");
 }
 if (process.env.FAKE_CALLS) NodeFS.appendFileSync(process.env.FAKE_CALLS, JSON.stringify(args) + "\\n");
+if (process.env.FAKE_TEMP_RECORD) NodeFS.appendFileSync(process.env.FAKE_TEMP_RECORD, JSON.stringify({ args: args.join(" "), tmp: process.env.TMPDIR, home: process.env.SCIENT_NEXT_HOME, t3Home: process.env.T3CODE_HOME }) + "\\n");
 const list = (name) => (process.env[name] ?? "").split(",").filter(Boolean);
 if (args[0] === "-r" && args[1] === "ls") {
   const packages = ["a", "b", "untested"].map((name) => ({ name, path: NodePath.resolve("packages", name) }));
@@ -485,6 +487,94 @@ test("a smoke run that ignores its synthetic home fails", () => {
   NodeAssert.deepEqual(result.statuses, [["smoke", "failed"]]);
   NodeAssert.equal(result.record.gates[0].reason, "the desktop did not use the synthetic home");
   NodeAssert.deepEqual(result.record.partial, ["smoke"]);
+});
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- The spawned CLI runs on the host platform.
+const hostPlatform = () => NodeOS.platform();
+
+/** macOS's standard per-user temp root as the system names it, or null on other hosts. */
+function macSystemTempAlias() {
+  if (hostPlatform() !== "darwin") return null;
+  try {
+    const root = NodeChildProcess.execFileSync("getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+    })
+      .trim()
+      .replace(/\/+$/u, "");
+    return root.startsWith("/var/folders/") ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Records what each gate invocation saw: its temp root and both isolated home variables. */
+function tempRecords(argv, env) {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-record-"));
+  directories.push(dir);
+  const record = NodePath.join(dir, "temp-record.jsonl");
+  const result = run(fixture(), argv, { ...env, FAKE_TEMP_RECORD: record });
+  NodeAssert.equal(result.status, 0, result.stderr);
+  return NodeFS.readFileSync(record, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+}
+
+function assertTempRoot(records, expected) {
+  // The server run is the test invocation: both homes must be isolated under the same root.
+  const server = records.filter((seen) => seen.args.includes("--filter t3"));
+  NodeAssert.ok(server.length > 0, "no server test invocation was recorded");
+  for (const seen of server) {
+    NodeAssert.ok(seen.home?.startsWith(expected + NodePath.sep), seen.home);
+    NodeAssert.ok(seen.t3Home?.startsWith(expected + NodePath.sep), seen.t3Home);
+  }
+  for (const seen of records) {
+    NodeAssert.equal(seen.tmp, expected, seen.args);
+    if (seen.home !== undefined)
+      NodeAssert.ok(seen.home.startsWith(expected + NodePath.sep), seen.home);
+  }
+}
+
+test("only macOS's system temp alias is resolved for gate commands", (t) => {
+  for (const platform of ["win32", "linux"])
+    NodeAssert.deepEqual(commandEnvFor(platform, "/var/folders/x/T"), {});
+  // Not the system alias: the spelling the caller chose stays.
+  for (const plain of ["/tmp", "/definitely/not/a/temp/root", "/var/folders/no-such-root"])
+    NodeAssert.deepEqual(commandEnvFor("darwin", plain), {});
+  // Positive control: the real system alias resolves to exactly /private plus its own path.
+  const alias = macSystemTempAlias();
+  if (alias === null) return t.skip("no macOS /var/folders temp alias on this host");
+  NodeAssert.deepEqual(commandEnvFor("darwin", alias), { TMPDIR: `/private${alias}` });
+});
+
+test("a caller's own symlink keeps its spelling, short or long", (t) => {
+  if (hostPlatform() === "win32") return t.skip("symlink aliases need Windows privileges");
+  const target = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-target-"));
+  directories.push(target);
+  // A short and a long symlink, both outside the system temp root.
+  const base = NodeFS.mkdtempSync(NodePath.join("/tmp", "scient-gates-alias-"));
+  directories.push(base);
+  for (const alias of [`${base}-s`, `${base}-${"x".repeat(60)}`]) {
+    NodeFS.symlinkSync(target, alias);
+    directories.push(alias);
+    NodeAssert.deepEqual(commandEnvFor("darwin", alias), {});
+    assertTempRoot(tempRecords(["--only", "fmt,test"], { TMPDIR: alias }), alias);
+  }
+  // A caller's symlink under the system root keeps its spelling too: its realpath is never /private plus itself.
+  const system = macSystemTempAlias();
+  if (system !== null) {
+    const alias = `${system}/scient-gates-custom-${process.pid}`;
+    NodeFS.symlinkSync(target, alias);
+    directories.push(alias);
+    NodeAssert.deepEqual(commandEnvFor("darwin", alias), {});
+    assertTempRoot(tempRecords(["--only", "fmt,test"], { TMPDIR: alias }), alias);
+  }
+});
+
+test("gate commands run under macOS's system temp root, given that alias explicitly", (t) => {
+  const alias = macSystemTempAlias();
+  if (alias === null) return t.skip("no macOS /var/folders temp alias on this host");
+  assertTempRoot(tempRecords(["--only", "fmt,test"], { TMPDIR: alias }), `/private${alias}`);
 });
 
 test("on Windows the local test aggregate is an explicit gap unless requested", () => {

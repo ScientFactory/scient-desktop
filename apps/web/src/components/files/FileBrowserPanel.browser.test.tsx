@@ -7,15 +7,15 @@ import {
   type ProjectListDirectoryInput,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
+import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
+import { RightPanelSheet } from "~/components/RightPanelSheet";
 import { dismissContextMenu, showContextMenuFallback } from "~/contextMenuFallback";
+import { isMacPlatform } from "~/lib/utils";
 import { act, render } from "../../../test/render";
 
-import { RightPanelSheet } from "~/components/RightPanelSheet";
-import { isMacPlatform } from "~/lib/utils";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { refreshProjectFiles } from "./projectFilesQueryState";
@@ -90,6 +90,9 @@ vi.mock("~/components/ui/tooltip", () => ({
   TooltipTrigger: ({ render }: { render: ReactNode }) => render,
   TooltipPopup: () => null,
 }));
+const downloadFile = vi.fn();
+vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
+vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 
 /** Refresh and expand-all live in the Files menu ("⋯") at the end of the bar. */
 async function chooseFromFilesMenu(container: HTMLElement, label: string) {
@@ -529,14 +532,16 @@ describe("Files panel search", () => {
       screen.container
         .querySelector("file-tree-container")!
         .shadowRoot!.querySelector<HTMLElement>('[data-item-path="README.md"]')!;
-    findRow().dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        button: 2,
-      }),
-    );
+    const openRowMenu = () =>
+      findRow().dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+    openRowMenu();
     // SCIENT-FORK:START — Copy mention sits under Copy; Add to chat opens the menu
     const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
     await expect.element(copy).toBeVisible();
@@ -546,6 +551,12 @@ describe("Files panel search", () => {
     await userEvent.click(action);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
 
+    openRowMenu();
+    await userEvent.click(page.getByRole("menuitem", { name: "Download", exact: true }));
+    expect(downloadFile).toHaveBeenCalledWith("/workspace", "README.md");
+
+    // Hover can take focus when the keyboard menu reopens under the pointer.
+    await commands.resetPointer();
     const row = findRow();
     await userEvent.keyboard("{Tab}");
     row.focus();

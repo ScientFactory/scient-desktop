@@ -587,3 +587,81 @@ describe("review record snapshots", () => {
     expect(files.some((name) => name.startsWith("library"))).toBe(false);
   });
 });
+
+describe("review snapshots of works with thousands of authors", () => {
+  it("reads an entry listing every author and keeps it while no record holds the list", async () => {
+    const { copy, emptyLibrary, reviewId, searched, added } = await reviewCopiedToEmptyLibrary();
+    const consortium = Array.from({ length: 7_992 }, (_, index) => ({
+      creatorType: "author",
+      givenName: `Author ${index + 1}`,
+      familyName: "Consortium",
+      literalName: null,
+    }));
+    // The entry as Scient wrote it before saved copies were cut: every author, no count.
+    const path = reviewFile(copy, reviewId, ".works.json");
+    const file = JSON.parse(await NodeFSP.readFile(path, "utf8"));
+    file.records[added.sourceId].creators = consortium;
+    await NodeFSP.writeFile(path, `${JSON.stringify(file, null, 2)}\n`);
+
+    const reads = { projectRoot: copy, library: emptyLibrary, reviewId };
+    const records = await listScientLibraryReviewRecords({ ...reads, mode: "read" });
+    expect(
+      records?.find((entry) => entry.projectSourceId === added.sourceId)?.record?.creators,
+    ).toEqual(consortium);
+
+    await changeScientLibraryReview({
+      projectRoot: copy,
+      library: emptyLibrary,
+      change: {
+        action: "screen",
+        reviewId,
+        stage: "title-abstract",
+        decisions: [{ sourceId: searched.sourceId, decision: "include" }],
+      },
+      actor: "user",
+    });
+    await readScientLibraryReview({ ...reads, mode: "write" });
+    const after = await listScientLibraryReviewRecords({ ...reads, mode: "read" });
+    const kept = after?.find((entry) => entry.projectSourceId === added.sourceId);
+    expect(kept?.record?.creators).toEqual(consortium);
+    // As an older Scient reads it: the first 256 names, the rest in a field it skips.
+    const stored = JSON.parse(await NodeFSP.readFile(path, "utf8")).records[added.sourceId];
+    expect(stored.creators).toEqual(consortium.slice(0, 256));
+    expect(stored.overflow).toMatchObject({ creators: consortium.slice(256) });
+  });
+
+  it("reads past an entry it cannot read or a count it cannot use, and keeps that entry as written", async () => {
+    const { copy, emptyLibrary, reviewId, searched, added } = await reviewCopiedToEmptyLibrary();
+    const path = reviewFile(copy, reviewId, ".works.json");
+    const file = JSON.parse(await NodeFSP.readFile(path, "utf8"));
+    file.records[searched.sourceId].creatorCount = 0;
+    file.records[added.sourceId].creators = [{ creatorType: "" }];
+    const unreadable = file.records[added.sourceId];
+    await NodeFSP.writeFile(path, `${JSON.stringify(file, null, 2)}\n`);
+
+    const reads = { projectRoot: copy, library: emptyLibrary, reviewId };
+    const records = await listScientLibraryReviewRecords({ ...reads, mode: "read" });
+    expect(records?.map(({ projectSourceId, from }) => [projectSourceId, from])).toEqual([
+      [searched.sourceId, "snapshot"],
+      [added.sourceId, "missing"],
+    ]);
+
+    await changeScientLibraryReview({
+      projectRoot: copy,
+      library: emptyLibrary,
+      change: {
+        action: "screen",
+        reviewId,
+        stage: "title-abstract",
+        decisions: [{ sourceId: searched.sourceId, decision: "include" }],
+      },
+      actor: "user",
+    });
+    await readScientLibraryReview({ ...reads, mode: "write" });
+    expect(JSON.parse(await NodeFSP.readFile(path, "utf8")).records[added.sourceId]).toEqual(
+      unreadable,
+    );
+    const folder = await NodeFSP.readdir(NodePath.dirname(path));
+    expect(folder.filter((name) => name.includes(".broken-"))).toEqual([]);
+  });
+});

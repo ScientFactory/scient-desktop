@@ -1106,6 +1106,10 @@ jobs:
       actions: read
     # SCIENT-FORK:END
     uses: ./.github/workflows/windows-packaging.yml
+    # SCIENT-FORK:START — the full WSL installer, which releases do not ship, only nightly and by hand.
+    with:
+      wsl: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    # SCIENT-FORK:END
 
   remote_server_packaging:
     needs: [queue_ci, changes]

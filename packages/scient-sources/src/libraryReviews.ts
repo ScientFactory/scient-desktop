@@ -29,6 +29,13 @@ import {
   ScientSourceIdentifier,
   type ScientSourceActor,
   type ScientSourceRecord,
+  ScientSavedCopyCreatorCount,
+  scientSavedCopyList,
+  SCIENT_SAVED_COPY_LIST_LIMIT,
+  scientSavedCopyHead,
+  scientSavedCopyRoster,
+  joinScientSavedCopy,
+  withUsableCreatorCount,
 } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { listScientSourceRecords, scientSourceStoreInternals } from "./store.ts";
@@ -74,14 +81,20 @@ const {
   reviewsDirectoryExists,
 } = scientSystematicReviewStoreInternals;
 
-/** What screening and counting read about one review record. No notes, tags, PDFs or full text. */
+/**
+ * What screening and counting read about one review record. No notes, tags, PDFs or full text.
+ * Built from a record, it keeps 256 creators and identifiers (`scientSavedCopyRoster`); a longer
+ * list an older Scient wrote is read and kept whole until a record holds it.
+ */
 export const ScientReviewWork = Schema.Struct({
   // Plain text, so a type a newer Scient adds never hides the whole file.
   type: NonEmptyString,
   title: NullableText,
-  creators: Schema.Array(ScientSourceCreator).pipe(Schema.check(Schema.isMaxLength(256))),
+  creators: Schema.Array(ScientSourceCreator),
+  /** The work's whole creator count, when `creators` holds only the first 256. */
+  creatorCount: Schema.optionalKey(ScientSavedCopyCreatorCount),
   issuedYear: Schema.NullOr(Schema.Int),
-  identifiers: Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
+  identifiers: Schema.Array(ScientSourceIdentifier),
   containerTitle: NullableText,
   abstract: NullableText,
   abstractSections: Schema.Array(ScientSourceAbstractSection).pipe(
@@ -99,7 +112,17 @@ const SnapshotFileHeader = Schema.Struct({
   records: Schema.Record(Schema.String, Schema.Unknown),
 });
 const decodeSnapshotHeader = Schema.decodeUnknownSync(SnapshotFileHeader);
-const decodeWork = Schema.decodeUnknownSync(ScientReviewWork);
+const decodeWholeWork = Schema.decodeUnknownSync(ScientReviewWork);
+const decodeWork = (raw: unknown) =>
+  decodeWholeWork(withUsableCreatorCount(joinScientSavedCopy(raw)));
+
+const decodeEntry = (raw: unknown): ScientReviewWork | null => {
+  try {
+    return decodeWork(raw);
+  } catch {
+    return null;
+  }
+};
 
 interface StoredWork {
   readonly work: ScientReviewWork;
@@ -109,29 +132,38 @@ interface StoredWork {
 
 interface SnapshotDocument {
   readonly entries: ReadonlyMap<string, StoredWork>;
+  /** Entries this version cannot read, kept as written until an entry for the source replaces them. */
+  readonly unread: ReadonlyMap<string, unknown>;
   readonly extra: JsonObject;
   /** The file's bytes as read, or null when there is no file. */
   readonly text: string | null;
 }
 
-const EMPTY_DOCUMENT: SnapshotDocument = { entries: new Map(), extra: {}, text: null };
-const WORK_FIELDS = Object.keys(ScientReviewWork.fields);
+const EMPTY_DOCUMENT: SnapshotDocument = {
+  entries: new Map(),
+  unread: new Map(),
+  extra: {},
+  text: null,
+};
+const WORK_FIELDS = [...Object.keys(ScientReviewWork.fields), "overflow"];
 const FILE_FIELDS = Object.keys(SnapshotFileHeader.fields);
 
 const codeUnitOrder = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
 function encodeWork(work: ScientReviewWork, extra: JsonObject) {
+  const head = scientSavedCopyHead(work, false);
   return {
     type: work.type,
     title: work.title,
-    creators: work.creators.map((creator) => ({
+    creators: head.creators.map((creator) => ({
       creatorType: creator.creatorType,
       givenName: creator.givenName,
       familyName: creator.familyName,
       literalName: creator.literalName,
     })),
+    ...(work.creatorCount !== undefined ? { creatorCount: work.creatorCount } : {}),
     issuedYear: work.issuedYear,
-    identifiers: work.identifiers.map((identifier) => ({
+    identifiers: head.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
       value: identifier.value,
     })),
@@ -143,19 +175,27 @@ function encodeWork(work: ScientReviewWork, extra: JsonObject) {
     })),
     capturedAt: work.capturedAt,
     capturedRevision: work.capturedRevision,
+    ...(head.overflow ? { overflow: head.overflow } : {}),
     ...sortedExtra(extra),
   };
 }
 
 /** Keys in code-unit order and fields in a fixed order, so equal content is equal bytes. */
-function encodeSnapshot(reviewId: string, document: Pick<SnapshotDocument, "entries" | "extra">) {
+function encodeSnapshot(
+  reviewId: string,
+  document: Pick<SnapshotDocument, "entries" | "extra"> & Partial<Pick<SnapshotDocument, "unread">>,
+) {
+  const unread = [...(document.unread ?? [])].filter(([id]) => !document.entries.has(id));
   return {
     formatVersion: 1,
     reviewId,
     records: Object.fromEntries(
-      [...document.entries]
-        .toSorted(([left], [right]) => codeUnitOrder(left, right))
-        .map(([sourceId, { work, extra }]) => [sourceId, encodeWork(work, extra)]),
+      [
+        ...[...document.entries].map(
+          ([sourceId, { work, extra }]) => [sourceId, encodeWork(work, extra)] as const,
+        ),
+        ...unread,
+      ].toSorted(([left], [right]) => codeUnitOrder(left, right)),
     ),
     ...sortedExtra(document.extra),
   };
@@ -196,16 +236,14 @@ async function readSnapshotDocument(filePath: string, reviewId: string): Promise
     const value: unknown = JSON.parse(text);
     const header = decodeSnapshotHeader(value);
     if (header.reviewId !== reviewId) return { broken: true };
-    return {
-      entries: new Map(
-        Object.entries(header.records).map(([sourceId, raw]) => [
-          sourceId,
-          { work: decodeWork(raw), extra: extraFields(raw, WORK_FIELDS) },
-        ]),
-      ),
-      extra: extraFields(value, FILE_FIELDS),
-      text,
-    };
+    const entries = new Map<string, StoredWork>();
+    const unread = new Map<string, unknown>();
+    for (const [sourceId, raw] of Object.entries(header.records)) {
+      const work = decodeEntry(raw);
+      if (work) entries.set(sourceId, { work, extra: extraFields(raw, WORK_FIELDS) });
+      else unread.set(sourceId, raw);
+    }
+    return { entries, unread, extra: extraFields(value, FILE_FIELDS), text };
   } catch {
     return { broken: true };
   }
@@ -300,8 +338,13 @@ async function publishSnapshot(
   required: ReadonlyArray<string>,
   name = reviewId,
 ): Promise<SnapshotState> {
+  const unread = new Map(
+    [current.single, ...(current.shards?.values() ?? [])].flatMap((document) => [
+      ...document.unread,
+    ]),
+  );
   if (current.shards === null) {
-    const encoded = encodeSnapshot(reviewId, { entries, extra: current.single.extra });
+    const encoded = encodeSnapshot(reviewId, { entries, unread, extra: current.single.extra });
     const text = formatJson(encoded);
     if (Buffer.byteLength(text, "utf8") <= scientReviewSnapshotLimits.shardThresholdBytes) {
       if (current.single.text === text) return current;
@@ -321,10 +364,14 @@ async function publishSnapshot(
   await assertScientProjectDirectory(folder.root, directory, { create: true });
   const shards = new Map(current.shards ?? []);
   let changed = false;
-  for (const shard of [...new Set([...groups.keys(), ...shards.keys()])].toSorted()) {
+  const unreadShards = [...unread.keys()].map(shardOf);
+  for (const shard of [
+    ...new Set([...groups.keys(), ...shards.keys(), ...unreadShards]),
+  ].toSorted()) {
     const existing = shards.get(shard);
     const encoded = encodeSnapshot(reviewId, {
       entries: groups.get(shard) ?? new Map(),
+      unread: new Map([...unread].filter(([sourceId]) => shardOf(sourceId) === shard)),
       // Fields a newer Scient put on the single file go to every shard.
       extra: existing?.extra ?? current.single.extra,
     });
@@ -355,16 +402,19 @@ export function scientReviewNamedIds(review: ScientSystematicReview): ReadonlyAr
   ];
 }
 
+/** `copy` is the entry it replaces, whose roster it keeps when only the copy holds the whole list. */
 export function scientReviewWorkFromRecord(
   record: ScientSourceRecord,
   capturedAt: string,
+  copy: ScientReviewWork | null = null,
 ): ScientReviewWork {
+  const { incompleteCreatorRoles: _roles, ...roster } = scientSavedCopyRoster(record, copy);
   return {
     type: record.type,
     title: record.title,
-    creators: record.creators,
+    ...roster,
     issuedYear: record.issuedYear,
-    identifiers: record.identifiers,
+    identifiers: scientSavedCopyList(record.identifiers, copy?.identifiers),
     containerTitle: record.containerTitle,
     abstract: record.abstract,
     abstractSections: record.abstractSections ?? [],
@@ -388,12 +438,18 @@ function refreshedWork(
   /** An unmerged source: the entry is its record whole, as for a pin's copy. */
   whole: boolean,
 ): ScientReviewWork {
-  const fresh = scientReviewWorkFromRecord(record, now);
-  if (whole) return workContent(fresh) === workContent(existing) ? existing : fresh;
+  if (whole) {
+    const fresh = scientReviewWorkFromRecord(record, now);
+    return workContent(fresh) === workContent(existing) ? existing : fresh;
+  }
+  const fresh = scientReviewWorkFromRecord(record, now, existing);
+  const { creatorCount: _count, ...freshRest } = fresh;
+  const creatorsFrom = fresh.creators.length > 0 ? fresh : existing;
   const next: ScientReviewWork = {
-    ...fresh,
+    ...freshRest,
     title: fresh.title ?? existing.title,
-    creators: fresh.creators.length > 0 ? fresh.creators : existing.creators,
+    creators: creatorsFrom.creators,
+    ...(creatorsFrom.creatorCount !== undefined ? { creatorCount: creatorsFrom.creatorCount } : {}),
     issuedYear: fresh.issuedYear ?? existing.issuedYear,
     identifiers: fresh.identifiers.length > 0 ? fresh.identifiers : existing.identifiers,
     containerTitle: fresh.containerTitle ?? existing.containerTitle,
@@ -417,6 +473,40 @@ export function scientReviewSnapshotText(
   );
 }
 
+/**
+ * A snapshot file's bytes with every list past 256 written in the form older Scient reads; null
+ * when the file needs no change or is not this review's snapshot.
+ */
+export function boundScientReviewSnapshotText(text: string, reviewId: string): string | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    const header = decodeSnapshotHeader(value);
+    if (header.reviewId !== reviewId) return null;
+    const long = (raw: unknown, name: string) =>
+      isJsonObject(raw) &&
+      Array.isArray(raw[name]) &&
+      raw[name].length > SCIENT_SAVED_COPY_LIST_LIMIT;
+    if (
+      !Object.values(header.records).some(
+        (raw) => long(raw, "creators") || long(raw, "identifiers"),
+      )
+    )
+      return null;
+    const entries = new Map<string, StoredWork>();
+    const unread = new Map<string, unknown>();
+    for (const [sourceId, raw] of Object.entries(header.records)) {
+      const work = decodeEntry(raw);
+      if (work) entries.set(sourceId, { work, extra: extraFields(raw, WORK_FIELDS) });
+      else unread.set(sourceId, raw);
+    }
+    return formatJson(
+      encodeSnapshot(reviewId, { entries, unread, extra: extraFields(value, FILE_FIELDS) }),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** A snapshot file's entries, or null when its bytes are not this review's snapshot. */
 export function decodeScientReviewSnapshotText(
   text: string,
@@ -425,7 +515,12 @@ export function decodeScientReviewSnapshotText(
   try {
     const header = decodeSnapshotHeader(JSON.parse(text));
     if (header.reviewId !== reviewId) return null;
-    return new Map(Object.entries(header.records).map(([id, raw]) => [id, decodeWork(raw)]));
+    return new Map(
+      Object.entries(header.records).flatMap(([id, raw]) => {
+        const work = decodeEntry(raw);
+        return work ? [[id, work] as const] : [];
+      }),
+    );
   } catch {
     return null;
   }

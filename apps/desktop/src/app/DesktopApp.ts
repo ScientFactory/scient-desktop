@@ -45,6 +45,7 @@ import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 // SCIENT-FORK:START — conversation files the OS opened with Scient. macOS
 // delivers a launch's open-file before startup reaches its listeners, so the
@@ -253,11 +254,13 @@ const startLocalBackend = Effect.gen(function* () {
   // SCIENT-FORK:END
 
   yield* DesktopBackendPool.recoverLocalBackend;
+  // SCIENT-FORK: only treat WSL-only as active when this build and host can actually run WSL.
+  const wslOnlyPrimaryActive =
+    settings.wslOnly === true &&
+    settings.wslBackendEnabled === true &&
+    (yield* (yield* DesktopWslEnvironment.DesktopWslEnvironment).isAvailable);
   // A backend started while another server holds this home's lock can only exit with code 78.
-  if (
-    !(settings.wslOnly && settings.wslBackendEnabled) &&
-    !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
-  ) {
+  if (!wslOnlyPrimaryActive && !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())) {
     const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
     yield* logBootstrapWarning("bootstrap found another server owning the Scient home", {
       owner: Option.getOrNull(owner),
@@ -309,7 +312,7 @@ const startLocalBackend = Effect.gen(function* () {
   if (yield* Ref.get(state.quitting)) {
     return false;
   }
-  if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
+  if (wslOnlyPrimaryActive) {
     yield* desktopWindow.showConnectingSplash;
   }
   yield* primaryBackend.start;

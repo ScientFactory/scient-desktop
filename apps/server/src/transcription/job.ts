@@ -45,6 +45,8 @@ export type Job = {
   correctionOnly?: true;
   transcriptOnly?: true;
   recording?: string;
+  /** Recorded as a lesson: its notes are made when it completes. */
+  lesson?: true;
   words?: readonly TranscriptionWord[];
   correction?: {
     mode: CorrectionMode;

@@ -13,6 +13,11 @@ const openConnect = vi.hoisted(() => vi.fn());
 vi.mock("~/scient/overleaf/useOverleafFolderConnect", () => ({
   useOverleafConnectDialog: () => ({ openConnect, dialog: null }),
 }));
+const transcribe = vi.hoisted(() => vi.fn());
+vi.mock("~/scient/recordings/useTranscribeFile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/scient/recordings/useTranscribeFile")>()),
+  useTranscribeFile: () => ({ available: true, transcribe, dialog: null }),
+}));
 
 import { useScientFolderActions } from "./useScientFolderActions";
 
@@ -57,6 +62,20 @@ async function chooseNew(
 }
 
 describe("useScientFolderActions", () => {
+  it("offers Transcribe on audio and video files and transcribes the file where it is", async () => {
+    const probe = await folderActions({});
+    await using _screen = probe.screen;
+    expect(
+      probe
+        .actions()
+        .menuItems("media/Talk.MP4")
+        .map((item) => item.id),
+    ).toEqual(["transcribe"]);
+    expect(probe.actions().menuItems("notes.md")).toEqual([]);
+    expect(probe.actions().handleMenuChoice("transcribe", "media/Talk.MP4")).toBe(true);
+    expect(transcribe).toHaveBeenCalledWith("/work/media/Talk.MP4");
+  });
+
   it("offers New document on folders only, and starts it in that folder", async () => {
     const probe = await folderActions({});
     await using _screen = probe.screen;

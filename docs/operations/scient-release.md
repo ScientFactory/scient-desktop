@@ -42,9 +42,20 @@ the stable scheduler and production gate.
   runtimes, so a release holds two macOS runners, not four. Linux and Windows
   packages set up while their prerequisites build, then wait for their own
   target's. The remote server asset starts once every target's SyncTeX runtime
-  and resource monitor exist, and fails if any is missing; Windows payload
-  verification starts once the Windows package exists. Assembly still requires
-  every job to succeed.
+  and resource monitor exist, and fails if any is missing. The Windows payload
+  verifier first generates the Windows server bytecode once the staged Windows
+  app exists, then verifies once the Windows package exists. Each wait names the
+  exact upload it found; the three Windows bytecode and verifier handoffs download
+  that artifact by ID, while the SyncTeX and resource monitor downloads still
+  select by name. GitHub's artifact reads agree only a moment after an upload is
+  first listed, so a download begun at once can fail with `None of the provided
+  artifact IDs were found` or `Not Found`. A wait therefore names an upload only
+  once the REST download endpoint has served it twice, five seconds apart, and
+  every download after a wait passes the job's token so it reads that same API.
+  A failed API request during a wait is retried a few times before it fails the
+  wait. An upload the endpoint still refuses two minutes after its first refusal,
+  or after 30 polls, also fails it; each check is cut at 10 seconds.
+  Assembly still requires every job to succeed.
 - The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
   default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
   updater manifests are generated from the archive as before.
@@ -63,12 +74,43 @@ the stable scheduler and production gate.
   The unpacked artifact is transferred to Windows 2025 for native verification.
   Structural validation runs on every host; native probes require both the
   matching operating system and architecture.
+- Packages ship prepared server bytecode: V8's compile cache for the server
+  modules the backend loads first (the CLI entry and the server's declarative
+  layers, a subset of startup), so the first launch after an install or update
+  does not compile those from source. Only the packaged engine can generate it: macOS
+  and Linux packages do so while packaging, and the Linux-hosted Windows packager
+  logs `Skipping unexecutable target win32/x64` while staging the input below.
+  That staging builds an unsigned `dir` app from the release bundles and hands it
+  to the Windows verifier, which generates the bytecode with that app's own
+  `Scient.exe` (`scripts/native-server-compile-cache.mjs generate`) and records
+  the SHA-256 of each covered server module. The signed package reuses the same
+  bundles (`--skip-build`); its afterPack hook installs the bytecode only for the
+  same Electron version, platform, architecture and module bytes, and otherwise
+  fails the build. The verifier then requires the packaged engine, loaded through
+  the backend's own preload, to accept every prepared module (`check`), in the
+  unpacked app and again after silently installing the release installer. Its
+  last step reports that installer's SHA-256, and assembly fails unless the
+  release's Windows installer has the same digest, so a package rerun whose
+  installer bytes changed needs its verifier rerun too. Windows Packaging runs
+  the same check on its installed slim app. Payload validation allows at most 64
+  prepared-bytecode files.
+  A user's machine benefits only when its engine's identity matches the
+  manifest's, including V8's `cachedDataVersionTag`, which also reflects V8 flags
+  and detected CPU features, and, on Windows, when the prepared files can be
+  hard-linked into the user's cache (same volume). Otherwise, and for a missing,
+  damaged or stale entry, the modules compile from their shipped source. A Windows
+  backend never exits normally, so it flushes the compile cache after startup even
+  when prepared bytecode was used; otherwise modules outside the prepared set
+  would compile on every launch.
 - CI calls Windows Packaging for changes affecting packaged code on pull
   requests, merge groups, and main. Successful qualification is part of the
-  existing required `Test` check; an unresolved diff runs qualification, and
-  a failed detector or an unqualified skip fails the gate. It runs the release
-  payload validator, packaged terminal/Cursor native probes, and an install/upgrade
-  from the checksum-pinned 0.6.21 installer without signing
+  required `Check` gate; an unresolved diff runs qualification, and
+  a failed detector or an unqualified skip fails the gate. It builds the slim
+  installer releases ship and runs the release payload validator and verifier,
+  packaged terminal/Cursor native probes, an install/upgrade from the
+  checksum-pinned 0.6.21 installer (full, like every release through 0.6.34)
+  that must leave no WSL runtime behind, installs into fresh, shared and linked
+  folders, and a fresh install's launch smoke and bytecode check, without signing
   secrets or publication authority. 0.6.21 downloads, verifies and installs in the
   background while the candidate builds; the candidate then installs over it. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
@@ -91,6 +133,21 @@ the stable scheduler and production gate.
   The resource monitor and capture helpers reuse release.yml's caches by their
   sources, the receipt-verified SyncTeX input is cached by its staging script
   and runner image; a miss builds as before, and the packaged binaries are executed either way.
+- Production Windows releases are slim: `release.yml` builds them with
+  `--omit-wsl-runtime`, which leaves out `wsl-runtime.tar.gz`, the Linux sidecar
+  natives and Linux Cursor helpers, and stamps `scientWslRuntimeOmitted: true`
+  into `app.asar`'s `package.json`. A slim app reports WSL unavailable without
+  probing `wsl.exe` or the registry, starts on Windows, and keeps saved WSL
+  preferences until the user chooses Switch to Windows. The release verifier runs
+  with `--omit-wsl-runtime`; without it the verifier requires the WSL archive.
+  Pull requests, merge groups and main pushes qualify only the slim installer.
+  The full WSL package below is built and qualified only by CI's nightly
+  `schedule` run and by manual runs (`workflow_dispatch` of CI or of Windows
+  Packaging): a verified build, a fresh install with launch smoke, and the Linux
+  payload check. A failure fails only that nightly or manual run, never a pull
+  request or the merge queue. Shipping WSL again means
+  dropping the flag, restoring the release workflow's WSL node-pty and Linux
+  SyncTeX inputs, and qualifying the full package on every pull request again.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
   WSL installation restores execute permissions for Cursor's Linux `rg` and
@@ -233,10 +290,29 @@ tag or release already exists.
    managed feed and synthetic project, drives the real restart controls, and
    temporarily freezes autosave to type and confirm an actual unsaved file edit,
    then resumes the renderer's timers before consent so save RPCs can run normally.
-   After native relaunch, the harness checks the edit on disk and attaches with Node's PID inspector
-   to verify the real restored project's visible controls and unlocked input.
-   Attachment happens after the measured workspace-ready receipt; no debug hook
-   or launch switch is added to production. The disposable Linux runner permits
+   Packaged builds ignore Node's inspector switches (the `enableNodeCliInspectArguments`
+   fuse is off in every build, rehearsals included), so the harness starts the installed
+   app itself with `--remote-debugging-port=0` and drives its window over Chromium's
+   DevTools protocol. Before attaching Playwright, it asks the endpoint for its main process
+   over a bare DevTools connection that sends only `SystemInfo.getProcessInfo`, and accepts
+   it only if that process is its own launch; otherwise it closes that connection and sends
+   nothing else. It requires the endpoint to be written into the synthetic profile and
+   records the restart interaction from DevTools screencast frames (the encoder is finished,
+   or killed after its deadline, even when stopping the screencast hangs). Its own quits use DevTools'
+   `Browser.close` and must show the app's `before-quit received` log and a normal exit
+   status; a forced exit is only cleanup and fails the ordinary-quit check.
+   The native relaunch passes no switches and is not attached to: its `launched`,
+   `backend-ready`, `workspace-ready` and `workspace-settled` receipts (one launch and
+   process, with `projectRestored`) mark it ready, and the last two must record that the
+   restored project's own control (its chat-header breadcrumb, found by project id) and the
+   chat composer were reachable (visible, enabled, outside any inert region and on top at
+   their centre, not under an overlay) and the window was not locked for the restart, at
+   readiness and again a second later. The
+   harness then checks the edit on disk, the single updated main process (any instance of
+   the app, from any AppImage mount, counts) and the old process's exit, captures that
+   process's window through the operating system, quits it normally, and launches the
+   installed target once more the same way to require the same reach for the restored
+   project's control and the composer, an unlocked window and the target version. The disposable Linux runner permits
    unprivileged user namespaces so Chromium's sandbox can start under AppArmor.
    macOS additionally requires signature, Gatekeeper and stapling checks. Windows
    requires valid Authenticode signatures, except that the workflow passes
@@ -267,8 +343,10 @@ tag or release already exists.
    download checksum, verifies that preparation did not shut down the app,
    then downloads the genuine target and completes a fresh consented restart.
 
-   Retain the per-target `native-update-*` artifacts: the JSON receipt, before/after
-   screenshots, and recorded restart interaction. Compare repeated
+   Retain the per-target `native-update-*` artifacts: the JSON receipt, the
+   `before-restart`, `restarted-window` (operating-system capture) and
+   `restored-workspace` screenshots, the recorded restart interaction, and the app
+   output and desktop logs. Compare repeated
    `confirmToReadyMs`, `preparationAndSaveMs`, `shutdownMs`, `handoffToLaunchMs`
    and `launchToReadyMs` rather than treating process launch as usability.
    These receipts do not establish physical low-end-machine performance,
@@ -281,8 +359,12 @@ tag or release already exists.
    `SHA256SUMS.txt`, and `scient-release-handoff.json`. Assembly fails unless
    every manifest-referenced payload exists and matches its declared size and
    SHA-512, every required architecture is present, and no unattested file is
-   included. Record the run ID, artifact ID, and artifact digest shown in its
-   summary.
+   included. The Windows installer and both macOS updater ZIPs must ship a
+   `.blockmap`, the map electron-updater uses for differential downloads, and
+   every blockmap that ships, DMG maps included, must decode and have chunks
+   that cover its payload exactly, each matching its BLAKE2b checksum. A missing,
+   corrupt, or other build's map fails assembly. The AppImage embeds its map.
+   Record the run ID, artifact ID, and artifact digest shown in its summary.
 5. Resolve artifact, signing, installed-app, updater, migration, website, and
    rollback gates against that exact candidate. Reject the pending production
    deployment if any gate fails; fix the source and build a new candidate rather

@@ -1,33 +1,77 @@
 import { expect, it } from "@effect/vitest";
-import { SourceControlProviderKind } from "@t3tools/contracts";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { SourceControlProviderKind, WS_METHODS } from "@t3tools/contracts";
+import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
+import { Deferred, Effect, Fiber, Layer, Option, Redacted } from "effect";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
-import { makeHarness } from "./Accounts.testkit.ts";
-
-let discoveries = 0;
+import { makeAccountsRpcHandlers } from "./AccountsRpcHandlers.ts";
+import { makeHarness, website } from "./Accounts.testkit.ts";
 
 it.effect(
-  "projects authenticated GitHub identities and the existing Custom models key inventory, discovering them once",
+  "keeps snapshots and writes immediate while external GitHub discovery stays on demand, off the write lock, and never runs aggregate discovery",
   () =>
     Effect.gen(function* () {
-      discoveries = 0;
+      let aggregateDiscoveries = 0;
+      let githubDiscoveries = 0;
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const githubItem = {
+        kind: SourceControlProviderKind.make("github"),
+        label: "GitHub",
+        implemented: true,
+        status: "available" as const,
+        version: Option.none(),
+        installHint: "",
+        detail: Option.none(),
+        auth: {
+          status: "authenticated" as const,
+          account: Option.some("synthetic-user"),
+          host: Option.some("github.example.test"),
+          detail: Option.none(),
+          accounts: [
+            {
+              host: "github.example.test",
+              account: "synthetic-user",
+              active: true,
+              authenticated: true,
+            },
+            {
+              host: "github.example.test",
+              account: "signed-out",
+              active: false,
+              authenticated: false,
+            },
+          ],
+        },
+      };
       const { service } = yield* makeHarness({
         sourceOverrides: {
           customModelKeys: Effect.succeed([
             { connectionId: "keyed", name: "Endpoint", origin: "https://models.example.test" },
           ]),
         },
-      });
+      }).pipe(
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry)({
+            resolveLink: () => undefined,
+            discover: Effect.sync(() => (aggregateDiscoveries += 1)).pipe(
+              Effect.andThen(Deferred.await(gate)),
+              Effect.as([githubItem]),
+            ),
+            discoverProvider: (kind) =>
+              kind === "github"
+                ? Effect.sync(() => (githubDiscoveries += 1)).pipe(
+                    Effect.andThen(Deferred.succeed(started, undefined)),
+                    Effect.andThen(Deferred.await(gate)),
+                    Effect.as(Option.some(githubItem)),
+                  )
+                : Effect.die("Accounts must not probe non-GitHub source-control providers."),
+          }),
+        ),
+      );
+
+      // Snapshots alone never trigger external GitHub discovery.
       expect((yield* service.snapshot).managedElsewhere).toEqual([
-        {
-          kind: "github",
-          id: "github.example.test:synthetic-user",
-          name: "synthetic-user",
-          detail: "github.example.test",
-          href: "/settings/source-control",
-          via: "gh",
-        },
         {
           kind: "custom-model",
           id: "keyed",
@@ -36,54 +80,264 @@ it.effect(
           href: "/settings/custom-models",
         },
       ]);
-      yield* service.snapshot;
-      expect(discoveries).toBe(1);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(SourceControlProviderRegistry)({
-          resolveLink: () => undefined,
-          discover: Effect.sync(() => (discoveries += 1)).pipe(
-            Effect.as([
+      expect(aggregateDiscoveries).toBe(0);
+      expect(githubDiscoveries).toBe(0);
+
+      // Start an in-flight external discovery and prove snapshots and writes still complete
+      // immediately while discovery is blocked (i.e., discovery never holds the write semaphore).
+      const discoveryFiber = yield* Effect.forkChild(service.externalIdentities);
+      yield* Deferred.await(started);
+      expect((yield* service.snapshot).managedElsewhere).toHaveLength(1);
+      yield* service.save(website());
+      expect(aggregateDiscoveries).toBe(0);
+      expect(githubDiscoveries).toBe(1);
+
+      // Releasing discovery completes the fiber and caches the complete result.
+      yield* Deferred.succeed(gate, undefined);
+      expect(yield* Fiber.join(discoveryFiber)).toEqual({
+        complete: true,
+        identities: [
+          {
+            kind: "github",
+            id: "github.example.test:synthetic-user",
+            name: "synthetic-user",
+            detail: "github.example.test",
+            href: "/settings/source-control",
+            via: "gh",
+          },
+        ],
+      });
+      yield* service.externalIdentities;
+      expect(aggregateDiscoveries).toBe(0);
+      expect(githubDiscoveries).toBe(1);
+    }),
+);
+
+it.effect("does not cache incomplete GitHub identity probes when credential lookup fails", () =>
+  Effect.gen(function* () {
+    let credentialCalls = 0;
+    const { service } = yield* makeHarness({
+      sourceControl: {
+        discover: Effect.succeed([
+          {
+            kind: SourceControlProviderKind.make("github"),
+            label: "GitHub",
+            status: "available",
+            version: Option.none(),
+            installHint: "Install gh",
+            detail: Option.none(),
+            auth: {
+              status: "authenticated",
+              account: Option.some("octo"),
+              host: Option.some("github.com"),
+              detail: Option.none(),
+              accounts: [
+                { host: "github.com", account: "octo", active: true, authenticated: true },
+              ],
+            },
+          },
+        ]),
+        github: GitHubSourceControlCredential.of({
+          mcpUrl: "https://api.githubcopilot.com/mcp/",
+          get: (host) => {
+            credentialCalls += 1;
+            return credentialCalls === 1
+              ? Effect.fail(new SourceControlCredentialError({ host }))
+              : Effect.succeedSome({
+                  token: Redacted.make("ghu_synthetic"),
+                  via: "app",
+                  login: "Octo",
+                });
+          },
+          invalidate: () => Effect.void,
+        }),
+      },
+    });
+
+    expect(yield* service.externalIdentities).toEqual({
+      complete: false,
+      identities: [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+      ],
+    });
+    // Because the first credential lookup failed, the partial result is not pinned for 1 minute.
+    expect(yield* service.externalIdentities).toEqual({
+      complete: true,
+      identities: [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "Octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "app",
+        },
+      ],
+    });
+    expect(credentialCalls).toBe(2);
+    // Once complete, subsequent reads reuse the cached entry.
+    yield* service.externalIdentities;
+    expect(credentialCalls).toBe(2);
+  }),
+);
+
+it.effect(
+  "marks result incomplete and skips cache when app sign-in masks a timed-out gh auth status probe",
+  () =>
+    Effect.gen(function* () {
+      let discoverCalls = 0;
+      const { service } = yield* makeHarness({
+        sourceControl: {
+          discover: Effect.sync(() => {
+            discoverCalls += 1;
+            return [
               {
                 kind: SourceControlProviderKind.make("github"),
                 label: "GitHub",
-                implemented: true,
-                status: "available",
+                status: "available" as const,
                 version: Option.none(),
-                installHint: "",
+                installHint: "Install gh",
                 detail: Option.none(),
-                auth: {
-                  status: "authenticated",
-                  account: Option.some("synthetic-user"),
-                  host: Option.some("github.example.test"),
-                  detail: Option.none(),
-                  accounts: [
-                    {
-                      host: "github.example.test",
-                      account: "synthetic-user",
-                      active: true,
-                      authenticated: true,
-                    },
-                    {
-                      host: "github.example.test",
-                      account: "signed-out",
-                      active: false,
-                      authenticated: false,
-                    },
-                  ],
-                },
+                auth:
+                  discoverCalls === 1
+                    ? {
+                        // Matches GitHubSourceControlProvider's live output when app sign-in
+                        // succeeds while `gh auth status` timed out.
+                        status: "authenticated" as const,
+                        account: Option.some("Octo"),
+                        host: Option.some("github.com"),
+                        detail: Option.some("Signed in with Scient for GitHub."),
+                        cliAuthStatus: "unknown" as const,
+                      }
+                    : {
+                        status: "authenticated" as const,
+                        account: Option.some("Octo"),
+                        host: Option.some("github.com"),
+                        detail: Option.some("Signed in with Scient for GitHub."),
+                        accounts: [
+                          {
+                            host: "github.com",
+                            account: "octo",
+                            active: true,
+                            authenticated: true,
+                          },
+                          {
+                            host: "github.com",
+                            account: "second",
+                            active: false,
+                            authenticated: true,
+                          },
+                        ],
+                      },
               },
-            ]),
-          ),
+            ];
+          }),
+          github: GitHubSourceControlCredential.of({
+            mcpUrl: "https://api.githubcopilot.com/mcp/",
+            get: () =>
+              Effect.succeedSome({
+                token: Redacted.make("ghu_synthetic"),
+                via: "app",
+                login: "Octo",
+              }),
+            invalidate: () => Effect.void,
+          }),
+        },
+      });
+
+      // First read: app sign-in succeeds, but cliAuthStatus is unknown -> incomplete, not cached.
+      expect(yield* service.externalIdentities).toEqual({
+        complete: false,
+        identities: [
+          {
+            kind: "github",
+            id: "github.com:octo",
+            name: "Octo",
+            detail: "github.com",
+            href: "/settings/source-control",
+            via: "app",
+          },
+        ],
+      });
+      expect(discoverCalls).toBe(1);
+
+      // Second read retries immediately and picks up alternate gh CLI logins once recovered.
+      expect(yield* service.externalIdentities).toEqual({
+        complete: true,
+        identities: [
+          {
+            kind: "github",
+            id: "github.com:octo",
+            name: "Octo",
+            detail: "github.com",
+            href: "/settings/source-control",
+            via: "app",
+          },
+          {
+            kind: "github",
+            id: "github.com:second",
+            name: "second",
+            detail: "github.com",
+            href: "/settings/source-control",
+            via: "gh",
+          },
+        ],
+      });
+      expect(discoverCalls).toBe(2);
+
+      // Complete result is now cached.
+      yield* service.externalIdentities;
+      expect(discoverCalls).toBe(2);
+    }),
+);
+
+it.effect("treats a failed gh version probe as incomplete but an absent gh as complete", () =>
+  Effect.gen(function* () {
+    let versionProbeFailed = true;
+    const { service } = yield* makeHarness({
+      sourceControl: {
+        discover: Effect.sync(() => [
+          {
+            kind: SourceControlProviderKind.make("github"),
+            label: "GitHub",
+            status: "missing" as const,
+            version: Option.none(),
+            installHint: "Install gh",
+            detail: versionProbeFailed ? Option.some("`gh --version` timed out.") : Option.none(),
+            auth: {
+              status: "unknown" as const,
+              account: Option.none(),
+              host: Option.none(),
+              detail: Option.some("Install gh"),
+            },
+          },
+        ]),
+        github: GitHubSourceControlCredential.of({
+          mcpUrl: "https://api.githubcopilot.com/mcp/",
+          get: () => Effect.succeedNone,
+          invalidate: () => Effect.void,
         }),
-      ),
-    ),
+      },
+    });
+
+    expect(yield* service.externalIdentities).toEqual({ complete: false, identities: [] });
+    versionProbeFailed = false;
+    expect(yield* service.externalIdentities).toEqual({ complete: true, identities: [] });
+  }),
 );
 
 it.effect("omits unavailable GitHub discovery and retains optional snapshot compatibility", () =>
   Effect.gen(function* () {
     const { service } = yield* makeHarness();
     expect((yield* service.snapshot).managedElsewhere).toEqual([]);
+    expect(yield* service.externalIdentities).toEqual({ complete: true, identities: [] });
   }),
 );
 
@@ -129,7 +383,7 @@ it.effect(
         },
       });
       expect(
-        (yield* service.snapshot).managedElsewhere?.map(({ id, name, via }) => ({
+        (yield* service.externalIdentities).identities.map(({ id, name, via }) => ({
           id,
           name,
           via,
@@ -138,5 +392,85 @@ it.effect(
         { id: "github.com:octo", name: "Octo", via: "app" },
         { id: "github.com:second", name: "second", via: "gh" },
       ]);
+    }),
+);
+
+it.effect(
+  "preserves GitHub managedElsewhere for legacy snapshot callers while updated callers opt out",
+  () =>
+    Effect.gen(function* () {
+      let githubProbes = 0;
+      const githubItem = {
+        kind: SourceControlProviderKind.make("github"),
+        label: "GitHub",
+        implemented: true,
+        status: "available" as const,
+        version: Option.none(),
+        installHint: "",
+        detail: Option.none(),
+        auth: {
+          status: "authenticated" as const,
+          account: Option.some("legacy-user"),
+          host: Option.some("github.com"),
+          detail: Option.none(),
+          accounts: [
+            { host: "github.com", account: "legacy-user", active: true, authenticated: true },
+          ],
+        },
+      };
+      const { service } = yield* makeHarness().pipe(
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry)({
+            resolveLink: () => undefined,
+            discover: Effect.die("Accounts must not run aggregate discovery."),
+            discoverProvider: (kind) =>
+              kind === "github"
+                ? Effect.sync(() => (githubProbes += 1)).pipe(Effect.as(Option.some(githubItem)))
+                : Effect.succeedNone,
+          }),
+        ),
+      );
+      const handlers = makeAccountsRpcHandlers({
+        accounts: service,
+        observeRpcEffect: (_method, effect) => effect,
+        observeRpcStream: (_method, stream) => stream,
+        check: () => Effect.die("unused"),
+        linkKey: () => Effect.die("unused"),
+        restoreKeptKeys: () => Effect.die("unused"),
+        paperForSource: () => Effect.die("unused"),
+        plainKeys: {
+          find: () => Effect.die("unused"),
+          keep: () => Effect.die("unused"),
+        },
+        papers: {
+          request: () => Effect.die("unused"),
+          continue: () => Effect.die("unused"),
+          list: () => Effect.die("unused"),
+          signInAsPerson: () => Effect.die("unused"),
+          universityBrowse: () => Effect.die("unused"),
+          universities: () => Effect.die("unused"),
+        },
+      });
+
+      // Updated clients pass omitExternalIdentities: true and trigger zero CLI probes.
+      const lightweight = yield* handlers[WS_METHODS.accountsSnapshot]({
+        omitExternalIdentities: true,
+      });
+      expect(lightweight.managedElsewhere).toEqual([]);
+      expect(githubProbes).toBe(0);
+
+      // Legacy clients omit the flag and keep seeing GitHub identities in snapshot.managedElsewhere.
+      const legacy = yield* handlers[WS_METHODS.accountsSnapshot]({});
+      expect(legacy.managedElsewhere).toEqual([
+        {
+          kind: "github",
+          id: "github.com:legacy-user",
+          name: "legacy-user",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+      ]);
+      expect(githubProbes).toBe(1);
     }),
 );

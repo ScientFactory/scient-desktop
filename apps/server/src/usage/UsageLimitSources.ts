@@ -12,7 +12,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { hubRoutes } from "@t3tools/shared/usageLimits";
+import { antigravityWindowLimitsModel, hubRoutes } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -202,7 +202,12 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    const { unreadProviders } = accounts.success;
+    return {
+      ...base,
+      accounts: accounts.success.accounts,
+      ...(unreadProviders.length > 0 ? { unreadProviders } : {}),
+    };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
@@ -226,7 +231,7 @@ export const make = Effect.gen(function* () {
     const snapshots = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
-      { concurrency: 4 },
+      { concurrency: "unbounded" },
     );
     yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
@@ -324,7 +329,10 @@ export function hubPoolResetAt(
     // An unread account may be the one still blocked, so its refill is unknown.
     if (account.usageLimits.unavailable) return null;
     const spent = account.usageLimits.windows.filter(
-      (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
+      (window) =>
+        window.usedPercent >= 100 &&
+        windowLimitsModel(window, model) &&
+        (account.driver !== "antigravity" || antigravityWindowLimitsModel(window, model)),
     );
     if (spent.length === 0) return null;
     const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));

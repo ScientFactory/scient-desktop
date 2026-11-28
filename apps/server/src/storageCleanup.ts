@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import {
@@ -53,6 +54,7 @@ import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import { checkpointRefForScopeOrdinal } from "./orchestration-v2/CheckpointService.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { MAX_OVERDUE_ARM_MS } from "./orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as WorktreeBranchSync from "./orchestration-v2/WorktreeBranchSync.ts";
@@ -369,6 +371,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const reconcileBranch = yield* WorktreeBranchSync.makeReconcile;
   const terminals = yield* TerminalManager.TerminalManager;
+  const pendingSettleScripts = yield* PendingSettleScripts.PendingSettleScripts;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const taskFolders = yield* TaskFolders.TaskFolders;
@@ -1219,6 +1222,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+    let deletionStarted = false;
     const removal = Effect.gen(function* () {
       yield* fs.chmod(container, 0o700);
       if (Option.isSome(annexed))
@@ -1244,13 +1248,34 @@ const make = Effect.gen(function* () {
         cwd: repositoryRoot,
         worktreePath: isolatedPath,
         force: false,
+        beforeDelete: Effect.sync(() => {
+          deletionStarted = true;
+        }),
         execute: git.execute,
-        run: (args) => cleanupGit(repositoryRoot, [...args], "git worktree remove"),
+        run: (args, cwd) => cleanupGit(cwd, [...args], "git worktree remove"),
       });
       return null;
     });
     return yield* removal.pipe(
-      Effect.catchCause((cause) => restore.pipe(Effect.andThen(Effect.failCause(cause)))),
+      Effect.catchCause((cause) => {
+        if (!deletionStarted) return restore.pipe(Effect.andThen(Effect.failCause(cause)));
+        return fs.exists(isolatedPath).pipe(
+          Effect.orElseSucceed(() => true),
+          Effect.flatMap((remains) =>
+            remains
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "StorageCleanup.cleanupGit",
+                    command: "git worktree remove",
+                    cwd: repositoryRoot,
+                    detail: `Cleanup stopped during deletion; remaining files are at ${isolatedPath}`,
+                    cause: Cause.squash(cause),
+                  }),
+                )
+              : Effect.failCause(cause),
+          ),
+        );
+      }),
       Effect.flatMap((reason) =>
         reason === null ? Effect.succeed(null) : restore.pipe(Effect.as(reason)),
       ),
@@ -1336,10 +1361,13 @@ const make = Effect.gen(function* () {
       // A removal Git refused keeps its checkout, and the next sweep looks at it again.
       if (yield* fs.exists(entry.path).pipe(Effect.orElseSucceed(() => true))) return;
       if (!(yield* fs.exists(adminDir).pipe(Effect.orElseSucceed(() => true)))) return;
+      const gitdir = yield* readGitdir(adminDir);
+      // A partial deletion can remove the gitfile but leave the isolated checkout for recovery.
+      if (gitdir !== null && (yield* fs.exists(path.dirname(path.resolve(adminDir, gitdir)))))
+        return;
       const others = (yield* readLeftovers).filter((leftover) => leftover.adminDir !== adminDir);
       // SCIENT-FORK:START — the admin directory as noted, so a reused name is never deleted.
       const identity = yield* adminDirIdentity(adminDir);
-      const gitdir = yield* readGitdir(adminDir);
       yield* writeLeftovers([...others, { adminDir, entry, identity, gitdir }]);
       // SCIENT-FORK:END
     },
@@ -1363,9 +1391,12 @@ const make = Effect.gen(function* () {
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
       // SCIENT-FORK:END
     );
-    if (Option.isSome(gitFile) && (yield* fs.exists(gitFile.value))) {
-      const current = yield* worktreeAdminDir(path.dirname(gitFile.value));
-      if ((yield* fs.realPath(current)) === (yield* fs.realPath(adminDir))) return false;
+    if (Option.isSome(gitFile)) {
+      const checkout = path.dirname(gitFile.value);
+      if (yield* fs.exists(gitFile.value)) {
+        const current = yield* worktreeAdminDir(checkout);
+        if ((yield* fs.realPath(current)) === (yield* fs.realPath(adminDir))) return false;
+      } else if (yield* fs.exists(checkout)) return false;
     }
     // SCIENT-FORK:START — checked again just before the delete, after the Git call above.
     if (!(yield* isNotedLeftover(leftover, adminDir))) return false;
@@ -1663,6 +1694,8 @@ const make = Effect.gen(function* () {
         if (group.some((member) => member.branch !== thread.branch))
           return keep("a subagent thread's branch differs from this worktree's branch");
         if (yield* hasTerminal(guardedPaths)) return keep(waitForStop("open terminal"));
+        if (members.some((member) => pendingSettleScripts.has(member.id)))
+          return keep(waitForStop("settle script is queued"));
         if (
           [...group, ...settlementChain.slice(1)].some(
             (member) =>
@@ -1729,6 +1762,8 @@ const make = Effect.gen(function* () {
           const latest = bound.filter((_entry, index) => boundKeys[index] === worktreeKey);
           // SCIENT-FORK:END archived-worktree-retention
           if (yield* hasTerminal(guardedPaths)) return waitForStop("open terminal");
+          if (latest.some((binding) => pendingSettleScripts.has(binding.id)))
+            return waitForStop("settle script is queued");
           if (deleted) {
             if (
               !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)

@@ -2402,6 +2402,7 @@ describe("AcpAdapterV2", () => {
         { label: "Blue", description: "Blue", value: "blue" },
       ],
       allowCustomAnswer: true,
+      required: false,
     },
   ];
 
@@ -2414,6 +2415,8 @@ describe("AcpAdapterV2", () => {
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
       },
+      // regression: #43335 a choice the schema leaves optional could not be skipped
+      { scenario: "OMP skipped optional choice", answers: {}, content: {} },
     ].map((fixture) => ({
       ...fixture,
       settings: OMP_SETTINGS,
@@ -2442,6 +2445,7 @@ describe("AcpAdapterV2", () => {
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
             { label: "Hold", value: "Hold", description: "Hold" },
           ],
+          required: false,
         },
       ],
       result: { action: "accept", content: fixture.content },
@@ -2555,6 +2559,22 @@ describe("AcpAdapterV2", () => {
       questions: openCodeQuestions,
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode skipped optional choice",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: {},
+      result: { action: "accept", content: {} },
+    },
+    {
+      scenario: "OpenCode required choice left unanswered is cancelled",
+      settings: OPENCODE_SETTINGS,
+      schema: { ...openCodeSchema, required: ["q0"] },
+      questions: openCodeQuestions.map(({ required: _, ...question }) => question),
+      answers: {},
+      result: { action: "cancel" },
     },
     {
       scenario: "Devin allowOther choice accepts a typed answer",
@@ -5225,12 +5245,20 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
       );
-      const items = Array.from(
+      const events = Array.from(
         yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         ),
-      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      );
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const terminal = events.at(-1);
+      assert.isTrue(
+        terminal?.type === "turn.terminal" && terminal.status === "completed",
+        "an error notice does not fail the turn",
+      );
 
       const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
         (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
@@ -5247,8 +5275,16 @@ describe("AcpAdapterV2", () => {
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
       assert.deepEqual(
-        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
-        [title],
+        items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
+        ),
+        [
+          { message: title, level: "info" },
+          { message: "warning notice", level: "warning" },
+          { message: "error notice", level: "error" },
+          { message: "_mock.custom notice", level: "info" },
+        ],
+        "only warning and error notices are shown as warnings",
       );
       const replies = new Map(
         items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
