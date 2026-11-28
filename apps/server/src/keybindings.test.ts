@@ -367,6 +367,119 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
     }).pipe(Effect.provide(layerKeybindings())),
   );
+
+  it.effect("swaps the file list and maximize shortcuts still on their old keys once", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const panelRules = Effect.map(readKeybindingsConfig(keybindingsConfigPath), (rules) =>
+        rules.filter(
+          (entry) =>
+            entry.command === "rightPanel.toggleFiles" ||
+            entry.command === "rightPanel.toggleMaximized",
+        ),
+      );
+      const oldFiles = {
+        key: "mod+alt+e",
+        command: "rightPanel.toggleFiles",
+        when: "!terminalFocus",
+      } as const;
+      const oldMaximize = {
+        key: "mod+alt+shift+e",
+        command: "rightPanel.toggleMaximized",
+      } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [oldFiles, oldMaximize]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.sameDeepMembers(yield* panelRules, [
+        { ...oldFiles, key: "mod+alt+shift+e" },
+        { ...oldMaximize, key: "mod+alt+e" },
+      ]);
+
+      // Choosing the old keys again afterwards sticks.
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [oldFiles, oldMaximize]);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.sameDeepMembers(yield* panelRules, [oldFiles, oldMaximize]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("gives a released config's file list the new key and maximize the freed one", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+alt+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
+      ]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.sameDeepMembers(
+        persisted.filter(
+          (entry) =>
+            entry.command === "rightPanel.toggleFiles" ||
+            entry.command === "rightPanel.toggleMaximized",
+        ),
+        [
+          { key: "mod+alt+shift+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
+          { key: "mod+alt+e", command: "rightPanel.toggleMaximized" },
+        ],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("keeps the file list and maximize off a taken key until it is free", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const panelRules = Effect.map(readKeybindingsConfig(keybindingsConfigPath), (rules) =>
+        rules.filter(
+          (entry) =>
+            entry.command === "rightPanel.toggleFiles" ||
+            entry.command === "rightPanel.toggleMaximized",
+        ),
+      );
+      const oldFiles = {
+        key: "mod+alt+e",
+        command: "rightPanel.toggleFiles",
+        when: "!terminalFocus",
+      } as const;
+      // No condition, so it overlaps Files' !terminalFocus on the same key.
+      const custom = { key: "mod+alt+shift+e", command: "sidebar.toggle" } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [oldFiles, custom]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.sameDeepMembers(yield* panelRules, [oldFiles]);
+
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [oldFiles]);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.sameDeepMembers(yield* panelRules, [
+        { ...oldFiles, key: "mod+alt+shift+e" },
+        { key: "mod+alt+e", command: "rightPanel.toggleMaximized" },
+      ]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("treats a Ctrl or Command rule as taking the mod key it presses", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const oldFiles = {
+        key: "mod+alt+e",
+        command: "rightPanel.toggleFiles",
+        when: "!terminalFocus",
+      } as const;
+      // Ctrl+Alt+Shift+E is mod+alt+shift+e on Linux and Windows.
+      const custom = { key: "ctrl+alt+shift+e", command: "sidebar.toggle" } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [custom, oldFiles]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.sameDeepMembers(
+        persisted.filter((entry) => entry.command === "rightPanel.toggleFiles"),
+        [oldFiles],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
   // SCIENT-FORK:END
   it.effect("keeps a late default pending while the config is full", () =>
     Effect.gen(function* () {

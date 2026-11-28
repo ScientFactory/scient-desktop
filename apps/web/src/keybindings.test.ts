@@ -660,11 +660,10 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
-  // SCIENT-FORK:START — Scient keeps mod+alt+e for Files, so maximize defaults to mod+alt+shift+e.
-  it("maximizes the right panel with mod+alt+shift+e by default", () => {
+  it("maximizes the right panel with mod+alt+e by default", () => {
     // macOS reports Option+E as the dead key "´", so the physical key decides.
-    const mac = event({ key: "´", code: "KeyE", metaKey: true, altKey: true, shiftKey: true });
-    const linux = event({ key: "E", code: "KeyE", ctrlKey: true, altKey: true, shiftKey: true });
+    const mac = event({ key: "´", code: "KeyE", metaKey: true, altKey: true });
+    const linux = event({ key: "e", code: "KeyE", ctrlKey: true, altKey: true });
     assert.strictEqual(
       resolveShortcutCommand(mac, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
       "rightPanel.toggleMaximized",
@@ -672,6 +671,27 @@ describe("resolveShortcutCommand", () => {
     assert.strictEqual(
       resolveShortcutCommand(linux, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
       "rightPanel.toggleMaximized",
+    );
+  });
+
+  // SCIENT-FORK:START — the file list beside a tab takes mod+alt+shift+e, next to T3's maximize.
+  it("toggles the side-panel file list with mod+alt+shift+e by default", () => {
+    const mac = event({ key: "´", code: "KeyE", metaKey: true, altKey: true, shiftKey: true });
+    const linux = event({ key: "E", code: "KeyE", ctrlKey: true, altKey: true, shiftKey: true });
+    const options = { context: { terminalFocus: false } };
+    assert.strictEqual(
+      resolveShortcutCommand(mac, DEFAULT_RESOLVED_KEYBINDINGS, {
+        ...options,
+        platform: "MacIntel",
+      }),
+      "rightPanel.toggleFiles",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(linux, DEFAULT_RESOLVED_KEYBINDINGS, {
+        ...options,
+        platform: "Linux",
+      }),
+      "rightPanel.toggleFiles",
     );
   });
   // SCIENT-FORK:END
