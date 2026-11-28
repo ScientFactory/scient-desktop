@@ -1392,6 +1392,35 @@ export const layerWithOptions = (
         }
       });
 
+      const writeIdleDetachEvent = Effect.fn("ProviderSessionManager.writeIdleDetachEvent")(
+        function* (input: {
+          readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+          readonly threadId: ThreadId;
+        }) {
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({
+                  threadId: input.threadId,
+                  providerSessionId: input.runtime.providerSessionId,
+                }),
+                type: "provider-session.detached",
+                threadId: input.threadId,
+                driver: input.runtime.driver,
+                providerInstanceId: input.runtime.instanceId,
+                occurredAt: now,
+                payload: {
+                  providerSessionId: input.runtime.providerSessionId,
+                  detachedAt: now,
+                  reason: "Idle thread unloaded from the shared provider session.",
+                },
+              },
+            ],
+          });
+        },
+      );
+
       const writeReleasedSessionEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedSessionEvents",
       )(function* (input: {
@@ -2835,7 +2864,17 @@ export const layerWithOptions = (
           /** Session release unloads only the threads it would archive, and never waits. */
           readonly archiveOnly?: boolean;
         }): Effect.fn.Return<void> {
-          const outcome = yield* threadAttachment.withLock(
+          // SCIENT-FORK:START — a regular idle unload can hold the lock while recording its
+          // detach. A closing session must reach physical cleanup even during a pending write.
+          const withAttachmentLock =
+            input.archiveOnly === true
+              ? <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
+                  threadAttachment
+                    .tryWithLock(key, effect)
+                    .pipe(Effect.map(Option.getOrElse(() => "skipped" as const)))
+              : threadAttachment.withLock;
+          // SCIENT-FORK:END
+          const outcome = yield* withAttachmentLock(
             threadAttachmentKey(input),
             Effect.gen(function* () {
               const key = sessionKey(input.providerSessionId);
@@ -2935,14 +2974,41 @@ export const layerWithOptions = (
                       }).pipe(Effect.andThen(unload(false)))
                     : Effect.fail(cause),
                 ),
-                Effect.tap(() =>
-                  Ref.update(sessions, (current) => {
+                Effect.andThen(() =>
+                  Ref.modify(sessions, (current) => {
                     const latest = current.get(key);
-                    if (latest?.runtime !== entry.runtime || !unloadsLoadedThread) return current;
+                    if (latest?.runtime !== entry.runtime || !unloadsLoadedThread) {
+                      return [false, current] as const;
+                    }
                     const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
                     linkedEnvironmentsByThread.delete(input.threadId);
-                    return new Map(current).set(key, { ...latest, linkedEnvironmentsByThread });
+                    // Session updates go to every attached thread, so a shared process that kept
+                    // its finished threads attached wrote each update once per thread ever run.
+                    const detach =
+                      latest.supportsMultipleProviderThreads &&
+                      !latest.loadedProviderThreadKeyByThread.has(input.threadId) &&
+                      ![...latest.idleThreadUnloads.values()].some(
+                        (other) => other.threadId === input.threadId,
+                      );
+                    const attachedThreadIds = new Set(latest.attachedThreadIds);
+                    if (detach) attachedThreadIds.delete(input.threadId);
+                    return [
+                      detach,
+                      new Map(current).set(key, {
+                        ...latest,
+                        attachedThreadIds,
+                        linkedEnvironmentsByThread,
+                      }),
+                    ] as const;
                   }),
+                ),
+                Effect.flatMap((detached) =>
+                  detached
+                    ? writeIdleDetachEvent({
+                        runtime: entry.runtime,
+                        threadId: input.threadId,
+                      })
+                    : Effect.void,
                 ),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
@@ -4743,7 +4809,13 @@ export const layerWithOptions = (
             const detachMutation = Ref.modify(sessions, (current) => {
               // SCIENT-FORK:END
               const entry = current.get(key);
-              if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
+              // SCIENT-FORK:START — an idle-detached thread can still own a native release to join.
+              if (
+                entry === undefined ||
+                (!entry.attachedThreadIds.has(input.threadId) &&
+                  !entry.idleUnloadedProviderThreads.has(input.threadId))
+              ) {
+                // SCIENT-FORK:END
                 return [
                   Option.none<{
                     readonly entry: LiveSessionEntry;

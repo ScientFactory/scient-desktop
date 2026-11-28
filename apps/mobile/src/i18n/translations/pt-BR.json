@@ -5840,5 +5840,6 @@
   "4aa6f8d0d5800dca": "{count, plural, one {Mostrar mais {count} thread concluída} other {Mostrar mais {count} threads concluídas}}",
   "f6cf1627f4acc5ef": "Visibilidade do comentário",
   "eb1fd384ad5919dd": "Nota interna",
-  "b45f0b467e9406d0": "Responder ao cliente"
+  "b45f0b467e9406d0": "Responder ao cliente",
+  "15e5597f8f93ce12": "{start} a {end}"
 }

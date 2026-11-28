@@ -5827,5 +5827,6 @@
   "4aa6f8d0d5800dca": "{count, plural, other {再显示 {count} 个已收尾的会话}}",
   "f6cf1627f4acc5ef": "评论可见范围",
   "eb1fd384ad5919dd": "内部备注",
-  "b45f0b467e9406d0": "回复客户"
+  "b45f0b467e9406d0": "回复客户",
+  "15e5597f8f93ce12": "{start} 至 {end}"
 }

@@ -3302,7 +3302,7 @@
   "c646366e142ba05f": "L’état WSL de l’app desktop n’est pas disponible.",
   "228dcd284ea651b3": "Échec du chargement de l’état WSL.",
   "b08d105dd2553f8d": "Le projet n’est pas apparu dans l’app desktop.",
-  "7a4b3f3b83e121d7": "{organization} a désactivé les données d’utilisation anonymes.",
+  "bf45d68027d21097": "{organization} a désactivé les données d’utilisation du produit.",
   "d85822b18e9475df": "Géré par {organization}.",
   "922269f8691aa3ba": "Impossible de savoir si cet environnement tourne sur cet ordinateur.",
   "35cade9cc8a01363": "La redirection de ports nécessite l’app de bureau.",

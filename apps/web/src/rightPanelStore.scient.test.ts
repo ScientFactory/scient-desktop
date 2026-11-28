@@ -8,7 +8,7 @@ import {
 } from "@scientfactory/document-artifacts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { assert, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSurface";
 import { useClosedViewStore } from "./closedViewStore";
@@ -147,6 +147,11 @@ describe("Scient right panel surfaces", () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "notes/other.md");
     store.openFile(refA, "notes/a.md", 12);
+    const original = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.find((surface) => surface.id === "file:notes/a.md");
+    assert(original?.kind === "file");
     store.renameFileSurface(refA, "notes/a.md", "notes/b.md", { keepState: true });
     let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
     expect(state.surfaces.map((surface) => surface.id)).toEqual([
@@ -157,7 +162,7 @@ describe("Scient right panel surfaces", () => {
     expect(state.surfaces[1]).toMatchObject({
       relativePath: "notes/b.md",
       revealLine: 12,
-      revealRequestId: 1,
+      revealRequestId: original.revealRequestId,
     });
     store.renameFileSurface(refA, "notes/b.md", "notes/c.md");
     state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
@@ -470,7 +475,7 @@ describe("Scient right panel surfaces", () => {
         kind: "file",
         relativePath: "chapters/results.tex",
         revealLine: 18,
-        revealRequestId: 1,
+        revealRequestId: expect.any(Number),
         latexRootRelativePath: "paper/main.tex",
       },
     ]);
@@ -557,6 +562,13 @@ describe("Scient right panel surfaces", () => {
       latexRootRelativePath: "main.tex",
     });
 
+    const [first] = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    assert(first?.kind === "file");
+    const id = first.revealRequestId;
+    expect(id).toBeGreaterThan(0);
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
       activeSurfaceId: "file:sections/results.tex",
@@ -566,8 +578,8 @@ describe("Scient right panel surfaces", () => {
           kind: "file",
           relativePath: "sections/results.tex",
           revealLine: null,
-          revealRequestId: 1,
-          latexPresentationRequest: { id: 1, mode: "split" },
+          revealRequestId: id,
+          latexPresentationRequest: { id, mode: "split" },
           latexRootRelativePath: "main.tex",
         },
       ],
@@ -578,7 +590,7 @@ describe("Scient right panel surfaces", () => {
       latexRootRelativePath: "main.tex",
     });
 
-    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "sections/results.tex", 1);
+    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "sections/results.tex", id);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
@@ -589,14 +601,16 @@ describe("Scient right panel surfaces", () => {
           kind: "file",
           relativePath: "sections/results.tex",
           revealLine: null,
-          revealRequestId: 2,
-          latexPresentationRequest: { id: 2, mode: "split" },
+          revealRequestId: id + 1,
+          latexPresentationRequest: { id: id + 1, mode: "split" },
           latexRootRelativePath: "main.tex",
         },
       ],
     });
 
-    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "sections/results.tex", 2);
+    useRightPanelStore
+      .getState()
+      .consumeLatexPresentationRequest(refA, "sections/results.tex", id + 1);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
@@ -607,7 +621,7 @@ describe("Scient right panel surfaces", () => {
           kind: "file",
           relativePath: "sections/results.tex",
           revealLine: null,
-          revealRequestId: 2,
+          revealRequestId: id + 1,
           latexRootRelativePath: "main.tex",
         },
       ],
@@ -619,6 +633,13 @@ describe("Scient right panel surfaces", () => {
       .getState()
       .openFile(refA, "report.html", undefined, { htmlPreviewMode: "source" });
 
+    const [first] = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    assert(first?.kind === "file");
+    const id = first.revealRequestId;
+    expect(id).toBeGreaterThan(0);
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
       activeSurfaceId: "file:report.html",
@@ -628,13 +649,13 @@ describe("Scient right panel surfaces", () => {
           kind: "file",
           relativePath: "report.html",
           revealLine: null,
-          revealRequestId: 1,
-          htmlPresentationRequest: { id: 1, mode: "source" },
+          revealRequestId: id,
+          htmlPresentationRequest: { id, mode: "source" },
         },
       ],
     });
 
-    useRightPanelStore.getState().consumeHtmlPresentationRequest(refA, "report.html", 1);
+    useRightPanelStore.getState().consumeHtmlPresentationRequest(refA, "report.html", id);
 
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
@@ -644,7 +665,7 @@ describe("Scient right panel surfaces", () => {
         kind: "file",
         relativePath: "report.html",
         revealLine: null,
-        revealRequestId: 1,
+        revealRequestId: id,
       },
     ]);
 
@@ -661,13 +682,18 @@ describe("Scient right panel surfaces", () => {
         kind: "file",
         relativePath: "report.html",
         revealLine: null,
-        revealRequestId: 3,
+        revealRequestId: id + 2,
       },
     ]);
   });
 
   it("keeps file surfaces when an environment workspace is available", () => {
     useRightPanelStore.getState().openFile(refA, "paper.pdf");
+    const [file] = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    assert(file?.kind === "file");
     useRightPanelStore.getState().open(refA, "agents");
 
     useRightPanelStore.getState().reconcileFileSurfaces(refA, true);
@@ -681,7 +707,7 @@ describe("Scient right panel surfaces", () => {
           kind: "file",
           relativePath: "paper.pdf",
           revealLine: null,
-          revealRequestId: 1,
+          revealRequestId: file.revealRequestId,
         },
         { id: "agents", kind: "agents" },
       ],
@@ -707,6 +733,11 @@ describe("Scient right panel surfaces", () => {
     useRightPanelStore.getState().openFile(refA, "origin.ts");
     useRightPanelStore.getState().openFile(refB, "untouched.ts");
 
+    const untouched = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refB,
+    ).surfaces;
+    expect(untouched).toHaveLength(1);
     useRightPanelStore.getState().restoreThreadState(refA, {
       isOpen: true,
       activeSurfaceId: "files",
@@ -720,15 +751,7 @@ describe("Scient right panel surfaces", () => {
     });
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
-    ).toEqual([
-      {
-        id: "file:untouched.ts",
-        kind: "file",
-        relativePath: "untouched.ts",
-        revealLine: null,
-        revealRequestId: 1,
-      },
-    ]);
+    ).toEqual(untouched);
   });
 
   it("keeps a new-browser placeholder until a real browser tab exists", () => {

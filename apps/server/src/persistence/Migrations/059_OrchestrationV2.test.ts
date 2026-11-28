@@ -16,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 123 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 124 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -95,6 +95,7 @@ layer("059_OrchestrationV2", (it) => {
         [121, "WorkflowMailSender"],
         [122, "WorkflowPools"],
         [123, "WorkflowRunSubject"],
+        [124, "GuardMessageSearchTriggers"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -183,6 +184,7 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 121, name: "WorkflowMailSender" },
         { migration_id: 122, name: "WorkflowPools" },
         { migration_id: 123, name: "WorkflowRunSubject" },
+        { migration_id: 124, name: "GuardMessageSearchTriggers" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

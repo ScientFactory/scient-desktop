@@ -36,6 +36,7 @@ export const makeProviderRegistryMock = (
   runtimeModeLimits: () => Effect.succeed([]),
   invalidateModelCaches: () => Effect.void,
   refreshModelCatalog: Effect.void,
+  refreshUsageLimits: () => Effect.void,
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   getProviderConnectionActionsForInstance: () => Effect.undefined,

@@ -5840,5 +5840,6 @@
   "4aa6f8d0d5800dca": "{count, plural, one {Mostrar {count} hilo resuelto más} other {Mostrar {count} hilos resueltos más}}",
   "f6cf1627f4acc5ef": "Visibilidad del comentario",
   "eb1fd384ad5919dd": "Nota interna",
-  "b45f0b467e9406d0": "Responder al cliente"
+  "b45f0b467e9406d0": "Responder al cliente",
+  "15e5597f8f93ce12": "{start} a {end}"
 }

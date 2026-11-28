@@ -127,19 +127,16 @@ export const renderCliShim = (input: {
     // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
     // Ctrl-C to the CLI directly. A background child would read /dev/null, so pass stdin on fd 9.
     // With stdin closed, `exec 9<&0` would end the shell; `command` makes it a normal error.
+    // Forwarding starts before the CLI does: a signal in between must not unmount under it.
     "{ command exec 9<&0; } 2>/dev/null || exec 9</dev/null",
-    // SCIENT-FORK: The server can start before this shell receives its PID.
-    // Hold TERM and HUP across that handoff so the mount survives server shutdown.
-    "cli= pending_term= pending_hup=",
-    `trap 'if [ -n "$cli" ]; then kill -TERM "$cli" 2>/dev/null; else pending_term=1; fi' TERM`,
-    `trap 'if [ -n "$cli" ]; then kill -HUP "$cli" 2>/dev/null; else pending_hup=1; fi' HUP`,
+    "cli= pending=",
+    `trap 'if [ -n "$cli" ]; then kill -TERM "$cli" 2>/dev/null; else pending=TERM; fi' TERM`,
+    `trap 'if [ -n "$cli" ]; then kill -HUP "$cli" 2>/dev/null; else pending=HUP; fi' HUP`,
+    "trap '' INT",
     `${run("$mount")} <&9 9<&- &`,
     "cli=$!",
-    '[ -z "$pending_term" ] || kill -TERM "$cli" 2>/dev/null',
-    '[ -z "$pending_hup" ] || kill -HUP "$cli" 2>/dev/null',
+    '[ -z "$pending" ] || kill -"$pending" "$cli" 2>/dev/null',
     "exec 9<&-",
-    // SCIENT-FORK-END
-    "trap '' INT",
     "status=0",
     'wait "$cli" || status=$?',
     // A trapped signal interrupts wait; wait again for the CLI's own exit status.

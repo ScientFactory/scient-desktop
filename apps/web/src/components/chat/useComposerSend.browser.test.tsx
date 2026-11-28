@@ -831,7 +831,7 @@ describe("mounted composer send admission owner", () => {
     expect(lock.current).toBe(true);
   });
 
-  it("keeps newer authoring when a fanout target loses its acknowledgement", async () => {
+  it("allows new fanout authoring while blocking a retry after a lost acknowledgement", async () => {
     await using fixture = await setup();
     using _toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-fanout-toast");
     const entered = Promise.withResolvers<void>();
@@ -840,6 +840,7 @@ describe("mounted composer send admission owner", () => {
       entered.resolve();
       return receipt.promise;
     });
+    const originalPrompt = fixture.context.prompt;
     const sending = fixture.fanout(fanoutInput(fixture));
     await entered.promise;
     useComposerDraftStore
@@ -859,10 +860,20 @@ describe("mounted composer send admission owner", () => {
     ).toBe(newer);
     fixture.context = { ...fixture.context, prompt: "Newer fanout draft" };
     await fixture.fanout(fanoutInput(fixture));
-    expect(fixture.command).toHaveBeenCalledTimes(1);
+    expect(fixture.command).toHaveBeenCalledTimes(2);
+    const first = fixture.command.mock.calls[0]?.[0].input;
+    const second = fixture.command.mock.calls[1]?.[0].input;
+    expect(first?.message.text).toBe(originalPrompt);
+    expect(second?.message.text).toBe("Newer fanout draft");
+    expect(second?.threadId).not.toBe(first?.threadId);
+
+    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, originalPrompt);
+    fixture.context = { ...fixture.context, prompt: originalPrompt };
+    await fixture.fanout(fanoutInput(fixture));
+    expect(fixture.command).toHaveBeenCalledTimes(2);
     expect(
       useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)?.prompt,
-    ).toBe("Newer fanout draft");
+    ).toBe(originalPrompt);
   });
   it("holds one admission lock and keeps settings and skills captured before the send yields", async () => {
     await using fixture = await setup();

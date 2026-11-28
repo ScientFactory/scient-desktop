@@ -181,6 +181,7 @@ function makeHarness(options?: {
       runtimeModeLimits: () => Effect.succeed([]),
       invalidateModelCaches: () => Effect.void,
       refreshModelCatalog: Effect.void,
+      refreshUsageLimits: () => Effect.void,
       refreshInstance: (instanceId) =>
         refreshInstance(instanceId, false).pipe(
           Effect.catch(() => SubscriptionRef.get(providersRef)),

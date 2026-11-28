@@ -22,6 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ChildProcessSpawner } from "effect/process";
+import { makeLinkedWorktreeCleanupFixture } from "../../testUtils/linkedWorktreeCleanupFixture.ts";
 import {
   threadCreated,
   THREAD_ID,
@@ -130,8 +131,11 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
       const sink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
       const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
-      yield* fs.makeDirectory(worktreePath, { recursive: true });
-      yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /fixture/admin");
+      const {
+        execute: executeWorktreeGit,
+        moves,
+        removals,
+      } = yield* makeLinkedWorktreeCleanupFixture(config.baseDir, worktreePath);
       const created = threadCreated(driver);
       yield* sink.commitProjectCommand({
         commandId: CommandId.make("retention-project"),
@@ -165,8 +169,6 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           ...scenario.runs.map(runCreated),
         ],
       });
-      const removals: string[] = [];
-      const moves: string[][] = [];
       const settings = yield* Settings.ServerSettingsService.pipe(
         Effect.provide(
           Settings.layerTest({
@@ -222,33 +224,12 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                         : ["symbolic-ref", "--quiet", "HEAD"],
                     );
                   }
-                  if (input.operation === "StorageCleanup.cleanupGit") {
-                    const args = [...input.args];
-                    assert.isFalse(args.includes("--force"));
-                    if (args[1] === "move") {
-                      assert.equal(args[0], "worktree");
-                      assert.lengthOf(args, 4);
-                      const source = args[2]!;
-                      const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
-                      yield* fs.rename(source, destination);
-                      moves.push(args);
-                    } else {
-                      const isolatedPath = moves[0]![3]!;
-                      assert.deepEqual(args, [
-                        "-c",
-                        "status.showUntrackedFiles=normal",
-                        "worktree",
-                        "remove",
-                        "--",
-                        isolatedPath,
-                      ]);
-                      assert.isFalse(yield* fs.exists(worktreePath));
-                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
-                      removals.push(isolatedPath);
-                      yield* fs.remove(isolatedPath, { recursive: true });
-                    }
+                  if (
+                    input.operation === "StorageCleanup.cleanupGit" ||
+                    input.operation === "StorageCleanup.worktreeAdminDir" ||
+                    input.operation === "StorageCleanup.worktreeRepository"
+                  ) {
+                    return yield* executeWorktreeGit(input);
                   }
                   return {
                     exitCode: ChildProcessSpawner.ExitCode(0),

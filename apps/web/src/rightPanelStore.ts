@@ -922,6 +922,9 @@ const rightPanelWindowSync = createRightPanelWindowSync({
 });
 // SCIENT-FORK:END
 
+// One counter for every file tab, so a reopened tab never reuses a request a viewer already handled.
+let lastFileRevealRequestId = 0;
+
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
@@ -1205,7 +1208,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
-            const revealRequestId = (existing?.revealRequestId ?? 0) + 1;
+            lastFileRevealRequestId = Math.max(
+              lastFileRevealRequestId,
+              existing?.revealRequestId ?? 0,
+            );
+            const revealRequestId = ++lastFileRevealRequestId;
             const surface = fileSurface(
               relativePath,
               normalizeRevealLine(line),
@@ -1641,6 +1648,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
+      onRehydrateStorage: () => (state) => {
+        for (const thread of Object.values(state?.byThreadKey ?? {})) {
+          for (const surface of thread.surfaces) {
+            if (surface.kind === "file") {
+              lastFileRevealRequestId = Math.max(lastFileRevealRequestId, surface.revealRequestId);
+            }
+          }
+        }
+      },
     },
   ),
 );

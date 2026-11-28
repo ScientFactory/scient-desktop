@@ -3302,7 +3302,7 @@
   "c646366e142ba05f": "Desktop WSL state is unavailable.",
   "228dcd284ea651b3": "Failed to load WSL state.",
   "b08d105dd2553f8d": "The project did not appear in the desktop app.",
-  "7a4b3f3b83e121d7": "{organization} turned off anonymous usage data.",
+  "bf45d68027d21097": "{organization} turned off product usage data.",
   "d85822b18e9475df": "Managed by {organization}.",
   "922269f8691aa3ba": "Could not tell whether this environment runs on this computer.",
   "35cade9cc8a01363": "Port forwarding needs the desktop app.",

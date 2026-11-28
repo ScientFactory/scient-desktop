@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
   openFile: vi.fn(),
   userActionRevisions: new Map<string, number>(),
   openExternal: vi.fn(),
+  forwardPort: vi.fn(),
+  forwardLocality: "remote" as "remote" | "pending",
   copy: vi.fn(),
   // SCIENT-FORK:START
   toast: vi.fn(),
@@ -112,6 +114,22 @@ vi.mock(import("../hooks/useFileMetadata"), async (original) => ({
 }));
 vi.mock(import("./files/useFileDownload"), () => ({ useFileDownload: () => state.download }));
 vi.mock(import("../env"), async (original) => ({ ...(await original()), isElectron: true }));
+// Desktop can forward this environment's ports: it runs on another machine.
+vi.mock(import("../state/portForwards"), async (original) => ({
+  ...(await original()),
+  canForwardPorts: () => true,
+  useForwardLocality: () => state.forwardLocality,
+  usePortForwards: () => [],
+  forwardPort: state.forwardPort,
+}));
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironment: (() => ({
+    connection: { phase: "connected" },
+    entry: { target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" } },
+    serverConfig: null,
+  })) as never,
+}));
 vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
@@ -123,6 +141,7 @@ vi.mock(import("./ui/toast"), async (original) => ({
   toastManager: { ...(await original()).toastManager, add: state.toast },
 }));
 
+import { PortForwardSameMachineError } from "../state/portForwards";
 import ChatMarkdown from "./ChatMarkdown";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 
@@ -167,6 +186,12 @@ function setup() {
     state.userActionRevisions.set(key, (state.userActionRevisions.get(key) ?? 0) + 1);
   });
   state.openExternal.mockReset().mockResolvedValue(undefined);
+  state.forwardLocality = "remote";
+  state.forwardPort.mockReset().mockImplementation(async (environmentId, remotePort) => ({
+    environmentId,
+    remotePort,
+    localPort: 45000,
+  }));
   state.copy.mockReset().mockResolvedValue(undefined);
   state.download.mockReset();
   const { openFile, getUserActionRevision } = useRightPanelStore.getState();
@@ -412,3 +437,40 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
   }
   expect(state.openExternal).toHaveBeenCalledTimes(2);
 });
+
+it.each(["remote", "pending-local", "remote-error"] as const)(
+  "opens an environment's localhost link in the system browser when the route is %s",
+  async (route) => {
+    using _setup = setup();
+    const url = "http://localhost:3000/docs?x=1#top";
+    const forwarded = "http://localhost:45000/docs?x=1#top";
+    if (route === "pending-local") {
+      state.forwardLocality = "pending";
+      state.forwardPort.mockRejectedValue(
+        new PortForwardSameMachineError({ port: 3000, cause: new Error("Same machine") }),
+      );
+    }
+    if (route === "remote-error") {
+      state.forwardPort.mockRejectedValue(new Error("The other machine could not be reached"));
+    }
+    await using screen = await renderMarkdown(`[App](${url})`);
+    // Keeps the test page from following the link; React's handlers run before this.
+    const stopNavigation = (event: Event) => event.preventDefault();
+    window.addEventListener("click", stopNavigation);
+    try {
+      await userEvent.click(screen.anchor(), { modifiers: ["ControlOrMeta"] });
+    } finally {
+      window.removeEventListener("click", stopNavigation);
+    }
+    if (route === "remote-error") {
+      await vi.waitFor(() => expect(state.toast).toHaveBeenCalled());
+      expect(state.openExternal).not.toHaveBeenCalled();
+    } else {
+      await vi.waitFor(() =>
+        expect(state.openExternal).toHaveBeenCalledExactlyOnceWith(
+          route === "remote" ? forwarded : url,
+        ),
+      );
+    }
+  },
+);
