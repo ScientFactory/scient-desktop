@@ -18,6 +18,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
+  ArrowRightIcon,
   ChevronRightIcon,
   PlusIcon,
   EllipsisIcon,
@@ -325,22 +326,23 @@ export function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> 
   );
 }
 
-/** A whole-card link to a related extension's page; its content is `RelatedExtension`. */
-export const RELATED_EXTENSION_LINK_CLASS = cn(
-  CARD_CLASS,
-  "flex items-center gap-3 px-4 py-3 transition-colors hover:bg-foreground/[0.035]",
-);
+/**
+ * A link to a related extension's page, like Settings' "Getting started": as wide as its text, a
+ * faint hover, and an arrow that moves on hover. Its content is `RelatedExtension`.
+ */
+export const RELATED_EXTENSION_LINK_CLASS =
+  "group -mx-2 inline-flex w-fit items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium text-foreground outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
-/** Inside a related extension's link: its icon, name and one line, then a chevron. */
-export function RelatedExtension({ name, line }: { readonly name: string; readonly line: string }) {
+/** Inside a related extension's link: its icon and name, then an arrow. */
+export function RelatedExtension({ name }: { readonly name: string }) {
   return (
     <>
-      <ExtensionIcon name={name} size="small" />
-      <span className="grid min-w-0 flex-1">
-        <span className="text-sm font-medium text-foreground">{name}</span>
-        <span className="truncate text-sm text-muted-foreground">{line}</span>
-      </span>
-      <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      <ExtensionIcon name={name} size="inline" />
+      <span className="transition-colors group-hover:text-foreground/75">{name}</span>
+      <ArrowRightIcon
+        aria-hidden
+        className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1"
+      />
     </>
   );
 }
@@ -679,7 +681,6 @@ function AvailabilityRows({
 
 /** On WhatsApp Business's page: the way to a person's own WhatsApp, which Business can't read. */
 function OwnWhatsAppLink({ entryName }: { readonly entryName: string | undefined }) {
-  const gt = useGT();
   if (entryName !== WHATSAPP_BUSINESS_SERVER) return null;
   return (
     <Link
@@ -687,7 +688,7 @@ function OwnWhatsAppLink({ entryName }: { readonly entryName: string | undefined
       params={{ serviceId: "whatsapp" }}
       className={RELATED_EXTENSION_LINK_CLASS}
     >
-      <RelatedExtension name="WhatsApp" line={gt("For your personal chats.")} />
+      <RelatedExtension name="WhatsApp" />
     </Link>
   );
 }

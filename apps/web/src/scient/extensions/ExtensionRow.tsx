@@ -152,7 +152,8 @@ function ExtensionLink({
   }
 }
 
-type ExtensionIconSize = "row" | "large" | "avatar" | "small";
+/** `inline` sits beside a line of text, as in a link to another extension. */
+type ExtensionIconSize = "row" | "large" | "avatar" | "small" | "inline";
 
 /** Avatar icons share the row size and use a round frame. */
 const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
@@ -160,6 +161,7 @@ const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
   large: "size-16 rounded-[25%]",
   avatar: "size-10 rounded-full",
   small: "size-8 rounded-[25%]",
+  inline: "size-5 rounded-[25%]",
 };
 
 const renderedIcons = new Map<string, string>();
@@ -228,7 +230,7 @@ function ExtensionIconTile({
         Icon
           ? "border-border bg-white dark:bg-card"
           : "border-border [color-scheme:light] dark:border-white/10",
-        Icon && (size === "large" ? "p-2.5" : "p-1.5"),
+        Icon && (size === "large" ? "p-2.5" : size === "inline" ? "p-0.5" : "p-1.5"),
         ICON_FRAME[size],
         unframed && "size-8 border-0 bg-transparent p-1 opacity-60",
       )}

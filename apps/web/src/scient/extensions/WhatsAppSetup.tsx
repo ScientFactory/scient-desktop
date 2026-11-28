@@ -440,10 +440,7 @@ export function WhatsAppDetail({ service }: { readonly service: AccountService }
         params={{ _splat: WHATSAPP_BUSINESS_SERVER }}
         className={RELATED_EXTENSION_LINK_CLASS}
       >
-        <RelatedExtension
-          name="WhatsApp Business"
-          line={gt("For business accounts, with Meta's tools.")}
-        />
+        <RelatedExtension name="WhatsApp Business" />
       </Link>
       {service.websiteUrl ? (
         <AboutCard rows={[[gt("Website"), service.websiteUrl.replace(/^https:\/\//, "")]]} />
