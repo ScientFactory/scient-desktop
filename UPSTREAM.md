@@ -2420,8 +2420,9 @@ When aligning, check:
   width, or marked `data-preserve-icon-weight` (on the icon or its parent), keeps its weight.
 - **Shortcuts T3 may also claim.** Scient adds `rightPanel.nextTab` (Ctrl+Tab),
   `rightPanel.previousTab` (Ctrl+Shift+Tab), `rightPanel.duplicateTab` (⌘⇧D),
-  `rightPanel.toggleFiles` (⌘⌥E), and ⌘T (`rightPanel.new`) for a closed panel; the
-  server's keybindings migration gives existing configs the closed-panel rule. ⌘[ and
+  `rightPanel.toggleFiles` (⌘⌥⇧E, beside T3's maximize on ⌘⌥E), and ⌘T (`rightPanel.new`)
+  for a closed panel; the server's keybindings migrations give existing configs the
+  closed-panel rule and move unchanged Files and maximize rules to these keys. ⌘[ and
   ⌘] (T3's `navigation.back`/`forward`) belong to a file tab's own history while the
   keyboard is in it. If T3 binds any of these, decide which command keeps the key.
 - **`otherViewers`.** The server browser now tells each window how many others watch

@@ -140,6 +140,70 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
   return leftContext === rightContext;
 }
 
+// SCIENT-FORK:START — a rule still on the key a default gave up moves with that default, once
+type KeybindingMove = { readonly from: KeybindingRule; readonly to: KeybindingRule };
+
+const MOVED_DEFAULT_KEYBINDINGS: ReadonlyArray<{
+  readonly id: string;
+  readonly moves: ReadonlyArray<KeybindingMove>;
+}> = [
+  {
+    // Files gave mod+alt+e to T3's maximize; builds before this saved maximize on mod+alt+shift+e.
+    id: "rightPanel.toggleFiles:mod+alt+shift+e",
+    moves: [
+      {
+        from: { key: "mod+alt+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
+        to: { key: "mod+alt+shift+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
+      },
+      {
+        from: { key: "mod+alt+shift+e", command: "rightPanel.toggleMaximized" },
+        to: { key: "mod+alt+e", command: "rightPanel.toggleMaximized" },
+      },
+    ],
+  },
+];
+
+/** The chord a rule presses on macOS, then elsewhere: `mod` is Command on one and Ctrl on the other. */
+function keybindingChords(rule: KeybindingRule): ReadonlyArray<string> {
+  const parsed = parseKeybindingShortcut(rule.key);
+  if (!parsed) return [];
+  return [true, false].map((mac) =>
+    [
+      parsed.key,
+      parsed.metaKey || (parsed.modKey && mac),
+      parsed.ctrlKey || (parsed.modKey && !mac),
+      parsed.shiftKey,
+      parsed.altKey,
+    ].join("|"),
+  );
+}
+
+/**
+ * Moves unchanged default rules to their new keys. Any enabled rule pressing a new key's chord on
+ * either platform, whatever its condition, declines the whole move: one would shadow the other.
+ */
+function moveDefaultKeybindings(
+  config: ReadonlyArray<KeybindingRule>,
+  moves: ReadonlyArray<KeybindingMove>,
+): { readonly config: ReadonlyArray<KeybindingRule>; readonly declined: boolean } {
+  const moved = config.map(
+    (entry) => moves.find((move) => isSameKeybindingRule(entry, move.from))?.to ?? entry,
+  );
+  const changed = moved.filter((entry, index) => entry !== config[index]);
+  const taken = changed.some((entry) => {
+    const chords = keybindingChords(entry);
+    return moved.some(
+      (other) =>
+        other !== entry &&
+        other.when?.trim() !== "false" &&
+        keybindingChords(other).some((chord, platform) => chord === chords[platform]),
+    );
+  });
+  if (changed.length === 0) return { config, declined: false };
+  return taken ? { config, declined: true } : { config: moved, declined: false };
+}
+// SCIENT-FORK:END
+
 function keybindingRuleFromInput(input: ServerRemoveKeybindingInput): KeybindingRule {
   return input.when === undefined
     ? { key: input.key, command: input.command }
@@ -486,13 +550,20 @@ const make = Effect.gen(function* () {
       const pendingLateDefaults = LATE_DEFAULT_KEYBINDINGS.filter(
         (late) => !appliedMigrationIds.has(late.id),
       );
+      // SCIENT-FORK:START
+      const pendingMovedDefaults = MOVED_DEFAULT_KEYBINDINGS.filter(
+        (moved) => !appliedMigrationIds.has(moved.id),
+      );
+      // SCIENT-FORK:END
       const configExists = yield* readConfigExists;
       if (!configExists) {
         yield* writeConfigAtomically(DEFAULT_KEYBINDINGS);
-        if (pendingLateDefaults.length > 0) {
+        if (pendingLateDefaults.length > 0 || pendingMovedDefaults.length > 0) {
           yield* recordAppliedMigrations([
             ...appliedMigrationIds,
             ...LATE_DEFAULT_KEYBINDINGS.map((late) => late.id),
+            // SCIENT-FORK: a new config already has the moved keys.
+            ...MOVED_DEFAULT_KEYBINDINGS.map((moved) => moved.id),
           ]);
         }
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
@@ -511,7 +582,19 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      // SCIENT-FORK:START — moved defaults first, so a default moving onto a freed key is not a
+      // conflict. A declined move stays pending, and the defaults it would have placed wait too.
+      let customConfig = runtimeConfig.keybindings;
+      const declinedMoves: typeof pendingMovedDefaults = [];
+      for (const pending of pendingMovedDefaults) {
+        const result = moveDefaultKeybindings(customConfig, pending.moves);
+        customConfig = result.config;
+        if (result.declined) declinedMoves.push(pending);
+      }
+      const awaitingMoves = declinedMoves.flatMap((pending) =>
+        pending.moves.map((move) => move.to),
+      );
+      // SCIENT-FORK:END
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -521,7 +604,11 @@ const make = Effect.gen(function* () {
         when: string | null;
       }> = [];
       for (const defaultRule of DEFAULT_KEYBINDINGS) {
-        if (existingCommands.has(defaultRule.command)) {
+        // SCIENT-FORK: a default waiting on a declined move keeps out of the key it would share.
+        if (
+          existingCommands.has(defaultRule.command) ||
+          awaitingMoves.some((rule) => isSameKeybindingRule(rule, defaultRule))
+        ) {
           continue;
         }
         const conflictingEntry = customConfig.find((entry) =>
@@ -585,16 +672,19 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      if (defaultsToAppend.length > 0) {
+      if (defaultsToAppend.length > 0 || customConfig !== runtimeConfig.keybindings) {
         yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
       }
       const settledLateDefaults = pendingLateDefaults.filter(
         (late) => !skippedDefaults.includes(late.rule),
       );
-      if (settledLateDefaults.length > 0) {
+      // SCIENT-FORK: a move is recorded once it ran or had nothing to move.
+      const settledMoves = pendingMovedDefaults.filter((moved) => !declinedMoves.includes(moved));
+      if (settledLateDefaults.length > 0 || settledMoves.length > 0) {
         yield* recordAppliedMigrations([
           ...appliedMigrationIds,
           ...settledLateDefaults.map((late) => late.id),
+          ...settledMoves.map((moved) => moved.id),
         ]);
       }
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);

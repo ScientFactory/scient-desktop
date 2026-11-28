@@ -66,7 +66,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+]", command: "navigation.forward", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+alt+b", command: "rightPanel.toggle" },
-  // SCIENT-FORK: rightPanel.toggleMaximized takes mod+alt+shift+e below; mod+alt+e stays Files.
+  { key: "mod+alt+e", command: "rightPanel.toggleMaximized" },
   { key: "mod+shift+b", command: "threadPanel.toggle", when: "!terminalFocus" },
   { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
   // SCIENT-FORK:START — a new tab also opens a closed panel; Ctrl+Tab moves between
@@ -75,9 +75,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "ctrl+tab", command: "rightPanel.nextTab" },
   { key: "ctrl+shift+tab", command: "rightPanel.previousTab" },
   { key: "mod+shift+d", command: "rightPanel.duplicateTab", when: "!terminalFocus" },
-  // The project's file list beside any tab.
-  { key: "mod+alt+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
-  { key: "mod+alt+shift+e", command: "rightPanel.toggleMaximized" },
+  // The project's file list beside any tab; T3's maximize keeps mod+alt+e.
+  { key: "mod+alt+shift+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
   // SCIENT-FORK:END
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
