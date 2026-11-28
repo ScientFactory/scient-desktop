@@ -403,7 +403,8 @@ describe("DesktopLifecycle", () => {
   // SCIENT-FORK:START — Scient keeps running in the background.
   const closeLastWindow = Effect.fn("test.closeLastWindow")(function* (
     platform: NodeJS.Platform,
-    keepRunningInBackground: boolean,
+    keepRunningInBackground: boolean | null,
+    expectQuit: boolean,
   ) {
     const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
     const quitRequested = yield* Deferred.make<void>();
@@ -438,7 +439,7 @@ describe("DesktopLifecycle", () => {
         yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
         const state = yield* DesktopState.DesktopState;
         appListeners.get("window-all-closed")?.();
-        if (!keepRunningInBackground && platform !== "darwin") yield* Deferred.await(quitRequested);
+        if (expectQuit) yield* Deferred.await(quitRequested);
         else yield* Effect.yieldNow;
         return {
           background: yield* Ref.get(state.background),
@@ -452,7 +453,10 @@ describe("DesktopLifecycle", () => {
     "keeps running hidden after the last window closes on %s",
     (platform) =>
       Effect.gen(function* () {
-        assert.deepEqual(yield* closeLastWindow(platform, true), { background: true, quit: false });
+        assert.deepEqual(yield* closeLastWindow(platform, true, false), {
+          background: true,
+          quit: false,
+        });
       }),
   );
 
@@ -460,11 +464,34 @@ describe("DesktopLifecycle", () => {
     "quits after the last window closes on %s with background running off",
     (platform) =>
       Effect.gen(function* () {
-        assert.deepEqual(yield* closeLastWindow(platform, false), {
+        assert.deepEqual(yield* closeLastWindow(platform, false, true), {
           background: false,
           quit: true,
         });
       }),
+  );
+
+  // Nothing stored: what loading an absent settings file yields.
+  it.effect.each(["win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
+    "quits after the last window closes on %s when the person never chose",
+    (platform) =>
+      Effect.gen(function* () {
+        const { keepRunningInBackground } = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
+        assert.deepEqual(yield* closeLastWindow(platform, keepRunningInBackground, true), {
+          background: false,
+          quit: true,
+        });
+      }),
+  );
+
+  it.effect("keeps running after the last window closes on macOS when the person never chose", () =>
+    Effect.gen(function* () {
+      const { keepRunningInBackground } = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
+      assert.deepEqual(yield* closeLastWindow("darwin", keepRunningInBackground, false), {
+        background: true,
+        quit: false,
+      });
+    }),
   );
 
   it.effect.each([

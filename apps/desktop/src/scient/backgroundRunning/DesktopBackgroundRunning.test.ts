@@ -16,7 +16,8 @@ import * as DesktopBackgroundRunning from "./DesktopBackgroundRunning.ts";
 
 interface Scenario {
   readonly platform?: NodeJS.Platform;
-  readonly keepRunningInBackground?: boolean;
+  /** The stored choice; `null` is nothing stored. Defaults to on. */
+  readonly keepRunningInBackground?: boolean | null;
 }
 
 const setup = Effect.fn("test.setup")(function* (scenario: Scenario = {}) {
@@ -34,7 +35,10 @@ const setup = Effect.fn("test.setup")(function* (scenario: Scenario = {}) {
         Layer.mergeAll(
           DesktopAppSettings.layerTest({
             ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-            keepRunningInBackground: scenario.keepRunningInBackground ?? true,
+            keepRunningInBackground:
+              scenario.keepRunningInBackground === undefined
+                ? true
+                : scenario.keepRunningInBackground,
           }),
           DesktopState.layer,
           Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
@@ -69,6 +73,10 @@ const setup = Effect.fn("test.setup")(function* (scenario: Scenario = {}) {
     activations,
     activated,
     quitRequested,
+    /** What the Settings switch reads through IPC. */
+    readSwitch: provide(
+      DesktopBackgroundRunning.getKeepRunningInBackground.handler({} as Electron.IpcMainEvent),
+    ),
   };
 });
 
@@ -92,6 +100,20 @@ describe("DesktopBackgroundRunning", () => {
       assert.isNull((yield* setup({ platform: "darwin" })).trays.at(-1));
       assert.isNull((yield* setup({ keepRunningInBackground: false })).trays.at(-1));
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    ["win32", false],
+    ["linux", false],
+    ["darwin", true],
+  ] as const)(
+    "with nothing stored on %s the Settings switch reads %s and no tray shows",
+    ([platform, on]) =>
+      Effect.gen(function* () {
+        const harness = yield* setup({ platform, keepRunningInBackground: null });
+        assert.isNull(harness.trays.at(-1));
+        assert.equal(yield* harness.readSwitch, on);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("removes the tray when the app shuts down", () =>

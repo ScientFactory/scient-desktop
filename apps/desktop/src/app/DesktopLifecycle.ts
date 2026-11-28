@@ -357,7 +357,11 @@ export const make = DesktopLifecycle.of({
           if (yield* Ref.get(state.quitting)) return;
           // SCIENT-FORK:START — Scient keeps running in the background with no window.
           const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-          if ((yield* appSettings.get).keepRunningInBackground) {
+          const keepRunning = DesktopAppSettings.keepsRunningInBackground(
+            yield* appSettings.get,
+            environment.platform,
+          );
+          if (keepRunning) {
             yield* Ref.set(state.background, true);
             return;
           }

@@ -68,7 +68,9 @@ export const make = Effect.fn("DesktopBackgroundRunning.make")(function* (setTra
           ),
         );
       });
-      yield* syncTray((yield* appSettings.get).keepRunningInBackground);
+      yield* syncTray(
+        DesktopAppSettings.keepsRunningInBackground(yield* appSettings.get, environment.platform),
+      );
       yield* Effect.addFinalizer(() => setTray(null));
     }).pipe(Effect.withSpan("DesktopBackgroundRunning.start")),
     setEnabled: Effect.fn("DesktopBackgroundRunning.setEnabled")(function* (enabled) {
@@ -128,7 +130,9 @@ export const getKeepRunningInBackground = makeSyncIpcMethod({
   channel: GET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL,
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.backgroundRunning.get")(function* () {
-    return (yield* (yield* DesktopAppSettings.DesktopAppSettings).get).keepRunningInBackground;
+    const settings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
+    const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
+    return DesktopAppSettings.keepsRunningInBackground(settings, platform);
   }),
 });
 

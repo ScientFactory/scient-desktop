@@ -60,8 +60,9 @@ export interface DesktopSettings {
   // WSL-only primary mode avoids a second Windows backend; default false preserves parallel setups.
   // Requires restart because the pool chooses its primary spec at layer initialization.
   readonly wslOnly: boolean;
-  // SCIENT-FORK:START — per machine; agents have no path to change it.
-  readonly keepRunningInBackground: boolean;
+  // SCIENT-FORK:START — per machine; agents have no path to change it. The person's choice, or
+  // null before they make one: `keepsRunningInBackground` then applies the platform's default.
+  readonly keepRunningInBackground: boolean | null;
   // SCIENT-FORK:END
 }
 
@@ -106,8 +107,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslDistro: null,
   voiceSelectedModelId: null,
   wslOnly: false,
-  // SCIENT-FORK: on by default.
-  keepRunningInBackground: true,
+  // SCIENT-FORK: no choice yet, so the platform's default applies.
+  keepRunningInBackground: null,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -298,7 +299,8 @@ function normalizeDesktopSettingsDocument(
     // SCIENT-FORK:END
     wslOnly: parsed.wslOnly === true,
     // SCIENT-FORK: Scient background running.
-    keepRunningInBackground: parsed.keepRunningInBackground !== false,
+    keepRunningInBackground:
+      typeof parsed.keepRunningInBackground === "boolean" ? parsed.keepRunningInBackground : null,
   };
 }
 
@@ -358,8 +360,9 @@ function toDesktopSettingsDocument(
     document.wslOnly = settings.wslOnly;
   }
 
-  // SCIENT-FORK:START — Scient background running.
-  if (settings.keepRunningInBackground !== defaults.keepRunningInBackground) {
+  // SCIENT-FORK:START — Scient background running: a choice is kept even when it matches today's
+  // default, so a later change of default never overrides it.
+  if (settings.keepRunningInBackground !== null) {
     document.keepRunningInBackground = settings.keepRunningInBackground;
   }
   // SCIENT-FORK:END
@@ -469,6 +472,17 @@ function setKeepRunningInBackground(settings: DesktopSettings, enabled: boolean)
   return settings.keepRunningInBackground === enabled
     ? settings
     : { ...settings, keepRunningInBackground: enabled };
+}
+
+/**
+ * Whether closing the last window leaves Scient running. With no choice made it is on for macOS,
+ * where apps stay in the Dock anyway, and off for Windows and Linux.
+ */
+export function keepsRunningInBackground(
+  settings: Pick<DesktopSettings, "keepRunningInBackground">,
+  platform: NodeJS.Platform,
+): boolean {
+  return settings.keepRunningInBackground ?? platform === "darwin";
 }
 // SCIENT-FORK:END
 

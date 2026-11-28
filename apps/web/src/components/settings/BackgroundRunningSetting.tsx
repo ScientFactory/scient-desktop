@@ -10,7 +10,8 @@ export function BackgroundRunningSetting() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const bridge = window.desktopBridge;
-  const [enabled, setEnabled] = useState(() => bridge?.getKeepRunningInBackground?.() ?? true);
+  // The main process applies the platform's default; the renderer never assumes one.
+  const [enabled, setEnabled] = useState(() => bridge?.getKeepRunningInBackground?.() === true);
   const [pending, setPending] = useState(false);
   const setKeepRunningInBackground = bridge?.setKeepRunningInBackground;
   if (!setKeepRunningInBackground) return null;

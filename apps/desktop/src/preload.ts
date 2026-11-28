@@ -176,7 +176,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient keeps running in the background.
   getKeepRunningInBackground: () =>
-    ipcRenderer.sendSync(IpcChannels.GET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL) !== false,
+    ipcRenderer.sendSync(IpcChannels.GET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL) === true,
   setKeepRunningInBackground: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_KEEP_RUNNING_IN_BACKGROUND_CHANNEL, enabled),
   // SCIENT-FORK:END
