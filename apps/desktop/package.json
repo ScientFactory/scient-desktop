@@ -14,6 +14,7 @@
     "test:document-pdf": "node scripts/document-page-pdf-fixtures.mjs",
     "test:svg-export": "node scripts/svg-export-smoke.mjs",
     "test:google-sign-in": "node scripts/google-sign-in-smoke.mjs",
+    "test:password-reveal": "node scripts/password-reveal-smoke.mjs",
     "i18n:generate": "node scripts/i18n-generate.mjs"
   },
   "dependencies": {

@@ -859,6 +859,13 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   autofills. The toolbar chip identifies the filled sign-in and offers other matches; the key button
   remains available for manual filling. The desktop advertises `originBoundFill`; `expectedOrigin`
   and the isolated guest's document nonce reject navigation races, including same-origin reloads.
+- **Password eye**: desktop tabs and their popups run with Blink's `PasswordReveal`
+  (`passwordReveal.ts`, set over whatever the `<webview>` asked for); server-run tabs don't.
+  Chromium shows the eye only for what was typed into an empty box while it keeps focus; a value
+  set by script, as every Scient fill is, hides it and masks a revealed box again. Author CSS can't
+  hide it per tab (`::-ms-reveal` doesn't parse), and agent tabs need no hiding: a filled secret
+  never gets an eye, and typed text is already readable by the agent's scripts.
+  `scripts/password-reveal-smoke.mjs` proves the eye and the fill rule in a real `<webview>` in CI.
 - Website rows offer **Open <site>**, opening the first site in a new in-app browser tab in the
   account's profile (or the default profile). Rejected passwords and codes show a short row status;
   a later successful sign-in or editing the password or two-factor key clears it.

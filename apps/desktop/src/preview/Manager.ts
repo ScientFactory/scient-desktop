@@ -18,6 +18,9 @@ import {
 // SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
 import { pinchZoomFactor, watchPinchZoom } from "../scient/browser/pinchZoom.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: Chromium's eye in a tab's password boxes.
+import { BROWSER_TAB_BLINK_FEATURES } from "../scient/browser/passwordReveal.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -523,6 +526,9 @@ const POPUP_WINDOW_OPTIONS = {
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,
+    // SCIENT-FORK:START — Scient Browser: a sign-in popup's password box has the tab's eye.
+    enableBlinkFeatures: BROWSER_TAB_BLINK_FEATURES,
+    // SCIENT-FORK:END
   },
 } satisfies Electron.BrowserWindowConstructorOptions;
 

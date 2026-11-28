@@ -77,6 +77,9 @@ import {
 // SCIENT-FORK:START — spelling suggestions and languages in the context menu.
 import { spellingMenuItems } from "../scient/spelling/ipc.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: Chromium's eye in a tab's password boxes.
+import { BROWSER_TAB_BLINK_FEATURES } from "../scient/browser/passwordReveal.ts";
+// SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
 
@@ -769,6 +772,9 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
+      // SCIENT-FORK:START — Scient Browser: Chromium's eye in a tab's password boxes.
+      webPreferences.enableBlinkFeatures = BROWSER_TAB_BLINK_FEATURES;
+      // SCIENT-FORK:END
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),

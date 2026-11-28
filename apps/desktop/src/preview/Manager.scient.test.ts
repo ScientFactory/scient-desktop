@@ -489,6 +489,36 @@ describe("PreviewManager and Google's sign-in", () => {
   );
 });
 
+describe("PreviewManager popups", () => {
+  effectIt.effect("gives a tab's sign-in popup Chromium's password eye", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const window = makeAppWindow(7);
+        const { guest } = makeGuest(41, window.webContents);
+        fromId.mockImplementation((id) => (id === 41 ? guest : null));
+        yield* manager.setMainWindow(window.window);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 41);
+
+        const openWindow = vi.mocked(guest.setWindowOpenHandler).mock.calls[0]![0];
+        const opened = openWindow({
+          url: "https://accounts.example.com/authorize",
+          disposition: "new-window",
+          frameName: "",
+          features: "",
+          referrer: { url: "", policy: "default" },
+        });
+        expect(opened).toMatchObject({
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            webPreferences: { enableBlinkFeatures: "PasswordReveal" },
+          },
+        });
+      }),
+    ),
+  );
+});
+
 describe("PreviewManager and trackpad pinch", () => {
   /** A guest whose `on` and `ipc.on` listeners the test can fire. */
   const makePinchableGuest = (id: number, hostWebContents: unknown) => {

@@ -128,12 +128,18 @@ function makeFakeWindow(id: number, session: ReturnType<typeof makeFakeSession>[
     if (call === undefined) throw new Error(`no ${event} listener`);
     return call[1] as () => void;
   };
+  const contentsListener = (event: string) => {
+    const call = webContents.on.mock.calls.find(([name]) => name === event);
+    if (call === undefined) throw new Error(`no ${event} listener`);
+    return call[1] as (...args: never[]) => void;
+  };
   return {
     window: window as unknown as Electron.BrowserWindow,
     loadURL: window.loadURL,
     getBounds: window.getBounds,
     maximize: window.maximize,
     listener,
+    contentsListener,
   };
 }
 
@@ -227,7 +233,7 @@ const makeHarness = Effect.fnUntraced(function* (
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
-          isBrowserPartition: () => false,
+          isBrowserPartition: (partition) => partition.startsWith("persist:scient-next-preview-"),
         }),
       ),
     ),
@@ -406,6 +412,29 @@ describe("DesktopWindow.openNewWindow", () => {
         // Reopening after the last window closed (the macOS Dock) installs the policy again.
         assert.isTrue(yield* windows.openNewWindow());
         assert.equal(harness.session.remoteRequestFrom(3), "origin stripped");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+});
+
+describe("DesktopWindow browser tabs", () => {
+  it.effect("gives a tab Chromium's password eye and no Blink feature its element asked for", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const attach = harness.fakes[0].contentsListener("will-attach-webview") as (
+          event: { preventDefault: () => void },
+          webPreferences: Electron.WebPreferences,
+          params: Record<string, string>,
+        ) => void;
+        const webPreferences: Electron.WebPreferences = { enableBlinkFeatures: "WebBluetooth" };
+        attach({ preventDefault: () => {} }, webPreferences, {
+          partition: "persist:scient-next-preview-test",
+        });
+        assert.equal(webPreferences.enableBlinkFeatures, "PasswordReveal");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

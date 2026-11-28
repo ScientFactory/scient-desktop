@@ -35,6 +35,9 @@ password**, and **Show** and **Copy** work for both, on any device. Each use is 
 Activity. A login you remove stays removed when a browser profile is refreshed; importing it again
 brings it back.
 
+A password box in a browser tab shows an eye while you type in it; click it to see what you typed.
+A filled password has no eye: use **Show password** in the key's menu.
+
 When an agent needs a key you haven't saved, it asks in a private card and keeps your answer here.
 A key you give an agent in the chat is kept as it is, with no card. Each one is a new key, even for
 a service you already have one for; an agent replaces a key only when it names the one to replace.
