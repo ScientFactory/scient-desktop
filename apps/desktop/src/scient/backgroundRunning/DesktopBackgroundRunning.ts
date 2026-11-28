@@ -95,9 +95,9 @@ export const make = Effect.fn("DesktopBackgroundRunning.make")(function* (setTra
           Effect.provideService(DesktopAppSettings.DesktopAppSettings, appSettings),
         ),
       );
-      yield* facts.summaries(
-        appSettings.get.pipe(Effect.map((settings) => settings.keepRunningInBackground)),
-      );
+      // Summaries report what this start applies: a change of the switch waits for the next start.
+      const choiceAtStart = (yield* appSettings.get).keepRunningInBackground;
+      yield* facts.summaries(Effect.succeed(choiceAtStart));
       yield* Effect.addFinalizer(() => setTray(null));
     }).pipe(Effect.withSpan("DesktopBackgroundRunning.start")),
     // The choice takes effect at the next start, for window closing, the tray and Accounts alike.

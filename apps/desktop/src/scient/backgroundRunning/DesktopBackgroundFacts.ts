@@ -96,7 +96,7 @@ export class DesktopBackgroundFacts extends Context.Service<
       readonly enabled: boolean;
       readonly previous: boolean | null;
     }) => Effect.Effect<void>;
-    /** A summary now and one a day while Scient runs; `choice` reads the stored setting. */
+    /** A summary now and one a day while Scient runs; `choice` is the stored choice this start applies. */
     readonly summaries: (
       choice: Effect.Effect<boolean | null>,
     ) => Effect.Effect<void, never, Scope.Scope>;

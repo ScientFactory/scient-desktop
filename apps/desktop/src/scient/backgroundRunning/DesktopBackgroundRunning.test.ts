@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
@@ -181,6 +182,23 @@ describe("DesktopBackgroundRunning", () => {
           { kind: "setting-changed", platform: "linux", enabled: true, previousSetBy: "default" },
         ]);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("daily summaries report the value this start applies, not a later choice", () =>
+    Effect.gen(function* () {
+      const harness = yield* setup({ platform: "linux", keepRunningInBackground: null });
+      yield* harness.background.setEnabled(true);
+      yield* TestClock.adjust("24 hours");
+      assert.deepEqual(
+        harness.recorded
+          .filter((fact) => fact.name === "app.background.summary")
+          .map((fact) => [fact.properties.reason, fact.properties.enabled, fact.properties.setBy]),
+        [
+          ["launch", false, "default"],
+          ["daily", false, "default"],
+        ],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("reports a tray that cannot be shown", () =>
