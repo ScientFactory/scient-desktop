@@ -909,9 +909,9 @@ describe("Discover", () => {
     await expect
       .element(page.getByRole("heading", { name: "Your agents" }))
       .not.toBeInTheDocument();
-    expect(linkIn(fixture.container, "Open")?.getAttribute("href")).toBe(
-      "/settings/extensions/item/server/scient.curated/whatsapp-business",
-    );
+    await expect
+      .element(page.getByRole("link", { name: /^WhatsApp Business/ }))
+      .toHaveAttribute("href", "/settings/extensions/item/server/scient.curated/whatsapp-business");
   });
 
   it("ends each field section on a full row, at most four rows, and leaves the rest to its page", async () => {

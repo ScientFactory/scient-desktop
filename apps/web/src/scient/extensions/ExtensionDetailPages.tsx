@@ -325,6 +325,26 @@ export function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> 
   );
 }
 
+/** A whole-card link to a related extension's page; its content is `RelatedExtension`. */
+export const RELATED_EXTENSION_LINK_CLASS = cn(
+  CARD_CLASS,
+  "flex items-center gap-3 px-4 py-3 transition-colors hover:bg-foreground/[0.035]",
+);
+
+/** Inside a related extension's link: its icon, name and one line, then a chevron. */
+export function RelatedExtension({ name, line }: { readonly name: string; readonly line: string }) {
+  return (
+    <>
+      <ExtensionIcon name={name} size="small" />
+      <span className="grid min-w-0 flex-1">
+        <span className="text-sm font-medium text-foreground">{name}</span>
+        <span className="truncate text-sm text-muted-foreground">{line}</span>
+      </span>
+      <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+    </>
+  );
+}
+
 function ExternalLink({ href }: { readonly href: string }) {
   return (
     <a
@@ -658,29 +678,17 @@ function AvailabilityRows({
 }
 
 /** On WhatsApp Business's page: the way to a person's own WhatsApp, which Business can't read. */
-function OwnWhatsAppSection({ entryName }: { readonly entryName: string | undefined }) {
+function OwnWhatsAppLink({ entryName }: { readonly entryName: string | undefined }) {
   const gt = useGT();
   if (entryName !== WHATSAPP_BUSINESS_SERVER) return null;
   return (
-    <DetailSection title={gt("Your own WhatsApp")}>
-      <MutedLine>
-        <T>For your personal chats.</T>
-      </MutedLine>
-      <div>
-        <Button
-          size="sm"
-          variant="outline"
-          render={
-            <Link
-              to="/settings/extensions/item/account/$serviceId"
-              params={{ serviceId: "whatsapp" }}
-            />
-          }
-        >
-          <T>Open</T>
-        </Button>
-      </div>
-    </DetailSection>
+    <Link
+      to="/settings/extensions/item/account/$serviceId"
+      params={{ serviceId: "whatsapp" }}
+      className={RELATED_EXTENSION_LINK_CLASS}
+    >
+      <RelatedExtension name="WhatsApp" line={gt("For your personal chats.")} />
+    </Link>
   );
 }
 
@@ -950,7 +958,7 @@ function ConnectorDetail({
           <ActionFeedback feedback={actions.feedback} waitingForSignIn={actions.waitingForSignIn} />
         </div>
       </DetailSection>
-      <OwnWhatsAppSection entryName={entry?.name} />
+      <OwnWhatsAppLink entryName={entry?.name} />
       <ToolsSection
         canTest={allowed.canTest}
         locked={actions.locked}
@@ -1155,7 +1163,7 @@ function ServerDetail({
         </>
       }
     >
-      <OwnWhatsAppSection entryName={entry.name} />
+      <OwnWhatsAppLink entryName={entry.name} />
       <DetailSection title={gt("Tools")}>
         <MutedCard>
           {entry.accountRequired === false

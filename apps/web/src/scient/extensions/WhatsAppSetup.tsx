@@ -54,6 +54,8 @@ import {
   DetailLayout,
   DetailSection,
   PrimaryAction,
+  RELATED_EXTENSION_LINK_CLASS,
+  RelatedExtension,
 } from "./ExtensionDetailPages";
 import { ActionError } from "./ExtensionsFeedback";
 import { ExtensionRow } from "./ExtensionRow";
@@ -433,25 +435,16 @@ export function WhatsAppDetail({ service }: { readonly service: AccountService }
         </DetailSection>
       ) : null}
       {link.dialogs}
-      <DetailSection title={gt("WhatsApp Business")}>
-        <MutedLine>
-          <T>For business accounts, with Meta's tools.</T>
-        </MutedLine>
-        <div>
-          <Button
-            size="sm"
-            variant="outline"
-            render={
-              <Link
-                to="/settings/extensions/item/server/$"
-                params={{ _splat: WHATSAPP_BUSINESS_SERVER }}
-              />
-            }
-          >
-            <T>Open</T>
-          </Button>
-        </div>
-      </DetailSection>
+      <Link
+        to="/settings/extensions/item/server/$"
+        params={{ _splat: WHATSAPP_BUSINESS_SERVER }}
+        className={RELATED_EXTENSION_LINK_CLASS}
+      >
+        <RelatedExtension
+          name="WhatsApp Business"
+          line={gt("For business accounts, with Meta's tools.")}
+        />
+      </Link>
       {service.websiteUrl ? (
         <AboutCard rows={[[gt("Website"), service.websiteUrl.replace(/^https:\/\//, "")]]} />
       ) : null}
