@@ -7,7 +7,16 @@ import { render } from "../../../test/render";
 import { PanelFilesLayout } from "./PanelFilesColumn";
 
 vi.mock("~/components/files/FileBrowserPanel", () => ({
-  default: () => <div>Project files</div>,
+  default: (props: { readonly onOpenFilePreview?: (relativePath: string) => void }) => (
+    <>
+      <div>Project files</div>
+      {props.onOpenFilePreview ? (
+        <button type="button" onClick={() => props.onOpenFilePreview?.("README.md")}>
+          Open preview
+        </button>
+      ) : null}
+    </>
+  ),
 }));
 
 const browser = {
@@ -54,4 +63,33 @@ it("resizes the file list beside a browser tab like the file viewer's", async ()
   await vi.waitFor(() =>
     expect(explorer.getBoundingClientRect().width).toBeCloseTo(start + 100, 0),
   );
+});
+
+it("opens a Markdown file rendered from the file list beside a browser tab", async () => {
+  using _storage = {
+    [Symbol.dispose]: () => {
+      localStorage.removeItem("t3code.fileExplorerOpen");
+      localStorage.removeItem("t3code.renderMarkdown");
+    },
+  };
+  localStorage.setItem("t3code.fileExplorerOpen", "true");
+  localStorage.setItem("t3code.renderMarkdown", "false");
+  const onOpenFile = vi.fn();
+  await using screen = await render(
+    <PanelFilesLayout
+      surface={browser}
+      environmentId={"env-1" as EnvironmentId}
+      cwd="/project"
+      projectName="Project"
+      workspaceMutationId={null}
+      onOpenFile={onOpenFile}
+      onOpenFileSource={() => {}}
+    >
+      <div>Browser page</div>
+    </PanelFilesLayout>,
+  );
+  await screen.getByRole("button", { name: "Open preview" }).click();
+
+  expect(onOpenFile).toHaveBeenCalledWith("README.md");
+  expect(localStorage.getItem("t3code.renderMarkdown")).toBe("true");
 });
