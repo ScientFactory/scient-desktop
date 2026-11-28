@@ -658,7 +658,7 @@ describe("Scient analytics contract", () => {
     expect(sparse?.properties).not.toHaveProperty("windowShownBucket");
   });
 
-  it("sends background-running summaries with closed values, counts only daily", () => {
+  it("sends background-running summaries with closed values, counts only daily and at Quit", () => {
     const daily = normalizeInheritedEvent(
       "app.background.summary",
       {
@@ -701,6 +701,16 @@ describe("Scient analytics contract", () => {
       setBy: "unknown",
     });
     expect(launch?.properties).not.toHaveProperty("windowlessCount");
+    const quit = normalizeInheritedEvent(
+      "app.background.summary",
+      { reason: "quit", platform: "windows", windowlessCount: 1, windowlessTimeBucket: "1-10m" },
+      context,
+    );
+    expect(quit?.properties).toMatchObject({
+      reason: "quit",
+      windowlessCount: 1,
+      windowlessTimeBucket: "1-10m",
+    });
   });
 
   it("sends background-running events with each kind's closed fields only", () => {

@@ -203,7 +203,7 @@ describe("DesktopBackgroundRunning", () => {
       yield* facts.windowlessStarted;
       tray?.quit();
       yield* Deferred.await(quitRequested);
-      yield* facts.quitDecided("none");
+      yield* facts.quitDecided(yield* facts.quitStarted, "none");
       assert.deepEqual(events(recorded), [
         {
           kind: "quit",

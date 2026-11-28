@@ -194,8 +194,11 @@ function handleBeforeQuit(
       const source = DesktopAppSettings.keepsRunningInBackground(settings, platform)
         ? "read"
         : "reported";
+      // The windowless period as Quit began: a window shown during the check must not hide it.
+      const facts = yield* Effect.serviceOption(DesktopBackgroundFacts.DesktopBackgroundFacts);
+      const snapshot = Option.isSome(facts) ? yield* facts.value.quitStarted : undefined;
       const prompt = yield* Effect.promise(() => confirmQuitStopsRunningWork(source));
-      yield* recordBackground((facts) => facts.quitDecided(prompt));
+      if (Option.isSome(facts) && snapshot) yield* facts.value.quitDecided(snapshot, prompt);
       return prompt !== "cancelled";
     }),
   ).then(

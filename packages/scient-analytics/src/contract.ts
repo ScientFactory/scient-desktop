@@ -1189,13 +1189,13 @@ const BACKGROUND_EVENT_KINDS = [
 
 function backgroundSummaryProperties(input: Readonly<Record<string, unknown>>) {
   closedEvent(input);
-  const reason = closedCategory(property(input, "reason"), ["launch", "daily"]);
+  const reason = closedCategory(property(input, "reason"), ["launch", "daily", "quit"]);
   return {
     reason,
     platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
     enabled: normalizedBoolean(property(input, "enabled")),
     setBy: closedCategory(property(input, "setBy"), BACKGROUND_SET_BY),
-    ...(reason === "daily"
+    ...(reason === "daily" || reason === "quit"
       ? {
           windowlessCount: countOrZero(property(input, "windowlessCount")),
           windowlessTimeBucket: closedCategory(

@@ -2508,6 +2508,23 @@
       }
     },
     {
+      "case": "app.background.summary:background-summary-quit",
+      "name": "app.background.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "quit",
+        "platform": "windows",
+        "enabled": true,
+        "setBy": "person",
+        "windowlessCount": 1,
+        "windowlessTimeBucket": "10-60m",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
       "case": "app.background.event:background-window-returned",
       "name": "app.background.event",
       "privacyLevel": "essential",

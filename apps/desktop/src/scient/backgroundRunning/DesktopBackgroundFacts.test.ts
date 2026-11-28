@@ -50,51 +50,72 @@ describe("windowlessBucket", () => {
 });
 
 describe("DesktopBackgroundFacts", () => {
-  it.effect("reports how a windowless period ended, with the way and its length", () =>
-    Effect.gen(function* () {
-      const { facts, recorded } = yield* recording();
-      // With a window open nothing ends, so nothing is reported.
-      yield* facts.windowRequested("shown");
-      yield* facts.quitDecided("none");
+  it.effect(
+    "a period ends only when a window shows; failed attempts and timeouts keep it open",
+    () =>
+      Effect.gen(function* () {
+        const { facts, recorded } = yield* recording();
+        // With a window open there is no period, so nothing is reported.
+        yield* facts.windowRequested;
+        yield* facts.windowShown;
+        yield* facts.quitDecided(yield* facts.quitStarted, "none");
 
-      yield* facts.windowlessStarted;
-      yield* TestClock.adjust("25 minutes");
-      yield* facts
-        .windowRequested("shown")
-        .pipe(Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"));
-      yield* facts.windowlessStarted;
-      yield* TestClock.adjust("2 hours");
-      yield* facts
-        .windowRequested("not-shown")
-        .pipe(Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"));
-      // A request while the backend is not ready: the window that follows reports the way.
-      yield* facts.windowlessStarted;
-      yield* facts
-        .windowRequested("pending")
-        .pipe(Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "dock"));
-      yield* TestClock.adjust("30 seconds");
-      yield* facts.windowRequested("shown");
+        yield* facts.windowlessStarted;
+        yield* TestClock.adjust("25 minutes");
+        yield* facts.windowRequested.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+        );
+        yield* facts.windowShown;
+        yield* facts.windowlessStarted;
+        yield* TestClock.adjust("2 hours");
+        yield* facts.windowRequested.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"),
+        );
+        yield* facts.windowNotShown;
+        // A request that never brings a window back counts once it times out.
+        yield* facts.windowRequested.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "dock"),
+        );
+        yield* TestClock.adjust(DesktopBackgroundFacts.RETURN_TIMEOUT);
+        // A retry that shows a window ends the period begun 2 hours and 2 minutes ago.
+        yield* facts.windowRequested.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"),
+        );
+        yield* TestClock.adjust("30 seconds");
+        yield* facts.windowShown;
+        yield* TestClock.adjust(DesktopBackgroundFacts.RETURN_TIMEOUT);
 
-      assert.deepEqual(
-        recorded.map((fact) => fact.properties),
-        [
-          { kind: "window-returned", platform: "windows", via: "tray", windowlessBucket: "10-60m" },
-          {
-            kind: "window-not-shown",
-            platform: "windows",
-            via: "second-launch",
-            windowlessBucket: "1-6h",
-          },
-          {
-            kind: "window-returned",
-            platform: "windows",
-            via: "dock",
-            windowlessBucket: "under-1m",
-          },
-        ],
-      );
-      assert.isTrue(recorded.every((fact) => fact.name === "app.background.event"));
-    }),
+        assert.deepEqual(
+          recorded.map((fact) => fact.properties),
+          [
+            {
+              kind: "window-returned",
+              platform: "windows",
+              via: "tray",
+              windowlessBucket: "10-60m",
+            },
+            {
+              kind: "window-not-shown",
+              platform: "windows",
+              via: "second-launch",
+              windowlessBucket: "1-6h",
+            },
+            {
+              kind: "window-not-shown",
+              platform: "windows",
+              via: "dock",
+              windowlessBucket: "1-6h",
+            },
+            {
+              kind: "window-returned",
+              platform: "windows",
+              via: "second-launch",
+              windowlessBucket: "1-6h",
+            },
+          ],
+        );
+        assert.isTrue(recorded.every((fact) => fact.name === "app.background.event"));
+      }).pipe(Effect.scoped),
   );
 
   it.effect("a cancelled Quit leaves Scient windowless; tray Quit says so once", () =>
@@ -103,11 +124,11 @@ describe("DesktopBackgroundFacts", () => {
       yield* facts.windowlessStarted;
       yield* TestClock.adjust("8 hours");
       yield* facts.trayQuitChosen;
-      yield* facts.quitDecided("cancelled");
+      yield* facts.quitDecided(yield* facts.quitStarted, "cancelled");
       yield* TestClock.adjust("1 hour");
-      yield* facts.quitDecided("confirmed");
+      yield* facts.quitDecided(yield* facts.quitStarted, "confirmed");
       assert.deepEqual(
-        recorded.map((fact) => fact.properties),
+        recorded.filter((fact) => fact.name === "app.background.event").map((f) => f.properties),
         [
           {
             kind: "quit",
@@ -125,7 +146,65 @@ describe("DesktopBackgroundFacts", () => {
           },
         ],
       );
-    }),
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a window shown while Quit asks does not hide the windowless Quit", () =>
+    Effect.gen(function* () {
+      const { facts, recorded } = yield* recording("win32");
+      yield* facts.windowlessStarted;
+      yield* TestClock.adjust("3 hours");
+      yield* facts.trayQuitChosen;
+      const snapshot = yield* facts.quitStarted;
+      yield* facts.windowRequested.pipe(
+        Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+      );
+      yield* facts.windowShown;
+      yield* facts.quitDecided(snapshot, "confirmed");
+      assert.deepEqual(
+        recorded.filter((fact) => fact.name === "app.background.event").map((f) => f.properties),
+        [
+          { kind: "window-returned", platform: "windows", via: "tray", windowlessBucket: "1-6h" },
+          {
+            kind: "quit",
+            platform: "windows",
+            via: "tray",
+            quitPrompt: "confirmed",
+            windowlessBucket: "1-6h",
+          },
+        ],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a Quit that goes on sends the windowless time since the last summary", () =>
+    Effect.gen(function* () {
+      const { facts, recorded } = yield* recording("linux");
+      yield* facts.summaries(Effect.succeed(true));
+      yield* facts.windowlessStarted;
+      yield* TestClock.adjust("40 minutes");
+      yield* facts.windowShown;
+      yield* facts.windowlessStarted;
+      yield* TestClock.adjust("30 minutes");
+      yield* facts.quitDecided(yield* facts.quitStarted, "cancelled");
+      yield* facts.quitDecided(yield* facts.quitStarted, "none");
+      // A later Quit with nothing windowless since sends no summary.
+      yield* facts.quitDecided(yield* facts.quitStarted, "none");
+      assert.deepEqual(
+        recorded.filter((fact) => fact.name === "app.background.summary").map((f) => f.properties),
+        [
+          { reason: "launch", platform: "linux", enabled: true, setBy: "person" },
+          {
+            reason: "quit",
+            platform: "linux",
+            enabled: true,
+            setBy: "person",
+            windowlessCount: 2,
+            windowlessTimeBucket: "1-6h",
+          },
+        ],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("reports failures and setting changes with closed values", () =>
@@ -146,7 +225,7 @@ describe("DesktopBackgroundFacts", () => {
           { kind: "setting-changed", platform: "macos", enabled: true, previousSetBy: "person" },
         ],
       );
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("summarizes at launch and daily: the setting, who set it, and windowless time", () =>
@@ -158,7 +237,7 @@ describe("DesktopBackgroundFacts", () => {
       yield* TestClock.adjust("1 hour");
       yield* facts.windowlessStarted;
       yield* TestClock.adjust("3 hours");
-      yield* facts.windowRequested("shown");
+      yield* facts.windowShown;
       choice = true;
       yield* TestClock.adjust("18 hours");
       yield* facts.windowlessStarted;
@@ -235,9 +314,10 @@ function launch(home: string, analytics: "true" | "false") {
     const background = yield* DesktopBackgroundFacts.DesktopBackgroundFacts;
     yield* background.summaries(Effect.succeed(true));
     yield* background.windowlessStarted;
-    yield* background
-      .windowRequested("shown")
-      .pipe(Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"));
+    yield* background.windowRequested.pipe(
+      Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+    );
+    yield* background.windowShown;
     return yield* (yield* DesktopUpdateFacts.DesktopUpdateFacts).pending;
   }).pipe(
     Effect.scoped,

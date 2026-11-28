@@ -466,6 +466,8 @@ export const make = Effect.gen(function* () {
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
   let mainClosedDuringStartup = false;
+  // SCIENT-FORK: the person asked for a window while running in the background; cleared once shown.
+  let windowRequestedInBackground = false;
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -1090,6 +1092,10 @@ export const make = Effect.gen(function* () {
             ...(retryInMs === undefined ? {} : { retryInMs }),
           }),
         );
+        // SCIENT-FORK: background-running analytics: a window asked for that will not show.
+        if (retryInMs === undefined && !firstRevealComplete && Option.isSome(backgroundFacts)) {
+          void runPromise(backgroundFacts.value.windowNotShown);
+        }
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
@@ -1178,6 +1184,11 @@ export const make = Effect.gen(function* () {
       // SCIENT-FORK:START — a startup sub-phase; only the first window shown in this process counts.
       if (Option.isSome(startupTiming)) yield* startupTiming.value.windowShown;
       // SCIENT-FORK:END
+      // SCIENT-FORK:START — a shown app window ends running in the background.
+      yield* Ref.set(desktopState.background, false);
+      windowRequestedInBackground = false;
+      if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.windowShown;
+      // SCIENT-FORK:END
       yield* dismissConnectingSplash;
     });
     pendingMainReveals.set(window, revealWhenReady);
@@ -1228,9 +1239,6 @@ export const make = Effect.gen(function* () {
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
-    // SCIENT-FORK: an open app window ends running in the background.
-    yield* Ref.set(desktopState.background, false);
-    if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.windowRequested("shown");
     return Option.some(window);
   });
 
@@ -1273,8 +1281,8 @@ export const make = Effect.gen(function* () {
 
   const createMainIfBackendReady = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
-    // SCIENT-FORK: running in the background opens no window on its own.
-    if (yield* Ref.get(desktopState.background)) {
+    // SCIENT-FORK: running in the background opens no window on its own, only one asked for.
+    if ((yield* Ref.get(desktopState.background)) && !windowRequestedInBackground) {
       if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.backendRestarted;
       return;
     }
@@ -1282,14 +1290,14 @@ export const make = Effect.gen(function* () {
     yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
-  // SCIENT-FORK:START — background-running analytics: did asking for a window bring one back?
-  const settleBackgroundReturn = Effect.gen(function* () {
+  // SCIENT-FORK:START — background-running analytics: a request that leaves no window at all,
+  // with the backend ready, failed; a window still loading reports itself when shown.
+  const settleBackgroundRequest = Effect.gen(function* () {
     if (Option.isNone(backgroundFacts) || (yield* Ref.get(desktopState.quitting))) return;
-    const shown = Option.isSome(yield* electronWindow.currentMainOrFirst);
-    const backendReady = yield* Ref.get(backendReadyRef);
-    yield* backgroundFacts.value.windowRequested(
-      shown ? "shown" : backendReady ? "not-shown" : "pending",
-    );
+    if (!(yield* Ref.get(desktopState.background)) || !(yield* Ref.get(backendReadyRef))) return;
+    if (Option.isNone(yield* electronWindow.currentMainOrFirst)) {
+      yield* backgroundFacts.value.windowNotShown;
+    }
   });
   // SCIENT-FORK:END
 
@@ -1401,8 +1409,13 @@ export const make = Effect.gen(function* () {
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
-      // SCIENT-FORK: the person asked for a window, so background running ends.
-      yield* Ref.set(desktopState.background, false);
+      // SCIENT-FORK:START — the person asked for a window; running in the background ends only
+      // once one shows, so a failed attempt can be retried by launching Scient again.
+      if (yield* Ref.get(desktopState.background)) {
+        windowRequestedInBackground = true;
+        if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.windowRequested;
+      }
+      // SCIENT-FORK:END
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* revealMain(existingWindow.value);
@@ -1423,7 +1436,7 @@ export const make = Effect.gen(function* () {
       yield* createMainIfBackendReady;
     }).pipe(
       // SCIENT-FORK: background-running analytics.
-      Effect.ensuring(settleBackgroundReturn),
+      Effect.ensuring(settleBackgroundRequest),
       Effect.withSpan("desktop.window.activate"),
     ),
     createMainIfBackendReady,

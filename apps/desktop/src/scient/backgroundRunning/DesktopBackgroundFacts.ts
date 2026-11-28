@@ -18,6 +18,8 @@ import { analyticsPlatform } from "../startupTiming/DesktopStartupTiming.ts";
 import * as DesktopUpdateFacts from "../updateOutcomes/DesktopUpdateFacts.ts";
 
 const SUMMARY_INTERVAL = "24 hours";
+/** A requested window not shown by then counts as a failed attempt; the period stays open. */
+export const RETURN_TIMEOUT = "2 minutes";
 
 export type ReturnVia = "tray" | "dock" | "second-launch" | "other";
 export type QuitPrompt = "none" | "confirmed" | "cancelled";
@@ -42,21 +44,42 @@ export function windowlessBucket(ms: number): string {
   return "over-7d";
 }
 
+/** A windowless period; `request` counts the requests for a window made during it. */
+interface Episode {
+  readonly id: number;
+  readonly since: number;
+  readonly via: Option.Option<ReturnVia>;
+  readonly request: number;
+}
+
+/** The windowless period and tray choice when Quit began, so the outcome is told from them. */
+export interface QuitSnapshot {
+  readonly episode: Option.Option<Episode>;
+  readonly via: "tray" | "other";
+}
+
 export class DesktopBackgroundFacts extends Context.Service<
   DesktopBackgroundFacts,
   {
     /** The last window closed and Scient keeps running with none. */
     readonly windowlessStarted: Effect.Effect<void>;
     /**
-     * A window was asked for (`CurrentReturnVia` says how) or opened. `shown` and `not-shown` end
-     * the windowless period, if there is one; `pending` means a window may still follow (the
-     * backend is not ready yet), and the window that follows reports the way it was asked for.
+     * The person asked for a window (`CurrentReturnVia` says how). If none shows within
+     * `RETURN_TIMEOUT`, the attempt counts as `window-not-shown`.
      */
-    readonly windowRequested: (outcome: "shown" | "not-shown" | "pending") => Effect.Effect<void>;
+    readonly windowRequested: Effect.Effect<void>;
+    /** An app window was shown: ends the windowless period as `window-returned`. */
+    readonly windowShown: Effect.Effect<void>;
+    /** A request for a window failed (no window, or its page failed to load); the period goes on. */
+    readonly windowNotShown: Effect.Effect<void>;
     /** The tray's Quit completely: the Quit that follows reports `via: tray`. */
     readonly trayQuitChosen: Effect.Effect<void>;
-    /** What Quit's running-work check decided; a cancelled Quit leaves Scient windowless. */
-    readonly quitDecided: (prompt: QuitPrompt) => Effect.Effect<void>;
+    readonly quitStarted: Effect.Effect<QuitSnapshot>;
+    /**
+     * What Quit's running-work check decided. A cancelled Quit leaves Scient windowless; a Quit
+     * that goes on also sends the windowless time since the last summary.
+     */
+    readonly quitDecided: (snapshot: QuitSnapshot, prompt: QuitPrompt) => Effect.Effect<void>;
     readonly trayFailed: (reason: TrayFailure) => Effect.Effect<void>;
     /** A cancelled Quit with no window showed the connecting splash. */
     readonly splashFallback: Effect.Effect<void>;
@@ -80,44 +103,58 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
     properties: DesktopUpdateFacts.DesktopUpdateFactProperties,
   ) => Effect.Effect<void>;
 }) {
+  const scope = yield* Effect.scope;
   const platform = analyticsPlatform(input.platform);
-  const windowlessSince = yield* Ref.make(Option.none<number>());
+  const episodeRef = yield* Ref.make(Option.none<Episode>());
+  let nextEpisode = 0;
   // Since the last summary: windowless periods begun, and windowless time in periods that ended.
   const period = yield* Ref.make({ startedAt: yield* Clock.currentTimeMillis, count: 0, ms: 0 });
   const trayQuit = yield* Ref.make(false);
-  const pendingVia = yield* Ref.make(Option.none<ReturnVia>());
+  const choiceRef = yield* Ref.make<Effect.Effect<boolean | null>>(Effect.succeed(null));
 
   const event = (kind: string, properties: DesktopUpdateFacts.DesktopUpdateFactProperties = {}) =>
     input.record("app.background.event", { kind, platform, ...properties });
 
-  /** Ends the windowless period; its length, or none when Scient was not windowless. */
-  const endWindowless = Effect.gen(function* () {
-    const since = yield* Ref.getAndSet(windowlessSince, Option.none());
-    if (Option.isNone(since)) return Option.none<number>();
+  /** Ends the period if it is still `id`, counting its time into the next summary. */
+  const endEpisode = Effect.fn("DesktopBackgroundFacts.endEpisode")(function* (id: number) {
+    const ended = yield* Ref.modify(episodeRef, (current) =>
+      Option.isSome(current) && current.value.id === id
+        ? [current, Option.none<Episode>()]
+        : [Option.none<Episode>(), current],
+    );
+    if (Option.isNone(ended)) return;
     const now = yield* Clock.currentTimeMillis;
     yield* Ref.update(period, (current) => ({
       ...current,
-      ms: current.ms + now - Math.max(since.value, current.startedAt),
+      ms: current.ms + now - Math.max(ended.value.since, current.startedAt),
     }));
-    return Option.some(now - since.value);
+  });
+
+  const notShown = Effect.fn("DesktopBackgroundFacts.notShown")(function* (episode: Episode) {
+    yield* event("window-not-shown", {
+      via: Option.getOrElse(episode.via, () => "other" as const),
+      windowlessBucket: windowlessBucket((yield* Clock.currentTimeMillis) - episode.since),
+    });
   });
 
   const summary = Effect.fn("DesktopBackgroundFacts.summary")(function* (
-    reason: "launch" | "daily",
-    choice: boolean | null,
+    reason: "launch" | "daily" | "quit",
   ) {
+    const choice = yield* yield* Ref.get(choiceRef);
     const now = yield* Clock.currentTimeMillis;
-    const since = yield* Ref.get(windowlessSince);
+    const episode = yield* Ref.get(episodeRef);
     const { startedAt, count, ms } = yield* Ref.getAndSet(period, {
       startedAt: now,
       count: 0,
       ms: 0,
     });
     // A period still under way adds its time within this summary's span.
-    const ongoing = Option.match(since, {
+    const ongoing = Option.match(episode, {
       onNone: () => 0,
-      onSome: (at) => now - Math.max(at, startedAt),
+      onSome: ({ since }) => now - Math.max(since, startedAt),
     });
+    // At Quit, only an interval with windowless time is worth a fact.
+    if (reason === "quit" && count === 0 && ms + ongoing === 0) return;
     yield* input.record("app.background.summary", {
       reason,
       platform,
@@ -126,52 +163,82 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
         input.platform,
       ),
       setBy: choice === null ? "default" : "person",
-      ...(reason === "daily"
-        ? { windowlessCount: count, windowlessTimeBucket: windowlessBucket(ms + ongoing) }
-        : {}),
+      ...(reason === "launch"
+        ? {}
+        : { windowlessCount: count, windowlessTimeBucket: windowlessBucket(ms + ongoing) }),
     });
   });
 
   return DesktopBackgroundFacts.of({
     windowlessStarted: Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const started = yield* Ref.modify(windowlessSince, (since) =>
-        Option.isSome(since) ? [false, since] : [true, Option.some(now)],
+      const id = nextEpisode;
+      const started = yield* Ref.modify(episodeRef, (current) =>
+        Option.isSome(current)
+          ? [false, current]
+          : [true, Option.some({ id, since: now, via: Option.none(), request: 0 })],
       );
       if (!started) return;
-      yield* Ref.set(pendingVia, Option.none());
+      nextEpisode += 1;
       yield* Ref.update(period, (current) => ({ ...current, count: current.count + 1 }));
     }),
-    windowRequested: Effect.fn("DesktopBackgroundFacts.windowRequested")(function* (outcome) {
-      const current = yield* CurrentReturnVia;
-      if (outcome === "pending") {
-        if (Option.isSome(yield* Ref.get(windowlessSince))) {
-          yield* Ref.set(pendingVia, Option.some(current));
-        }
-        return;
-      }
-      const via = Option.getOrElse(yield* Ref.getAndSet(pendingVia, Option.none()), () => current);
-      const length = yield* endWindowless;
-      if (Option.isNone(length)) return;
-      yield* event(outcome === "shown" ? "window-returned" : "window-not-shown", {
-        via,
-        windowlessBucket: windowlessBucket(length.value),
+    windowRequested: Effect.gen(function* () {
+      const via = yield* CurrentReturnVia;
+      const requested = yield* Ref.modify(episodeRef, (current) => {
+        if (Option.isNone(current)) return [Option.none<Episode>(), current];
+        const next = {
+          ...current.value,
+          via: Option.some(via),
+          request: current.value.request + 1,
+        };
+        return [Option.some(next), Option.some(next)];
       });
-    }),
+      if (Option.isNone(requested)) return;
+      const { id, request } = requested.value;
+      // Still the same period and no later request: this one did not bring a window back.
+      yield* Effect.sleep(RETURN_TIMEOUT).pipe(
+        Effect.andThen(Ref.get(episodeRef)),
+        Effect.flatMap((current) =>
+          Option.isSome(current) && current.value.id === id && current.value.request === request
+            ? notShown(current.value)
+            : Effect.void,
+        ),
+        Effect.forkIn(scope),
+      );
+    }).pipe(Effect.withSpan("DesktopBackgroundFacts.windowRequested")),
+    windowShown: Effect.gen(function* () {
+      const episode = yield* Ref.get(episodeRef);
+      if (Option.isNone(episode)) return;
+      yield* endEpisode(episode.value.id);
+      yield* event("window-returned", {
+        via: Option.getOrElse(episode.value.via, () => "other" as const),
+        windowlessBucket: windowlessBucket((yield* Clock.currentTimeMillis) - episode.value.since),
+      });
+    }).pipe(Effect.withSpan("DesktopBackgroundFacts.windowShown")),
+    windowNotShown: Effect.gen(function* () {
+      // Settles the request: its timeout no longer counts it a second time.
+      const episode = yield* Ref.updateAndGet(episodeRef, (current) =>
+        Option.map(current, (value) => ({ ...value, request: value.request + 1 })),
+      );
+      if (Option.isSome(episode)) yield* notShown(episode.value);
+    }).pipe(Effect.withSpan("DesktopBackgroundFacts.windowNotShown")),
     trayQuitChosen: Ref.set(trayQuit, true),
-    quitDecided: Effect.fn("DesktopBackgroundFacts.quitDecided")(function* (prompt) {
-      const via = (yield* Ref.getAndSet(trayQuit, false)) ? "tray" : "other";
-      const now = yield* Clock.currentTimeMillis;
-      const length =
-        prompt === "cancelled"
-          ? Option.map(yield* Ref.get(windowlessSince), (since) => now - since)
-          : yield* endWindowless;
-      if (Option.isNone(length)) return;
-      yield* event("quit", {
-        via,
-        quitPrompt: prompt,
-        windowlessBucket: windowlessBucket(length.value),
-      });
+    quitStarted: Effect.gen(function* () {
+      const via = (yield* Ref.getAndSet(trayQuit, false)) ? ("tray" as const) : ("other" as const);
+      return { episode: yield* Ref.get(episodeRef), via };
+    }),
+    quitDecided: Effect.fn("DesktopBackgroundFacts.quitDecided")(function* (snapshot, prompt) {
+      if (Option.isSome(snapshot.episode)) {
+        const { id, since } = snapshot.episode.value;
+        const length = (yield* Clock.currentTimeMillis) - since;
+        if (prompt !== "cancelled") yield* endEpisode(id);
+        yield* event("quit", {
+          via: snapshot.via,
+          quitPrompt: prompt,
+          windowlessBucket: windowlessBucket(length),
+        });
+      }
+      if (prompt !== "cancelled") yield* summary("quit");
     }),
     trayFailed: Effect.fn("DesktopBackgroundFacts.trayFailed")(function* (reason) {
       yield* event("tray-failed", { reason });
@@ -188,10 +255,10 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
       });
     }),
     summaries: Effect.fn("DesktopBackgroundFacts.summaries")(function* (choice) {
-      yield* summary("launch", yield* choice);
+      yield* Ref.set(choiceRef, choice);
+      yield* summary("launch");
       yield* Effect.sleep(SUMMARY_INTERVAL).pipe(
-        Effect.andThen(choice),
-        Effect.flatMap((current) => summary("daily", current)),
+        Effect.andThen(summary("daily")),
         Effect.forever,
         Effect.forkScoped,
       );

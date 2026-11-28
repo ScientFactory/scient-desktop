@@ -455,6 +455,14 @@ export function buildAnalyticsConformanceFixture() {
       windowlessCount: 3,
       windowlessTimeBucket: "1-6h",
     }),
+    fixtureCase("background-summary-quit", "app.background.summary", {
+      reason: "quit",
+      platform: "windows",
+      enabled: true,
+      setBy: "person",
+      windowlessCount: 1,
+      windowlessTimeBucket: "10-60m",
+    }),
     fixtureCase("background-window-returned", "app.background.event", {
       kind: "window-returned",
       platform: "windows",

@@ -907,29 +907,55 @@ describe("DesktopWindow", () => {
   );
 
   // SCIENT-FORK:START — running in the background opens no window on its own.
+  type FakeBrowserWindow = ReturnType<typeof makeFakeBrowserWindow>;
+
+  /** The app left running after its last window closed, ready to be asked for a window. */
+  const windowless = Effect.fn("test.windowless")(function* (fake: FakeBrowserWindow) {
+    const windows = yield* DesktopWindow.DesktopWindow;
+    const state = yield* DesktopState.DesktopState;
+    yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+    fake.isDestroyed.mockReturnValue(true);
+    fake.windowListeners.get("closed")?.();
+    yield* Ref.set(state.background, true);
+    fake.isDestroyed.mockReturnValue(false);
+    return { windows, state };
+  });
+
+  /** Fires the window's first paint and waits for its reveal. */
+  const paint = (fake: FakeBrowserWindow, revealed: { promise: Promise<void> }) =>
+    Effect.sync(() => fake.windowListeners.get("ready-to-show")?.()).pipe(
+      Effect.andThen(Effect.promise(() => revealed.promise)),
+    );
+
   it.effect(
-    "opens no window on a backend restart while in the background, and opens on activate",
+    "opens no window on a backend restart while in the background, and ends it once one shows",
     () =>
       Effect.gen(function* () {
         const fake = makeFakeBrowserWindow();
         const createCount = yield* Ref.make(0);
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const revealed = Promise.withResolvers<void>();
         yield* Effect.gen(function* () {
-          const windows = yield* DesktopWindow.DesktopWindow;
-          const state = yield* DesktopState.DesktopState;
-          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
-          assert.equal(yield* Ref.get(createCount), 1);
-          fake.isDestroyed.mockReturnValue(true);
-          fake.windowListeners.get("closed")?.();
-          yield* Ref.set(state.background, true);
+          const { windows, state } = yield* windowless(fake);
           yield* windows.handleBackendNotReady;
           yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
           assert.equal(yield* Ref.get(createCount), 1);
-          fake.isDestroyed.mockReturnValue(false);
           yield* windows.activate;
           assert.equal(yield* Ref.get(createCount), 2);
+          // Created but not yet shown: launching Scient again must still be able to retry.
+          assert.isTrue(yield* Ref.get(state.background));
+          yield* paint(fake, revealed);
           assert.isFalse(yield* Ref.get(state.background));
-        }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: () => revealed.resolve(),
+            }),
+          ),
+        );
       }),
   );
 
@@ -939,14 +965,8 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       yield* Effect.gen(function* () {
-        const windows = yield* DesktopWindow.DesktopWindow;
-        const state = yield* DesktopState.DesktopState;
-        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        fake.isDestroyed.mockReturnValue(true);
-        fake.windowListeners.get("closed")?.();
-        yield* Ref.set(state.background, true);
+        const { windows } = yield* windowless(fake);
         yield* windows.handleBackendNotReady;
-        fake.isDestroyed.mockReturnValue(false);
         yield* windows.activate;
         assert.equal(yield* Ref.get(createCount), 1);
         yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
@@ -965,62 +985,72 @@ describe("DesktopWindow", () => {
     return { facts, recorded };
   });
 
-  it.effect("reports a backend restart while windowless and the way a window came back", () =>
-    Effect.gen(function* () {
-      const fake = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const { facts, recorded } = yield* backgroundFacts;
-      yield* Effect.gen(function* () {
-        const windows = yield* DesktopWindow.DesktopWindow;
-        const state = yield* DesktopState.DesktopState;
-        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        fake.isDestroyed.mockReturnValue(true);
-        fake.windowListeners.get("closed")?.();
-        yield* Ref.set(state.background, true);
-        yield* facts.windowlessStarted;
-        yield* windows.handleBackendNotReady;
-        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        yield* TestClock.adjust("2 hours");
-        fake.isDestroyed.mockReturnValue(false);
-        yield* windows.activate.pipe(
-          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+  it.effect(
+    "reports a backend restart while windowless, and a return only once a window shows",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const revealed = Promise.withResolvers<void>();
+        const { facts, recorded } = yield* backgroundFacts;
+        yield* Effect.gen(function* () {
+          const { windows } = yield* windowless(fake);
+          yield* facts.windowlessStarted;
+          yield* windows.handleBackendNotReady;
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          yield* TestClock.adjust("2 hours");
+          yield* windows.activate.pipe(
+            Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+          );
+          assert.equal(yield* Ref.get(createCount), 2);
+          // Created hidden: nothing has come back yet.
+          assert.deepEqual(recorded, [{ kind: "backend-restarted", platform: "windows" }]);
+          yield* paint(fake, revealed);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: () => revealed.resolve(),
+            }),
+          ),
+          Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
         );
-        assert.equal(yield* Ref.get(createCount), 2);
-      }).pipe(
-        Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })),
-        Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
-      );
-      assert.deepEqual(recorded, [
-        { kind: "backend-restarted", platform: "windows" },
-        { kind: "window-returned", platform: "windows", via: "tray", windowlessBucket: "1-6h" },
-      ]);
-    }),
+        assert.deepEqual(recorded, [
+          { kind: "backend-restarted", platform: "windows" },
+          { kind: "window-returned", platform: "windows", via: "tray", windowlessBucket: "1-6h" },
+        ]);
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("an activation while the backend is down reports its way once the window opens", () =>
+  it.effect("an activation while the backend is down reports its way once the window shows", () =>
     Effect.gen(function* () {
       const fake = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealed = Promise.withResolvers<void>();
       const { facts, recorded } = yield* backgroundFacts;
       yield* Effect.gen(function* () {
-        const windows = yield* DesktopWindow.DesktopWindow;
-        const state = yield* DesktopState.DesktopState;
-        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        fake.isDestroyed.mockReturnValue(true);
-        fake.windowListeners.get("closed")?.();
-        yield* Ref.set(state.background, true);
+        const { windows } = yield* windowless(fake);
         yield* facts.windowlessStarted;
         yield* windows.handleBackendNotReady;
-        fake.isDestroyed.mockReturnValue(false);
         yield* windows.activate.pipe(
           Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"),
         );
-        assert.deepEqual(recorded, []);
         yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.deepEqual(recorded, []);
+        yield* paint(fake, revealed);
       }).pipe(
-        Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })),
+        Effect.provide(
+          layerTest({
+            window: fake.window,
+            createCount,
+            mainWindow,
+            onReveal: () => revealed.resolve(),
+          }),
+        ),
         Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
       );
       assert.deepEqual(recorded, [
@@ -1031,23 +1061,19 @@ describe("DesktopWindow", () => {
           windowlessBucket: "under-1m",
         },
       ]);
-    }),
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("reports a window that does not show when asked for with the backend ready", () =>
+  it.effect("a failed reopen is an attempt; Scient stays windowless and a retry can succeed", () =>
     Effect.gen(function* () {
       const fake = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const failCreate = yield* Ref.make(false);
+      const revealed = Promise.withResolvers<void>();
       const { facts, recorded } = yield* backgroundFacts;
       yield* Effect.gen(function* () {
-        const windows = yield* DesktopWindow.DesktopWindow;
-        const state = yield* DesktopState.DesktopState;
-        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        fake.isDestroyed.mockReturnValue(true);
-        fake.windowListeners.get("closed")?.();
-        yield* Ref.set(state.background, true);
+        const { windows, state } = yield* windowless(fake);
         yield* facts.windowlessStarted;
         yield* Ref.set(failCreate, true);
         yield* Effect.exit(
@@ -1055,12 +1081,20 @@ describe("DesktopWindow", () => {
             Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "dock"),
           ),
         );
+        assert.isTrue(yield* Ref.get(state.background));
+        yield* Ref.set(failCreate, false);
+        yield* TestClock.adjust("20 minutes");
+        yield* windows.activate.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"),
+        );
+        yield* paint(fake, revealed);
       }).pipe(
         Effect.provide(
           layerTest({
             window: fake.window,
             createCount,
             mainWindow,
+            onReveal: () => revealed.resolve(),
             onWindowCreate: Ref.get(failCreate).pipe(
               Effect.flatMap((fail) => (fail ? Effect.die("no window") : Effect.void)),
             ),
@@ -1075,8 +1109,43 @@ describe("DesktopWindow", () => {
           via: "dock",
           windowlessBucket: "under-1m",
         },
+        {
+          kind: "window-returned",
+          platform: "windows",
+          via: "second-launch",
+          windowlessBucket: "10-60m",
+        },
       ]);
-    }),
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a requested window whose page fails to load is a failed attempt", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const { facts, recorded } = yield* backgroundFacts;
+      yield* Effect.gen(function* () {
+        const { windows } = yield* windowless(fake);
+        yield* facts.windowlessStarted;
+        yield* windows.activate.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+        );
+        fake.webContentsListeners.get("did-fail-load")?.({}, -105, "NAME_NOT_RESOLVED", "", true);
+        yield* Effect.yieldNow;
+      }).pipe(
+        Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })),
+        Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
+      );
+      assert.deepEqual(recorded, [
+        {
+          kind: "window-not-shown",
+          platform: "windows",
+          via: "tray",
+          windowlessBucket: "under-1m",
+        },
+      ]);
+    }).pipe(Effect.scoped),
   );
   // SCIENT-FORK:END
 
