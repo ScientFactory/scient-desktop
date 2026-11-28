@@ -1087,6 +1087,45 @@ describe("DesktopBackendConfiguration", () => {
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+  it.effect("gives native and WSL backends the launch's DO_NOT_TRACK decision", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const launch = (env: Record<string, string>) =>
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const primary = yield* configuration.resolvePrimary;
+          const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
+          return [primary.env.SCIENT_ANALYTICS_ENABLED, wsl.env.SCIENT_ANALYTICS_ENABLED];
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: () => Option.some("172.27.0.99"),
+                }),
+              ),
+              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+            ),
+          ),
+          Effect.provideService(HostProcess.Environment, env),
+        );
+
+      assert.deepEqual(yield* launch({}), ["true", "true"]);
+      assert.deepEqual(yield* launch({ SCIENT_ANALYTICS_ENABLED: "true", DO_NOT_TRACK: "1" }), [
+        "false",
+        "false",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
   // SCIENT-FORK:END scient-backend-launch
 
   it.effect("gives the Windows and WSL backends one host scope that survives a restart", () =>

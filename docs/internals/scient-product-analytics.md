@@ -7,7 +7,15 @@ disabled. When available, analytics is on for everyone at `diagnostic` (usage,
 reliability and delivery counters), like T3: there is no in-app switch, and a
 preference saved by an older build no longer applies.
 Native and WSL backend configuration receive the same bounded release metadata.
-An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch.
+An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch. `DO_NOT_TRACK`
+(T3's `isDoNotTrackSet`) turns analytics off even over an explicit
+`SCIENT_ANALYTICS_ENABLED=true`, in the desktop's backend metadata, its update facts and
+the server itself (so headless launches too). On a recognized CI runner (T3's
+`isCiEnvironment`) a packaged build stays off unless explicitly enabled. Each process
+decides once when it starts: update facts from the desktop's launch environment, a
+backend from the environment the desktop starts it with (which can already hold a
+`DO_NOT_TRACK` that T3's shell discovery imported). Nothing waits for or follows later
+shell-profile changes.
 For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can turn analytics on
 in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
@@ -923,8 +931,9 @@ Installs run with every backend stopped and an apply outcome is known before any
 so both events wait in a persisted journal in the desktop process
 ([`DesktopUpdateFacts.ts`](../../apps/desktop/src/scient/updateOutcomes/DesktopUpdateFacts.ts):
 at most 64 facts and 14 days; drops are counted into the next summary). It records nothing while
-analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, or a managed
-policy without telemetry) and deletes what an earlier launch kept. Facts travel on the telemetry
+analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, `DO_NOT_TRACK`, a
+CI runner without explicit opt-in, or a managed policy without telemetry) and deletes what an
+earlier launch kept. Facts travel on the telemetry
 pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else the first ready
 one; two backends have two installation identities). That backend's `ScientRecordedAnalyticsIngest`
 queues them with their own event ids and times, through the normal shape checks, and the desktop
