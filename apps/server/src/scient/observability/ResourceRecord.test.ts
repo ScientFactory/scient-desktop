@@ -64,7 +64,7 @@ describe("ResourceRecord", () => {
         Effect.provide(
           layerWith(filePath).pipe(
             Layer.provide(
-              Layer.succeed(HostResources.HostResources, {
+              Layer.mock(HostResources.HostResources)({
                 read: Effect.die("not sampled in this test"),
               }),
             ),

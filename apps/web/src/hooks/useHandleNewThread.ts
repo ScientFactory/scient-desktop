@@ -136,7 +136,10 @@ export function createNewThreadHandler(router: AnyRouter) {
     const navigationIntent =
       options?.navigationIntent ??
       getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
-        router.subscribe("onBeforeNavigate", invalidate);
+        // SCIENT-FORK: only a new page cancels; a search-only change keeps the opening.
+        router.subscribe("onBeforeNavigate", (event) => {
+          if (event.pathChanged) invalidate();
+        });
       }).claim({
         kind: options?.navigationKind ?? "explicit",
         scope:

@@ -25,6 +25,13 @@ source could be read—are sent to the client.
 This page is separate from Scient product analytics and telemetry, and it does not query a provider
 billing API unless you explicitly connect one under **Provider billing**.
 
+Scient reads another agent's local history only for agents you have turned on and allowed. The
+first time you open Usage, it asks which agents to include. Scient Agent's usage is part of Scient's
+own data, so it needs no permission. Change your answer for each agent with
+**Usage access** under **Settings → Providers → Configuration**. Grok and OpenCode Go limits, Claude
+reset credits, and matching Claude limits to your account read the agent's sign-in, so they also
+wait for this permission.
+
 Cost is an estimate with explicit provenance. A saved custom price takes precedence. Otherwise,
 Scient uses a cost reported in the transcript when one exists, or prices a recognized model with
 the public LiteLLM model rate table. Tokens from

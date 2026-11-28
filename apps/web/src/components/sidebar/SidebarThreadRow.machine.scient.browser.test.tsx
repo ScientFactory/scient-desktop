@@ -93,6 +93,7 @@ function Card({
           onUnsettle={noop}
           onSnooze={noop}
           onUnsnooze={noop}
+          onPin={noop}
           onUnpin={noop}
           onAcknowledgeWoke={noop}
         />

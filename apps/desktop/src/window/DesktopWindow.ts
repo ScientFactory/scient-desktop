@@ -74,6 +74,7 @@ import { spellingMenuItems } from "../scient/spelling/ipc.ts";
 // SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
+// SCIENT-FORK: no SpellCheckerLanguages import; Scient's configureSpelling sets the languages.
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -754,6 +755,9 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
+      // Default mode keys zoom by host across the partition and resets it to app zoom on every
+      // cross-document commit; isolated keeps each tab's zoom on its own frame across navigations.
+      webPreferences.zoomMode = "isolated";
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
@@ -894,6 +898,9 @@ export const make = Effect.gen(function* () {
     window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
       callback(permission !== "openExternal"),
     );
+    // SCIENT-FORK:START — configureSpelling (scient/spelling/ipc.ts) already applies the system
+    // languages and keeps the ones the user turned off; T3's per-window seeding would re-add them.
+    // SCIENT-FORK:END
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({

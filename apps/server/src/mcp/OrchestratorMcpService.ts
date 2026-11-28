@@ -122,6 +122,7 @@ import {
 import { DelegatedStopHandledByCaller } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
+import { firstLineTitle } from "./firstLineTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -975,7 +976,12 @@ function threadTitle(input: {
   readonly title: string | undefined;
   readonly index: number;
 }): string {
-  const detail = input.title?.trim() || input.prompt?.trim();
+  const detail =
+    firstLineTitle(input.title) ||
+    input.prompt
+      ?.trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim();
   if (!detail) return placeholderThreadTitle(input.parentTitle, input.index);
   if (detail.length <= 80) return detail;
   let end = 77;
@@ -2758,7 +2764,8 @@ const make = Effect.gen(function* () {
       const derivedTitle = (input.prompt.split(/[\r\n\u2028\u2029]/, 1)[0]?.trim() ?? "")
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
-      const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
+      const title =
+        firstLineTitle(input.title) ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
       // Scope the idempotency key by provider session so two callers
       // reusing the same clientRequestId cannot collide on one task row.
       const commandId =
@@ -2884,7 +2891,7 @@ const make = Effect.gen(function* () {
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           requireExisting: true,
-          title: input.title ?? existing.title,
+          title: firstLineTitle(input.title) ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
           schedule: input.schedule ?? existing.schedule,
@@ -3216,6 +3223,7 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      const title = firstLineTitle(input.title);
       const environmentId =
         input.target === undefined
           ? undefined
@@ -3226,6 +3234,7 @@ const make = Effect.gen(function* () {
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
+          ...(title === undefined ? {} : { title }),
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -3348,7 +3357,7 @@ const make = Effect.gen(function* () {
               parentRunId: parentRun.id,
               parentNodeId,
               task: taskPrompt(input),
-              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(title === undefined ? {} : { title }),
               modelSelection: target.modelSelection,
               runtimeMode,
               interactionMode,

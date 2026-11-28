@@ -27,9 +27,15 @@ export const THREAD_DETAILS_ITEMS = [
     defaultVisible: true,
   },
   { id: "sideChats", label: msg("Side chats"), defaultVisible: true },
+  { id: "tasks", label: msg("Agent tasks"), defaultVisible: false },
   // Was "usage" while it defaulted to off; the new id turns it on once for everyone.
   { id: "usageLimits", label: msg("Usage limits"), defaultVisible: true },
   { id: "context", label: msg("Context window"), defaultVisible: false },
+  {
+    id: "machineLoad",
+    label: msg("Machine load", { $context: "thread details item: CPU, memory and disk use" }),
+    defaultVisible: false,
+  },
 ] as const;
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];

@@ -53,6 +53,7 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { useSidebarUtilityActions } from "../../scient/sidebar/useSidebarUtilityActions";
 // SCIENT-FORK:END
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
+import { SidebarHostPressureWarning } from "./SidebarHostPressureWarning";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -453,6 +454,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter({
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">
+        <SidebarHostPressureWarning />
         {/* SCIENT-FORK:START — What's new card. */}
         <ScientReleaseCard />
         {/* SCIENT-FORK:END */}

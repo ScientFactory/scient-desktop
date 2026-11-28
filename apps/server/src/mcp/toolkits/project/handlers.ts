@@ -46,6 +46,7 @@ import {
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
+import { firstLineTitle } from "../../firstLineTitle.ts";
 import {
   newCommandId,
   readMutationCaller,
@@ -516,7 +517,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           commandId,
           threadId,
           projectId,
-          title: input.title,
+          title: firstLineTitle(input.title) ?? input.title,
           ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
           ...(input.generateTitle === true ? {} : { titleRenamed: true }),
           modelSelection,

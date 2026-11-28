@@ -94,6 +94,11 @@ every provider can understand every format. Depending on the provider, it
 receives the attachment directly or a server-local path it can read using its
 available tools. Uploaded files are not automatically executed.
 
+In the desktop app, when the thread's environment runs on this computer, drag a
+folder onto the composer or choose **Folder…** from the attach button to add its
+path. Nothing is uploaded, so there is no size limit; the agent reads the folder
+in place.
+
 Click a video attachment to play it. If its format cannot play in the app, use
 **Download video**. Select another attachment to preview it when its format is
 supported, or save the original file to open it elsewhere.

@@ -112,6 +112,7 @@ import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
+import { getProviderReinstallCommand } from "./providerStatus";
 import { useSearchableSetting } from "./settingsSearch";
 import { CompactIdleThreadsRow } from "./SettingsPanels";
 import {
@@ -1399,7 +1400,9 @@ function ProviderInstanceRow({
   );
   // SCIENT-FORK:END
   const updateCandidate =
-    liveProvider !== undefined && isProviderSettingsUpdateCandidate(liveProvider)
+    liveProvider !== undefined &&
+    (isProviderSettingsUpdateCandidate(liveProvider) ||
+      getProviderReinstallCommand(liveProvider) !== null)
       ? liveProvider
       : undefined;
   const isInstanceUpdateRunning =

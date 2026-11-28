@@ -26,6 +26,7 @@ import {
   enrichGrokSnapshot,
 } from "./status.ts";
 import { grokUsageReader } from "./usage.ts";
+import { needsUsageAccessLimits } from "@t3tools/provider-core/server/usageLimits";
 import { readGrokAccount } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -217,6 +218,7 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
     defaultConfig: (): GrokSettings => decodeGrokSettings({}),
     usage: grokUsageReader,
     create: Effect.fn("GrokDriver.create")(function* (input) {
+      const usageAccess = input.usageAccess ?? Effect.succeed(false);
       const random = yield* SecureRandom.SecureRandom;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
@@ -303,13 +305,21 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
               snapshot.installed &&
               snapshot.auth.status === "authenticated"
             ),
+          // readGrokAccount opens Grok's auth.json, so it waits for usage access.
           (snapshot) =>
-            readGrokAccount(effectiveEnvironment).pipe(
-              Effect.map(({ email, usageLimits }) => ({
-                ...snapshot,
-                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                usageLimits,
-              })),
+            Effect.flatMap(usageAccess, (allowed) =>
+              allowed
+                ? readGrokAccount(effectiveEnvironment).pipe(
+                    Effect.map(({ email, usageLimits }) => ({
+                      ...snapshot,
+                      auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                      usageLimits,
+                    })),
+                  )
+                : Effect.map(needsUsageAccessLimits, (usageLimits) => ({
+                    ...snapshot,
+                    usageLimits,
+                  })),
             ),
         ),
         Effect.map(decorateSnapshot),
@@ -320,11 +330,17 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
-      const checkUsageLimits = readGrokAccount(effectiveEnvironment).pipe(
-        Effect.map(({ email, usageLimits }) => ({
-          usageLimits,
-          ...(email ? { auth: { email } } : {}),
-        })),
+      // The limits-only check opens Grok's auth.json too, so it waits for usage access the same way.
+      const checkUsageLimits = Effect.flatMap(usageAccess, (allowed) =>
+        allowed
+          ? readGrokAccount(effectiveEnvironment).pipe(
+              Effect.map(({ email, usageLimits }) => ({
+                usageLimits,
+                ...(email ? { auth: { email } } : {}),
+              })),
+            )
+          : Effect.map(needsUsageAccessLimits, (usageLimits) => ({ usageLimits })),
+      ).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

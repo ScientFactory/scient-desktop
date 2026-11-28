@@ -68,6 +68,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle, titleClippedPierreTreeRow } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
+import { isMarkdownPreviewFile } from "./filePreviewMode";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
 import {
@@ -94,6 +95,7 @@ interface FileBrowserPanelProps {
   // SCIENT-FORK:START — New opens a LaTeX document straight in Visual
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   // SCIENT-FORK:END
+  onOpenFilePreview?: (relativePath: string) => void;
   /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
    * loaded folders. */
   hostFolder?: boolean;
@@ -120,6 +122,7 @@ export default function FileBrowserPanel({
   selectedPathRevealId,
   onOpenFile,
   onOpenFileSource,
+  onOpenFilePreview,
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
@@ -223,11 +226,16 @@ export default function FileBrowserPanel({
       // SCIENT-FORK:START — the file management groups around the upstream items
       const manageItems = fileActions.menuItems(item.path);
       // SCIENT-FORK:END
+      const canOpenPreview =
+        onOpenFilePreview !== undefined &&
+        entryKindsRef.current.get(relativePath) === "file" &&
+        isMarkdownPreviewFile(relativePath);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
+            ...(canOpenPreview ? [{ id: "open-preview", label: gt("Open preview") }] : []),
             // SCIENT-FORK:START — Open with lists every app the computer offers
             ...(await fileActions.withOpenWith(item.path, fileMenuItems)),
             // SCIENT-FORK:END
@@ -268,6 +276,10 @@ export default function FileBrowserPanel({
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
         if (isFileMenuAction) {
           await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+          return;
+        }
+        if (clicked === "open-preview") {
+          onOpenFilePreview?.(panelPath(relativePath));
           return;
         }
         // SCIENT-FORK:START

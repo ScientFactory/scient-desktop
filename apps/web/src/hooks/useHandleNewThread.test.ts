@@ -3,7 +3,7 @@ import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
   // SCIENT-FORK:START — Scient ends a route visit's claims on the router's before-navigate event.
-  let beforeNavigate: () => void = () => undefined;
+  let beforeNavigate: (event: { readonly pathChanged: boolean }) => void = () => undefined;
   // SCIENT-FORK:END
   type ProjectFile = { readonly defaultThreadEnvMode?: "local" | "worktree" } | null;
   let completeProjectFileRead: (value: ProjectFile) => void = () => undefined;
@@ -38,7 +38,7 @@ const testState = vi.hoisted(() => {
       matches: [{ params: {} }],
     },
     // SCIENT-FORK:START
-    subscribe: (_event: string, listener: () => void) => {
+    subscribe: (_event: string, listener: (event: { readonly pathChanged: boolean }) => void) => {
       beforeNavigate = listener;
     },
     // SCIENT-FORK:END
@@ -75,7 +75,7 @@ const testState = vi.hoisted(() => {
   return {
     // SCIENT-FORK:START
     navigateAway: () => {
-      beforeNavigate();
+      beforeNavigate({ pathChanged: true });
       router.state.location.href = "/usage";
     },
     // SCIENT-FORK:END

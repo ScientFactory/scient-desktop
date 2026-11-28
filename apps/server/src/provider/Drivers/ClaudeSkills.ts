@@ -18,6 +18,7 @@ export { mergeClaudeReportedSkills } from "./ScientNativeSkills.ts";
 // SCIENT-FORK:END
 
 import { claudeAccountConfigPath, readClaudeOauthAccount } from "../claudeResetCredits.ts";
+import { parseGitfileTarget } from "../../project/worktreeContainer.ts";
 
 type ClaudeSkillScope = "user" | "project";
 
@@ -205,8 +206,9 @@ const findPluginRepositoryRoot = Effect.fnUntraced(function* (cwd: string) {
   const gitFile = yield* fileSystem
     .readFileString(path.join(root, ".git"))
     .pipe(Effect.orElseSucceed(() => ""));
-  if (!gitFile.trim().startsWith("gitdir:")) return root;
-  const gitDirectory = path.resolve(root, gitFile.trim().slice(7).trim());
+  const gitFileTarget = parseGitfileTarget(gitFile);
+  if (gitFileTarget === undefined) return root;
+  const gitDirectory = path.resolve(root, gitFileTarget);
   const commonFile = yield* fileSystem
     .readFileString(path.join(gitDirectory, "commondir"))
     .pipe(Effect.orElseSucceed(() => ""));

@@ -941,8 +941,9 @@ describe("Scient provider settings", () => {
       },
     };
     await using _screen = await render(panel({ targetInstanceId: codexId }));
-    await userEvent.click(page.getByRole("button", { name: /view details/ }).last());
+    // SCIENT-FORK:START — the Status row offers the update inline.
     await userEvent.click(button("Update now"));
+    // SCIENT-FORK:END
     await userEvent.click(select("Antigravity"));
     for (const status of ["warning", "ready"] as const) {
       await setProviders([{ ...provider(), status }, missingAntigravityProvider()]);
@@ -1154,5 +1155,17 @@ describe("EnvironmentProviderSettings health check interval", () => {
 
     await expect.element(input).toHaveValue("300");
     expect(state.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("shows an inline Update now button in the provider status section when a CLI update is available", async () => {
+    await setup();
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+
+    const updateButton = page.getByRole("button", { name: "Update now" });
+    await expect.element(updateButton).toBeVisible();
+    await userEvent.click(updateButton);
+
+    expect(state.updateProvider).toHaveBeenCalledTimes(1);
   });
 });

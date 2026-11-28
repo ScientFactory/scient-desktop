@@ -116,7 +116,6 @@ import {
   useRef,
   useState,
   type ComponentProps,
-  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -137,7 +136,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 // SCIENT-FORK:END
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type {
   HtmlFilePresentationRequest,
@@ -480,26 +479,30 @@ export function WorkspaceBrowserPreview(props: {
   readonly refreshKey: number;
   // SCIENT-FORK: Reload file always reloads the page.
   readonly manualReloadKey: number;
+  readonly refreshRevision?: number;
 }) {
   // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
   const resource = workspaceViewerAssetResource(props, "workspace-file", true);
   const messages = useMessages();
   // SCIENT-FORK:END
-  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
-  // inode, which an atomic replace changes.
-  // SCIENT-FORK:START — so does each change the file's watcher reports.
-  const mintRevision = `${props.workspaceMutationId ?? ""}:${props.refreshKey}:${props.manualReloadKey}`;
+  const refreshRevision = props.refreshRevision ?? 0;
+  // Each workspace mutation or manual refresh re-mints the URL: a file outside the workspace is
+  // signed by its inode, which an atomic replace changes.
+  // SCIENT-FORK:START — so does each change the file's watcher reports, and Reload file.
+  const refreshSuffix = refreshRevision > 0 ? `:refresh:${refreshRevision}` : "";
+  const mintRevision = `${props.workspaceMutationId ?? ""}:${props.refreshKey}:${props.manualReloadKey}${refreshSuffix}`;
   const assetUrl = useAssetUrlState(props.environmentId, resource, mintRevision);
   // SCIENT-FORK:END
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   // Servers that report the file's revision let an unchanged page stay loaded.
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
-  // SCIENT-FORK:START — Reload file always reloads the page. Without a server revision (a page
-  // outside the workspace, an older server), Scient's refresh of the page decides, as before.
+  // SCIENT-FORK:START — Reload file and refreshing workspace files always reload the page.
+  // Without a server revision (a page outside the workspace, an older server), Scient's refresh of
+  // the page decides, as before.
   const latestRevision =
     fileRevision === undefined
-      ? `${props.refreshKey}:${props.manualReloadKey}`
-      : `${fileRevision}:${props.manualReloadKey}`;
+      ? `${props.refreshKey}:${props.manualReloadKey}${refreshSuffix}`
+      : `${fileRevision}:${props.manualReloadKey}${refreshSuffix}`;
   // SCIENT-FORK:END
   // The HTML frame keeps the URL it loaded, so it moves only once a re-minted URL has arrived.
   const [frame, setFrame] = useState<HtmlPreviewFrame | null>(null);
@@ -1647,25 +1650,6 @@ export function EditableFileEditor({
   );
 }
 
-function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
-  const mac = isMacPlatform(navigator.platform);
-  const selectAll =
-    event.key.toLowerCase() === "a" &&
-    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
-    !event.shiftKey &&
-    !event.altKey;
-  // React bubbles keys from portaled children (the image dialog) through this surface.
-  if (
-    !selectAll ||
-    !(event.target instanceof Node) ||
-    !event.currentTarget.contains(event.target)
-  ) {
-    return;
-  }
-  event.preventDefault();
-  window.getSelection()?.selectAllChildren(event.currentTarget);
-}
-
 /** T3's ordinary rendered preview remains authoritative for MDX. */
 function RenderedMarkdownSurface({
   environmentId,
@@ -1744,7 +1728,6 @@ function RenderedMarkdownSurface({
       relativePath={relativePath}
       threadRef={threadRef}
       workspaceMutationId={workspaceMutationId}
-      onKeyDown={selectRenderedContentOnSelectAll}
       onTaskListChange={onTaskListChange}
     />
   );
@@ -3098,6 +3081,7 @@ function FilePreviewPanelContent({
               workspaceMutationId={workspaceMutationId}
               refreshKey={viewerRefreshKey}
               manualReloadKey={manualReloadKey}
+              refreshRevision={fileRefreshRevision}
             />
           ) : awaitingMarkdownLease && admissionError ? (
             // SCIENT-FORK:START — document session could not be admitted
@@ -3491,6 +3475,17 @@ function FilePreviewPanelContent({
                 selectedPathRevealId={revealRequestId}
                 onOpenFile={onOpenFile}
                 onOpenFileSource={onOpenFileSource}
+                onOpenFilePreview={(path) => {
+                  // SCIENT-FORK:START — the open document's pending save lands before the
+                  // Markdown view changes.
+                  const open = () => {
+                    setRenderMarkdownPreferred(true);
+                    onOpenFile(path);
+                  };
+                  if (relativePath === null) open();
+                  else runAfterPendingSave([relativePath], open);
+                  // SCIENT-FORK:END
+                }}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}
                 // SCIENT-FORK:START — the Files tab's Back and Forward sit in its toolbar

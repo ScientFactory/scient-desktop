@@ -34,7 +34,10 @@ import { isLiveCallerShell } from "./liveCallerShell.ts";
 
 const delegatedTaskPrefix = "thread:delegated-task:";
 
+const launchHash = /^[0-9a-f]{64}$/;
+
 const suggestedThreadId = (threadId: ThreadId) => {
+  if (launchHash.test(threadId)) return ThreadId.make(`mcp:launch:${threadId}`);
   if (!threadId.startsWith(delegatedTaskPrefix)) return ThreadId.make(`mcp:${threadId}`);
   const rest = threadId.slice(delegatedTaskPrefix.length);
   // encodeURIComponent throws on lone surrogates, which a JSON string can carry.
@@ -58,7 +61,7 @@ const candidateThreadIds = (threadId: ThreadId, environmentId: EnvironmentId) =>
 };
 
 /**
- * Agents paste bare uuids for `mcp:<uuid>` threads, unencoded delegated-task ids, and thread links.
+ * Agents paste bare uuids for `mcp:<uuid>` threads, bare hashes for `mcp:launch:<hash>` threads, unencoded delegated-task ids, and thread links.
  * The id is never rewritten, so permission checks keyed on it still hold; the miss
  * only names a live thread the caller could read by its full id. Ids from another
  * machine miss here too. The link hint is static: listing links probes peers.

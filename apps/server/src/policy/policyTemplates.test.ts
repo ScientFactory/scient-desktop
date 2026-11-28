@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   MACOS_MANAGED_PREFERENCES_PATH,
   WINDOWS_POLICY_GROUPS,
@@ -36,6 +37,28 @@ it("refuses a profile for a policy with a null value, which a plist cannot hold"
     reason:
       "settings.defaultModelSelection is null, which a configuration profile cannot hold; deploy this policy as a file.",
   });
+});
+
+it("keeps carriage returns in the macOS profile's provider environment strings", () => {
+  const profile = macosProfile(
+    {
+      schemaVersion: 1,
+      organization: "Example Corp",
+      limits: {
+        providers: {
+          instances: {
+            [ProviderDriverKind.make("claudeAgent")]: {
+              locked: true,
+              environment: [{ name: "EXAMPLE_PAYLOAD", value: "first\r\nsecond\rthird\n<&>" }],
+            },
+          },
+        },
+      },
+    },
+    { profile: "profile-uuid", payload: "payload-uuid" },
+  );
+  assert(profile._tag === "Valid");
+  assert.include(profile.profile, "<string>first&#13;\nsecond&#13;third\n&lt;&amp;&gt;</string>");
 });
 
 // SCIENT-FORK:START — templates must write where Scient's policy reader looks.
