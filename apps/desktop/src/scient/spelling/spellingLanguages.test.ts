@@ -66,6 +66,29 @@ describe("makeDocumentSpelling", () => {
     expect(codes()).toEqual(["en-US", "he"]);
   });
 
+  it("reads the POSIX locale tags Linux reports", () => {
+    const { codes } = setup(["en_GB.UTF-8", "de_DE@euro"]);
+    expect(codes()).toEqual(["en-GB", "de-DE"]);
+  });
+
+  // Chromium lists a bare "en" (the en-US dictionary), and GLib follows en_GB with a generated "en".
+  it.each([
+    { system: ["en-GB", "en"], expected: ["en-GB"] },
+    { system: ["en", "en-GB"], expected: ["en-GB"] },
+    { system: ["en-GB", "en-US"], expected: ["en-GB", "en-US"] },
+    { system: ["de-DE", "en"], expected: ["de-DE", "en"] },
+    // en-SG has no dictionary of its own, so its fallback to "en" must not stand in for en-GB.
+    { system: ["en_SG", "en", "en_GB"], expected: ["en-GB"] },
+  ])("uses a bare system language only as a fallback: $system", ({ system, expected }) => {
+    const { codes } = setup(system, {}, [...AVAILABLE, "en"]);
+    expect(codes()).toEqual(expected);
+  });
+
+  it("keeps a language's fallback at its first tag, ahead of the cap", () => {
+    const { codes } = setup(["en", "de-DE", "fr", "es", "it", "en-SG"], {}, [...AVAILABLE, "en"]);
+    expect(codes()).toEqual(["en", "de-DE", "fr", "es"]);
+  });
+
   // English prompts a language guesser took for Indonesian, French and Danish (issue screenshots).
   it.each([
     "look at @data/cohort.csv and compute mean age",
