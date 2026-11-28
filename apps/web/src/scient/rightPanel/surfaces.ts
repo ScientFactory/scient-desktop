@@ -36,6 +36,7 @@ export type ScientRightPanelSurface =
       readonly module: "recording";
       readonly projectId: string;
       readonly source: string;
+      readonly sessionId?: string;
       readonly match?: { readonly version: string; readonly time: number; readonly query: string };
       readonly title: string;
     }
@@ -104,13 +105,15 @@ export function scientRecordingSurface(
   source: string,
   match?: { version: string; time: number; query: string },
   title?: string,
+  sessionId?: string,
 ): Extract<ScientRightPanelSurface, { module: "recording" }> {
   return {
-    id: `scient:recording:${encodeURIComponent(projectId)}:${encodeURIComponent(source)}`,
+    id: `scient:recording:${encodeURIComponent(projectId)}:${encodeURIComponent(sessionId ?? source)}`,
     kind: "scient",
     module: "recording",
     projectId,
     source,
+    ...(sessionId ? { sessionId } : {}),
     ...(match ? { match } : {}),
     title: title || (source.split(/[\\/]/).at(-1) ?? source),
   };
@@ -269,6 +272,9 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
         ? { version: match.version, time: match.time, query: match.query }
         : undefined,
       typeof surface.title === "string" ? surface.title.slice(0, 200) : undefined,
+      typeof surface.sessionId === "string" && /^[a-f0-9-]{36}$/.test(surface.sessionId)
+        ? surface.sessionId
+        : undefined,
     );
   }
   if (surface.id === "scient:sources" && surface.module === "sources") {
@@ -380,7 +386,7 @@ export function scientRightPanelSurfaceTitle(
     case "recording":
       return surface.title;
     case "recordings":
-      return resolve(msg("Recordings"));
+      return resolve(msg("Sessions"));
     case "sources":
       return resolve(msg("Library", { $context: "the reference library panel" }));
     case "new-tab":

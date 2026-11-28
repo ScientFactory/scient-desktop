@@ -1416,7 +1416,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               { id: "copy-path", label: gt("Copy path") },
               ...(group.environmentId === primaryEnvironmentId
                 ? [
-                    { id: "recordings", label: gt("Recordings") },
+                    { id: "recordings", label: gt("Sessions") },
                     { id: "record-audio", label: gt("Record a lesson") },
                   ]
                 : []),

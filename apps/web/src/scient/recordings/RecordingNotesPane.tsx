@@ -54,6 +54,8 @@ export function RecordingNotesPane({
     "study-notes": gt("Study notes"),
     "action-items": gt("Action items"),
     lesson: gt("Lesson notes"),
+    meeting: gt("Meeting notes"),
+    interview: gt("Interview notes"),
   };
   const make = async (next: RecordingNoteRecipe) => {
     setRecipe(next);

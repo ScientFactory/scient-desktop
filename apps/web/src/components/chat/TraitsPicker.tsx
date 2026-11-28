@@ -539,16 +539,46 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
   );
 });
 
+// SCIENT-FORK:START — options only a chat turn reads (Codex Cyber Access), hidden where no chat starts.
+const CHAT_TURN_OPTION_IDS = new Set(["cyberAccessProgram"]);
+export function withoutChatTurnOptions(
+  models: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  return models.map((model) =>
+    model.capabilities?.optionDescriptors?.some(({ id }) => CHAT_TURN_OPTION_IDS.has(id))
+      ? {
+          ...model,
+          capabilities: {
+            ...model.capabilities,
+            optionDescriptors: model.capabilities.optionDescriptors.filter(
+              ({ id }) => !CHAT_TURN_OPTION_IDS.has(id),
+            ),
+          },
+        }
+      : model,
+  );
+}
+// SCIENT-FORK:END
+
 export const TraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
-  ...props
+  // SCIENT-FORK:START
+  forChat = false,
+  // SCIENT-FORK:END
+  ...input
 }: TraitsSelectionInput & {
   size?: ComposerControlSize;
   hidden?: boolean;
   disabled?: boolean;
+  // SCIENT-FORK:START — the choice starts chat turns, so chat-only options apply.
+  forChat?: boolean;
+  // SCIENT-FORK:END
 }) {
+  // SCIENT-FORK:START
+  const props = forChat ? input : { ...input, models: withoutChatTurnOptions(input.models) };
+  // SCIENT-FORK:END
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
   const traits = useTraitsSelection(props);
   const resolve = useMessages();

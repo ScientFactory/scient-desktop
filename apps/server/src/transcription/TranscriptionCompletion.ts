@@ -12,9 +12,12 @@ const isRevisionId = Schema.is(RevisionId);
 /** A completed lesson gets its notes, written by a thread of their own. */
 const makeLessonNotes = ({ id, stage, lesson }: SettledTranscription) =>
   lesson && stage === "completed" && isRevisionId(id)
-    ? Notes.execute({ action: "make", project: lesson.project, id, recipe: "lesson" }).pipe(
-        Effect.catchCause(() => Effect.logWarning("Could not make the lesson notes", { id })),
-      )
+    ? Notes.execute({
+        action: "make",
+        project: lesson.project,
+        id,
+        recipe: lesson.type === "meeting" || lesson.type === "interview" ? lesson.type : "lesson",
+      }).pipe(Effect.catchCause(() => Effect.logWarning("Could not make the lesson notes", { id })))
     : Effect.void;
 
 export const completionCommand = ({

@@ -476,6 +476,7 @@ export function ComposerAttachmentFileList({
     <div className="mb-3 flex flex-col gap-1">
       {files.map((file) => {
         const recording = file.source?._tag === "recording-transcript" ? file.source : undefined;
+        const session = file.source?._tag === "session" ? file.source : undefined;
         const fileCanUpload =
           supportsAttachmentUploads &&
           maxFileAttachmentBytes !== null &&
@@ -488,10 +489,11 @@ export function ComposerAttachmentFileList({
             key={file.id}
             className={cn(
               "flex min-w-0 items-center gap-2 py-1 text-sm text-foreground",
-              recording && "w-fit max-w-full rounded-lg border border-border bg-muted/40 px-2",
+              (recording || session) &&
+                "w-fit max-w-full rounded-lg border border-border bg-muted/40 px-2",
             )}
           >
-            {recording ? (
+            {recording || session ? (
               <AudioLinesIcon className="ms-1 size-4 shrink-0 text-muted-foreground" />
             ) : (
               <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
@@ -508,6 +510,13 @@ export function ComposerAttachmentFileList({
                   <span className="block truncate text-xs text-secondary-label">
                     {gt("Transcript")} · {recordingTime(recording.start)}–
                     {recordingTime(recording.end)}
+                  </span>
+                </>
+              ) : session ? (
+                <>
+                  <span className="block truncate font-medium">{session.name}</span>
+                  <span className="block truncate text-xs text-secondary-label">
+                    {gt("Session context")}
                   </span>
                 </>
               ) : (

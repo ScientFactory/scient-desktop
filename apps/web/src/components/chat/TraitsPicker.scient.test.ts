@@ -2,7 +2,11 @@ import { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits"
 import { getProviderOptionDescriptors, getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { getTraitsSectionVisibility, withoutPromptInjectedOptions } from "./TraitsPicker";
+import {
+  getTraitsSectionVisibility,
+  withoutChatTurnOptions,
+  withoutPromptInjectedOptions,
+} from "./TraitsPicker";
 
 const CONTEXT_WINDOW: ProviderOptionDescriptor = {
   id: "contextWindow",
@@ -185,3 +189,24 @@ it.each(["Default", "Default (Medium)"])(
     ).toBe(label);
   },
 );
+
+describe("withoutChatTurnOptions", () => {
+  it("drops Cyber Access, which only a chat turn reads, and keeps the rest", () => {
+    const cyber: ProviderOptionDescriptor = {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [{ id: "standard", label: "Standard", isDefault: true }],
+      currentValue: "standard",
+    };
+    const [model] = withoutChatTurnOptions([
+      {
+        slug: "gpt",
+        name: "GPT",
+        isCustom: false,
+        capabilities: { optionDescriptors: [FAST_MODE, cyber] },
+      },
+    ]);
+    expect(model?.capabilities?.optionDescriptors?.map(({ id }) => id)).toEqual(["fastMode"]);
+  });
+});

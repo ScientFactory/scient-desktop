@@ -3,16 +3,22 @@ import { Radio, RadioGroup } from "../../components/ui/radio-group";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import type { ModelSelection } from "@t3tools/contracts";
 import { CorrectionModelPicker } from "./CorrectionModelPicker";
-import { downloadEnvironmentSpeechModel } from "@t3tools/client-runtime/voice-input";
+import {
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
+} from "@t3tools/client-runtime/voice-input";
 import { readPreparedConnection } from "../../state/session";
-import { readPrimaryEnvironmentId } from "../../state/environments";
+import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../../state/environments";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { Link } from "@tanstack/react-router";
+import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { useProjects } from "../../state/entities";
 import { formatBytes } from "../../lib/formatBytes";
 import { recordingTime } from "./recordingPresentation";
 import { Switch } from "../../components/ui/switch";
 import { useGT, useLocale } from "gt-react";
-import { useId, useRef, useState } from "react";
+import { lazy, Suspense, useId, useRef, useState } from "react";
+import { ChevronRightIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -30,7 +36,7 @@ import { Badge } from "../../components/ui/badge";
 import { languageLabel } from "../../lib/languageLabel";
 import { RecordingSelect } from "./RecordingSelect";
 import { useRecordingRead } from "./useRecordingRead";
-import { andFinally } from "../../lib/compilerSafe";
+import { andFinally, fail } from "../../lib/compilerSafe";
 
 const retiringOpenAiModels = new Set([
   "whisper-1",
@@ -40,6 +46,13 @@ const retiringOpenAiModels = new Set([
   "gpt-4o-transcribe-diarize",
 ]);
 
+// Loaded on first use: the editor brings settings code the dialog otherwise never needs.
+const ProjectWordsEditor = lazy(() =>
+  import("../transcription/WordsPanel").then((module) => ({
+    default: module.ProjectWordsEditor,
+  })),
+);
+
 export function TranscribeDialog({
   project,
   projectTitle,
@@ -47,6 +60,7 @@ export function TranscribeDialog({
   title,
   previousId,
   batchSources,
+  otherBatches = [],
   onClose,
   onStart,
 }: {
@@ -56,6 +70,8 @@ export function TranscribeDialog({
   title: string;
   previousId?: string;
   batchSources?: readonly string[];
+  /** Recordings selected in other projects, started with the same choices. */
+  otherBatches?: readonly { project: string; sources: readonly string[] }[];
   onClose: () => void;
   onStart: () => void;
 }) {
@@ -71,13 +87,16 @@ export function TranscribeDialog({
   };
   const [language, setLanguage] = useState("auto");
   const [engineId, setEngineId] = useState("");
+  const [moreEngines, setMoreEngines] = useState(false);
   const [correction, setCorrection] = useState<"off" | "quick" | "thorough">("quick");
   const [wordsEnabled, setWordsEnabled] = useState(true);
   const [correctionModel, setCorrectionModel] = useState<ModelSelection>();
   const [subtitleOverride, setSubtitleMode] = useState<"transcribe" | "subtitles" | "both">();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [download, setDownload] = useState<string>();
+  // Models wait their turn: the computer downloads one at a time. The first is downloading.
+  const [downloads, setDownloads] = useState<readonly string[]>([]);
+  const downloadQueue = useRef(Promise.resolve());
   const [downloadError, setDownloadError] = useState(false);
   const [inventoryRefresh, setInventoryRefresh] = useState(0);
   const sample = useRecordingRead(batchSources ? "" : source, (signal) =>
@@ -95,7 +114,7 @@ export function TranscribeDialog({
         { language: effectiveLanguage, details: true },
         signal,
       ),
-    download ? 1500 : undefined,
+    downloads.length ? 1500 : undefined,
     inventoryRefresh,
   );
   const discovery = useRecordingRead(batchSources ? "" : source, (signal) =>
@@ -222,7 +241,11 @@ export function TranscribeDialog({
         signal,
       ),
   );
-  const vocabulary = useRecordingRead(project, (signal) =>
+  const environmentId = usePrimaryEnvironmentId();
+  const projectId = useProjects().find(({ workspaceRoot }) => workspaceRoot === project)?.id;
+  // Words are edited in place; closing the editor counts them again.
+  const [wordsRevision, setWordsRevision] = useState(0);
+  const vocabulary = useRecordingRead(`${project}:${wordsRevision}`, (signal) =>
     Promise.all([
       transcriptionCommand("words-list", project, { level: "global" }, signal),
       transcriptionCommand("words-list", project, { level: "project" }, signal),
@@ -259,29 +282,44 @@ export function TranscribeDialog({
       : engine?.engine === "cloud"
         ? audioCost(engine.audioHourUsd)
         : undefined;
-  const downloadModel = async (id: string) => {
-    const environmentId = readPrimaryEnvironmentId();
-    const prepared = environmentId && readPreparedConnection(environmentId);
+  const downloadModel = (id: string) => {
+    if (downloads.includes(id)) return;
     setDownloadError(false);
-    if (!prepared) {
-      setDownloadError(true);
-      return;
-    }
-    setDownload(id);
-    await andFinally(
-      async () => {
-        try {
-          await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, id));
-          setInventoryRefresh((refresh) => refresh + 1);
-        } catch {
-          setDownloadError(true);
-        }
-      },
-      () => {
-        setDownload(undefined);
-      },
+    setDownloads((current) => [...current, id]);
+    downloadQueue.current = downloadQueue.current.then(() =>
+      andFinally(
+        async () => {
+          try {
+            const environmentId = readPrimaryEnvironmentId();
+            const prepared = environmentId && readPreparedConnection(environmentId);
+            if (!prepared) fail("No connection");
+            await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, id));
+            setInventoryRefresh((refresh) => refresh + 1);
+          } catch {
+            setDownloadError(true);
+          }
+        },
+        () => setDownloads((current) => current.filter((item) => item !== id)),
+      ),
     );
   };
+  const downloading = downloads[0];
+  const downloadProgress = useRecordingRead(
+    downloading ?? "",
+    async (signal) => {
+      const environmentId = readPrimaryEnvironmentId();
+      const prepared = environmentId && readPreparedConnection(environmentId);
+      if (!prepared) return undefined;
+      const { models } = await runEnvironmentSpeech(getEnvironmentSpeechModels(prepared), {
+        signal,
+      });
+      const model = models.find(({ id }) => id === downloading);
+      return model?.downloaded !== undefined && model.size
+        ? Math.min(99, Math.floor((model.downloaded / model.size) * 100))
+        : undefined;
+    },
+    1000,
+  );
   const start = async () => {
     if (!canStart || pending || checking || (needsEstimate && !estimate.data?.estimateId)) return;
     setPending(true);
@@ -294,17 +332,31 @@ export function TranscribeDialog({
           } else if (engine) {
             if (engine.engine === "cloud") await consentToTranscriptionEngine(engine.id);
             if (batchSources) {
-              await transcriptionCommand("start-batch", project, {
-                source,
-                sources: batchSources,
+              const choices = {
                 language: effectiveLanguage,
                 engine: engine.engine,
                 model: engine.model,
                 ...(engine.engine === "cloud" ? { cloudEngineId: engine.id } : {}),
-                ...(correction === "off" ? { mode: "off" } : {}),
-                ...(wordsEnabled ? {} : { useWords: false }),
+                ...(correction === "off" ? { mode: "off" as const } : {}),
+                ...(wordsEnabled ? {} : { useWords: false as const }),
                 ...(correction !== "off" && correctionModel ? { correctionModel } : {}),
-              });
+              };
+              // One batch per project; a project with a single recording starts it alone.
+              for (const batch of [{ project, sources: batchSources }, ...otherBatches]) {
+                const [first, ...rest] = batch.sources;
+                if (!first) continue;
+                if (rest.length)
+                  await transcriptionCommand("start-batch", batch.project, {
+                    source: first,
+                    sources: batch.sources,
+                    ...choices,
+                  });
+                else
+                  await transcriptionCommand("start", batch.project, {
+                    source: first,
+                    ...choices,
+                  });
+              }
             } else {
               await transcriptionCommand("start", project, {
                 source,
@@ -608,62 +660,110 @@ export function TranscribeDialog({
                     };
                     return (
                       <>
-                        {visible.map(card)}
+                        {/* Engines sit two to a line; each card needs little width. */}
+                        <div className="grid gap-2 sm:grid-cols-2">{visible.map(card)}</div>
                         {inventory.data && (
-                          <div className="rounded-lg border px-3 py-1.5">
-                            <Collapsible>
-                              <CollapsibleTrigger className="text-sm font-medium">
+                          <div>
+                            <Popover open={moreEngines} onOpenChange={setMoreEngines}>
+                              <PopoverTrigger
+                                render={<Button type="button" size="sm" variant="ghost" />}
+                              >
                                 {gt("More engines")}
-                              </CollapsibleTrigger>
-                              <CollapsiblePanel>
-                                <div className="space-y-2 pt-2">
-                                  {hidden.map(card)}
-                                  {inventory.data && !inventory.data.chatgpt.signedIn && (
-                                    <div className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
-                                      <span>{gt("ChatGPT")}</span>
-                                      <Link to="/settings/providers" className="text-primary">
-                                        {gt("Sign in")}
-                                      </Link>
-                                    </div>
-                                  )}
-                                  <Link
-                                    to="/settings/accounts"
-                                    className="block text-sm text-primary"
-                                  >
-                                    {gt("Add an account for a cloud engine")}
-                                  </Link>
-                                  {inventory.data?.local.some(({ installed }) => !installed) && (
-                                    <ul className="mt-2 space-y-1 text-muted-foreground">
-                                      {inventory.data.local
-                                        .filter(({ installed }) => !installed)
-                                        .map((model) => (
-                                          <li
-                                            key={model.id}
-                                            className="flex items-center justify-between gap-2"
-                                          >
-                                            <span>
-                                              {model.name}
-                                              {model.size !== undefined &&
-                                                ` · ${formatBytes(model.size)}`}
+                                <ChevronRightIcon
+                                  aria-hidden
+                                  className="-me-1 size-3.5 opacity-60"
+                                />
+                              </PopoverTrigger>
+                              <PopoverPopup width="lg" align="start">
+                                <div className="flex max-h-96 flex-col gap-1 overflow-y-auto text-sm">
+                                  {hidden.map((option) => (
+                                    <button
+                                      key={option.id}
+                                      type="button"
+                                      className="flex flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-start hover:bg-accent"
+                                      onClick={() => {
+                                        setEngineId(option.id);
+                                        if (option.engine !== "local" && subtitleMode === "both")
+                                          setSubtitleMode("transcribe");
+                                        setMoreEngines(false);
+                                      }}
+                                    >
+                                      <span className="font-medium">{option.title}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        {[
+                                          option.destination,
+                                          option.engine === "local" && option.size !== undefined
+                                            ? formatBytes(option.size)
+                                            : undefined,
+                                          option.engine === "local" &&
+                                          option.speed != null &&
+                                          duration
+                                            ? gt("About {time}", {
+                                                time: recordingTime((option.speed * duration) / 30),
+                                              })
+                                            : undefined,
+                                          option.engine === "cloud"
+                                            ? audioCost(option.audioHourUsd)
+                                            : undefined,
+                                          option.engine === "cloud" && option.retiresInFebruary
+                                            ? gt("Retiring Feb 2027")
+                                            : undefined,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" · ")}
+                                      </span>
+                                    </button>
+                                  ))}
+                                  {inventory.data.local
+                                    .filter(({ installed }) => !installed)
+                                    .map((model) => (
+                                      <button
+                                        key={model.id}
+                                        type="button"
+                                        aria-label={gt("Download {model}", { model: model.name })}
+                                        aria-busy={downloads.includes(model.id)}
+                                        className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-start hover:bg-accent"
+                                        onClick={() => downloadModel(model.id)}
+                                      >
+                                        <span>
+                                          {model.name}
+                                          {model.size !== undefined && (
+                                            <span className="text-muted-foreground">
+                                              {` · ${formatBytes(model.size)}`}
                                             </span>
-                                            <Button
-                                              size="xs"
-                                              variant="outline"
-                                              type="button"
-                                              disabled={!!download}
-                                              onClick={() => void downloadModel(model.id)}
-                                            >
-                                              {download === model.id
-                                                ? gt("Downloading…")
-                                                : gt("Download")}
-                                            </Button>
-                                          </li>
-                                        ))}
-                                    </ul>
-                                  )}
+                                          )}
+                                        </span>
+                                        <span className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+                                          {downloading === model.id ? (
+                                            <>
+                                              {downloadProgress.data !== undefined &&
+                                                `${downloadProgress.data}%`}
+                                              <LoaderCircleIcon
+                                                aria-hidden
+                                                className="size-4 animate-spin"
+                                              />
+                                            </>
+                                          ) : downloads.includes(model.id) ? (
+                                            gt("Waiting")
+                                          ) : (
+                                            <DownloadIcon aria-hidden className="size-4" />
+                                          )}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 border-t px-2 pt-2">
+                                    {!inventory.data.chatgpt.signedIn && (
+                                      <Link to="/settings/providers" className="text-primary">
+                                        {gt("Sign in to ChatGPT")}
+                                      </Link>
+                                    )}
+                                    <Link to="/settings/accounts" className="text-primary">
+                                      {gt("Add a cloud account")}
+                                    </Link>
+                                  </div>
                                 </div>
-                              </CollapsiblePanel>
-                            </Collapsible>
+                              </PopoverPopup>
+                            </Popover>
                           </div>
                         )}
                       </>
@@ -741,9 +841,33 @@ export function TranscribeDialog({
                       : vocabulary.isError
                         ? gt("Could not load Words")
                         : gt("Loading Words…")}{" "}
-                    <Link to="/settings/transcription" className="text-foreground underline">
-                      {gt("Edit Words")}
-                    </Link>
+                    {environmentId && projectId ? (
+                      <Popover
+                        onOpenChange={(open) => {
+                          if (!open) setWordsRevision((current) => current + 1);
+                        }}
+                      >
+                        <PopoverTrigger
+                          render={<button type="button" className="text-foreground underline" />}
+                        >
+                          {gt("Edit Words")}
+                        </PopoverTrigger>
+                        <PopoverPopup width="md" align="start">
+                          <div className="space-y-3">
+                            <Suspense fallback={null}>
+                              <ProjectWordsEditor
+                                environmentId={environmentId}
+                                projectId={projectId}
+                              />
+                            </Suspense>
+                          </div>
+                        </PopoverPopup>
+                      </Popover>
+                    ) : (
+                      <Link to="/settings/transcription" className="text-foreground underline">
+                        {gt("Edit Words")}
+                      </Link>
+                    )}
                   </p>
                 </div>
                 <Switch

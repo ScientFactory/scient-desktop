@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { atomicWrite, fingerprint, openLedger, timestamp, type Segment } from "./ledger.ts";
-import type { ModelSelection, TranscriptionWord } from "@t3tools/contracts";
+import type { ModelSelection, RecordingSessionType, TranscriptionWord } from "@t3tools/contracts";
 import type { CorrectionMode, CorrectionEstimate, CorrectionOutcome } from "./correction.ts";
 import { recognitionTerms } from "./words.ts";
 import { decodePcm } from "./media.ts";
@@ -47,6 +47,7 @@ export type Job = {
   recording?: string;
   /** Recorded as a lesson: its notes are made when it completes. */
   lesson?: true;
+  sessionType?: RecordingSessionType;
   words?: readonly TranscriptionWord[];
   correction?: {
     mode: CorrectionMode;

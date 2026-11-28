@@ -52,9 +52,11 @@ export type ManagedRecording = {
 export function RecordingNameInput({
   recording,
   onDone,
+  onRename,
 }: {
   readonly recording: ManagedRecording;
   readonly onDone: (changed: boolean) => void;
+  readonly onRename?: (title: string) => Promise<unknown>;
 }) {
   const gt = useGT();
   const [value, setValue] = useState(recording.title);
@@ -65,10 +67,12 @@ export function RecordingNameInput({
     const title = value.trim();
     if (!save || !title || title === recording.title) return onDone(false);
     try {
-      await transcriptionCommand("recording-rename", recording.workspaceRoot, {
-        source: recording.source,
-        title,
-      });
+      if (onRename) await onRename(title);
+      else
+        await transcriptionCommand("recording-rename", recording.workspaceRoot, {
+          source: recording.source,
+          title,
+        });
       onDone(true);
     } catch {
       toastManager.add({ type: "error", title: gt("Could not rename the recording") });

@@ -107,6 +107,16 @@ it("records only after explicit start, handles permission denial, and keeps a gl
     );
     await screen.getByRole("button", { name: "Record", exact: true }).click();
     expect(mocks.microphone).not.toHaveBeenCalled();
+    await expect.element(page.getByRole("button", { name: "Start recording" })).toBeEnabled();
+    if (import.meta.env.VITE_SCIENT_RECORDINGS_SCREENSHOTS) {
+      await page.viewport(900, 560);
+      for (const animation of document.getAnimations()) {
+        if (animation.effect?.getTiming().iterations !== Infinity) animation.finish();
+      }
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_RECORDINGS_SCREENSHOTS}/record-start.png`,
+      });
+    }
     await page.getByRole("button", { name: "Start recording" }).click();
     await expect.element(page.getByText(/Microphone access was denied/)).toBeVisible();
     await page.getByRole("button", { name: "Start recording" }).click();
@@ -179,7 +189,7 @@ it("shows live captions, pauses the lesson while you talk, and opens the lesson 
   );
   try {
     await screen.getByRole("button", { name: "Record", exact: true }).click();
-    await expect.element(page.getByRole("heading", { name: "Record a lesson" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Record a session" })).toBeVisible();
     await page.getByRole("button", { name: "Start recording" }).click();
     await expect.element(page.getByText(/Entropy always increases\./)).toBeVisible();
     await page.getByRole("button", { name: "Talk", exact: true }).click();
@@ -207,11 +217,12 @@ it("shows live captions, pauses the lesson while you talk, and opens the lesson 
     );
     expect(mocks.command).toHaveBeenCalledWith("capture-finish", "/class", {
       id: expect.any(String),
-      lesson: { language: "en" },
+      lesson: { language: "en", sessionType: "lecture" },
     });
     expect(mocks.command).toHaveBeenCalledWith("capture-start", "/class", {
       id: expect.any(String),
       language: expect.any(String),
+      sessionType: "lecture",
     });
   } finally {
     vi.unstubAllGlobals();

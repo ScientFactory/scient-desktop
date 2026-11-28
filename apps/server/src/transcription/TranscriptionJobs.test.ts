@@ -187,7 +187,15 @@ it.effect("leaves empty projects untouched and isolates corrupt revisions from v
     yield* Effect.promise(() => NodeFSP.writeFile(recording, "media"));
     yield* jobs.execute({ action: "media-register", project, source: recording });
     expect(yield* jobs.execute({ action: "media-list", project })).toEqual({
-      media: [{ source: recording, size: 5, created: expect.any(Number), queued: false }],
+      media: [
+        {
+          source: recording,
+          size: 5,
+          created: expect.any(Number),
+          queued: false,
+          recordingId: expect.stringMatching(/^[a-f0-9-]{36}$/),
+        },
+      ],
     });
     const legacy = NodePath.join(project, "legacy-duration.wav");
     yield* Effect.promise(async () => {
@@ -271,14 +279,18 @@ it.effect("lists project media that was never added and finds a file's transcrip
       );
     });
     yield* jobs.execute({ action: "media-register", project, source: transcribed });
-    const listed = yield* jobs.execute({ action: "media-list", project });
-    expect(listed).toEqual({
-      media: expect.arrayContaining([
-        { source: downloaded, size: 5, created: expect.any(Number), queued: false },
-        expect.objectContaining({ source: transcribed }),
-      ]),
+    const gone = NodePath.join(project, "gone");
+    expect(yield* jobs.execute({ action: "list", project: gone })).toEqual([]);
+    expect(yield* jobs.execute({ action: "media-list", project: gone, found: true })).toEqual({
+      media: [],
     });
-    expect(listed).toHaveProperty("media.length", 2);
+    // Recordings added to Scient and files found in the project are listed apart.
+    expect(yield* jobs.execute({ action: "media-list", project })).toEqual({
+      media: [expect.objectContaining({ source: transcribed })],
+    });
+    expect(yield* jobs.execute({ action: "media-list", project, found: true })).toEqual({
+      media: [{ source: downloaded, size: 5, created: expect.any(Number), queued: false }],
+    });
     expect(
       yield* jobs.execute({ action: "list", project, includeCreated: true, source: transcribed }),
     ).toMatchObject([{ job: { id } }]);

@@ -28,6 +28,7 @@ import {
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type RecordingSession,
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -39,6 +40,7 @@ import {
   EllipsisIcon,
   FileAudioIcon,
   FileTextIcon,
+  FolderSearchIcon,
   PlusIcon,
   SearchIcon,
   XIcon,
@@ -61,6 +63,7 @@ import {
   type RecordingAction,
 } from "./RecordingManage";
 import { useRecycleBin } from "./serverPlatform";
+import { ProjectMediaFinder, SelectionBar } from "./ProjectMediaFinder";
 import { WorkspacePageContainer } from "../../components/WorkspacePageContainer";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -101,6 +104,16 @@ function RecordingProgress({ state }: { state: RecordingStatus["state"] }) {
     </span>
   );
 }
+
+/** A click on a row's own control (checkbox, button, menu, name field) is not a click to open it. */
+const fromControl = (event: React.MouseEvent) =>
+  event.target instanceof Element &&
+  event.target !== event.currentTarget &&
+  Boolean(
+    event.target.closest(
+      "button, a, input, label, [role=checkbox], [role=menu], [role=menuitem], [data-row-control]",
+    ),
+  );
 
 export function RecordingsPage({
   lockedProject,
@@ -144,10 +157,29 @@ export function RecordingsPage({
     source: string;
     previousId?: string;
     batchSources?: readonly string[];
+    otherBatches?: readonly { project: Project; sources: readonly string[] }[];
   }>();
+  // Recordings chosen across projects are transcribed with one set of choices.
+  const transcribeAll = (groups: readonly { project: Project; sources: readonly string[] }[]) => {
+    const [first, ...others] = groups.filter(({ sources }) => sources.length);
+    if (!first) return;
+    const total = groups.reduce((sum, { sources }) => sum + sources.length, 0);
+    setTranscribe({
+      project: first.project,
+      source: first.sources[0]!,
+      ...(total > 1 ? { batchSources: first.sources } : {}),
+      ...(others.length ? { otherBatches: others } : {}),
+    });
+  };
   const [jobActionPending, setJobActionPending] = useState(false);
   const [jobActionError, setJobActionError] = useState(false);
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
+  const [combining, setCombining] = useState(false);
+  const [sessionError, setSessionError] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
+  // Audio and video already in the projects are browsed apart from the recordings.
+  const [finding, setFinding] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(false);
   const [transcriptFile, setTranscriptFile] = useState<File>();
@@ -207,7 +239,32 @@ export function RecordingsPage({
         destructive: true,
         separatorBefore: true,
         disabled: busy,
-        run: () =>
+        run: () => {
+          const project = projects.find(
+            ({ workspaceRoot }) => workspaceRoot === managed.workspaceRoot,
+          );
+          if (project && sessionProjects.has(project.id)) {
+            void (async () => {
+              try {
+                const session =
+                  sessionsBySource.get(key) ??
+                  (
+                    await transcriptionCommand("session", managed.workspaceRoot, {
+                      command: { kind: "ensure", source: managed.source },
+                    })
+                  ).session;
+                if (!session) fail("Session unavailable.");
+                await transcriptionCommand("session", managed.workspaceRoot, {
+                  command: { kind: "trash", id: session.id, version: session.version },
+                });
+                setSelection(new Set());
+              } catch {
+                setSessionError(true);
+              }
+              refreshList();
+            })();
+            return;
+          }
           void trashRecording(managed, {
             done: gt(
               "{os, select, windows {Moved {name} to the Recycle Bin} other {Moved {name} to the Trash}}",
@@ -218,7 +275,8 @@ export function RecordingsPage({
             if (!trashed) return;
             setSelection(new Set());
             refreshList();
-          }),
+          });
+        },
       },
     ];
   };
@@ -358,7 +416,7 @@ export function RecordingsPage({
     async (signal) =>
       Promise.allSettled(
         projects.map(async (project) => {
-          const [revisions, files] = await Promise.all([
+          const [revisions, files, sessions] = await Promise.all([
             transcriptionCommand(
               "list",
               project.workspaceRoot,
@@ -366,8 +424,16 @@ export function RecordingsPage({
               signal,
             ),
             transcriptionCommand("media-list", project.workspaceRoot, {}, signal),
+            transcriptionCommand(
+              "session",
+              project.workspaceRoot,
+              { command: { kind: "list" } },
+              signal,
+            )
+              .then((result) => result.sessions)
+              .catch(() => undefined),
           ]);
-          return { revisions, media: files.media };
+          return { revisions, media: files.media, sessions };
         }),
       ),
     3000,
@@ -377,6 +443,11 @@ export function RecordingsPage({
   const durations = new Map<string, number>();
   const queuedRecordings = new Set<string>();
   const titles = new Map<string, string>();
+  const sessionsBySource = new Map<string, RecordingSession>();
+  const activeSessions: { project: Project; session: RecordingSession }[] = [];
+  const trash: { project: Project; session: RecordingSession }[] = [];
+  const archive: { project: Project; session: RecordingSession }[] = [];
+  const sessionProjects = new Set<string>();
   const added: {
     key: string;
     project: Project;
@@ -390,7 +461,18 @@ export function RecordingsPage({
   projects.forEach((project, index) => {
     const result = list.data?.[index];
     if (result?.status !== "fulfilled") return;
-    const { revisions, media } = result.value;
+    const { revisions, media, sessions } = result.value;
+    if (sessions) sessionProjects.add(project.id);
+    for (const session of sessions ?? []) {
+      if (session.archived) {
+        if (session.parts.length > 1) archive.push({ project, session });
+        continue;
+      }
+      if (session.trashed) trash.push({ project, session });
+      else activeSessions.push({ project, session });
+      for (const part of session.parts)
+        sessionsBySource.set(`${project.id}/${part.source}`, session);
+    }
     const transcribed = new Set(revisions.map(({ job }) => job.source));
     for (const file of media) {
       const key = `${project.id}/${file.source}`;
@@ -406,28 +488,32 @@ export function RecordingsPage({
       grouped.set(key, recording);
     }
   });
+  // A recording opens before it has a transcript too; its page offers to transcribe it.
   const openRecording = async (
-    recording: Recording,
+    recording: Recording & { source: string },
     match?: { version: string; time: number; query: string },
     replace = false,
+    explicit?: RecordingSession,
   ) => {
-    if (opening.current || !recording.revisions.length) return;
+    if (opening.current) return;
     opening.current = true;
     setOpenError(false);
     const {
       project,
+      source,
       revisions: [latest],
     } = recording;
-    if (!latest) return;
     const panel = useRightPanelStore.getState();
+    let session = explicit ?? sessionsBySource.get(`${project.id}/${source}`);
     const open = (threadRef: ReturnType<typeof scopeThreadRef>) => {
       panel.openScient(
         threadRef,
         scientRecordingSurface(
           project.id,
-          latest.job.source,
+          source,
           match,
-          recordingTitle(latest.job.source, titles.get(`${project.id}/${latest.job.source}`)),
+          session?.title ?? recordingTitle(source, titles.get(`${project.id}/${source}`)),
+          match ? undefined : session?.id,
         ),
       );
       panel.requestMaximize(threadRef);
@@ -436,6 +522,13 @@ export function RecordingsPage({
     await andFinally(
       async () => {
         try {
+          if (!session && !match && sessionProjects.has(project.id)) {
+            const result = await transcriptionCommand("session", project.workspaceRoot, {
+              command: { kind: "ensure", source },
+            });
+            session = result.session;
+            refreshList();
+          }
           const recordingIds = new Set(
             recording.revisions.map(({ job }) => job.recording ?? job.id),
           );
@@ -462,9 +555,10 @@ export function RecordingsPage({
           };
           const currentThreadId = fromThread ? ThreadId.make(fromThread) : null;
           if (currentThreadId && (await openInThread(currentThreadId))) {
-            await settlePromise(() =>
-              linkRecordingThread(project.workspaceRoot, latest.job.id, currentThreadId),
-            );
+            if (latest)
+              await settlePromise(() =>
+                linkRecordingThread(project.workspaceRoot, latest.job.id, currentThreadId),
+              );
             return;
           }
           const links = (
@@ -480,7 +574,8 @@ export function RecordingsPage({
           });
           if (!target) return;
           open(scopeThreadRef(project.environmentId, target.threadId));
-          await linkRecordingThread(project.workspaceRoot, latest.job.id, target.threadId);
+          if (latest)
+            await linkRecordingThread(project.workspaceRoot, latest.job.id, target.threadId);
         } catch {
           setOpenError(true);
         }
@@ -493,7 +588,7 @@ export function RecordingsPage({
 
   const sourceRecording =
     lockedProject && openSource ? grouped.get(`${lockedProject}/${openSource}`) : undefined;
-  const openRedirect = useEffectEvent((recording: Recording) =>
+  const openRedirect = useEffectEvent((recording: Recording & { source: string }) =>
     openRecording(recording, undefined, true),
   );
   const redirectAttempted = useRef("");
@@ -503,7 +598,7 @@ export function RecordingsPage({
     const key = JSON.stringify([lockedProject, openSource]);
     if (redirectAttempted.current === key) return;
     redirectAttempted.current = key;
-    void openRedirect(sourceRecording);
+    void openRedirect({ ...sourceRecording, source: openSource });
   }, [lockedProject, openSource, sourceRecording, redirectAttempted]);
 
   const unfilteredRows = [
@@ -545,7 +640,45 @@ export function RecordingsPage({
       status: file.queued ? "queued" : "untranscribed",
     })),
   ];
-  const rows = unfilteredRows
+  const sessionRows = unfilteredRows.flatMap((row) => {
+    const session = sessionsBySource.get(row.key);
+    if (session?.trashed || (session && session.parts[0]?.source !== row.source)) return [];
+    return [
+      {
+        ...row,
+        ...(session
+          ? {
+              title: session.title,
+              duration: session.parts.reduce((sum, part) => sum + part.duration, 0) || row.duration,
+            }
+          : {}),
+        session,
+      },
+    ];
+  });
+  const listed = new Set(sessionRows.map(({ key }) => key));
+  for (const { project, session } of activeSessions) {
+    const first = session.parts[0];
+    if (!first) continue;
+    const key = `${project.id}/${first.source}`;
+    if (listed.has(key)) continue;
+    sessionRows.push({
+      key,
+      project,
+      source: first.source,
+      title: session.title,
+      size: 0,
+      created: session.created,
+      duration: session.parts.reduce((sum, part) => sum + part.duration, 0),
+      recording: undefined,
+      snippet: undefined,
+      matchedRevision: undefined,
+      status: "untranscribed",
+      queued: false,
+      session,
+    });
+  }
+  const rows = sessionRows
     .filter(
       (row) =>
         (!projectFilter || projectFilter === row.project.id) &&
@@ -567,14 +700,14 @@ export function RecordingsPage({
   // The project is named on each row only when the list mixes projects.
   const manyProjects = new Set(rows.map((row) => row.project.id)).size > 1;
   const statusOptions = [
-    { value: "", label: gt("All statuses") },
-    { value: "untranscribed", label: gt("Not transcribed") },
+    { value: "", label: gt("All recordings") },
+    { value: "completed", label: gt("Transcribed") },
     { value: "queued", label: gt("Queued") },
     { value: "transcribing", label: gt("Transcribing") },
     { value: "paused", label: gt("Paused") },
     { value: "review", label: gt("Needs review") },
-    { value: "completed", label: gt("Done") },
     { value: "failed", label: gt("Couldn’t finish") },
+    { value: "untranscribed", label: gt("No transcript") },
   ];
   const statusLabels = new Map(statusOptions.map(({ value, label }) => [value, label]));
   const formatWhen = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
@@ -612,7 +745,70 @@ export function RecordingsPage({
     };
   };
   const selectedFiles = added.filter((file) => !file.queued && selection.has(file.key));
-  const batchProject = selectedFiles[0]?.project;
+  const selectedRows = sessionRows.filter(({ key }) => selection.has(key));
+  const batchProject = selectedRows[0]?.project;
+  const canCombine =
+    selectedRows.length >= 2 &&
+    selectedRows.length <= 20 &&
+    selectedRows.every(
+      ({ project, duration, queued, recording }) =>
+        project.id === batchProject?.id &&
+        sessionProjects.has(project.id) &&
+        !queued &&
+        Boolean(duration) &&
+        !recording?.revisions[0]?.job.transcriptOnly,
+    );
+  const toggleSelection = (key: string, checked: boolean) =>
+    setSelection((current) => {
+      const next = new Set(current);
+      if (checked && next.size < 20) next.add(key);
+      else if (!checked) next.delete(key);
+      return next;
+    });
+  const combine = async () => {
+    if (!canCombine || !batchProject || combining) return;
+    setCombining(true);
+    setSessionError(false);
+    await andFinally(
+      async () => {
+        try {
+          const { session } = await transcriptionCommand("session", batchProject.workspaceRoot, {
+            command: {
+              kind: "combine",
+              selection: selectedRows.map(({ source, session }) =>
+                session ? { id: session.id, version: session.version } : { source },
+              ),
+            },
+          });
+          const first = session?.parts[0];
+          setSelection(new Set());
+          refreshList();
+          if (session && first)
+            await openRecording(
+              { project: batchProject, source: first.source, revisions: [] },
+              undefined,
+              false,
+              session,
+            );
+        } catch {
+          setSessionError(true);
+          refreshList();
+        }
+      },
+      () => setCombining(false),
+    );
+  };
+  const restore = async (project: Project, session: RecordingSession) => {
+    setSessionError(false);
+    try {
+      await transcriptionCommand("session", project.workspaceRoot, {
+        command: { kind: "restore", id: session.id, version: session.version },
+      });
+    } catch {
+      setSessionError(true);
+    }
+    refreshList();
+  };
   return (
     <WorkspacePageContainer
       width="readable"
@@ -642,226 +838,821 @@ export function RecordingsPage({
         void add([...event.dataTransfer.files]);
       }}
     >
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-medium">
-          {gt("Recordings")}{" "}
-          <span className="text-sm tabular-nums text-muted-foreground">{rows.length}</span>
-        </h1>
-        <div className="flex items-center gap-1.5">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!available || !projects.length}
-            onClick={() => openRecordingCapture(destination?.id)}
-          >
-            <span aria-hidden className="size-2.5 rounded-full bg-destructive" />
-            {gt("Record")}
-          </Button>
-          <Menu>
-            <MenuTrigger
-              render={
+      {finding ? (
+        <ProjectMediaFinder
+          projects={projects}
+          onBack={() => setFinding(false)}
+          onAdded={(added) => {
+            setFinding(false);
+            refreshList();
+            if (added.reduce((sum, { sources }) => sum + sources.length, 0) <= 20)
+              transcribeAll(added);
+          }}
+        />
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-lg font-medium">
+              {gt("Sessions")}{" "}
+              <span className="text-sm tabular-nums text-muted-foreground">{rows.length}</span>
+            </h1>
+            <div className="flex items-center gap-1.5">
+              {archive.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={showArchive}
+                  onClick={() => setShowArchive((value) => !value)}
+                >
+                  {gt("Archive")}
+                </Button>
+              )}
+              {trash.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={showTrash}
+                  onClick={() => setShowTrash((value) => !value)}
+                >
+                  {gt("Trash")}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!available || !projects.length}
+                onClick={() => openRecordingCapture(destination?.id)}
+              >
+                <span aria-hidden className="size-2.5 rounded-full bg-destructive" />
+                {gt("Record")}
+              </Button>
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!available || !projects.length}
+                      aria-label={gt("Add recording")}
+                    />
+                  }
+                >
+                  <PlusIcon aria-hidden />
+                  {gt("Add")}
+                  <ChevronDownIcon aria-hidden className="-me-1 size-3.5 opacity-60" />
+                </MenuTrigger>
+                <MenuPopup align="end" className="w-max">
+                  <MenuItem disabled={!canAdd || adding} onClick={() => picker.current?.click()}>
+                    <FileAudioIcon aria-hidden />
+                    {gt("Audio or video files…")}
+                  </MenuItem>
+                  <MenuItem disabled={!available} onClick={() => setFinding(true)}>
+                    <FolderSearchIcon aria-hidden />
+                    {gt("From your projects…")}
+                  </MenuItem>
+                  <MenuItem disabled={!canAdd} onClick={() => chooseTranscript()}>
+                    <FileTextIcon aria-hidden />
+                    {gt("Import a transcript…")}
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+              <input
+                type="file"
+                ref={transcriptPicker}
+                accept=".srt,.vtt,.ass,.ssa,.docx"
+                hidden
+                onChange={(event) => {
+                  setTranscriptFile(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <input
+                ref={picker}
+                type="file"
+                multiple
+                hidden
+                accept="audio/*,video/*,.mkv,.m4a,.flac,.ogg"
+                onChange={(event) => {
+                  const files = [...(event.currentTarget.files ?? [])];
+                  event.currentTarget.value = "";
+                  void add(files);
+                }}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+            {/* A pill, like Extensions: the control radius is a theme variable the input group reads. */}
+            <div className="w-full [--control-radius:9999px] sm:w-60">
+              <InputGroup>
+                <InputGroupAddon>
+                  <SearchIcon aria-hidden />
+                </InputGroupAddon>
+                <InputGroupInput
+                  size="sm"
+                  value={search}
+                  onChange={(event) => setSearch(event.currentTarget.value)}
+                  aria-label={gt("Search recordings and transcripts")}
+                  placeholder={gt("Search")}
+                />
+                {search && (
+                  <InputGroupAddon align="inline-end">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={gt("Clear search")}
+                      onClick={() => setSearch("")}
+                    >
+                      <XIcon />
+                    </Button>
+                  </InputGroupAddon>
+                )}
+              </InputGroup>
+            </div>
+            <div className="flex flex-wrap items-center gap-1">
+              {!lockedProject && (
+                <RecordingSelect
+                  label={gt("Project")}
+                  value={projectFilter}
+                  onChange={setProjectFilter}
+                  options={[
+                    { value: "", label: gt("All projects") },
+                    ...projects.map((project) => ({ value: project.id, label: project.title })),
+                  ]}
+                />
+              )}
+              <RecordingSelect
+                label={gt("Status")}
+                value={statusFilter}
+                options={statusOptions}
+                onChange={setStatusFilter}
+              />
+              <RecordingSelect
+                label={gt("Sort recordings")}
+                value={sort}
+                onChange={setSort}
+                options={[
+                  { value: "newest", label: gt("Newest") },
+                  { value: "oldest", label: gt("Oldest") },
+                  { value: "longest", label: gt("Longest") },
+                  { value: "name", label: gt("Title") },
+                ]}
+              />
+              {(query || projectFilter || statusFilter) && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    setSearch("");
+                    setProjectFilter("");
+                    setStatusFilter("");
+                  }}
+                >
+                  {gt("Clear filters")}
+                </Button>
+              )}
+            </div>
+          </div>
+          {dragging && (
+            <div className="pointer-events-none absolute inset-3 z-10 grid place-items-center rounded-xl border border-dashed border-primary bg-background/95 text-sm">
+              {destination
+                ? gt("Drop to add to {project}", { project: destination.title })
+                : gt("Drop to add recordings")}
+            </div>
+          )}
+          {openError && <p role="status">{gt("Could not open the recording thread")}</p>}
+          {jobActionError && <p role="status">{gt("Could not update the transcription job")}</p>}
+          {addError && <p role="status">{gt("Could not copy the recording into the project")}</p>}
+          {pendingImport && (
+            <Dialog
+              open
+              onOpenChange={(open) => {
+                if (!open) setPendingImport(undefined);
+              }}
+            >
+              <DialogPopup>
+                <DialogHeader>
+                  <DialogTitle>{gt("Choose a project")}</DialogTitle>
+                </DialogHeader>
+                <DialogPanel>
+                  <RecordingSelect
+                    label={gt("Destination project")}
+                    value={destinationId}
+                    options={projects.map(({ id, title }) => ({ value: id, label: title }))}
+                    onChange={setDestinationId}
+                  />
+                </DialogPanel>
+                <DialogFooter>
+                  <Button
+                    disabled={!chosenDestination}
+                    onClick={() => {
+                      if (!chosenDestination) return;
+                      setPendingImport(undefined);
+                      void add(pendingImport, chosenDestination);
+                    }}
+                  >
+                    {gt("Add recording")}
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
+          )}
+          {transcriptFile && (
+            <ImportTranscriptDialog
+              file={transcriptFile}
+              projects={projects}
+              selectedProject={transcriptMatch?.project ?? destination}
+              matched={transcriptMatch}
+              media={unfilteredRows.flatMap(({ project, source, recording }) => {
+                const latest = recording?.revisions[0]?.job;
+                return latest?.transcriptOnly
+                  ? []
+                  : [{ project, source, ...(latest ? { revision: latest.id } : {}) }];
+              })}
+              copy={copyTranscript}
+              onClose={() => setTranscriptFile(undefined)}
+              onImported={() => {
+                setTranscriptFile(undefined);
+                refreshList();
+              }}
+            />
+          )}
+          {info && (
+            <RecordingInfo
+              details={info.details}
+              anchor={info.anchor}
+              onClose={() => setInfo(undefined)}
+            />
+          )}
+          {sessionError && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {gt("Could not update the selected sessions. Check their files and try again.")}
+            </p>
+          )}
+          {showArchive && archive.length > 0 && (
+            <section className="rounded-lg border p-2" aria-label={gt("Archived sessions")}>
+              {archive.map(({ project, session }) => (
+                <div
+                  key={`${project.id}:${session.id}`}
+                  className="flex items-center gap-2 px-2 py-1 text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const source = session.parts[0]?.source;
+                      if (source)
+                        void openRecording(
+                          { project, source, revisions: [] },
+                          undefined,
+                          false,
+                          session,
+                        );
+                    }}
+                  >
+                    {gt("Open")}
+                  </Button>
+                </div>
+              ))}
+            </section>
+          )}
+          {showTrash && trash.length > 0 && (
+            <section className="rounded-lg border p-2" aria-label={gt("Trashed sessions")}>
+              {trash.map(({ project, session }) => (
+                <div
+                  key={`${project.id}:${session.id}`}
+                  className="flex items-center gap-2 px-2 py-1 text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void restore(project, session)}
+                  >
+                    {gt("Restore")}
+                  </Button>
+                </div>
+              ))}
+            </section>
+          )}
+          {!available && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {gt("Recordings are unavailable in this session")}
+            </p>
+          )}
+          {list.data?.some((result) => result.status === "rejected") && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {gt("Could not load recordings from every project")}
+            </p>
+          )}
+          {available &&
+            rows.length === 0 &&
+            list.data?.every((result) => result.status === "fulfilled") && (
+              <Empty>
+                <EmptyMedia variant="icon">
+                  <AudioLinesIcon />
+                </EmptyMedia>
+                <EmptyTitle>
+                  {unfilteredRows.length ? gt("No matching recordings") : gt("No recordings yet")}
+                </EmptyTitle>
+                {unfilteredRows.length === 0 && (
+                  <EmptyDescription>
+                    {gt(
+                      "Add a lecture, meeting or interview. Scient transcribes it here, in its project.",
+                    )}
+                  </EmptyDescription>
+                )}
+                {unfilteredRows.length === 0 ? (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button disabled={!canAdd || adding} onClick={() => picker.current?.click()}>
+                      {gt("Add recording")}
+                    </Button>
+                    <Button variant="outline" onClick={() => setFinding(true)}>
+                      {gt("From your projects")}
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearch("");
+                      setProjectFilter("");
+                      setStatusFilter("");
+                    }}
+                  >
+                    {gt("Clear filters")}
+                  </Button>
+                )}
+              </Empty>
+            )}
+          <LegendList
+            className="-mx-2 min-h-0 flex-1"
+            data={rows}
+            estimatedItemSize={64}
+            keyExtractor={(row) => row.key}
+            contentContainerStyle={{ paddingBottom: batchProject ? 72 : 0 }}
+            renderItem={({ item }) => {
+              const {
+                key,
+                project,
+                source,
+                title,
+                recording,
+                created,
+                duration,
+                snippet,
+                matchedRevision,
+              } = item;
+              if (item.session && item.session.parts.length > 1) {
+                return (
+                  <div className="flex min-h-14 items-center gap-3 rounded-lg px-2 hover:bg-accent/60">
+                    <Checkbox
+                      aria-label={gt("Select {recording}", { recording: title })}
+                      checked={selection.has(key)}
+                      onCheckedChange={(checked) => toggleSelection(key, checked === true)}
+                    />
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 py-2 text-start"
+                      onClick={() =>
+                        void openRecording({
+                          project,
+                          source,
+                          revisions: recording?.revisions ?? [],
+                        })
+                      }
+                    >
+                      <span className="block truncate text-sm font-medium">{title}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {gt("{count} parts", { count: item.session.parts.length })} ·{" "}
+                        {project.title}
+                      </span>
+                    </button>
+                    {duration ? (
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {recordingTime(duration)}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              }
+              const renameSession =
+                item.session !== undefined
+                  ? (title: string) =>
+                      transcriptionCommand("session", project.workspaceRoot, {
+                        command: {
+                          kind: "edit",
+                          id: item.session!.id,
+                          version: item.session!.version,
+                          title,
+                        },
+                      })
+                  : undefined;
+              const MediaIcon = /\.(mp4|webm|mov|m4v|ogv|mkv)$/i.test(source)
+                ? ClapperboardIcon
+                : AudioLinesIcon;
+              const visibleDate = created > 0 ? formatDate.format(created) : undefined;
+              const queued = "queued" in item && item.queued === true;
+              const managed = { workspaceRoot: project.workspaceRoot, source, title };
+              const renamed = (changed: boolean) => {
+                setRenaming(undefined);
+                if (changed) refreshList();
+              };
+              if (!recording) {
+                const actions: RecordingAction[] = [
+                  {
+                    id: "open",
+                    label: gt("Open"),
+                    run: () => void openRecording({ project, source, revisions: [] }),
+                  },
+                  {
+                    id: "transcribe",
+                    label: gt("Transcribe…"),
+                    disabled: queued,
+                    run: () => setTranscribe({ project, source }),
+                  },
+                  {
+                    id: "import",
+                    label: gt("Import transcript"),
+                    disabled: !canAdd || queued,
+                    run: () => chooseTranscript({ project, source }),
+                  },
+                  ...manageActions(
+                    key,
+                    managed,
+                    queued,
+                    recordingDetails({ ...item, duration: item.duration }),
+                  ),
+                ];
+                return (
+                  <div
+                    data-recording={key}
+                    className="group/recording flex min-h-14 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
+                    onClick={(event) => {
+                      if (renaming !== key && !fromControl(event))
+                        void openRecording({ project, source, revisions: [] });
+                    }}
+                    onContextMenu={(event) => void showRecordingMenu(event, actions)}
+                  >
+                    {/* The checkbox takes the icon's place while the row is hovered, focused or chosen. */}
+                    <span
+                      data-row-control
+                      className="relative grid size-9 shrink-0 place-items-center text-muted-foreground"
+                    >
+                      <MediaIcon
+                        aria-hidden
+                        className="size-4 group-hover/recording:opacity-0 group-focus-within/recording:opacity-0 group-has-[[aria-checked=true]]/recording:opacity-0 pointer-coarse:opacity-0"
+                      />
+                      <span className="absolute inset-0 grid place-items-center opacity-0 group-hover/recording:opacity-100 group-focus-within/recording:opacity-100 has-[[aria-checked=true]]:opacity-100 pointer-coarse:opacity-100">
+                        <Checkbox
+                          aria-label={gt("Select {recording}", { recording: fileName(source) })}
+                          checked={selection.has(key)}
+                          disabled={queued || (!selection.has(key) && selectedFiles.length >= 20)}
+                          onCheckedChange={(checked) =>
+                            setSelection((current) => {
+                              const next = new Set(current);
+                              if (checked) next.add(key);
+                              else next.delete(key);
+                              return next;
+                            })
+                          }
+                        />
+                      </span>
+                    </span>
+                    {renaming === key ? (
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">
+                          <RecordingNameInput
+                            recording={managed}
+                            onDone={renamed}
+                            {...(renameSession ? { onRename: renameSession } : {})}
+                          />
+                        </p>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 self-stretch text-start outline-none"
+                        onClick={() => void openRecording({ project, source, revisions: [] })}
+                      >
+                        <span className="block text-sm font-medium">
+                          <MiddleTruncate value={title} />
+                        </span>
+                        {manyProjects && (
+                          <span className="block text-xs text-muted-foreground">
+                            {project.title}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                    {queued ? (
+                      <Badge variant="secondary" size="sm">
+                        {gt("Queued")}
+                      </Badge>
+                    ) : (
+                      <span className="opacity-0 group-hover/recording:opacity-100 group-focus-within/recording:opacity-100 pointer-coarse:opacity-100">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setTranscribe({ project, source })}
+                        >
+                          {gt("Transcribe")}
+                        </Button>
+                      </span>
+                    )}
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {[duration ? recordingTime(duration) : undefined, visibleDate]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button
+                            size="icon-sm"
+                            variant="ghost-muted-row"
+                            aria-label={gt("Recording actions")}
+                          />
+                        }
+                      >
+                        <EllipsisIcon />
+                      </MenuTrigger>
+                      <MenuPopup>
+                        <RecordingMenuItems actions={actions} />
+                      </MenuPopup>
+                    </Menu>
+                  </div>
+                );
+              }
+              const { job, state, reviewCount } = recording.revisions[0]!;
+              const working =
+                queued || ["decoding", "transcribing", "writing"].includes(state.stage);
+              const actions: RecordingAction[] = [
+                {
+                  id: "open",
+                  label: gt("Open"),
+                  run: () => void openRecording({ ...recording, source }),
+                },
+                ...(job.transcriptOnly
+                  ? []
+                  : [
+                      {
+                        id: "import",
+                        label: gt("Import transcript"),
+                        disabled: !canAdd || queued,
+                        run: () => chooseTranscript({ project, source, revision: job.id }),
+                      },
+                    ]),
+                ...(!queued &&
+                !job.transcriptOnly &&
+                (state.stage === "completed" || state.stage === "failed")
+                  ? [
+                      {
+                        id: "again",
+                        label: gt("Transcribe again"),
+                        run: () => setTranscribe({ project, source, previousId: job.id }),
+                      },
+                    ]
+                  : []),
+                ...manageActions(
+                  key,
+                  managed,
+                  working,
+                  recordingDetails({
+                    ...item,
+                    language:
+                      job.settings.language === "auto"
+                        ? undefined
+                        : languageLabel(job.settings.language, locale),
+                    versions: recording.revisions.length,
+                  }),
+                ),
+              ];
+              const opener =
+                "flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 text-start outline-none";
+              const content = (
+                <>
+                  <span className="grid size-9 shrink-0 place-items-center text-muted-foreground">
+                    <MediaIcon className="size-4" />
+                  </span>
+                  <span className="min-w-0 flex-1 space-y-1">
+                    <span className="block text-sm font-medium">
+                      {renaming === key ? (
+                        <RecordingNameInput
+                          recording={managed}
+                          onDone={renamed}
+                          {...(renameSession ? { onRename: renameSession } : {})}
+                        />
+                      ) : (
+                        <MiddleTruncate value={title} />
+                      )}
+                    </span>
+                    {(manyProjects || job.settings.language !== "auto") && (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {[
+                          manyProjects ? project.title : undefined,
+                          job.settings.language === "auto"
+                            ? undefined
+                            : languageLabel(job.settings.language, locale),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    )}
+                    {snippet && (
+                      <bdi className="block truncate text-xs text-muted-foreground">{snippet}</bdi>
+                    )}
+                    {!queued && <RecordingProgress state={state} />}
+                    {!queued && (state.stage === "paused" || state.stage === "interrupted") && (
+                      <span className="block text-xs text-muted-foreground">
+                        {gt("Paused. Resumes where it stopped")}
+                      </span>
+                    )}
+                  </span>
+                  {queued ? (
+                    <Badge variant="secondary" size="sm">
+                      {gt("Queued")}
+                    </Badge>
+                  ) : (
+                    <RecordingBadge state={state} reviewCount={reviewCount} />
+                  )}
+                </>
+              );
+              return (
+                <div
+                  data-recording={key}
+                  className="flex min-h-14 cursor-pointer items-center gap-2 rounded-lg px-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
+                  onClick={(event) => {
+                    if (renaming !== key && !fromControl(event))
+                      void openRecording({ ...recording, source });
+                  }}
+                  onContextMenu={(event) => void showRecordingMenu(event, actions)}
+                >
+                  {sessionProjects.has(project.id) && (
+                    <Checkbox
+                      aria-label={gt("Select {recording}", { recording: title })}
+                      checked={selection.has(key)}
+                      disabled={working || (!selection.has(key) && selection.size >= 20)}
+                      onCheckedChange={(checked) => toggleSelection(key, checked === true)}
+                    />
+                  )}
+                  {renaming === key ? (
+                    <div className={opener}>{content}</div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void openRecording({ ...recording, source })}
+                      className={opener}
+                    >
+                      {content}
+                    </button>
+                  )}
+                  {matchedRevision?.matchTime !== undefined ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void openRecording(
+                          { ...recording, source },
+                          {
+                            version: matchedRevision.job.id,
+                            time: matchedRevision.matchTime!,
+                            query,
+                          },
+                        )
+                      }
+                    >
+                      {gt("Open match · {time}", {
+                        time: recordingTime(matchedRevision.matchTime),
+                      })}
+                    </Button>
+                  ) : queued ? null : ["decoding", "transcribing"].includes(state.stage) ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={jobActionPending}
+                      onClick={() => void runJobAction(recording, "pause")}
+                    >
+                      {gt("Pause")}
+                    </Button>
+                  ) : (state.stage === "interrupted" || state.stage === "paused") &&
+                    job.settings.engine === "local" &&
+                    job.correction?.mode !== "thorough" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={jobActionPending}
+                      onClick={() => void runJobAction(recording, "resume")}
+                    >
+                      {gt("Resume")}
+                    </Button>
+                  ) : state.stage === "failed" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setTranscribe({ project, source, previousId: job.id })}
+                    >
+                      {gt("Try again")}
+                    </Button>
+                  ) : reviewCount ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void openRecording({ ...recording, source })}
+                    >
+                      {gt("Review")}
+                    </Button>
+                  ) : null}
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {[duration ? recordingTime(duration) : undefined, visibleDate]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          size="icon-sm"
+                          variant="ghost-muted-row"
+                          aria-label={gt("Recording actions")}
+                        />
+                      }
+                    >
+                      <EllipsisIcon />
+                    </MenuTrigger>
+                    <MenuPopup>
+                      <RecordingMenuItems actions={actions} />
+                    </MenuPopup>
+                  </Menu>
+                </div>
+              );
+            }}
+          />
+          {batchProject && (
+            <SelectionBar
+              count={selectedRows.length}
+              clearLabel={gt("Clear selection")}
+              onClear={() => setSelection(new Set())}
+            >
+              {canCombine && (
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!available || !projects.length}
-                  aria-label={gt("Add recording")}
-                />
-              }
-            >
-              <PlusIcon aria-hidden />
-              {gt("Add")}
-              <ChevronDownIcon aria-hidden className="-me-1 size-3.5 opacity-60" />
-            </MenuTrigger>
-            <MenuPopup align="end" className="w-max">
-              <MenuItem disabled={!canAdd || adding} onClick={() => picker.current?.click()}>
-                <FileAudioIcon aria-hidden />
-                {gt("Audio or video files…")}
-              </MenuItem>
-              <MenuItem disabled={!canAdd} onClick={() => chooseTranscript()}>
-                <FileTextIcon aria-hidden />
-                {gt("Import a transcript…")}
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
-          <input
-            type="file"
-            ref={transcriptPicker}
-            accept=".srt,.vtt,.ass,.ssa,.docx"
-            hidden
-            onChange={(event) => {
-              setTranscriptFile(event.currentTarget.files?.[0]);
-              event.currentTarget.value = "";
-            }}
-          />
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            accept="audio/*,video/*,.mkv,.m4a,.flac,.ogg"
-            onChange={(event) => {
-              const files = [...(event.currentTarget.files ?? [])];
-              event.currentTarget.value = "";
-              void add(files);
-            }}
-          />
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-        {/* A pill, like Extensions: the control radius is a theme variable the input group reads. */}
-        <div className="w-full [--control-radius:9999px] sm:w-60">
-          <InputGroup>
-            <InputGroupAddon>
-              <SearchIcon aria-hidden />
-            </InputGroupAddon>
-            <InputGroupInput
-              size="sm"
-              value={search}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-              aria-label={gt("Search recordings and transcripts")}
-              placeholder={gt("Search")}
-            />
-            {search && (
-              <InputGroupAddon align="inline-end">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={gt("Clear search")}
-                  onClick={() => setSearch("")}
+                  disabled={combining}
+                  onClick={() => void combine()}
                 >
-                  <XIcon />
+                  {gt("Combine")}
                 </Button>
-              </InputGroupAddon>
-            )}
-          </InputGroup>
-        </div>
-        <div className="flex flex-wrap items-center gap-1">
-          {!lockedProject && (
-            <RecordingSelect
-              label={gt("Project")}
-              value={projectFilter}
-              onChange={setProjectFilter}
-              options={[
-                { value: "", label: gt("All projects") },
-                ...projects.map((project) => ({ value: project.id, label: project.title })),
-              ]}
-            />
+              )}
+              {selectedFiles.length > 0 && (
+                <Button
+                  size="sm"
+                  aria-label={gt("Transcribe selected")}
+                  onClick={() =>
+                    transcribeAll(
+                      [...new Set(selectedFiles.map(({ project }) => project))].map((project) => ({
+                        project,
+                        sources: selectedFiles
+                          .filter((file) => file.project.id === project.id)
+                          .map(({ source }) => source),
+                      })),
+                    )
+                  }
+                >
+                  {gt("Transcribe")}
+                </Button>
+              )}
+            </SelectionBar>
           )}
-          <RecordingSelect
-            label={gt("Status")}
-            value={statusFilter}
-            options={statusOptions}
-            onChange={setStatusFilter}
-          />
-          <RecordingSelect
-            label={gt("Sort recordings")}
-            value={sort}
-            onChange={setSort}
-            options={[
-              { value: "newest", label: gt("Newest") },
-              { value: "oldest", label: gt("Oldest") },
-              { value: "longest", label: gt("Longest") },
-              { value: "name", label: gt("Title") },
-            ]}
-          />
-          {(query || projectFilter || statusFilter) && (
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => {
-                setSearch("");
-                setProjectFilter("");
-                setStatusFilter("");
-              }}
-            >
-              {gt("Clear filters")}
-            </Button>
-          )}
-        </div>
-      </div>
-      {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-10 grid place-items-center rounded-xl border border-dashed border-primary bg-background/95 text-sm">
-          {destination
-            ? gt("Drop to add to {project}", { project: destination.title })
-            : gt("Drop to add recordings")}
-        </div>
-      )}
-      {openError && <p role="status">{gt("Could not open the recording thread")}</p>}
-      {jobActionError && <p role="status">{gt("Could not update the transcription job")}</p>}
-      {addError && <p role="status">{gt("Could not copy the recording into the project")}</p>}
-      {pendingImport && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setPendingImport(undefined);
-          }}
-        >
-          <DialogPopup>
-            <DialogHeader>
-              <DialogTitle>{gt("Choose a project")}</DialogTitle>
-            </DialogHeader>
-            <DialogPanel>
-              <RecordingSelect
-                label={gt("Destination project")}
-                value={destinationId}
-                options={projects.map(({ id, title }) => ({ value: id, label: title }))}
-                onChange={setDestinationId}
-              />
-            </DialogPanel>
-            <DialogFooter>
-              <Button
-                disabled={!chosenDestination}
-                onClick={() => {
-                  if (!chosenDestination) return;
-                  setPendingImport(undefined);
-                  void add(pendingImport, chosenDestination);
-                }}
-              >
-                {gt("Add recording")}
-              </Button>
-            </DialogFooter>
-          </DialogPopup>
-        </Dialog>
-      )}
-      {transcriptFile && (
-        <ImportTranscriptDialog
-          file={transcriptFile}
-          projects={projects}
-          selectedProject={transcriptMatch?.project ?? destination}
-          matched={transcriptMatch}
-          media={unfilteredRows.flatMap(({ project, source, recording }) => {
-            const latest = recording?.revisions[0]?.job;
-            return latest?.transcriptOnly
-              ? []
-              : [{ project, source, ...(latest ? { revision: latest.id } : {}) }];
-          })}
-          copy={copyTranscript}
-          onClose={() => setTranscriptFile(undefined)}
-          onImported={() => {
-            setTranscriptFile(undefined);
-            refreshList();
-          }}
-        />
-      )}
-      {info && (
-        <RecordingInfo
-          details={info.details}
-          anchor={info.anchor}
-          onClose={() => setInfo(undefined)}
-        />
+        </>
       )}
       {transcribe && (
         <TranscribeDialog
           key={transcribe.source}
           project={transcribe.project.workspaceRoot}
-          projectTitle={transcribe.project.title}
+          {...(transcribe.otherBatches ? {} : { projectTitle: transcribe.project.title })}
           source={transcribe.source}
           title={
             transcribe.batchSources
-              ? gt("{count} recordings", { count: transcribe.batchSources.length })
+              ? gt("{count} recordings", {
+                  count:
+                    transcribe.batchSources.length +
+                    (transcribe.otherBatches ?? []).reduce(
+                      (sum, { sources }) => sum + sources.length,
+                      0,
+                    ),
+                })
               : fileName(transcribe.source)
           }
           {...(transcribe.batchSources ? { batchSources: transcribe.batchSources } : {})}
+          {...(transcribe.otherBatches
+            ? {
+                otherBatches: transcribe.otherBatches.map(({ project, sources }) => ({
+                  project: project.workspaceRoot,
+                  sources,
+                })),
+              }
+            : {})}
           {...(transcribe.previousId ? { previousId: transcribe.previousId } : {})}
           onClose={() => setTranscribe(undefined)}
           onStart={() => {
@@ -871,374 +1662,6 @@ export function RecordingsPage({
           }}
         />
       )}
-      {!available && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {gt("Recordings are unavailable in this session")}
-        </p>
-      )}
-      {list.data?.some((result) => result.status === "rejected") && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {gt("Could not load recordings from every project")}
-        </p>
-      )}
-      {available &&
-        rows.length === 0 &&
-        list.data?.every((result) => result.status === "fulfilled") && (
-          <Empty>
-            <EmptyMedia variant="icon">
-              <AudioLinesIcon />
-            </EmptyMedia>
-            <EmptyTitle>
-              {unfilteredRows.length ? gt("No matching recordings") : gt("No recordings yet")}
-            </EmptyTitle>
-            {unfilteredRows.length === 0 && (
-              <EmptyDescription>
-                {gt(
-                  "Add a lecture, meeting or interview. Scient transcribes it here, in its project.",
-                )}
-              </EmptyDescription>
-            )}
-            {unfilteredRows.length === 0 ? (
-              <Button disabled={!canAdd || adding} onClick={() => picker.current?.click()}>
-                {gt("Add recording")}
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSearch("");
-                  setProjectFilter("");
-                  setStatusFilter("");
-                }}
-              >
-                {gt("Clear filters")}
-              </Button>
-            )}
-          </Empty>
-        )}
-      {batchProject && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2 text-sm">
-          <span className="flex-1">{gt("{count} selected", { count: selectedFiles.length })}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              const sources = selectedFiles.map(({ source }) => source);
-              setTranscribe({
-                project: batchProject,
-                source: sources[0]!,
-                ...(sources.length > 1 ? { batchSources: sources } : {}),
-              });
-            }}
-          >
-            {gt("Transcribe selected")}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setSelection(new Set())}>
-            {gt("Clear selection")}
-          </Button>
-        </div>
-      )}
-      <LegendList
-        className="-mx-2 min-h-0 flex-1"
-        data={rows}
-        estimatedItemSize={64}
-        keyExtractor={(row) => row.key}
-        renderItem={({ item }) => {
-          const {
-            key,
-            project,
-            source,
-            title,
-            recording,
-            created,
-            duration,
-            snippet,
-            matchedRevision,
-          } = item;
-          const MediaIcon = /\.(mp4|webm|mov|m4v|ogv|mkv)$/i.test(source)
-            ? ClapperboardIcon
-            : AudioLinesIcon;
-          const visibleDate = created > 0 ? formatDate.format(created) : undefined;
-          const queued = "queued" in item && item.queued === true;
-          const managed = { workspaceRoot: project.workspaceRoot, source, title };
-          const renamed = (changed: boolean) => {
-            setRenaming(undefined);
-            if (changed) refreshList();
-          };
-          if (!recording) {
-            const actions: RecordingAction[] = [
-              {
-                id: "transcribe",
-                label: gt("Transcribe…"),
-                disabled: queued,
-                run: () => setTranscribe({ project, source }),
-              },
-              {
-                id: "import",
-                label: gt("Import transcript"),
-                disabled: !canAdd || queued,
-                run: () => chooseTranscript({ project, source }),
-              },
-              ...manageActions(
-                key,
-                managed,
-                queued,
-                recordingDetails({ ...item, duration: item.duration }),
-              ),
-            ];
-            return (
-              <div
-                data-recording={key}
-                className="group/recording flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60"
-                onContextMenu={(event) => void showRecordingMenu(event, actions)}
-              >
-                {/* The checkbox takes the icon's place while the row is hovered, focused or chosen. */}
-                <span className="relative grid size-9 shrink-0 place-items-center text-muted-foreground">
-                  <MediaIcon
-                    aria-hidden
-                    className="size-4 group-hover/recording:opacity-0 group-focus-within/recording:opacity-0 group-has-[[aria-checked=true]]/recording:opacity-0 pointer-coarse:opacity-0"
-                  />
-                  <span className="absolute inset-0 grid place-items-center opacity-0 group-hover/recording:opacity-100 group-focus-within/recording:opacity-100 has-[[aria-checked=true]]:opacity-100 pointer-coarse:opacity-100">
-                    <Checkbox
-                      aria-label={gt("Select {recording}", { recording: fileName(source) })}
-                      checked={selection.has(key)}
-                      disabled={
-                        queued ||
-                        (batchProject !== undefined && batchProject.id !== project.id) ||
-                        (!selection.has(key) && selectedFiles.length >= 20)
-                      }
-                      onCheckedChange={(checked) =>
-                        setSelection((current) => {
-                          const next = new Set(current);
-                          if (checked) next.add(key);
-                          else next.delete(key);
-                          return next;
-                        })
-                      }
-                    />
-                  </span>
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
-                    {renaming === key ? (
-                      <RecordingNameInput recording={managed} onDone={renamed} />
-                    ) : (
-                      <MiddleTruncate value={title} />
-                    )}
-                  </p>
-                  {manyProjects && <p className="text-xs text-muted-foreground">{project.title}</p>}
-                </div>
-                <Badge variant="secondary" size="sm">
-                  {queued ? gt("Queued") : gt("Not transcribed")}
-                </Badge>
-                {!queued && (
-                  <Button
-                    disabled={queued}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setTranscribe({ project, source })}
-                  >
-                    {gt("Transcribe")}
-                  </Button>
-                )}
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {[duration ? recordingTime(duration) : undefined, visibleDate]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost-muted-row"
-                        aria-label={gt("Recording actions")}
-                      />
-                    }
-                  >
-                    <EllipsisIcon />
-                  </MenuTrigger>
-                  <MenuPopup>
-                    <RecordingMenuItems actions={actions} />
-                  </MenuPopup>
-                </Menu>
-              </div>
-            );
-          }
-          const { job, state, reviewCount } = recording.revisions[0]!;
-          const working = queued || ["decoding", "transcribing", "writing"].includes(state.stage);
-          const actions: RecordingAction[] = [
-            { id: "open", label: gt("Open"), run: () => void openRecording(recording) },
-            ...(job.transcriptOnly
-              ? []
-              : [
-                  {
-                    id: "import",
-                    label: gt("Import transcript"),
-                    disabled: !canAdd || queued,
-                    run: () => chooseTranscript({ project, source, revision: job.id }),
-                  },
-                ]),
-            ...(!queued &&
-            !job.transcriptOnly &&
-            (state.stage === "completed" || state.stage === "failed")
-              ? [
-                  {
-                    id: "again",
-                    label: gt("Transcribe again"),
-                    run: () => setTranscribe({ project, source, previousId: job.id }),
-                  },
-                ]
-              : []),
-            ...manageActions(
-              key,
-              managed,
-              working,
-              recordingDetails({
-                ...item,
-                language:
-                  job.settings.language === "auto"
-                    ? undefined
-                    : languageLabel(job.settings.language, locale),
-                versions: recording.revisions.length,
-              }),
-            ),
-          ];
-          const opener =
-            "flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 text-start outline-none";
-          const content = (
-            <>
-              <span className="grid size-9 shrink-0 place-items-center text-muted-foreground">
-                <MediaIcon className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1 space-y-1">
-                <span className="block text-sm font-medium">
-                  {renaming === key ? (
-                    <RecordingNameInput recording={managed} onDone={renamed} />
-                  ) : (
-                    <MiddleTruncate value={title} />
-                  )}
-                </span>
-                {(manyProjects || job.settings.language !== "auto") && (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {[
-                      manyProjects ? project.title : undefined,
-                      job.settings.language === "auto"
-                        ? undefined
-                        : languageLabel(job.settings.language, locale),
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                )}
-                {snippet && (
-                  <bdi className="block truncate text-xs text-muted-foreground">{snippet}</bdi>
-                )}
-                {!queued && <RecordingProgress state={state} />}
-                {!queued && (state.stage === "paused" || state.stage === "interrupted") && (
-                  <span className="block text-xs text-muted-foreground">
-                    {gt("Paused. Resumes where it stopped")}
-                  </span>
-                )}
-              </span>
-              {queued ? (
-                <Badge variant="secondary" size="sm">
-                  {gt("Queued")}
-                </Badge>
-              ) : (
-                <RecordingBadge state={state} reviewCount={reviewCount} />
-              )}
-            </>
-          );
-          return (
-            <div
-              data-recording={key}
-              className="flex min-h-14 items-center gap-2 rounded-lg px-2 hover:bg-accent/60 has-focus-visible:bg-accent/60"
-              onContextMenu={(event) => void showRecordingMenu(event, actions)}
-            >
-              {renaming === key ? (
-                <div className={opener}>{content}</div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void openRecording(recording)}
-                  className={opener}
-                >
-                  {content}
-                </button>
-              )}
-              {matchedRevision?.matchTime !== undefined ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    void openRecording(recording, {
-                      version: matchedRevision.job.id,
-                      time: matchedRevision.matchTime!,
-                      query,
-                    })
-                  }
-                >
-                  {gt("Open match · {time}", { time: recordingTime(matchedRevision.matchTime) })}
-                </Button>
-              ) : queued ? null : ["decoding", "transcribing"].includes(state.stage) ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={jobActionPending}
-                  onClick={() => void runJobAction(recording, "pause")}
-                >
-                  {gt("Pause")}
-                </Button>
-              ) : (state.stage === "interrupted" || state.stage === "paused") &&
-                job.settings.engine === "local" &&
-                job.correction?.mode !== "thorough" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={jobActionPending}
-                  onClick={() => void runJobAction(recording, "resume")}
-                >
-                  {gt("Resume")}
-                </Button>
-              ) : state.stage === "failed" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setTranscribe({ project, source, previousId: job.id })}
-                >
-                  {gt("Try again")}
-                </Button>
-              ) : reviewCount ? (
-                <Button size="sm" variant="outline" onClick={() => void openRecording(recording)}>
-                  {gt("Review")}
-                </Button>
-              ) : null}
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {[duration ? recordingTime(duration) : undefined, visibleDate]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost-muted-row"
-                      aria-label={gt("Recording actions")}
-                    />
-                  }
-                >
-                  <EllipsisIcon />
-                </MenuTrigger>
-                <MenuPopup>
-                  <RecordingMenuItems actions={actions} />
-                </MenuPopup>
-              </Menu>
-            </div>
-          );
-        }}
-      />
     </WorkspacePageContainer>
   );
 }

@@ -1,6 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - Recording chunks are committed alongside the project transcript ledger.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - Recording chunks are committed alongside the project transcript ledger.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { RecordingSessionType } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { atomicWrite } from "./ledger.ts";
 
 const prefix = ".recording-capture-";
@@ -97,10 +99,48 @@ export async function touchCapture(root: string, id: string, nowMs: number) {
   await NodeFSP.utimes(directory, nowMs / 1000, nowMs / 1000);
 }
 
+const CaptureSessionInfo = Schema.Struct({
+  type: RecordingSessionType,
+  markers: Schema.Array(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))).check(
+    Schema.isMaxLength(1000),
+  ),
+});
+export type CaptureSessionInfo = typeof CaptureSessionInfo.Type;
+const decodeCaptureSession = Schema.decodeUnknownSync(CaptureSessionInfo);
+
+async function readCaptureSession(directory: string) {
+  try {
+    const file = NodePath.join(directory, "session.json");
+    if (!(await NodeFSP.lstat(file)).isFile()) throw new Error("Invalid recording session.");
+    return decodeCaptureSession(JSON.parse(await NodeFSP.readFile(file, "utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export async function updateCaptureSession(
+  root: string,
+  id: string,
+  update: {
+    type?: CaptureSessionInfo["type"];
+    mark?: number;
+  },
+) {
+  const directory = await captureDirectory(root, id);
+  const previous = await readCaptureSession(directory);
+  const markers = previous?.markers ?? [];
+  const next = {
+    type: update.type ?? previous?.type ?? "lecture",
+    markers: update.mark !== undefined ? [...markers, update.mark].slice(0, 1000) : markers,
+  };
+  await atomicWrite(NodePath.join(directory, "session.json"), JSON.stringify(next));
+}
+
 export async function finishCapture(
   root: string,
   id: string,
-  register: (source: string) => Promise<unknown>,
+  register: (source: string, info?: CaptureSessionInfo) => Promise<unknown>,
 ) {
   const directory = NodePath.join(root, prefix + id);
   if (!(await NodeFSP.lstat(directory)).isDirectory()) throw new Error("Invalid capture directory");
@@ -135,14 +175,14 @@ export async function finishCapture(
   await NodeFSP.rename(temporary, path);
   if (finished.size >= FINISHED_LIMIT) finished.delete(finished.values().next().value!);
   finished.add(id);
-  await register(path);
+  await register(path, await readCaptureSession(directory));
   await NodeFSP.rm(directory, { recursive: true });
   return path;
 }
 
 export async function recoverCaptures(
   root: string,
-  register: (source: string) => Promise<unknown>,
+  register: (source: string, info?: CaptureSessionInfo) => Promise<unknown>,
   nowMs: number,
 ) {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true });

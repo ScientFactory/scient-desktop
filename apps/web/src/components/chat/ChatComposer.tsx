@@ -4321,11 +4321,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   : // SCIENT-FORK:START — busy-state placeholder while the agent works.
                                     (offeredPromptSuggestion ??
                                     composerWorkingPlaceholder ??
-                                    (composerFiles.some(
-                                      (file) => file.source?._tag === "recording-transcript",
-                                    )
-                                      ? gt("Ask about this recording…")
-                                      : m(DEFAULT_COMPOSER_PLACEHOLDER)))
+                                    (composerFiles.some((file) => file.source?._tag === "session")
+                                      ? gt("Ask about this session…")
+                                      : composerFiles.some(
+                                            (file) => file.source?._tag === "recording-transcript",
+                                          )
+                                        ? gt("Ask about this recording…")
+                                        : m(DEFAULT_COMPOSER_PLACEHOLDER)))
                       // SCIENT-FORK:END
                     }
                     placeholderSuffix={
