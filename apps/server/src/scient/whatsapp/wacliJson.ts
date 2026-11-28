@@ -193,9 +193,32 @@ export function readContacts(data: unknown): Array<WhatsAppContact> {
   });
 }
 
-const SendData = Schema.Struct({ id: Schema.String.check(Schema.isNonEmpty()), to: OptionalText });
-const decodeSendData = Schema.decodeUnknownOption(SendData);
-export const readSendResult = (data: unknown) => Option.getOrUndefined(decodeSendData(data));
+/** The running sync's reply to a delegated send. */
+const DelegateReply = Schema.Struct({
+  ok: Schema.Boolean,
+  error: OptionalText,
+  id: OptionalText,
+  to: OptionalText,
+});
+const decodeDelegateReply = Schema.decodeUnknownOption(DelegateReply);
+export const readDelegateReply = (reply: unknown) =>
+  Option.getOrUndefined(decodeDelegateReply(reply));
+
+const JID = /^\d+(?::\d+)?@(?:s\.whatsapp\.net|lid)$|^[\d-]+@g\.us$/u;
+const PHONE = /^\+?[\d\s().-]+$/u;
+
+/**
+ * What `whatsapp_send` may address: one person or group, as a JID or a phone number. Status
+ * (`status@broadcast`), broadcast lists and channels are refused: an ordinary text sent there
+ * reaches an audience, not a chat.
+ */
+export function recipientFor(to: string): string | undefined {
+  const value = to.trim();
+  if (JID.test(value)) return value;
+  if (!PHONE.test(value)) return undefined;
+  const digits = value.replace(/\D/gu, "");
+  return digits.length >= 7 && digits.length <= 15 ? digits : undefined;
+}
 
 const NOT_FOUND = /no local exact name match|no contacts, groups, or chats match|not found/iu;
 const AMBIGUOUS = /ambiguous|matches \d+ recipients|multiple/iu;
@@ -245,7 +268,18 @@ export function sendFailure(error: string, to: string): WhatsAppToolError {
       message: "WhatsApp isn't connected right now. Try again in a minute.",
     });
   }
-  if (/may still have gone through|uncertain|deadline exceeded|timed out|timeout/iu.test(error)) {
+  // wacli refuses a request it never dispatched in so many words.
+  if (/was not sent/iu.test(error)) {
+    return new WhatsAppToolError({
+      code: "failed",
+      message: "WhatsApp didn't send the message. Try again.",
+    });
+  }
+  if (
+    /may still have gone through|uncertain|deadline exceeded|timed out|timeout|EOF|broken pipe|connection reset/iu.test(
+      error,
+    )
+  ) {
     return sendUncertainError();
   }
   if (AMBIGUOUS.test(error) || NOT_FOUND.test(error)) return readFailure(error);

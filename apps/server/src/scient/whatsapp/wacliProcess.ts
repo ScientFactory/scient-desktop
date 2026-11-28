@@ -44,20 +44,27 @@ const PASSED_THROUGH = [
   "LOCALAPPDATA",
 ] as const;
 
+/** Only what wacli needs from the host: nothing of Scient's own, no WACLI_* the user set. */
+export function wacliBaseEnvironment(hostEnvironment: NodeJS.ProcessEnv): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of PASSED_THROUGH) {
+    const value = hostEnvironment[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 export function wacliEnvironment(input: {
   readonly hostEnvironment: NodeJS.ProcessEnv;
   readonly storeDir: string;
   readonly deviceLabel: string;
 }): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const key of PASSED_THROUGH) {
-    const value = input.hostEnvironment[key];
-    if (value !== undefined) env[key] = value;
-  }
-  env.WACLI_STORE_DIR = input.storeDir;
-  env.WACLI_DEVICE_LABEL = input.deviceLabel;
-  env.WACLI_DEVICE_PLATFORM = "DESKTOP";
-  return env;
+  return {
+    ...wacliBaseEnvironment(input.hostEnvironment),
+    WACLI_STORE_DIR: input.storeDir,
+    WACLI_DEVICE_LABEL: input.deviceLabel,
+    WACLI_DEVICE_PLATFORM: "DESKTOP",
+  };
 }
 
 export class WacliProcessError extends Schema.TaggedError<WacliProcessError>()(

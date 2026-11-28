@@ -18,9 +18,10 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../../config.ts";
-import * as ProcessRunner from "../../processRunner.ts";
+import { runWacli, wacliBaseEnvironment } from "./wacliProcess.ts";
 import { artifactUrlRejection } from "../latex/LatexManagedToolchain.ts";
 import * as PandocArchiveUnpacker from "../pandoc/PandocArchiveUnpacker.ts";
 import { WacliInstall, WacliInstallError } from "./WacliInstall.ts";
@@ -94,7 +95,8 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
   const unpacker = yield* PandocArchiveUnpacker.PandocArchiveUnpacker;
-  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const versionEnv = wacliBaseEnvironment(yield* HostProcess.Environment);
   const platform = yield* HostProcess.Platform;
   const lookup = resolveWacliAsset(platform, yield* HostProcess.Architecture, manifest);
 
@@ -210,20 +212,22 @@ const make = Effect.gen(function* () {
     const present = yield* fileSystem.exists(executable).pipe(Effect.orElseSucceed(() => false));
     if (!present) return yield* failStep(SETUP_FAILED, "archive has no executable");
     if (platform !== "win32") yield* fileSystem.chmod(executable, 0o755);
-    const result = yield* processRunner
-      .run({
-        command: executable,
-        args: ["version"],
-        timeout: VERSION_CHECK_TIMEOUT,
-        maxOutputBytes: VERSION_CHECK_MAX_OUTPUT_BYTES,
-        outputMode: "truncate",
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(Effect.catch((cause) => failStep(SETUP_FAILED, `did not start: ${cause.message}`)));
-    if (result.timedOut || result.code !== 0 || !reportsVersion(result.stdout, manifest.version)) {
+    // The same minimal environment as every other wacli run: no provider keys or Scient tokens.
+    const result = yield* runWacli({
+      executable,
+      args: ["version"],
+      env: versionEnv,
+      command: "version",
+      timeout: VERSION_CHECK_TIMEOUT,
+      maxStdoutBytes: VERSION_CHECK_MAX_OUTPUT_BYTES,
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.catch((cause) => failStep(SETUP_FAILED, `did not start: ${cause.message}`)),
+    );
+    if (result.exitCode !== 0 || !reportsVersion(result.stdout, manifest.version)) {
       return yield* failStep(
         SETUP_FAILED,
-        `version check: code ${String(result.code)}, timedOut ${String(result.timedOut)}, stdout ${result.stdout.slice(0, 80).trim()}`,
+        `version check: code ${String(result.exitCode)}, stdout ${result.stdout.slice(0, 80).trim()}`,
       );
     }
   });
@@ -344,5 +348,5 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(WacliInstall, make).pipe(
-  Layer.provide(Layer.mergeAll(PandocArchiveUnpacker.layer, ProcessRunner.layer)),
+  Layer.provide(PandocArchiveUnpacker.layer),
 );
