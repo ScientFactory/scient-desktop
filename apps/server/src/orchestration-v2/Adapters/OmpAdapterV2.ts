@@ -14,6 +14,7 @@ import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
 } from "@t3tools/shared/model";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
@@ -1679,12 +1680,20 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 detail: `${target.name} ${attachment.type} attachment exceeds the ${formatOmpBytes(limit)} limit.`,
               });
             attachmentPaths.set(attachment, real);
-            if (isProviderNativeImageAttachment(attachment))
+            if (isProviderNativeImageAttachment(attachment)) {
+              // Label from the bytes (every image signature fits in 12) before planning, since the
+              // frame budget counts the mimeType; providers reject a type that disagrees with them.
+              const header = yield* Effect.scoped(
+                fs.open(real).pipe(Effect.flatMap((file) => file.readAlloc(12))),
+              );
               imageFiles.push({
                 path: real,
                 size: Number(info.size),
-                mimeType: attachment.mimeType,
+                mimeType:
+                  imageMimeTypeFromBytes(Option.getOrElse(header, () => new Uint8Array())) ??
+                  attachment.mimeType,
               });
+            }
           }
           if (imageFiles.length > 0) {
             const modelRef = selected ?? (yield* client.getState()).model;

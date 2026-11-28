@@ -279,6 +279,7 @@ function makeTransport(input?: { active?: boolean }) {
         ready: Effect.void,
         probe: Effect.void,
         inboundFrames: Effect.succeed(0),
+        awaitingReply: Effect.succeed(false),
         closed: Effect.never,
       };
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -319,6 +320,7 @@ function makeTransport(input?: { active?: boolean }) {
         removeRelayEnvironments: () => Effect.die("Unexpected removal"),
         retryNow: () => Effect.void,
         setEnabled: () => Effect.die("Unexpected toggle"),
+        setLabel: () => Effect.die("Unexpected label update"),
         setCompatibility: () => Effect.die("Unexpected compatibility update"),
         state: () => SubscriptionRef.get(supervisor.state),
         stateChanges: () => SubscriptionRef.changes(supervisor.state),

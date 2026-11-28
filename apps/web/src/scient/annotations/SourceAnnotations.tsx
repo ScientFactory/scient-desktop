@@ -2,6 +2,8 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import type { MessageResolver } from "~/i18n/messages";
 import { PdfTarget } from "@scientfactory/document-artifacts";
 import {
+  isScientRegionAnchor,
+  scientAnnotationPages,
   scientAnnotationQuote,
   type EnvironmentId,
   type ScientSourceDetailResult,
@@ -36,6 +38,7 @@ import { usePdfAnnotations } from "./useDocumentAnnotations";
 type SourceAttachment = ScientSourceDetailResult["attachments"][number];
 
 const NO_UNPLACED: ReadonlyArray<ScientUnplacedAnnotation> = [];
+const MARKED_AREA = msg("Marked area");
 
 /**
  * The highlights and notes on a Source's PDFs, in reading order. Absent when
@@ -181,16 +184,17 @@ function AttachmentAnnotations(props: {
       fileName: attachment.fileName,
     });
   const open = (annotation: ScientPdfAnnotation) => {
+    const { anchor } = annotation;
     const document = pdfDocumentIdentity(descriptor);
-    if (document) {
+    if (document && !isScientRegionAnchor(anchor)) {
       requestPdfReveal(
         pdfRevealDocumentKey(descriptor),
         PdfTarget.make({
           version: 1,
           document,
           material: pdf.material,
-          extractor: annotation.anchor.extractor,
-          selector: annotation.anchor.selector,
+          extractor: anchor.extractor,
+          selector: anchor.selector,
         }),
       );
     }
@@ -216,7 +220,9 @@ function AttachmentAnnotations(props: {
                 className="line-clamp-3 border-l-2 border-warning/60 pl-2 text-sm"
                 style={annotation.color ? { borderColor: annotation.color } : undefined}
               >
-                {scientAnnotationQuote(annotation)}
+                {isScientRegionAnchor(annotation.anchor)
+                  ? m(MARKED_AREA)
+                  : scientAnnotationQuote(annotation)}
               </span>
               {annotation.note ? (
                 <span className="mt-1 block whitespace-pre-wrap text-sm text-muted-foreground">
@@ -227,30 +233,32 @@ function AttachmentAnnotations(props: {
                 {annotationMeta(annotation, m)}
               </span>
             </button>
-            <ScientTooltip content="Quote in my document">
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost-muted-row"
-                aria-label={gt("Quote in my document")}
-                onClick={() => {
-                  const pages = annotation.anchor.selector.pages.map((page) => page.page);
-                  // The PDF is not open here: it is read briefly for its printed page labels.
-                  void readQuotePageLabels({ contentKey: attachment.sha256, url: pdfUrl }).then(
-                    (labels) =>
-                      quoteInDocument(environmentId, root, {
-                        quote: scientAnnotationQuote(annotation),
-                        pages,
-                        pageLabels: quotePageLabels(pages, labels),
-                        citationKey: props.citationKey,
-                        fileName: attachment.fileName,
-                      }),
-                  );
-                }}
-              >
-                <TextQuote />
-              </Button>
-            </ScientTooltip>
+            {isScientRegionAnchor(annotation.anchor) ? null : (
+              <ScientTooltip content="Quote in my document">
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost-muted-row"
+                  aria-label={gt("Quote in my document")}
+                  onClick={() => {
+                    const pages = scientAnnotationPages(annotation);
+                    // The PDF is not open here: it is read briefly for its printed page labels.
+                    void readQuotePageLabels({ contentKey: attachment.sha256, url: pdfUrl }).then(
+                      (labels) =>
+                        quoteInDocument(environmentId, root, {
+                          quote: scientAnnotationQuote(annotation),
+                          pages,
+                          pageLabels: quotePageLabels(pages, labels),
+                          citationKey: props.citationKey,
+                          fileName: attachment.fileName,
+                        }),
+                    );
+                  }}
+                >
+                  <TextQuote />
+                </Button>
+              </ScientTooltip>
+            )}
             <ScientTooltip content="Remove">
               <Button
                 type="button"
@@ -318,7 +326,7 @@ function AttachmentAnnotations(props: {
 }
 
 function annotationMeta(annotation: ScientPdfAnnotation, resolve: MessageResolver): string {
-  const pages = annotation.anchor.selector.pages.map((page) => page.page);
+  const pages = scientAnnotationPages(annotation);
   const where =
     pages.length === 1
       ? resolve(msg("Page {page}", { page: pages[0]! }))
@@ -333,7 +341,7 @@ const UNPLACED_KINDS: Readonly<Record<ScientUnplacedAnnotation["kind"], string |
   underline: msg("Underline", { $context: "a kind of PDF annotation" }),
   note: msg("Note on the page"),
   text: msg("Text on the page"),
-  image: msg("Marked area"),
+  image: MARKED_AREA,
   ink: msg("Drawing", { $context: "a kind of PDF annotation" }),
 };
 

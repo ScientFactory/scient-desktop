@@ -7,7 +7,8 @@ parallel; use an isolated worktree when simultaneous tasks should not edit the
 same project files. Threads in the same checkout share its branch, so Scient
 refuses a branch switch there while one of them is working.
 
-Pin a thread from its context menu to keep it in the pinned section above your active work.
+Pin a thread from its context menu to keep it in the pinned section above your active work. On web
+and desktop, you can also pin it from the pin button that appears when you hover or focus its card.
 `mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
 their project, including when you connect to more than one environment.
 
@@ -694,7 +695,9 @@ selected, the options apply to every connected environment, and the mobile app u
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
-several selected threads together. Choose **Wake thread** to bring a thread back early.
+several selected threads together. **Snooze → Indefinitely** keeps a thread snoozed until you
+wake it (it still wakes early on approvals, questions, errors, or new messages). Choose **Wake
+thread** to bring a thread back early.
 
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,

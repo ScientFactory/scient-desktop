@@ -23,6 +23,10 @@ function threadStatusKind(thread: StatusThread): SectionStatusKind | null {
       return "waiting";
     case "ready":
       return hasUnseenCompletion(thread) ? "done" : null;
+    case "connecting":
+    case "reconnecting":
+    case "offline":
+      return null;
   }
 }
 

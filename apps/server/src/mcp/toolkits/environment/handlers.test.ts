@@ -4,6 +4,7 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import { fullAccessCapturedPolicyLayer } from "../../McpToolAccess.testkit.ts";
 import { expect, it } from "@effect/vitest";
 import {
+  CALM_HOST_PRESSURE,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderInstanceId,
@@ -18,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as Environment from "../../../environment/ServerEnvironment.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
@@ -41,7 +43,7 @@ const caller: McpInvocationContext.McpInvocationScope = {
   capabilities: new Set(["orchestration" as const]),
   issuedAt: 0,
 };
-const layerEnvironment = Layer.mock(Environment.ServerEnvironment)({
+const layerServerEnvironment = Layer.mock(Environment.ServerEnvironment)({
   getDescriptor: Effect.succeed({
     environmentId,
     label: "Test",
@@ -89,53 +91,77 @@ it.effect("updates preferences for a thread caller through the /mcp registration
             getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
           }),
         ),
-        Layer.provide(layerEnvironment),
+        Layer.provide(layerServerEnvironment),
         Layer.provide(fullAccessCapturedPolicyLayer),
         Layer.provide(Settings.layerTest()),
+        Layer.provide(Layer.mock(HostResources.HostResources)({})), // SCIENT-FORK: unread here.
       ),
     ),
   ),
 );
+
+const layerEnvironment = (overrides: {
+  readonly getThreadShell: ThreadManagement.ThreadManagementService["Service"]["getThreadShell"];
+  readonly updateSettings?: Settings.ServerSettingsService["Service"]["updateSettings"];
+}) =>
+  Layer.mergeAll(
+    fullAccessCapturedPolicyLayer,
+    ThreadCommandExecutor.layer,
+    Layer.succeed(McpInvocationContext.McpInvocationContext, {
+      environmentId,
+      requestNamespace: "provider:preferences",
+      thread: {
+        threadId,
+        providerSessionId: "provider:preferences",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration" as const]),
+      issuedAt: 0,
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: overrides.getThreadShell,
+    }),
+    Layer.mock(Environment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({
+        environmentId,
+        label: "Test",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0",
+        capabilities: { repositoryIdentity: false },
+      }),
+    }),
+    Layer.mock(Settings.ServerSettingsService)({
+      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      ...(overrides.updateSettings === undefined
+        ? {}
+        : { updateSettings: overrides.updateSettings }),
+    }),
+    Layer.mock(HostResources.HostResources)({
+      read: Effect.succeed({
+        sampledAt: 0,
+        cpuUtilization: 0.934,
+        cpuCount: 16,
+        availableMemoryBytes: 3.26e9,
+        totalMemoryBytes: 64e9,
+        diskFreeBytes: 812e9,
+        diskTotalBytes: 2e12,
+      }),
+      readPressure: Effect.succeed({ ...CALM_HOST_PRESSURE, memory: "severe", cpu: "elevated" }),
+    }),
+  );
 
 it.effect("refuses a preferences update when the caller's turn ends while it waits", () =>
   Effect.gen(function* () {
     const caller = yield* Ref.make<OrchestrationV2ThreadShell>(liveThreadShell(threadId));
     const updates = yield* Ref.make(0);
     const checked = yield* Deferred.make<void>();
-    const layerDependencies = Layer.mergeAll(
-      fullAccessCapturedPolicyLayer,
-      ThreadCommandExecutor.layer,
-      Layer.succeed(McpInvocationContext.McpInvocationContext, {
-        environmentId,
-        requestNamespace: "provider:preferences",
-        thread: {
-          threadId,
-          providerSessionId: "provider:preferences",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        },
-        client: undefined,
-        capabilities: new Set(["orchestration" as const]),
-        issuedAt: 0,
-      }),
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: () =>
-          Ref.get(caller).pipe(Effect.tap(() => Deferred.succeed(checked, undefined))),
-      }),
-      Layer.mock(Environment.ServerEnvironment)({
-        getDescriptor: Effect.succeed({
-          environmentId,
-          label: "Test",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0",
-          capabilities: { repositoryIdentity: false },
-        }),
-      }),
-      Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-        updateSettings: () =>
-          Ref.update(updates, (count) => count + 1).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
-      }),
-    );
+    const layerDependencies = layerEnvironment({
+      getThreadShell: () =>
+        Ref.get(caller).pipe(Effect.tap(() => Deferred.succeed(checked, undefined))),
+      updateSettings: () =>
+        Ref.update(updates, (count) => count + 1).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
+    });
     yield* Effect.gen(function* () {
       const toolkit = yield* EnvironmentToolkit;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -166,6 +192,33 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       ),
     );
   }),
+);
+
+it.effect("scient_environment_read tells agents how loaded the machine is", () =>
+  Effect.gen(function* () {
+    const toolkit = yield* EnvironmentToolkit;
+    const result = yield* toolkit
+      .handle("scient_environment_read", {})
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(result.at(-1)?.result).toMatchObject({
+      machine: {
+        pressure: { memory: "severe", cpu: "elevated", io: "none", disk: "none" },
+        cpuCount: 16,
+        cpuUsedPercent: 93,
+        memoryAvailableGb: 3.3,
+        memoryTotalGb: 64,
+        diskFreeGb: 812,
+      },
+    });
+  }).pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+        Layer.provideMerge(
+          layerEnvironment({ getThreadShell: () => Effect.succeed(liveThreadShell(threadId)) }),
+        ),
+      ),
+    ),
+  ),
 );
 
 it("keeps agent feedback out of the preferences agents read and write", () => {

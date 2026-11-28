@@ -415,7 +415,7 @@ const layerUsage = UsageService.layer.pipe(
 );
 
 const layerResourceDiagnostics = Layer.mergeAll(
-  HostResources.layer,
+  HostResources.layer.pipe(Layer.provide(layerNativeTelemetry)),
   layerResourceTelemetry,
   ProcessDiagnostics.layer.pipe(Layer.provide(layerResourceTelemetry)),
   ProcessResourceMonitor.layer.pipe(Layer.provide(layerResourceTelemetry)),
@@ -1666,10 +1666,10 @@ const layerMakeServer = Layer.unwrap(
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
       // SCIENT-FORK:START — one checkpoint upkeep worker shared by every Git driver; its runs
-      // are noted in the resource record.
+      // are noted in the resource record, whose host readings need the native telemetry client.
       Layer.provide(
         Layer.mergeAll(CheckpointUpkeep.layer, VcsProcess.layer).pipe(
-          Layer.provideMerge(ResourceRecord.layer),
+          Layer.provideMerge(ResourceRecord.layer.pipe(Layer.provide(layerNativeTelemetry))),
         ),
       ),
       // SCIENT-FORK:END

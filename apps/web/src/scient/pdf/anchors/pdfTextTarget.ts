@@ -121,6 +121,9 @@ export function pdfTextTarget(input: {
             quote: page.text.slice(page.start, page.end),
             prefix: page.text.slice(Math.max(0, page.start - context), page.start),
             suffix: page.text.slice(page.end, page.end + context),
+            ...(page.recognizedBy
+              ? { recognized: { engine: page.recognizedBy, geometry: "word-box" as const } }
+              : {}),
           })),
         },
       }),

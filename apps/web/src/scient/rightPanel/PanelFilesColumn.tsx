@@ -11,7 +11,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { shortcutLabelForCommand } from "~/keybindings";
 import type { OpenFileOptions, RightPanelSurface } from "~/rightPanelStore";
-import { SCIENT_DEFAULT_FILE_EXPLORER_OPEN } from "~/scient/fileOpening/fileOpeningPolicy";
+import {
+  RENDER_MARKDOWN_STORAGE_KEY,
+  SCIENT_DEFAULT_FILE_EXPLORER_OPEN,
+  SCIENT_DEFAULT_RENDER_MARKDOWN,
+} from "~/scient/fileOpening/fileOpeningPolicy";
 
 import { ScientFilesIcon } from "./ScientRightPanelSurfaceIcon";
 
@@ -101,6 +105,12 @@ export function PanelFilesLayout(props: {
   readonly children: ReactNode;
 }) {
   const [open] = usePanelFilesOpen();
+  // The file viewer's Markdown view choice, so Open preview opens the file rendered.
+  const [, setRenderMarkdownPreferred] = useLocalStorage(
+    RENDER_MARKDOWN_STORAGE_KEY,
+    SCIENT_DEFAULT_RENDER_MARKDOWN,
+    Schema.Boolean,
+  );
   if (
     !open ||
     !panelFilesColumnApplies(props.surface) ||
@@ -125,6 +135,10 @@ export function PanelFilesLayout(props: {
               selectedPathRevealId={0}
               onOpenFile={props.onOpenFile}
               onOpenFileSource={props.onOpenFileSource}
+              onOpenFilePreview={(path) => {
+                setRenderMarkdownPreferred(true);
+                props.onOpenFile(path);
+              }}
               workspaceMutationId={props.workspaceMutationId}
             />
           </Suspense>

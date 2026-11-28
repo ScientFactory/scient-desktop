@@ -1227,7 +1227,9 @@ export const buildAppUnderTest = (options?: {
           }),
         ),
         Layer.provide([
-          HostResources.layer,
+          HostResources.layer.pipe(
+            Layer.provide(NativeTelemetryClient.layerTest(options?.layers?.nativeTelemetryClient)),
+          ),
           Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({
             readHistory: (input) =>
               Effect.succeed({

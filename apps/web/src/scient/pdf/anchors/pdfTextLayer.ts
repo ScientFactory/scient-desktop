@@ -1,6 +1,7 @@
 import { PDF_TARGET_LIMITS } from "@scientfactory/document-artifacts";
 import type { PDFPageView } from "pdfjs-dist/types/web/pdf_page_view";
 
+import { PDF_OCR_ENGINE, PDF_OCR_LAYER_ID } from "../ocr/pdfOcrText";
 import type { ScientPdfRuntime } from "../pdfRuntime";
 
 /**
@@ -42,6 +43,8 @@ export interface PdfSelectedPage extends PdfPageGeometry {
   readonly text: string;
   readonly start: number;
   readonly end: number;
+  /** The engine that recognized this page's text from its image; absent for the PDF's own text. */
+  readonly recognizedBy?: string;
 }
 
 export type PdfTextSelection =
@@ -161,6 +164,7 @@ export function readPdfTextSelection(
     const pieces = textPieces(layer);
     if (!pieces) return refuse("page-too-complex");
     let offset = 0;
+    let recognizedBy: string | undefined;
     let start = Infinity;
     let end = 0;
     for (const piece of pieces) {
@@ -173,6 +177,13 @@ export function readPdfTextSelection(
         const after = isText ? range.comparePoint(node, 0) > 0 : false;
         if (!before && !after && from < to) {
           if (isText && !isQuarterTurn(node.parentElement)) return refuse("unsupported-text-angle");
+          if (
+            !recognizedBy &&
+            isText &&
+            node.parentElement?.closest(`[id^="${PDF_OCR_LAYER_ID}"]`)
+          ) {
+            recognizedBy = PDF_OCR_ENGINE;
+          }
           characters += to - from;
           if (characters > PDF_TARGET_LIMITS.characters) return refuse("selection-too-large");
           start = Math.min(start, offset + from);
@@ -184,7 +195,7 @@ export function readPdfTextSelection(
     const text = pieces.map((piece) => piece.text).join("");
     // A page the range only touches at a boundary contributes nothing.
     if (!Number.isFinite(start) || !text.slice(start, end).trim()) continue;
-    pages.push({ ...geometry, text, start, end });
+    pages.push({ ...geometry, text, start, end, ...(recognizedBy ? { recognizedBy } : {}) });
   }
   if (pages.length === 0) return { _tag: "Empty" };
   if (pages.length > PDF_TARGET_LIMITS.pages) return refuse("too-many-pages");

@@ -731,6 +731,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`ddeb226831a3cbca8d6d07f362e9c55f82b41eab` is recorded in
+[the 2026-11-28 ddeb226831 receipt](docs/internals/t3-upstream-sync-20261128-ddeb226831.md), Scient PR #1180.
+Literal merge `5f69412114443ec2f701ccab819c2a41ad3b46ab` has owned base
+`c8efa33bd9daa2cc4d84cbd20bedea899f4446ea` and the frozen official target as parents, retaining
+the 237 official commits after `241d46c562`. The range adds per-agent usage access, machine-load
+readings, image drawing, folder attachments, Markdown code-block previews, indefinite snooze and
+many document-preview fixes. Release remains separate.
+
+The previous committed alignment through
 `241d46c562fa9a0e1bfc58de181a704dd43ac8f7` is recorded in
 [the 2026-11-28 241d46c562 receipt](docs/internals/t3-upstream-sync-20261128-241d46c562.md), Scient PR #1169.
 Literal merge `fee9d6734e041eb9d3838868a533b348f55d6f73` has owned base
@@ -2411,8 +2420,9 @@ When aligning, check:
   width, or marked `data-preserve-icon-weight` (on the icon or its parent), keeps its weight.
 - **Shortcuts T3 may also claim.** Scient adds `rightPanel.nextTab` (Ctrl+Tab),
   `rightPanel.previousTab` (Ctrl+Shift+Tab), `rightPanel.duplicateTab` (⌘⇧D),
-  `rightPanel.toggleFiles` (⌘⌥E), and ⌘T (`rightPanel.new`) for a closed panel; the
-  server's keybindings migration gives existing configs the closed-panel rule. ⌘[ and
+  `rightPanel.toggleFiles` (⌘⌥⇧E, beside T3's maximize on ⌘⌥E), and ⌘T (`rightPanel.new`)
+  for a closed panel; the server's keybindings migrations give existing configs the
+  closed-panel rule and move unchanged Files and maximize rules to these keys. ⌘[ and
   ⌘] (T3's `navigation.back`/`forward`) belong to a file tab's own history while the
   keyboard is in it. If T3 binds any of these, decide which command keeps the key.
 - **`otherViewers`.** The server browser now tells each window how many others watch
@@ -2737,6 +2747,17 @@ Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` 
 `system_notice`, Scient's `scient.pluginSignIn.open` RPC, the ACP flavor hooks `scientToolNotice`
 and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
 section of `docs/internals/scient-extensions.md`.
+
+## Usage access on by default
+
+T3's #43948 reads an agent's usage history and sign-in only after the user allows it, and asks
+on the Usage page until they answer. Scient treats an unanswered `usageAccess` as allowed; only
+`"denied"` stops the reads. The SCIENT-FORK lines are in `ProviderInstanceRegistry.ts` (the driver
+gate), `UsageService.ts` (`grantOf`, so `accessRequests` stays empty and no client asks),
+`ProviderInstanceCard.tsx` (the switch shows on) and `WelcomePage.tsx` (an unchecked usage box
+saves `"denied"`). T3's question UI stays in place and unused. When T3 changes the grant, keep
+unanswered as allowed. Tests: the usage-access cases in `UsageService.test.ts` and
+`ProviderInstanceRegistry.test.ts`.
 
 ## Security policy
 

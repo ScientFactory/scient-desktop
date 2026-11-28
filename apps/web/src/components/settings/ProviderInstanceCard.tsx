@@ -75,6 +75,8 @@ import { useProviderSettingsLifecyclePresentation } from "../../scient/providerC
 import { managedVersionAdvisory } from "~/scient/providerConnection/providerSettingsLifecyclePresentation";
 // SCIENT-FORK:END
 import { withProviderInstanceEnabled } from "../../scient/providerConnection/providerEnablement";
+import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
+import { UsageAccessReads } from "../usage/UsageAccessReads";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { providerSettingsTabClassName } from "./providerSettingsTabs";
 
@@ -96,6 +98,7 @@ import { ScientAgentComputerControlPermissionsRow } from "~/scient/computerContr
 import type { DriverOption } from "./providerDriverMeta";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
+  getProviderReinstallCommand,
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
   getProviderStatusKey,
@@ -245,6 +248,59 @@ function ProviderAuthEmail(props: {
         className="max-w-full truncate"
       />
     </span>
+  );
+}
+
+type ProviderVersionAdvisory = NonNullable<
+  ReturnType<typeof getProviderVersionAdvisoryPresentation>
+>;
+
+// The popover and the Status row both offer the same update action, so the
+// label, busy state and progress line live in one place.
+function ProviderVersionUpdateAction(props: {
+  readonly advisory: ProviderVersionAdvisory;
+  readonly isReinstall: boolean;
+  readonly isUpdating: boolean;
+  readonly progress: string | null;
+  readonly problem: string | null;
+  readonly stretch: boolean;
+  readonly onRun: () => void;
+}) {
+  const { advisory, isReinstall, isUpdating, progress, problem, stretch, onRun } = props;
+  const gt = useGT();
+  return (
+    <>
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        className={cn(stretch ? "w-full" : "w-fit")}
+        disabled={isUpdating}
+        onClick={onRun}
+      >
+        {isUpdating ? <Spinner /> : <DownloadIcon />}
+        {isUpdating
+          ? gt("Updating")
+          : advisory.targetVersion
+            ? gt("Install {version}", {
+                version: getProviderVersionLabel(advisory.targetVersion),
+              })
+            : isReinstall
+              ? gt("Reinstall")
+              : gt("Update now")}
+      </Button>
+      {progress || problem ? (
+        <p
+          aria-live="polite"
+          className={cn(
+            "text-xs leading-snug [overflow-wrap:anywhere]",
+            problem ? "text-warning" : "text-muted-foreground",
+          )}
+        >
+          {progress ?? problem}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -881,6 +937,32 @@ export function ProviderInstanceCard({
   // Custom instances of a driver still come from the same company.
   const vendorLabel = driverOption?.vendorLabel;
   const usesScientManagedRuntime = liveProvider?.connection?.runtime?.source === "scient_managed";
+  const updateAdvisory = getProviderVersionAdvisoryPresentation(
+    liveProvider?.versionAdvisory,
+    liveProvider?.compatibilityAdvisory,
+    enabled,
+    m,
+  );
+  const reinstallCommand =
+    enabled && !updateAdvisory ? getProviderReinstallCommand(liveProvider) : null;
+  const isReinstall = reinstallCommand !== null;
+  const rawVersionAdvisory =
+    updateAdvisory ??
+    (isReinstall
+      ? {
+          title: gt("Reinstall needed"),
+          detail: gt(
+            "This installation is missing files it needs to start. Reinstall it to fix it.",
+          ),
+          updateCommand: reinstallCommand,
+          emphasis: "strong" as const,
+          targetVersion: null,
+        }
+      : null);
+  // SCIENT-FORK:START — managed copies use their own update lifecycle.
+  const versionAdvisory = managedVersionAdvisory(rawVersionAdvisory, usesScientManagedRuntime);
+  // SCIENT-FORK:END
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
   const updateState = liveProvider?.updateState;
   const updateProgress = isUpdating
     ? ((updateState?.status === "queued" || updateState?.status === "running"
@@ -897,17 +979,8 @@ export function ProviderInstanceCard({
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
-  const rawVersionAdvisory = getProviderVersionAdvisoryPresentation(
-    liveProvider?.versionAdvisory,
-    liveProvider?.compatibilityAdvisory,
-    enabled,
-    m,
-  );
-  // SCIENT-FORK:START — managed copies use their own update lifecycle.
-  const versionAdvisory = managedVersionAdvisory(rawVersionAdvisory, usesScientManagedRuntime);
-  // SCIENT-FORK:END
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
+  const VersionAdvisoryIcon =
+    hasCompatibilityWarning || isReinstall ? AlertTriangleIcon : ArrowUpCircleIcon;
   const onRunVersionAction =
     readOnly || usesScientManagedRuntime
       ? undefined
@@ -986,6 +1059,16 @@ export function ProviderInstanceCard({
     }
     onUpdate(withProviderInstanceEnabled(instance, value));
   };
+
+  const readsUsage =
+    // SCIENT-FORK:START — Scient Agent's usage is Scient's own state, read without a grant.
+    instance.driver !== "scient" &&
+    // SCIENT-FORK:END
+    Object.values(PROVIDER_PRESENTATION).some(
+      (presentation) => presentation.driverKind === instance.driver,
+    );
+  const updateUsageAccess = (allowed: boolean) =>
+    onUpdate({ ...instance, usageAccess: allowed ? "allowed" : "denied" });
 
   const updateAccentColor = (value: string) => {
     const normalized = normalizeProviderAccentColor(value);
@@ -1191,7 +1274,7 @@ export function ProviderInstanceCard({
                   <VersionAdvisoryIcon
                     className={cn(
                       mode === "list" && "size-3.5",
-                      hasCompatibilityWarning && "text-warning",
+                      (hasCompatibilityWarning || isReinstall) && "text-warning",
                     )}
                   />
                 )}
@@ -1217,34 +1300,15 @@ export function ProviderInstanceCard({
             </p>
           </div>
           {onRunVersionAction ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              className="w-full"
-              disabled={isUpdating}
-              onClick={onRunVersionAction}
-            >
-              {isUpdating ? <Spinner /> : <DownloadIcon />}
-              {isUpdating
-                ? gt("Updating")
-                : versionAdvisory.targetVersion
-                  ? gt("Install {version}", {
-                      version: getProviderVersionLabel(versionAdvisory.targetVersion),
-                    })
-                  : gt("Update now")}
-            </Button>
-          ) : null}
-          {updateProgress || updateProblem ? (
-            <p
-              aria-live="polite"
-              className={cn(
-                "text-xs leading-snug [overflow-wrap:anywhere]",
-                updateProblem ? "text-warning" : "text-muted-foreground",
-              )}
-            >
-              {updateProgress ?? updateProblem}
-            </p>
+            <ProviderVersionUpdateAction
+              advisory={versionAdvisory}
+              isReinstall={isReinstall}
+              isUpdating={isUpdating}
+              progress={updateProgress}
+              problem={updateProblem}
+              stretch
+              onRun={onRunVersionAction}
+            />
           ) : null}
           {onRunVersionAction && updateCommand ? (
             <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -1426,6 +1490,19 @@ export function ProviderInstanceCard({
           {restartNotice}
         </p>
       ) : null}
+      {versionAdvisory && onRunVersionAction ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <ProviderVersionUpdateAction
+            advisory={versionAdvisory}
+            isReinstall={isReinstall}
+            isUpdating={isUpdating}
+            progress={updateProgress}
+            problem={updateProblem}
+            stretch={false}
+            onRun={onRunVersionAction}
+          />
+        </div>
+      ) : null}
       {urlAuthAction && onAcceptUrlAuth ? (
         <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
           <p>{urlAuthAction.message}</p>
@@ -1549,6 +1626,21 @@ export function ProviderInstanceCard({
               </div>
             }
           />
+          {readsUsage ? (
+            <SettingsRow
+              title={gt("Usage access")}
+              description={<UsageAccessReads driver={instance.driver} />}
+              control={
+                <Switch
+                  // SCIENT-FORK: usage access is on unless the user turned it off.
+                  checked={instance.usageAccess !== "denied"}
+                  disabled={readOnly}
+                  onCheckedChange={(checked) => updateUsageAccess(Boolean(checked))}
+                  aria-label={gt("Usage access for {provider}", { provider: displayName })}
+                />
+              }
+            />
+          ) : null}
         </SettingsSection>
 
         {setup || environmentFields.length > 0 ? (

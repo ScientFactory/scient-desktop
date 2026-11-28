@@ -223,9 +223,9 @@ Useful current commands include:
 - `rightPanel.new` (`mod+t`) opens a side-panel tab on the Tools page;
 - `rightPanel.nextTab` and `rightPanel.previousTab` (`ctrl+tab`, `ctrl+shift+tab`) move between
   side-panel tabs;
-- `rightPanel.toggleFiles` (`mod+alt+e`) shows or hides the file list beside a side-panel tab;
+- `rightPanel.toggleFiles` (`mod+alt+shift+e`) shows or hides the file list beside a side-panel tab;
 - `rightPanel.duplicateTab` (`mod+shift+d`) opens a second copy of a browser or terminal tab; and
-- `rightPanel.toggleMaximized` maximizes or restores the open right panel and has no default shortcut.
+- `rightPanel.toggleMaximized` (`mod+alt+e`) maximizes or restores the right panel, opening it first when it is closed.
 
 Repeating either search shortcut closes it; opening the other replaces the current search. The theme
 editor's **Inspect** mode selects one visible element and reveals its color token, then disarms. Use
@@ -287,8 +287,8 @@ Use **Inspect** to pick an element in the app and reveal its color token. Inspec
 successful pick; its hover glow and badge preview the element and color family that click will select.
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
 
-`rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
-so add one in **Settings** → **Shortcuts** if you want to use it.
+`rightPanel.toggleMaximized` (`mod+alt+e`) maximizes or restores the right panel, opening it
+first when it is closed.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
 `draftThreadRoute`, `turnRunning`, `composerEmpty`, `editableFocus`, `isWeb`, and `isDesktop`.

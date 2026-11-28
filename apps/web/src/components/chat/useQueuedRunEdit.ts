@@ -236,6 +236,7 @@ export function useQueuedRunEdit(input: {
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
   const promoteQueuedRun = useAtomCommand(threadEnvironment.promoteQueuedRun);
+  const cancelQueuedRun = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
@@ -258,6 +259,17 @@ export function useQueuedRunEdit(input: {
       : attachmentContextIdsForRecord(editing.context, attachment).filter((contextId) =>
           originalReferencedContextIds!.has(contextId),
         );
+  // A stash entry holds only the draft, so it must hold everything a save would keep: thread and
+  // machine records and the referenced reply live in the draft; any other kept record does not.
+  const canMoveEditToStash =
+    editing !== null &&
+    editing.existingAttachments.length === 0 &&
+    (editing.context?.records ?? []).every(
+      (record) =>
+        isDraftOwnedRecord(record) ||
+        "attachmentId" in record ||
+        (record.kind === "response" && originalReferencedContextIds!.has(record.contextId)),
+    );
   const editingAttachments =
     editing === null
       ? null
@@ -400,6 +412,12 @@ export function useQueuedRunEdit(input: {
     clearEditDraft(editing.runId);
     queuedRunEdits.end(editKey);
     focusComposerSoon();
+  });
+  const removeEditedRun = useStableCallback(() => {
+    if (editing === null) return;
+    const { threadId, runId } = editing;
+    cancelEdit();
+    void cancelQueuedRun({ environmentId, input: { threadId, runId } });
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
     const removed = editing?.existingAttachments.find(
@@ -571,6 +589,8 @@ export function useQueuedRunEdit(input: {
     removedEditingAttachments,
     beginEdit,
     cancelEdit,
+    canMoveEditToStash,
+    removeEditedRun,
     removeEditingAttachment,
     restoreEditingAttachment,
     saveEdit,

@@ -569,6 +569,52 @@ describe("Files panel search", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
+  it("offers Open preview for markdown files and opens them rendered", async () => {
+    // SCIENT-FORK:START — Scient's lazy tree lists each folder through the mocked command, its
+    // menu shows through the mocked local API, and it files Copy mention under Copy.
+    setup();
+    files.directories = { "": [entry("src", "directory"), entry("README.md")], src: [] };
+    files.localApi = { contextMenu: { show: showContextMenuFallback } };
+    const onOpenFilePreview = vi.fn();
+    const container = document.createElement("div");
+    // The tree virtualizes its rows, so it needs a real viewport to render any.
+    container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px;";
+    await using screen = await render(
+      <FileBrowserPanel {...props} cwd="/open-preview" onOpenFilePreview={onOpenFilePreview} />,
+      { container },
+    );
+    const findTreeRow = (path: string) =>
+      screen.container
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`) ?? null;
+    using _menu = {
+      [Symbol.dispose]: () => {
+        dismissContextMenu();
+        files.localApi = undefined;
+      },
+    };
+    // SCIENT-FORK:END
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
+
+    findTreeRow("src/")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
+    );
+    // SCIENT-FORK:START — Add to chat is on every row's menu.
+    await expect
+      .element(page.getByRole("menuitem", { name: "Add to chat", exact: true }))
+      .toBeVisible();
+    // SCIENT-FORK:END
+    await expect.element(action).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    findTreeRow("README.md")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
+    );
+    await userEvent.click(action);
+    expect(onOpenFilePreview).toHaveBeenCalledWith("README.md");
+  });
+
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
     setup();
     files.directories = { "": [entry("README.md")] };

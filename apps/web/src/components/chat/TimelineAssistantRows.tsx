@@ -78,6 +78,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                 text={messageText}
                 className="scient-reply-prose"
                 renderInsights
+                previewMarkdownFences
                 cwd={ctx.markdownCwd}
                 agentDirectories={createAgentDirectoriesReader(ctx.threadRef, row.projectedItem)}
                 threadRef={ctx.threadRef ?? undefined}
@@ -156,6 +157,7 @@ export function SentMessageTimelineRow({
           // SCIENT-FORK:START — reply leading (scient/typography).
           className="scient-reply-prose"
           // SCIENT-FORK:END
+          previewMarkdownFences
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}

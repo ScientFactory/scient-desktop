@@ -25,6 +25,13 @@ source could be read—are sent to the client.
 This page is separate from Scient product analytics and telemetry, and it does not query a provider
 billing API unless you explicitly connect one under **Provider billing**.
 
+Scient reads the local history of the agents you have turned on, unless you turn that off for an
+agent with **Usage access** under **Settings → Providers → Configuration**. Scient Agent's usage is
+part of Scient's own data, so it has no switch. Grok and OpenCode Go limits, Claude reset credits,
+and matching Claude limits to your account read the agent's sign-in, so they also stop when Usage
+access is off. On the welcome page, clearing **Also show my usage stats** before **Find my
+projects** turns Usage access off for those agents.
+
 Cost is an estimate with explicit provenance. A saved custom price takes precedence. Otherwise,
 Scient uses a cost reported in the transcript when one exists, or prices a recognized model with
 the public LiteLLM model rate table. Tokens from

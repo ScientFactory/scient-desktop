@@ -20,14 +20,22 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
+    readonly cwd?: string | null;
     readonly allowedRoots: ReadonlyArray<string>;
     readonly requestPath: string;
   }) {
     const { path } = input;
-    const resolved = path.resolve(input.requestPath);
     const outside = EffectAcpErrors.AcpRequestError.invalidParams(
       `Path '${input.requestPath}' is outside the session workspace.`,
     );
+    let resolved: string;
+    if (path.isAbsolute(input.requestPath)) {
+      resolved = path.resolve(input.requestPath);
+    } else if (input.cwd !== null && input.cwd !== undefined) {
+      resolved = path.resolve(input.cwd, input.requestPath);
+    } else {
+      return yield* outside;
+    }
     // Canonicalize the deepest existing ancestor, so a link above missing directories cannot escape.
     let candidate = resolved;
     const missingSuffix: Array<string> = [];
@@ -63,6 +71,7 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
+    readonly cwd?: string | null;
     readonly allowedRoots: ReadonlyArray<string>;
     readonly request: EffectAcpSchema.ReadTextFileRequest;
   }): Effect.fn.Return<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError> {

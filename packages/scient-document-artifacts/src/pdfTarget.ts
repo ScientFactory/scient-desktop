@@ -76,6 +76,17 @@ export const PdfDocumentIdentity = Schema.Struct({
 });
 export type PdfDocumentIdentity = typeof PdfDocumentIdentity.Type;
 
+/**
+ * The page's text was recognized from its image (a scan) rather than read from the PDF. Its
+ * positions are word boxes found in the image, not glyph positions, and the words can hold
+ * recognition errors.
+ */
+export const PdfRecognizedText = Schema.Struct({
+  engine: NonEmpty(256),
+  geometry: Schema.Literal("word-box"),
+});
+export type PdfRecognizedText = typeof PdfRecognizedText.Type;
+
 export const PdfTextPageSelector = Schema.Struct({
   page: PageNumber,
   viewBox: PdfRect,
@@ -87,8 +98,37 @@ export const PdfTextPageSelector = Schema.Struct({
   quote: NonEmpty(PDF_TARGET_LIMITS.characters),
   prefix: Text(PDF_TARGET_LIMITS.context),
   suffix: Text(PDF_TARGET_LIMITS.context),
+  recognized: Schema.optionalKey(PdfRecognizedText),
 });
 export type PdfTextPageSelector = typeof PdfTextPageSelector.Type;
+
+/**
+ * A box drawn on one page, independent of its text: `rect` is `[x1, y1, x2, y2]` in the page's
+ * PDF user space (the space of `viewBox`, y up), inside the view box, with `x1 < x2` and
+ * `y1 < y2`. Zoom and the reader's rotation never change it.
+ */
+export const PdfRegionPageSelector = Schema.Struct({
+  page: PageNumber,
+  viewBox: PdfRect,
+  rotation: PdfTextPageSelector.fields.rotation,
+  userUnit: PdfTextPageSelector.fields.userUnit,
+  rect: PdfRect,
+}).check(
+  Schema.makeFilter(({ rect, viewBox }) => {
+    const [x1, y1, x2, y2] = rect;
+    return (
+      viewBox[0] < viewBox[2] &&
+      viewBox[1] < viewBox[3] &&
+      x1 < x2 &&
+      y1 < y2 &&
+      x1 >= viewBox[0] &&
+      y1 >= viewBox[1] &&
+      x2 <= viewBox[2] &&
+      y2 <= viewBox[3]
+    );
+  }),
+);
+export type PdfRegionPageSelector = typeof PdfRegionPageSelector.Type;
 
 export const PdfTarget = Schema.Struct({
   version: Schema.Literal(1),

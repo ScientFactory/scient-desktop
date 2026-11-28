@@ -45,6 +45,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -1088,6 +1089,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
+  const fileSystem = yield* FileSystem.FileSystem;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const messageIdClock = yield* Ref.make({ epochMillis: -1, counter: 0 });
@@ -3670,9 +3672,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             preserveOverflow: host.preserveAttachmentContext === true,
             // SCIENT-FORK:END
           })).trim();
-          const files = OpenCodeRuntime.toOpenCodeFileParts({
+          const files = yield* OpenCodeRuntime.toOpenCodeFileParts({
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
+            fileSystem,
           });
           if (text.length === 0 && files.length === 0) {
             return yield* protocolError(
@@ -4379,9 +4382,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   `OpenCode turn ${steerInput.providerTurnId} is not active`,
                 );
               }
-              const files = OpenCodeRuntime.toOpenCodeFileParts({
+              const files = yield* OpenCodeRuntime.toOpenCodeFileParts({
                 attachments: steerInput.message.attachments,
                 resolveAttachmentPath: host.resolveAttachmentPath,
+                fileSystem,
               });
               if (text.length === 0 && files.length === 0) {
                 return yield* protocolError("OpenCode steering requires text or an attachment");
@@ -4819,6 +4823,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
 });
 
 export type OpenCodeAdapterV2DriverEnv =
+  | FileSystem.FileSystem
   | OpenCodeRuntime.OpenCodeRuntime
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions

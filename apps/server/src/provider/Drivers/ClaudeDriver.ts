@@ -145,6 +145,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     accentColor,
     environment,
     enabled,
+    usageAccess = Effect.succeed(false),
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -163,7 +164,11 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     const modelCatalog = catalogService
       .current(DRIVER_KIND)
       .pipe(Effect.map(resolveClaudeModelCatalog));
-    const processEnv = yield* mergeClaudeProcessEnvironment(config, environment, process.env);
+    const processEnv = yield* mergeClaudeProcessEnvironment(
+      { ...config, enabled },
+      environment,
+      process.env,
+    );
     const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -319,6 +324,13 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       effectiveProcessEnv,
       modelCatalog,
     );
+
+    // The organization ID comes from Claude's sign-in file, which T3 reads only with usage access.
+    const readOrganizationId = usageAccess.pipe(
+      Effect.flatMap((allowed) =>
+        allowed ? ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath) : Effect.undefined,
+      ),
+    );
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
@@ -390,7 +402,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       () =>
         probeClaudeCapabilities(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir).pipe(
           Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+            readOrganizationId.pipe(
               Effect.map((workspaceId) => ({
                 _tag: "fresh" as const,
                 capabilities:
@@ -409,7 +421,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
               Effect.flatMap((capabilities) =>
                 capabilities === undefined
                   ? Effect.fail(error)
-                  : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+                  : readOrganizationId.pipe(
                       Effect.flatMap((workspaceId) =>
                         workspaceId === capabilities.workspaceId
                           ? Effect.succeed({
@@ -446,9 +458,14 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       settings: effectiveConfig,
       environment: effectiveProcessEnv,
       spawner,
-      invalidateCapabilities: Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey),
+      // Probes are cached per usage-access answer; a sign-in change drops both.
+      invalidateCapabilities: Cache.invalidateAll(capabilitiesProbeCache),
     });
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    // A probe holds the organization ID only if access was allowed, so a changed answer probes again.
+    const resolveCapabilities = usageAccess.pipe(
+      Effect.flatMap((allowed) =>
+        Cache.get(capabilitiesProbeCache, `${capabilitiesCacheKey}\0${allowed}`),
+      ),
       Effect.map((result) => result.capabilities),
     );
 
@@ -463,8 +480,14 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
               serverConfig.stateDir,
               catalog,
               scopedLimitNames,
+              // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                usageAccess.pipe(
+                  Effect.flatMap((allowed) =>
+                    allowed
+                      ? ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+                      : Effect.undefined,
+                  ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
@@ -520,9 +543,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         Boolean(capabilities.subscriptionType) &&
         !capabilities.apiKeySource &&
         !effectiveProcessEnv.CLAUDE_CODE_OAUTH_TOKEN?.trim();
-      const workspaceId = usesSavedOAuth
-        ? yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)
-        : undefined;
+      const workspaceId = usesSavedOAuth ? yield* readOrganizationId : undefined;
       const auth =
         capabilities.email || workspaceId
           ? {
@@ -551,8 +572,9 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         response: capabilities.usage,
         checkedAt: capabilities.usageCheckedAt ?? checkedAt,
       });
+      // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
       const resetCredits =
-        usesSavedOAuth && !usageLimits.unavailable && version
+        usesSavedOAuth && !usageLimits.unavailable && version && (yield* usageAccess)
           ? yield* ClaudeResetCredits.readClaudeResetCredits(configDir, version)
           : undefined;
       return {

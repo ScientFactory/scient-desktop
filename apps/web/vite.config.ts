@@ -15,6 +15,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { scientOcrAssets } from "./scripts/scientOcrAssets";
 import { scientPdfAssets } from "./scripts/scientPdfAssets";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -357,6 +358,7 @@ export default defineConfig(({ command, mode }) => {
     plugins: [
       bootstrapTitlePlugin(),
       scientPdfAssets(),
+      scientOcrAssets(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
       builtDev

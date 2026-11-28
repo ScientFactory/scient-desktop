@@ -46,6 +46,11 @@ export const ScientAnnotationAgentView = Schema.Struct({
   pages: Schema.Array(PageNumber),
   quote: Schema.String,
   quoteTruncated: Schema.Boolean,
+  region: Schema.optionalKey(
+    Schema.Tuple([Schema.Number, Schema.Number, Schema.Number, Schema.Number]).annotate({
+      description: "A box drawn on the page, no quote: [x1, y1, x2, y2] in PDF points, y up.",
+    }),
+  ),
   note: Schema.String,
   highlighted: Schema.Boolean,
   createdBy: ScientAnnotationActor,

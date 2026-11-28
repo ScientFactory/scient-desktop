@@ -82,6 +82,8 @@ export interface ReaderSearch {
   readonly notFound: boolean;
   /** Why nothing can be found, shown in a small card when Enter finds nothing. */
   readonly notFoundNote?: string | undefined;
+  /** Work the results still wait for, such as pages being read, shown beside the count. */
+  readonly status?: { readonly label: string; readonly description: string } | undefined;
   /** Raised to move focus into the field, for example by Cmd+F. */
   readonly focusRequest: number;
   readonly onQuery: (query: string) => void;
@@ -155,25 +157,34 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
         />
         {searching ? (
           <>
-            <span className="scient-reader-search-count" aria-live="polite">
-              {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
+            <span className="scient-reader-search-navigation">
+              <span className="scient-reader-search-count" aria-live="polite">
+                {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
+              </span>
+              <button
+                type="button"
+                aria-label={gt("Previous result")}
+                disabled={props.total === 0}
+                onClick={() => props.onNavigate(true)}
+              >
+                <ChevronDown className="rotate-180" />
+              </button>
+              <button
+                type="button"
+                aria-label={gt("Next result")}
+                disabled={props.total === 0}
+                onClick={() => props.onNavigate(false)}
+              >
+                <ChevronDown />
+              </button>
             </span>
-            <button
-              type="button"
-              aria-label={gt("Previous result")}
-              disabled={props.total === 0}
-              onClick={() => props.onNavigate(true)}
-            >
-              <ChevronDown className="rotate-180" />
-            </button>
-            <button
-              type="button"
-              aria-label={gt("Next result")}
-              disabled={props.total === 0}
-              onClick={() => props.onNavigate(false)}
-            >
-              <ChevronDown />
-            </button>
+            {props.status ? (
+              <ScientTooltip content={props.status.description}>
+                <span className="scient-reader-search-status" aria-label={props.status.description}>
+                  {props.status.label}
+                </span>
+              </ScientTooltip>
+            ) : null}
           </>
         ) : null}
       </div>

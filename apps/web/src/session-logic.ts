@@ -2,7 +2,7 @@ import {
   browserActionPresentation,
   foldedQuestionAnswerRunIdByMessageId,
 } from "./scient/threadTimeline/presentation";
-import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
+import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { msg } from "gt-react";
 // SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
 import { customEndpointFailureNote } from "./scient/providerConnection/customEndpointFailureNote";
@@ -261,6 +261,27 @@ export function derivePendingUserInputs(
   return [...inputs].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+export type TaskListPlan = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
+
+// Snapshots do not load plans in run order, so the run ordinal decides which list is newest.
+export function findLatestTaskList(projection: ThreadStructure | null): TaskListPlan | null {
+  if (projection === null) return null;
+  const runOrdinals = new Map<RunId | null, number>(
+    projection.runs.map((run) => [run.id, run.ordinal]),
+  );
+  let latest: TaskListPlan | null = null;
+  for (const plan of projection.plans) {
+    if (plan.kind !== "todo_list" || plan.status === "superseded") continue;
+    if (
+      latest === null ||
+      (runOrdinals.get(plan.runId) ?? -1) >= (runOrdinals.get(latest.runId) ?? -1)
+    ) {
+      latest = plan;
+    }
+  }
+  return latest === null || latest.steps.length === 0 ? null : latest;
+}
+
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
   "fork",
   "handoff",
@@ -309,7 +330,7 @@ function projectedWorkEntryStatus(
       return "failed";
     case "cancelled":
     case "interrupted":
-      return "stopped";
+      return item.toolNonExecutionKind === "declined" ? "declined" : "stopped";
   }
 }
 

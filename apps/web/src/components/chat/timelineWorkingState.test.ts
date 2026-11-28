@@ -76,6 +76,7 @@ describe("resolveTimelineWorking", () => {
       startedAt: "2026-10-07T10:01:00.000Z",
       preparingWorktree: false,
       submissionIntent: "foreground",
+      providerInstanceId: null,
       latestUserMessageId: previousPrompt,
       latestRunId: completedRun.runId,
       latestRunRequestedAt: completedRun.requestedAt,

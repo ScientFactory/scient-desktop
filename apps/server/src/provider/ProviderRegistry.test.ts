@@ -65,7 +65,7 @@ import {
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, probeClaudeWorkspaceSnapshot } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -6646,6 +6646,56 @@ it.layer(
         assert.isNull(status.version, "mise's own version is not Claude's");
       }),
     );
+
+    // SCIENT-FORK:START — Settings → Skills lists each agent's global skills from this status.
+    it.effect("lists global skills at startup for the Skills page and rescans per project", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-home-" });
+        yield* fs.makeDirectory(path.join(homePath, "skills", "review"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(homePath, "skills", "review", "SKILL.md"),
+          "---\nname: review\ndescription: Review a change\n---\n",
+        );
+        const settings = { ...defaultClaudeSettings, homePath };
+
+        const status = yield* checkClaudeProviderStatus(settings, claudeCapabilities(), {
+          ANTHROPIC_BASE_URL: "",
+        });
+        assert.deepStrictEqual(
+          status.skills.map((skill) => skill.name),
+          ["review"],
+        );
+
+        const workspace = yield* probeClaudeWorkspaceSnapshot(
+          settings,
+          status as ServerProvider,
+          path.join(homePath, "missing-project"),
+          { ANTHROPIC_BASE_URL: "" },
+        );
+        assert.deepStrictEqual(
+          workspace.skills.map((skill) => skill.name),
+          ["review"],
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // Scient checks the CLI sign-in before reporting ready.
+            if (joined === "auth status --json")
+              return {
+                stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                stderr: "",
+                code: 0,
+              };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+    // SCIENT-FORK:END
 
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {

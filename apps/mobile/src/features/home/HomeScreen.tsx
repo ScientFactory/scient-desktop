@@ -102,6 +102,7 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
+import { HostPressureBanner } from "./HostPressureBanner";
 import { ThreadListFilters } from "./ThreadListFilters";
 import { deriveHomeEmptyState } from "./home-empty-state";
 // SCIENT-FORK:START — Scient Accounts: sign-ins waiting with no chat reach the phone too.
@@ -651,6 +652,8 @@ export function HomeScreen(props: HomeScreenProps) {
             }}
           >
             <View className="w-full max-w-[430px]">
+              {/* A strained machine with no threads still needs its warning. */}
+              <HostPressureBanner />
               {/* SCIENT-FORK:START — Scient Accounts: an empty home still shows what waits. */}
               <HomeAccountWaits
                 environmentIds={searchEnvironmentIds}
@@ -693,6 +696,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      <HostPressureBanner />
       {/* SCIENT-FORK:START — Scient Accounts: what a sign-in outside any chat waits on. */}
       <HomeAccountWaits
         environmentIds={searchEnvironmentIds}
@@ -772,6 +776,9 @@ export function HomeScreen(props: HomeScreenProps) {
           className="flex-1 items-center justify-center px-4"
           style={{ paddingBottom: insets.bottom }}
         >
+          <View className="w-full">
+            <HostPressureBanner />
+          </View>
           {/* SCIENT-FORK:START — Scient Accounts: an empty filtered list still shows what waits. */}
           <HomeAccountWaits
             environmentIds={searchEnvironmentIds}

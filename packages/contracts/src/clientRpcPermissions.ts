@@ -290,6 +290,10 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.guestShareCreate) {
     return [AuthAccessWriteScope, AuthOrchestrationReadScope];
   }
+  // Checking a secret source resolves a caller-named reference and applies it to providers.
+  if (method === WS_METHODS.serverCheckSecretSource) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
   // SCIENT-FORK:START — package operations require file access and the matching Compute grant.
   if (
     method === WS_METHODS.computeResultsExport ||
