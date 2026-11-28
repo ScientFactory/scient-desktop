@@ -22,6 +22,8 @@ import {
 import { type PdfViewAreaLocation } from "./pdfReaderSessionStore";
 import { createPdfReaderViewportSession } from "./pdfReaderViewportSession";
 import { createPdfPresentationLayer, preparePdfPresentation } from "./pdfPresentation";
+import { attachPdfOcr, pdfNativeTextContent, pdfOcrSession } from "./ocr/pdfOcr";
+import type { PdfOcrCoverage } from "./ocr/pdfOcrSession";
 
 export type PdfReaderPhase = "loading" | "password" | "ready" | "error";
 export type PdfFindPhase = "idle" | "pending" | "found" | "not-found";
@@ -47,6 +49,8 @@ export interface PdfReaderState {
   readonly rotation: number;
   readonly scanned: boolean | null;
   readonly scale: number;
+  /** Text recognition on scanned pages; null until the PDF is open. */
+  readonly ocr: PdfOcrCoverage | null;
 }
 
 /**
@@ -88,6 +92,7 @@ const INITIAL_STATE: PdfReaderState = {
   rotation: 0,
   scanned: null,
   scale: 1,
+  ocr: null,
 };
 
 function pdfErrorMessage(error: unknown): string {
@@ -119,7 +124,7 @@ async function detectScannedDocument(
   for (let pageNumber = 1; pageNumber <= pagesToInspect; pageNumber += 1) {
     const page = await runtime.document.getPage(pageNumber);
     try {
-      const content = await page.getTextContent();
+      const content = await pdfNativeTextContent(runtime.document, page);
       if (!isCurrent()) return null;
       if (content.items.some((item) => "str" in item && item.str.trim().length > 0)) return false;
     } finally {
@@ -329,38 +334,39 @@ export function useScientPdfReader(input: {
     let onPinchWheel: ((event: WheelEvent) => void) | null = null;
     const viewportSession = createPdfReaderViewportSession({ documentKey: input.documentKey });
     const responsiveZoom = createPdfResponsiveZoomController();
-    // A PDF known by its content is kept for a while after the reader leaves it (pdfDocuments.ts).
-    const lease = acquirePdfDocument(
+    const documentCacheKey =
       input.contentKey === null
         ? null
-        : JSON.stringify(["pdf", input.documentKey, input.contentKey]),
-      input.sourceUrl,
-      {
-        onPassword: ({ reason, submit }) => {
-          if (!isRequested()) return;
-          passwordRef.current = submit;
-          setState((previous) => ({
-            ...previous,
-            phase: "password",
-            passwordReason: reason,
-            error: null,
-          }));
-        },
-        onProgress: (loaded, total) => {
-          if (!isRequested() || runtimeRef.current) return;
-          setState((previous) => ({
-            ...previous,
-            progress: total && total > 0 ? Math.min(loaded / total, 1) : null,
-          }));
-        },
+        : JSON.stringify(["pdf", input.documentKey, input.contentKey]);
+    // A PDF known by its content is kept for a while after the reader leaves it (pdfDocuments.ts).
+    const lease = acquirePdfDocument(documentCacheKey, input.sourceUrl, {
+      onPassword: ({ reason, submit }) => {
+        if (!isRequested()) return;
+        passwordRef.current = submit;
+        setState((previous) => ({
+          ...previous,
+          phase: "password",
+          passwordReason: reason,
+          error: null,
+        }));
       },
-    );
+      onProgress: (loaded, total) => {
+        if (!isRequested() || runtimeRef.current) return;
+        setState((previous) => ({
+          ...previous,
+          progress: total && total > 0 ? Math.min(loaded / total, 1) : null,
+        }));
+      },
+    });
     let failed = false;
     let unkeep: (() => void) | null = null;
+    let detachOcr: (() => void) | null = null;
 
     void lease.value
-      .then(async ({ document }) => {
+      .then(async ({ document, passwordProtected }) => {
         if (!isRequested()) return;
+        // Before the viewer asks for pages: their text then includes recognized text.
+        const ocr = pdfOcrSession(document, documentCacheKey, passwordProtected);
         const runtime = createPdfRuntime({
           container,
           viewerElement,
@@ -370,6 +376,16 @@ export function useScientPdfReader(input: {
         });
         candidate = runtime;
         const displayed = () => current && runtimeRef.current === runtime;
+        const ocrBinding = attachPdfOcr(runtime, ocr);
+        const unsubscribeOcr = ocr.subscribe(() => {
+          if (!displayed()) return;
+          const next = ocr.coverage();
+          setState((previous) => (previous.ocr === next ? previous : { ...previous, ocr: next }));
+        });
+        detachOcr = () => {
+          unsubscribeOcr();
+          ocrBinding.detach();
+        };
         let preparedOutline: PDFOutline = [];
         let preparedScanned: boolean | null = null;
 
@@ -409,12 +425,14 @@ export function useScientPdfReader(input: {
             unkeep =
               shelfPlace?.keep({
                 hide: (evict, viewBytes) => {
+                  ocrBinding.setParked(true);
                   runtime.park();
                   return lease.park(evict, viewBytes);
                 },
                 show: () => {
                   lease.unpark();
                   runtime.unpark();
+                  ocrBinding.setParked(false);
                 },
               }) ?? null;
             container.classList.remove("scient-pdf-staging");
@@ -447,6 +465,7 @@ export function useScientPdfReader(input: {
                 scale: runtime.viewer.currentScale,
                 outline: preparedOutline,
                 scanned: preparedScanned,
+                ocr: ocr.coverage(),
               }));
             });
             disposeOld?.();
@@ -625,6 +644,7 @@ export function useScientPdfReader(input: {
       passwordRef.current = null;
       if (pinchFrame !== null) cancelAnimationFrame(pinchFrame);
       if (onPinchWheel) container.removeEventListener("wheel", onPinchWheel);
+      detachOcr?.();
       const runtime = candidate;
       if (runtime && runtimeRef.current === runtime) {
         viewportSession.snapshot(
@@ -835,6 +855,7 @@ export function useScientPdfReader(input: {
   const prepareSearch = useStableCallback(() => {
     const runtime = runtimeRef.current;
     if (!runtime || activeSearchQueryRef.current.length > 0) return;
+    // The PDF's own text is extracted while the query is typed; scanned pages wait for one.
     runtime.eventBus.dispatch("find", {
       source: runtime,
       type: "",

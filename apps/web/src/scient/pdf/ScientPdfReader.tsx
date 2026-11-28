@@ -7,7 +7,15 @@ import type {
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
 import { EnvironmentId, type ContextMenuItem, type ScopedThreadRef } from "@t3tools/contracts";
-import { Download, FileText, ListTree, LoaderCircle, FolderSearch, X } from "lucide-react";
+import {
+  Download,
+  FileText,
+  ListTree,
+  LoaderCircle,
+  FolderSearch,
+  SquareDashedMousePointer,
+  X,
+} from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -46,9 +54,12 @@ import { pdfContentKey, webPdfSourceActions, webPdfSourceResolver } from "./pdfS
 import { parseSafePdfExternalUrl, stepPdfZoom, type PdfSidebarMode } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
-import { useScientPdfReader } from "./useScientPdfReader";
+import { useScientPdfReader, type PdfReaderState } from "./useScientPdfReader";
 import type { ScientPdfRuntime } from "./pdfRuntime";
-import { PdfAnnotationLayer } from "../annotations/PdfAnnotationLayer";
+import {
+  PdfAnnotationActionsContext,
+  usePdfAnnotationLayer,
+} from "../annotations/PdfAnnotationLayer";
 import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
 import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealRequests";
 import { pdfEditSession } from "./pdfEditSession";
@@ -79,6 +90,44 @@ export interface PdfSyncNavigation {
   readonly forwardTarget: PdfForwardSyncTarget | null;
   readonly onInverseSearch?: (point: PdfInverseSyncPoint, selectedText?: string) => void;
   readonly onPageChange: (page: number) => void;
+}
+
+type Translate = ReturnType<typeof useGT>;
+
+/** Scanned pages still being read, which a search's results do not include yet. */
+function searchRecognitionStatus(state: PdfReaderState, gt: Translate) {
+  const ocr = state.ocr;
+  if (!ocr || ocr.scanned === 0) return undefined;
+  const done = ocr.recognized + ocr.failed;
+  if (ocr.checked && done >= ocr.scanned) return undefined;
+  return {
+    label: gt("Reading {done}/{total}", { done, total: ocr.scanned }),
+    description: gt("Text recognized on {done} of {total} scanned pages so far", {
+      done: ocr.recognized,
+      total: ocr.scanned,
+    }),
+  };
+}
+
+function searchNotFoundNote(state: PdfReaderState, gt: Translate): string | undefined {
+  const ocr = state.ocr;
+  if (ocr && ocr.scanned > 0) {
+    if (ocr.failed >= ocr.scanned) {
+      return gt(
+        "Text on this PDF's scanned pages couldn't be recognized, so they weren't searched.",
+      );
+    }
+    if (ocr.failed > 0) {
+      return gt(
+        "{count, plural, one {{count} scanned page couldn't be read and wasn't searched.} other {{count} scanned pages couldn't be read and weren't searched.}}",
+        { count: ocr.failed },
+      );
+    }
+    return gt("Scanned pages are searched by their recognized text, which can contain errors.");
+  }
+  return state.scanned
+    ? gt("This PDF's pages are images, so their words can't be searched or copied.")
+    : undefined;
 }
 
 function PdfPasswordPrompt(props: {
@@ -662,6 +711,14 @@ function LoadedScientPdfReader(props: {
     props.source.capabilities.canRevealSource && props.actions.revealSource !== undefined;
   const canSaveCopy = presentedSource?.source.capabilities.canSaveCopy === true;
   const hasSourceActions = canSaveCopy || canRevealSource;
+  const annotationLayer = usePdfAnnotationLayer({
+    // Structural edits publish their bytes before displaying the new page order.
+    source: edit.url ? edit.savedSource : (presentedSource?.source ?? null),
+    container,
+    runtimeRef: reader.runtimeRef,
+    ready: currentPresentation && !edit.busy,
+  });
+  const area = annotationLayer.actions?.area ?? null;
 
   return (
     <div
@@ -703,9 +760,8 @@ function LoadedScientPdfReader(props: {
           total: state.findCount.total,
           notFound: state.findPhase === "not-found",
           // Said only when a search finds nothing, never over the page.
-          notFoundNote: state.scanned
-            ? "This PDF's pages are images, so their words can't be searched or copied."
-            : undefined,
+          notFoundNote: searchNotFoundNote(state, gt),
+          status: searchRecognitionStatus(state, gt),
           focusRequest: searchFocus,
           onFocus: () => setSearchOpen(true),
           onQuery: (value) => {
@@ -719,6 +775,15 @@ function LoadedScientPdfReader(props: {
         shortcutLabel={shortcutLabel}
         moreActions={
           <>
+            {area ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => area.setDrawing(true)}>
+                  <SquareDashedMousePointer />
+                  {gt("Mark an area", { $context: "menu item: draw a box on a PDF page" })}
+                </DropdownMenuItem>
+              </>
+            ) : null}
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
             {canSaveCopy ? (
               <DropdownMenuItem
@@ -745,6 +810,14 @@ function LoadedScientPdfReader(props: {
           </>
         }
       />
+      {area?.drawing ? (
+        <div className="scient-pdf-copy-notice" role="status">
+          <span>{gt("Drag across a page to mark an area.")}</span>
+          <Button variant="ghost" size="xs" onClick={() => area.setDrawing(false)}>
+            <T>Cancel</T>
+          </Button>
+        </div>
+      ) : null}
       {props.copyView ? (
         <div className="scient-pdf-copy-notice">
           <span>{props.copyView === "edited" ? gt("Edited copy") : gt("Original PDF")}</span>
@@ -949,12 +1022,7 @@ function LoadedScientPdfReader(props: {
           >
             <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
-          <PdfAnnotationLayer
-            source={edit.savedSource ?? presentedSource?.source ?? null}
-            container={container}
-            runtimeRef={reader.runtimeRef}
-            ready={currentPresentation && !edit.busy}
-          >
+          <PdfAnnotationActionsContext value={annotationLayer.actions}>
             <PdfQuoteLayer
               container={container}
               runtimeRef={reader.runtimeRef}
@@ -964,7 +1032,8 @@ function LoadedScientPdfReader(props: {
               citeThread={props.citeThread}
               revealOwner={props.revealOwner}
             />
-          </PdfAnnotationLayer>
+          </PdfAnnotationActionsContext>
+          {annotationLayer.overlay}
           {props.sourceNotice || state.updateError ? (
             <div className="scient-pdf-update-notice" role="status">
               <span>{state.updateError ?? props.sourceNotice}</span>

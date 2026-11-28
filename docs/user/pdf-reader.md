@@ -37,8 +37,9 @@ The reader supports:
 - existing PDF links, annotations, and form fields in read mode;
 - optional virtualized page thumbnails and the document outline, switched by the
   Pages and Outline icons at the top of the sidebar (hover for their names);
-- password-protected files, progress, invalid-file errors, and a scanned-page
-  notice; and
+- password-protected files, progress and invalid-file errors;
+- text recognition on scanned pages, so they can be searched, selected and quoted
+  (see [Scanned pages](#scanned-pages)); and
 - saving a copy from the secondary actions menu. In the desktop app, Scient
   opens a native Save dialog and confirms when the copy has been written;
   cancelling the dialog leaves the PDF unchanged.
@@ -63,7 +64,8 @@ and a little text around it.
   it once the message is sent.
 
 In a PDF in your project, the same bar also offers **Highlight** and **Note**,
-even where there is no conversation. See
+even where there is no conversation, and **Mark an area** in the **More** menu
+draws a box around a figure or any part of a page. See
 [Highlight and annotate PDFs](sources.md#highlight-and-annotate-pdfs).
 
 ## Page changes
@@ -129,8 +131,33 @@ use, such as fonts they share with it, stays. Existing base-document outlines, i
 and attachments are retained; destinations to removed pages follow a surviving
 page. Imported internal links are retained when their target is also inserted.
 
-The reader does not yet add Scient annotations or OCR. Scanned PDFs without a
-text layer can be read visually, but text selection and search may be limited.
+## Scanned pages
+
+When a page is a scan, an image with little or no text of its own, Scient reads
+its words on your computer while you look at it. The page shows **Reading text…**
+in its corner while recognition runs. You can then
+select and copy its words, quote them with **Ask in chat**, and highlight them or
+add a note. **Mark an area** lets you box a figure and add a note while the
+page is still being read. If a page already contains substantial text, Scient
+uses it even when an older transcription has mistakes.
+
+Type a query in Find (`Cmd/Ctrl+F`) to search the PDF. Matches in native text
+and on previously recognized pages can appear while Scient reads other scans.
+It starts near the current page. **Reading 12/40** means results are still
+incomplete. Clearing or closing Find cancels queued work on offscreen pages.
+A page already being read can finish.
+
+Scient reuses recognized text when you zoom or change your search. Reopening a
+PDF also reuses pages still in this computer’s cache. A page unlocked with a
+password is cached only in memory.
+
+Recognition reads English and Hebrew, including Hebrew sentences with English
+words, units and numbers. It reads the page as a picture, so expect mistakes,
+especially in tables, formulas, handwriting, and small or faint print. Check
+decimal points, minus signs and units against the image before quoting a value. On a
+scanned page, selections and highlights cover whole words. A quote from a scanned
+page tells the agent that its text was recognized and may contain errors. A page
+scanned sideways is read the way round that gives the most legible text.
 
 Keyboard shortcuts inside the reader:
 

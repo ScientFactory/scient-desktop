@@ -141,9 +141,10 @@ neutral location format the annotation store reuses.
   not count). `PdfQuoteLayer` shows Ask in chat (or the refusal) next to the
   selection and inserts through the active composer (`ComposerHandleContext`).
   A host enables it by passing `citeThread`; a draft attachment has none. For a
-  project PDF, `PdfAnnotationLayer` (`scient/annotations`) wraps the quote
-  layer and adds Highlight and Note to the same bar, with or without a thread;
-  annotations are described in [Sources](scient-sources.md#annotations).
+  project PDF, `usePdfAnnotationLayer` (`scient/annotations`) gives the quote
+  layer Highlight and Note for the same bar, with or without a thread, and the
+  More menu Mark an area; annotations are described in
+  [Sources](scient-sources.md#annotations).
 - **Budget.** A new quote's link must fit 40,000 characters
   (`PDF_CITATION_CAPTURE_BUDGET`), or the button says "Shorten selection". Links
   are read back up to 240,000 characters, as file quotes are, so the longest
@@ -183,9 +184,87 @@ editing is disabled. Scient annotation identity, provenance, persistence, and
 cross-artifact behavior remain a later product layer. This reader exposes a
 stable document/page navigation seam without inventing that data model early.
 
-OCR is likewise out of scope. The reader samples only the opening pages for text
-and describes that limited observation rather than declaring the whole document
-to be scanned.
+## Scanned pages
+
+`scient/pdf/ocr` recognizes the text of scanned pages locally. The runtime is
+Tesseract 5 through tesseract.js 7 (Apache-2.0) in Web Workers: LSTM-only cores
+(plain, SIMD and relaxed SIMD) and English and Hebrew `tessdata_best` integer
+models, served from `ocr-assets/` by `scripts/scientOcrAssets.ts` with their
+notices. No CDN request is made. OCRia Nano read the pilot's pages best, but its
+model license does not allow shipping it. Workers start with the first page and
+stop after a minute idle; two run at once on computers with eight or more cores.
+
+- **Seam.** One session per `PDFDocumentProxy` (`pdfOcrSession`, created before
+  the viewer asks for pages) patches each page's `getTextContent` and
+  `streamTextContent`. The text layer, selection, quotes and annotations
+  therefore read recognized words as page text, find as below: the page's own
+  items first, then recognized ones. PDF.js's `getTextContent` reads `this.streamTextContent`, so the
+  page's own text is collected from the unpatched stream. Callers that must see
+  only the PDF's own text use `pdfNativeTextContent`.
+- **Which pages.** A page is a scan when it has fewer than 160 non-space
+  characters of its own and images cover at least half of its area (from its
+  operator list, checked only on pages with little native text). Pure XFA forms
+  and other pages are never recognized.
+- **Find.** Find never waits for a reading. PDF.js extracts pages one after
+  another and selects a match only once the page it is on is extracted, so a
+  `getTextContent` that waited for a scan would hold every later page, and every
+  hit on them, for as long as that scan took. `attachPdfOcrFind` therefore gives
+  the reader's `PDFFindController` its own document (re-applied when the viewer
+  sets the document again) whose pages return `findTextContent`: the page's own
+  text plus its reading if already in memory. A reading that arrives later is
+  normalized and matched by a one-page scratch `PDFFindController`, because PDF.js
+  exports neither step, then merged into the reader's controller: page text,
+  matches, total, highlights and count. Recognized items follow the page's own,
+  so earlier matches and the selection keep their place; if nothing was found
+  before, the first late match is selected. A reading is merged only once the
+  page's drawn text layer shows recognized text (or none is drawn), since its
+  offsets would otherwise land on a layer without those words. The merge writes
+  the controller's underscore fields of PDF.js 6.4; `pdfOcrFind.browser.test.ts`
+  runs the real controller to catch a PDF.js change.
+- **Search reading.** Opening find only extracts the PDF's own text. While
+  PDF.js is extracting native text, background scan sweeps wait so ordinary
+  PDFs keep full native search speed and never duplicate `getTextContent`.
+  Once extraction finishes and a reader has a query (its `find` events), one
+  pass inspects only unclassified sparse pages (or remaining pages once a scan
+  is known) from that reader's page, wrapping, at most `PDF_OCR_SEARCH_AHEAD`
+  at a time: each holds its page, classified and, if a scan, queued, until read;
+  pages read only for a search are cleaned up. Keystrokes keep the pass. Demand
+  is per reader: when the last reader clears its query, closes find or closes,
+  queued pages are dropped at once; a page being read finishes, since Tesseract
+  cannot stop mid-page, and is cached. A later search starts a new pass that
+  skips pages already known. A PDF with no scanned or sparse pages is never
+  swept. The search field shows the share read so far.
+- **Text layer.** A page is drawn with what is ready and queued for reading when
+  it appears; pages in view come before pages a search waits for. When its
+  reading arrives its text layer is drawn again, except under a live selection,
+  which is left until it moves. Recognized items sit in a marked-content span whose
+  id starts with `scient-ocr-text-`; that span, not a flag, tells selection the
+  page's text was recognized.
+- **Geometry and anchors.** Each word is one item spanning its box at its line's
+  height, axis-aligned, so selections and highlights cover words. A target's page
+  records `recognized: { engine, geometry: "word-box" }`; offsets and text hashes
+  follow the usual profile, and the agent view marks the page as recognized. The
+  text is derived deterministically from the stored reading, so anchors verify on
+  this computer; another computer's reading can differ and is then relocated by
+  text, as for a changed PDF.
+- **Direction.** Tesseract reads a Hebrew line word by word from the right, which
+  reverses an English run inside it ("mg 10-20") and mirrors its brackets. Such
+  runs, and Hebrew runs in English lines, are put back in reading order and
+  direction marks are dropped. A page whose first reading has little confident
+  text among many words is read at the other three quarter turns and the most
+  legible reading kept.
+- **Cache.** Readings are kept in IndexedDB (`scient-pdf-ocr`), keyed by the
+  recognizer, intrinsic PDF rotation and SHA-256 of the rendered page image, with an alias from the
+  document cache key, page and rotation so a reopened PDF preloads its cached
+  pages in one IndexedDB read without rendering them again.
+  At most 4,000 pages are kept, least recently used dropped first. This is the
+  only PDF content the client persists, and it stays in this browser profile. Pages
+  unlocked with a password use a cache in memory for that open document.
+
+Recognized text exists only in the client. Server-side readers of a PDF's text
+(Sources full text, agents anchoring annotations by quote) do not see it. Tables,
+formulas, handwriting, other scripts and vertical text are not handled beyond
+what Tesseract reads as lines.
 
 ## Upstream maintenance
 

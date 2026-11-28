@@ -1,5 +1,6 @@
 import type { PdfMaterial } from "@scientfactory/document-artifacts";
 import {
+  isScientRegionAnchor,
   liveScientAnnotations,
   type EnvironmentId,
   type ScientAnnotationAlternative,
@@ -167,7 +168,11 @@ export async function removeAnnotation(
   if (!removed) return;
   toastManager.add({
     type: "success",
-    title: removed.highlighted ? m(msg("Highlight removed")) : m(msg("Note removed")),
+    title: isScientRegionAnchor(removed.anchor)
+      ? m(msg("Area removed", { $context: "a box marked on a PDF page" }))
+      : removed.highlighted
+        ? m(msg("Highlight removed"))
+        : m(msg("Note removed")),
     actionProps: {
       children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {

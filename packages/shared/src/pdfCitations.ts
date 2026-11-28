@@ -136,7 +136,11 @@ export function pdfCitationForProvider(citation: PdfCitation) {
     document: agentDocument(citation),
     revision: citation.target.material === null ? ("unverified" as const) : ("exact" as const),
     selection: "text" as const,
-    pages: pages.map((page) => ({ page: page.page, text: page.quote })),
+    pages: pages.map((page) => ({
+      page: page.page,
+      text: page.quote,
+      ...(page.recognized ? { recognized: true as const } : {}),
+    })),
     before: pages[0]!.prefix,
     after: pages.at(-1)!.suffix,
     ...(citation.comment === undefined ? {} : { comment: citation.comment }),
@@ -144,4 +148,4 @@ export function pdfCitationForProvider(citation: PdfCitation) {
 }
 
 export const PDF_CITATION_PROVIDER_NOTE =
-  "PDF quotes give the page and the text as Scient's PDF reader extracted it, with up to 64 characters before and after. The PDF may have changed since the quote was taken.";
+  "PDF quotes give the page and the text as Scient's PDF reader extracted it, with up to 64 characters before and after. The PDF may have changed since the quote was taken. A page marked recognized is a scan whose text was read from its image, so its words can hold recognition errors.";

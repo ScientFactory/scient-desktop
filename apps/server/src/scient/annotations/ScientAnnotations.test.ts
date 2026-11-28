@@ -84,6 +84,57 @@ describe("ScientAnnotations", () => {
     }).pipe(Effect.scoped, Effect.provide(layer), onProjectBackend),
   );
 
+  it.effect("keeps a box drawn on a page with no text and shows it again when reopened", () =>
+    Effect.gen(function* () {
+      const { root } = yield* project;
+      const annotations = yield* ScientAnnotations;
+      // A page with no text stands in for a scan whose words are not recognized yet.
+      yield* write(root, "scans/figure.pdf", [[]]);
+      const opened = yield* annotations.forDocument({ root, relativePath: "scans/figure.pdf" });
+      if (opened.status !== "available") throw new Error("Expected an annotatable PDF");
+      const anchor = {
+        selector: {
+          type: "region" as const,
+          pages: [
+            {
+              page: 1,
+              viewBox: [0, 0, 612, 792] as const,
+              rotation: 0,
+              userUnit: 1,
+              rect: [72.5, 400, 300, 700.25] as const,
+            },
+          ] as const,
+        },
+      };
+      const created = yield* annotations.mutate(
+        {
+          root,
+          relativePath: "scans/figure.pdf",
+          material: opened.material,
+          command: {
+            action: "create",
+            annotationId: "ann_regionfig1",
+            anchor,
+            highlighted: false,
+            note: "Figure 2 contradicts Table 1",
+          },
+        },
+        "user",
+      );
+      expect(created.outcome).toBe("created");
+
+      const reopened = yield* annotations.forDocument({ root, relativePath: "scans/figure.pdf" });
+      expect(reopened.status === "available" && reopened.annotations).toEqual([
+        expect.objectContaining({
+          annotationId: "ann_regionfig1",
+          anchor,
+          highlighted: false,
+          note: "Figure 2 contradicts Table 1",
+        }),
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layer), onProjectBackend),
+  );
+
   it.effect("reports a folder that is not a Scient project as unavailable", () =>
     Effect.gen(function* () {
       const { root } = yield* project;

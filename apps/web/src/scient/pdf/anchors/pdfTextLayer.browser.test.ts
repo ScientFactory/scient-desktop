@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ScientPdfRuntime } from "../pdfRuntime";
+import { PDF_OCR_ENGINE, PDF_OCR_LAYER_ID } from "../ocr/pdfOcrText";
 import { readPdfTextSelection } from "./pdfTextLayer";
 
 /** pdf.js-shaped pages: `.page[data-page-number] > .textLayer > span` per line, `br` for EOL. */
@@ -59,6 +60,19 @@ function select(start: Text, startOffset: number, end: Text, endOffset: number) 
 }
 
 describe("reading a PDF selection", () => {
+  it("labels only selections that include recognized text on a mixed page", () => {
+    using fixture = pages([["native stamp", "scanned words"]]);
+    const stamp = fixture.text(1, 0);
+    const scan = fixture.text(1, 1);
+    scan.parentElement!.id = PDF_OCR_LAYER_ID + "1";
+    const native = readPdfTextSelection(fixture.runtime, select(stamp, 0, stamp, stamp.length));
+    expect(native._tag).toBe("Ready");
+    if (native._tag === "Ready") expect(native.pages[0]!.recognizedBy).toBeUndefined();
+    const mixed = readPdfTextSelection(fixture.runtime, select(stamp, 0, scan, scan.length));
+    expect(mixed._tag).toBe("Ready");
+    if (mixed._tag === "Ready") expect(mixed.pages[0]!.recognizedBy).toBe(PDF_OCR_ENGINE);
+  });
+
   it("maps a selection across pages to per-page offsets in the text-layer profile", () => {
     using fixture = pages([["alpha one", "alpha two"], ["beta one"], ["gamma one", "gamma two"]]);
     const { runtime, text } = fixture;
