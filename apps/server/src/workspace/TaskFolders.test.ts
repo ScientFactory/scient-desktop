@@ -612,6 +612,7 @@ it.live("keeps a recovery checkout's Git registration in a guarded storage sweep
         root: taskFolder.root,
         force: false,
         forget: false,
+        projectCommands: "request-not-permitted",
         removeCheckout: () => Effect.die("The original checkout is absent"),
       });
 
