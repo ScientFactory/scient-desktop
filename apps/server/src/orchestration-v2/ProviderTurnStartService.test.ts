@@ -81,6 +81,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { NativeSessionOperationError } from "./Adapters/NativeSessionAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -510,6 +511,8 @@ function makeLocalCommandHarness(input: {
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
+  readonly openSessionBusy?: true;
+  readonly idleCompaction?: "beforeCacheExpires";
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
   readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
@@ -610,7 +613,8 @@ function makeLocalCommandHarness(input: {
     attachments: [],
     streaming: false,
     createdBy: input.createdBy ?? "user",
-    creationSource: input.createdBy === undefined ? "web" : "mcp",
+    creationSource: input.idleCompaction ? "server" : input.createdBy === undefined ? "web" : "mcp",
+    ...(input.idleCompaction === undefined ? {} : { idleCompaction: input.idleCompaction }),
     ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
     createdAt: now,
     updatedAt: now,
@@ -1306,6 +1310,7 @@ function makeLocalCommandHarness(input: {
                           instanceId: newInstanceId,
                           providerSessionId,
                           cause: input.openFailure,
+                          ...(input.openSessionBusy ? { sessionBusy: true } : {}),
                         }),
                       ),
                     ),
@@ -1338,7 +1343,7 @@ function makeLocalCommandHarness(input: {
   );
   const tryHandlePromptCommand = vi.fn(() =>
     input.logoutFailure === undefined
-      ? Effect.succeed(true)
+      ? Effect.succeed(input.text.trim().toLowerCase() !== "/compact")
       : Effect.fail(
           new ProviderSetupError({
             instanceId: oldInstanceId,
@@ -3518,6 +3523,65 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+const busyScientSession = () =>
+  new ProviderAdapter.ProviderAdapterOpenSessionError({
+    driver: ProviderDriverKind.make("scient"),
+    providerSessionId: ProviderSessionId.make("busy-scient-session"),
+    cause: new NativeSessionOperationError({
+      detail: "This Scient Agent conversation is already open.",
+      code: "session_busy",
+    }),
+  });
+
+effectIt.effect.each([false, true])(
+  "skips idle compaction when the native session is locked or still closing (closing: %s)",
+  (closing) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "/compact",
+        previousMessages: ["Earlier request"],
+        createdBy: "agent",
+        idleCompaction: "beforeCacheExpires",
+        openFailure: closing ? "The prior native close is still pending." : busyScientSession(),
+        ...(closing ? { openSessionBusy: true } : {}),
+      });
+
+      yield* harness.startWithRetry;
+
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      const projection = harness.projection();
+      expect(projection.runs.at(-1)).toMatchObject({ status: "cancelled", startedAt: null });
+      expect(projection.attempts[0]).toMatchObject({ status: "cancelled", startedAt: null });
+      expect(projection.nodes[0]).toMatchObject({ status: "cancelled", startedAt: null });
+      expect(projection.turnItems).toMatchObject([{ type: "compaction", status: "cancelled" }]);
+      expect(harness.settledRuns).toEqual(["cancelled"]);
+    }),
+);
+
+effectIt.effect("still reports a busy session for a manually requested compaction", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "/compact",
+      previousMessages: ["Earlier request"],
+      openFailure: busyScientSession(),
+    });
+
+    yield* harness.start;
+
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        status: "failed",
+        title: "Provider session failed to open",
+        failure: { message: "This Scient Agent conversation is already open." },
+      },
+    ]);
   }),
 );
 

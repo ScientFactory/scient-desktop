@@ -204,14 +204,23 @@ export const acquireOmpSessionLock = (
   lockPath: string,
   registry: OmpSessionLockRegistry,
   fs: OmpLockFs = nodeOmpLockFs,
-): Effect.Effect<OmpSessionLockHandle, string> =>
+): Effect.Effect<
+  OmpSessionLockHandle,
+  { readonly reason: "busy" | "io"; readonly detail: string }
+> =>
   Effect.try({
     try: () => tryAcquireOmpSessionLockSync(lockPath, registry, fs),
-    catch: () => `${target.name} could not lock this conversation.`,
+    catch: () => ({
+      reason: "io" as const,
+      detail: `${target.name} could not lock this conversation.`,
+    }),
   }).pipe(
     Effect.filterOrFail(
       (result): result is OmpSessionLockHandle => result !== "busy",
-      () => `This ${target.name} conversation is already open.`,
+      () => ({
+        reason: "busy" as const,
+        detail: `This ${target.name} conversation is already open.`,
+      }),
     ),
   );
 

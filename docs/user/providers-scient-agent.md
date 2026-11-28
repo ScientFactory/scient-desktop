@@ -161,6 +161,8 @@ never expires is never compacted for being idle, nor is a thread whose model you
 last reply. **When you return** offers the **Compact** chip after an hour idle. Compaction before the
 cache expires needs a Scient Agent that reports its prompt cache, and for a five-minute cache one
 that also reports the warming-stop time; with an older one, those threads only get the chip.
+If the agent session is busy or still closing, Scient skips background compaction and leaves the
+conversation history as is.
 
 Agent notices, retry progress and save failures appear in the conversation. Questions retain
 the agent's offered choices, editor text and timeout information; an expired question closes
