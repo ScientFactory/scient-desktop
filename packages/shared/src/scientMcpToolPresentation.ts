@@ -11,7 +11,8 @@ export type ScientMcpToolSummaryAction =
   | "scient-overleaf"
   | "scient-custom-models"
   | "scient-compute"
-  | "scient-transcription";
+  | "scient-transcription"
+  | "scient-whatsapp";
 
 function tool(
   labels: T3McpToolDefinition["labels"],
@@ -70,6 +71,18 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_papers_queue: tool(["Queue", "Queueing", "Queued", "papers to fetch"], "scient-accounts"),
   t3_papers_status: tool(["Check", "Checking", "Checked", "queued papers"], "scient-accounts"),
   // SCIENT-FORK:END
+  whatsapp_status: tool(["Check", "Checking", "Checked", "WhatsApp"], "scient-whatsapp"),
+  whatsapp_chats: tool(["List", "Listing", "Listed", "WhatsApp chats"], "scient-whatsapp"),
+  whatsapp_messages: tool(["Read", "Reading", "Read", "WhatsApp messages"], "scient-whatsapp"),
+  whatsapp_search: tool(
+    ["Search", "Searching", "Searched", "WhatsApp messages"],
+    "scient-whatsapp",
+  ),
+  whatsapp_contacts: tool(
+    ["Look up", "Looking up", "Looked up", "WhatsApp contacts"],
+    "scient-whatsapp",
+  ),
+  whatsapp_send: tool(["Send", "Sending", "Sent", "a WhatsApp message"], "scient-whatsapp"),
   preview_network: {
     displayName: "Read the preview page's requests",
     labels: ["Read", "Reading", "Read", "the preview page's requests"],

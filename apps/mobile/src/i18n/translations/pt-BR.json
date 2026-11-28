@@ -421,6 +421,8 @@
   "1f97511c97da1198": "{count, plural, one {Tentou usar a Computação {count} vez} other {Tentou usar a Computação {count} vezes}}",
   "c46ed2b656421e98": "{count, plural, one {Used transcription {count} time} other {Used transcription {count} times}}",
   "4e4eb1f2d0419914": "{count, plural, one {Tried to use transcription {count} time} other {Tried to use transcription {count} times}}",
+  "a35af971f8484c7e": "{count, plural, one {Used WhatsApp {count} time} other {Used WhatsApp {count} times}}",
+  "2c8f599fbd8814fc": "{count, plural, one {Tried to use WhatsApp {count} time} other {Tried to use WhatsApp {count} times}}",
   "420bea546d5f8802": "Thread copiada",
   "2efb2dd3bf170f67": "Falha ao copiar a thread",
   "6c03545936b55e0b": "Link do PR copiado",

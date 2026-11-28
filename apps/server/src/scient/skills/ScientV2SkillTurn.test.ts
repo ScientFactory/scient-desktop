@@ -282,8 +282,9 @@ it.live.each(
           "sources:write",
           "skills:write",
           "threads:read",
-          // SCIENT-FORK:START — Scient Accounts: retain account grants during skill-scope changes.
+          // SCIENT-FORK:START — Scient Accounts and WhatsApp: retain their grants during skill-scope changes.
           "accounts",
+          "whatsapp",
           // SCIENT-FORK:END
         ] as const;
         const expectedCapabilities = new Set([

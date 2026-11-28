@@ -421,6 +421,8 @@
   "1f97511c97da1198": "{count, plural, one {Próbowano użyć Compute: {count} raz} few {Próbowano użyć Compute: {count} razy} many {Próbowano użyć Compute: {count} razy} other {Próbowano użyć Compute: {count} razy}}",
   "c46ed2b656421e98": "{count, plural, one {Used transcription {count} time} other {Used transcription {count} times}}",
   "4e4eb1f2d0419914": "{count, plural, one {Tried to use transcription {count} time} other {Tried to use transcription {count} times}}",
+  "a35af971f8484c7e": "{count, plural, one {Used WhatsApp {count} time} other {Used WhatsApp {count} times}}",
+  "2c8f599fbd8814fc": "{count, plural, one {Tried to use WhatsApp {count} time} other {Tried to use WhatsApp {count} times}}",
   "420bea546d5f8802": "Skopiowano wątek",
   "2efb2dd3bf170f67": "Nie udało się skopiować wątku",
   "6c03545936b55e0b": "Skopiowano link do pull requesta",
