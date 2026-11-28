@@ -980,7 +980,6 @@
   "src/scient/desktopUpdate/restoredUpdateRetry.scient.browser.test.tsx": 1.758,
   "src/scient/desktopUpdate/serverReleaseAvailability.test.ts": 0.009,
   "src/scient/desktopUpdate/SidebarOtherUpdates.browser.test.tsx": 0.696,
-  "src/scient/desktopUpdate/updateEverythingRetry.scient.test.ts": 0.008,
   "src/scient/desktopUpdate/updateReadyNotice.browser.test.tsx": 0.711,
   "src/scient/desktopUpdate/updateRestartFlow.browser.test.tsx": 5.477,
   "src/scient/desktopUpdate/useOtherUpdates.browser.test.tsx": 0.44,
