@@ -8,12 +8,13 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { savedViewReferences, savedViewUnresolvedRelations } from "@t3tools/shared/savedDataView";
 import * as Schema from "effect/Schema";
 import { useGT } from "gt-react";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { FileSurfaceFailure, FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
+import { PreviewPositionKey } from "~/components/files/previewPosition";
 
 import {
   Select,
@@ -54,6 +55,7 @@ export function DataFileTable(props: {
   readonly reloadKey: string;
 }) {
   const gt = useGT();
+  const filePositionKey = useContext(PreviewPositionKey);
   const workspace = props.workspace;
   const savedView =
     workspace && isScientSavedViewFile(workspace.path, props.viewSql) ? workspace : null;
@@ -173,6 +175,7 @@ export function DataFileTable(props: {
   };
   const currentRevision = savedView === null ? revision : viewRevision;
   const gridRevision = `${currentRevision}#${props.reloadKey}`;
+  const fileRevision = asset._tag === "Success" ? asset.fileRevision : null;
   const target: ProfileTarget = viewInput
     ? { kind: "view", input: viewInput }
     : { kind: "file", input: { path: props.absolutePath, sheet } };
@@ -185,6 +188,18 @@ export function DataFileTable(props: {
         {...(viewInput === null ? {} : { validateCopy })}
         label={sheets[sheet] ?? props.name}
         revision={gridRevision}
+        position={
+          workspace &&
+          savedView === null &&
+          filePositionKey !== null &&
+          typeof fileRevision === "string"
+            ? {
+                key: JSON.stringify([filePositionKey, sheet]),
+                revision: fileRevision,
+                verified: !asset.waiting,
+              }
+            : null
+        }
         loadPage={loadPage}
         enableMinimumFilter={
           workspace !== undefined && (savedView !== null || canSaveDataView(workspace.path))

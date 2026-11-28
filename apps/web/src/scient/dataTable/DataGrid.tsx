@@ -11,6 +11,7 @@ import { msg, useGT, useMessages } from "gt-react";
 import { ArrowDown, ArrowUp, Ellipsis, Search } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -20,6 +21,7 @@ import {
 } from "react";
 
 import { FileSurfaceFailure, FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
+import { createPositionMemory } from "~/components/files/previewPosition";
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
@@ -50,6 +52,7 @@ import {
 const MAX_CACHED_PAGES = 64;
 const MAX_LOADING_PAGES = 2;
 const FIRST_PAGE_LIMIT = 200;
+const savedRows = createPositionMemory<{ revision: string; rowCount: number; row: number }>();
 type TableShape = Omit<DataTablePage, "offset" | "rows">;
 
 interface Cell {
@@ -91,6 +94,12 @@ export interface DataGridProps {
   readonly loadPage: (query: DataTableQuery) => Promise<DataTablePage>;
   /** A new revision drops every loaded row, as when the source changes. */
   readonly revision: string;
+  /** A workspace file and sheet whose default view can outlive this grid. */
+  readonly position?: {
+    readonly key: string;
+    readonly revision: string;
+    readonly verified: boolean;
+  } | null;
   readonly actionTriggerRef?: RefObject<HTMLButtonElement | null>;
   readonly toolbarStart?: ReactNode;
   readonly isCellChanged?: (rowLabel: string, column: number) => boolean;
@@ -122,6 +131,7 @@ export function DataGrid(props: DataGridProps) {
   const { shape, error } = table;
 
   const scroller = useRef<HTMLDivElement | null>(null);
+  const restoredPosition = useRef<{ key: string; revision: string } | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [anchor, setAnchor] = useState<Cell | null>(null);
@@ -150,6 +160,11 @@ export function DataGrid(props: DataGridProps) {
 
   const columns = shape?.columns ?? [];
   const rowCount = shape?.matchCount ?? 0;
+  const positionKey = props.position?.key ?? null;
+  const positionRevision = props.position?.revision ?? null;
+  const positionVerified = props.position?.verified === true;
+  const plainView = sort === null && searchText === "" && search === "" && minimum === null;
+  const positionReady = error === null && table.pages.size > 0 && viewport.height > 0;
   const pageRows = dataTablePageRows(columns.length);
   const visibleRows = rowWindow({
     scrollTop: scroll.top,
@@ -158,6 +173,64 @@ export function DataGrid(props: DataGridProps) {
   });
   const firstPage = Math.floor(visibleRows.first / pageRows);
   const lastPage = Math.floor((visibleRows.first + Math.max(0, visibleRows.count - 1)) / pageRows);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll and its virtual row window once the current revision has a measured track.
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (
+      positionKey === null ||
+      positionRevision === null ||
+      !positionVerified ||
+      !positionReady ||
+      !node ||
+      (restoredPosition.current?.key === positionKey &&
+        restoredPosition.current.revision === positionRevision)
+    )
+      return;
+
+    const mountedFile = restoredPosition.current?.key === positionKey;
+    restoredPosition.current = { key: positionKey, revision: positionRevision };
+    if (mountedFile || node.scrollTop > 0) {
+      // Leave the reader where they are when the open file is repaged or the check arrives late.
+      if (plainView) {
+        const rows = rowWindow({
+          scrollTop: node.scrollTop,
+          viewportHeight: viewport.height,
+          rowCount,
+        });
+        savedRows.set(positionKey, {
+          revision: positionRevision,
+          rowCount,
+          row: rows.first + rows.offset / ROW_HEIGHT,
+        });
+      }
+      return;
+    }
+    const saved = savedRows.get(positionKey);
+    const row =
+      plainView && saved?.revision === positionRevision && saved.rowCount === rowCount
+        ? saved.row
+        : 0;
+    const rows = rowWindow({ scrollTop: 0, viewportHeight: viewport.height, rowCount });
+    node.scrollTop = rows.scrollTopFor(row);
+    const top = node.scrollTop;
+    setScroll((current) => (current.top === top ? current : { ...current, top }));
+    savedRows.set(positionKey, { revision: positionRevision, rowCount, row });
+  }, [
+    plainView,
+    positionKey,
+    positionReady,
+    positionRevision,
+    positionVerified,
+    rowCount,
+    viewport.height,
+  ]);
+
+  // A mounted file can remember its current row while the same revision is rechecked.
+  const canRememberPosition = () =>
+    positionVerified ||
+    (restoredPosition.current?.key === positionKey &&
+      restoredPosition.current.revision === positionRevision);
 
   const requestPage = useStableCallback((page: number) => {
     const requested = table;
@@ -260,6 +333,8 @@ export function DataGrid(props: DataGridProps) {
     setFocus(null);
     if (scroller.current) scroller.current.scrollTop = 0;
     setScroll((current) => ({ ...current, top: 0 }));
+    if (positionKey !== null && positionRevision !== null && canRememberPosition())
+      savedRows.set(positionKey, { revision: positionRevision, rowCount, row: 0 });
   };
 
   const selection =
@@ -551,9 +626,24 @@ export function DataGrid(props: DataGridProps) {
         aria-colcount={columns.length + 1}
         aria-multiselectable="true"
         className="relative min-h-0 flex-1 overflow-auto text-xs outline-none select-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-ring"
-        onScroll={(event) =>
-          setScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft })
-        }
+        onScroll={(event) => {
+          const { scrollTop: top, scrollLeft: left } = event.currentTarget;
+          setScroll({ top, left });
+          if (
+            positionKey !== null &&
+            positionRevision !== null &&
+            positionReady &&
+            plainView &&
+            canRememberPosition()
+          ) {
+            const rows = rowWindow({ scrollTop: top, viewportHeight: viewport.height, rowCount });
+            savedRows.set(positionKey, {
+              revision: positionRevision,
+              rowCount,
+              row: rows.first + rows.offset / ROW_HEIGHT,
+            });
+          }
+        }}
         onKeyDown={onKeyDown}
       >
         <div
