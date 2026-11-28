@@ -144,7 +144,8 @@ the stable scheduler and production gate.
   The full WSL package below is built and qualified only by CI's nightly
   `schedule` run and by manual runs (`workflow_dispatch` of CI or of Windows
   Packaging): a verified build, a fresh install with launch smoke, and the Linux
-  payload check. Its failure blocks nothing else. Shipping WSL again means
+  payload check. A failure fails only that nightly or manual run, never a pull
+  request or the merge queue. Shipping WSL again means
   dropping the flag, restoring the release workflow's WSL node-pty and Linux
   SyncTeX inputs, and qualifying the full package on every pull request again.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
