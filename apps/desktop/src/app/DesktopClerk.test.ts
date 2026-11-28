@@ -46,6 +46,13 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
+// SCIENT-FORK:START — a window opened while running in the background is shown once ready.
+import type * as Electron from "electron";
+import {
+  clearAwaitingFirstReveal,
+  markAwaitingFirstReveal,
+} from "../scient/backgroundRunning/firstReveal.ts";
+// SCIENT-FORK:END
 
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
@@ -248,6 +255,50 @@ describe("DesktopClerk", () => {
       );
     },
   );
+
+  // SCIENT-FORK:START — a window opened while running in the background is shown once ready.
+  it.effect("a second instance leaves a window awaiting its first reveal to DesktopWindow", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const reveals: unknown[] = [];
+    const window = { id: 2 } as unknown as Electron.BrowserWindow;
+    const electronApp = {
+      quit: Effect.void,
+      on: (eventName: string, listener: (...args: unknown[]) => void) =>
+        Effect.sync(() => {
+          listeners.set(eventName, listener);
+        }),
+    } as unknown as ElectronApp.ElectronApp["Service"];
+    const electronWindow = {
+      currentMainOrFirst: Effect.succeedSome(window),
+      reveal: (value: unknown) => Effect.sync(() => void reveals.push(value)),
+    } as unknown as ElectronWindow.ElectronWindow["Service"];
+    const settle = Effect.promise(() => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      return promise;
+    });
+
+    return Effect.gen(function* () {
+      yield* (yield* DesktopClerk.DesktopClerk).configure;
+      markAwaitingFirstReveal(window);
+      listeners.get("second-instance")!({}, ["t3"]);
+      yield* settle;
+      assert.deepEqual(reveals, []);
+      clearAwaitingFirstReveal(window);
+      listeners.get("second-instance")!({}, ["t3"]);
+      yield* settle;
+      assert.deepEqual(reveals, [window]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerDesktopClerk(true, [], "linux", undefined, undefined, listeners)),
+      Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+    );
+  });
+  // SCIENT-FORK:END
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
 

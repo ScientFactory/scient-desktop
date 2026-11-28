@@ -74,6 +74,7 @@ import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublishe
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 // SCIENT-FORK:START — background-running analytics.
 import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+import { isAwaitingFirstReveal } from "../scient/backgroundRunning/firstReveal.ts";
 // SCIENT-FORK:END
 
 const environmentInput = {
@@ -1119,33 +1120,58 @@ describe("DesktopWindow", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("a requested window whose page fails to load is a failed attempt", () =>
-    Effect.gen(function* () {
-      const fake = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const { facts, recorded } = yield* backgroundFacts;
-      yield* Effect.gen(function* () {
-        const { windows } = yield* windowless(fake);
-        yield* facts.windowlessStarted;
-        yield* windows.activate.pipe(
-          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+  it.effect(
+    "a page that fails to load is a failed attempt, and the next request loads it again",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const revealed = Promise.withResolvers<void>();
+        const { facts, recorded } = yield* backgroundFacts;
+        yield* Effect.gen(function* () {
+          const { windows } = yield* windowless(fake);
+          yield* facts.windowlessStarted;
+          yield* windows.activate.pipe(
+            Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+          );
+          // The older second-instance reveal leaves it to the readiness-aware path.
+          assert.isTrue(isAwaitingFirstReveal(fake.window));
+          fake.webContentsListeners.get("did-fail-load")?.({}, -105, "NAME_NOT_RESOLVED", "", true);
+          yield* Effect.yieldNow;
+          const loads = fake.loadURL.mock.calls.length;
+          yield* windows.activate.pipe(
+            Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"),
+          );
+          assert.equal(fake.loadURL.mock.calls.length, loads + 1);
+          yield* paint(fake, revealed);
+          assert.isFalse(isAwaitingFirstReveal(fake.window));
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: () => revealed.resolve(),
+            }),
+          ),
+          Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
         );
-        fake.webContentsListeners.get("did-fail-load")?.({}, -105, "NAME_NOT_RESOLVED", "", true);
-        yield* Effect.yieldNow;
-      }).pipe(
-        Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })),
-        Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
-      );
-      assert.deepEqual(recorded, [
-        {
-          kind: "window-not-shown",
-          platform: "windows",
-          via: "tray",
-          windowlessBucket: "under-1m",
-        },
-      ]);
-    }).pipe(Effect.scoped),
+        assert.deepEqual(recorded, [
+          {
+            kind: "window-not-shown",
+            platform: "windows",
+            via: "tray",
+            windowlessBucket: "under-1m",
+          },
+          {
+            kind: "window-returned",
+            platform: "windows",
+            via: "second-launch",
+            windowlessBucket: "under-1m",
+          },
+        ]);
+      }).pipe(Effect.scoped),
   );
   // SCIENT-FORK:END
 

@@ -54,6 +54,10 @@ import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
 // SCIENT-FORK:START — startup timing and background running, reported through the analytics path.
 import * as DesktopStartupTiming from "../scient/startupTiming/DesktopStartupTiming.ts";
 import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+import {
+  clearAwaitingFirstReveal,
+  markAwaitingFirstReveal,
+} from "../scient/backgroundRunning/firstReveal.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — near-full default size and one-time size updates for older profiles.
 import { applyOneTimeMainWindowSizing, nearFullMainWindowSize } from "./scientMainWindowSizing.ts";
@@ -480,6 +484,8 @@ export const make = Effect.gen(function* () {
   // SCIENT-FORK:END
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
+  // SCIENT-FORK: windows whose page failed to load for good, with the call that loads it again.
+  const failedLoads = new WeakMap<Electron.BrowserWindow, () => void>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
@@ -1092,10 +1098,13 @@ export const make = Effect.gen(function* () {
             ...(retryInMs === undefined ? {} : { retryInMs }),
           }),
         );
-        // SCIENT-FORK: background-running analytics: a window asked for that will not show.
-        if (retryInMs === undefined && !firstRevealComplete && Option.isSome(backgroundFacts)) {
-          void runPromise(backgroundFacts.value.windowNotShown);
+        // SCIENT-FORK:START — background running: a window asked for that will not show. The next
+        // request loads it again instead of reusing a window whose page never loaded.
+        if (retryInMs === undefined && !firstRevealComplete) {
+          failedLoads.set(window, loadApplication);
+          if (Option.isSome(backgroundFacts)) void runPromise(backgroundFacts.value.windowNotShown);
         }
+        // SCIENT-FORK:END
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
@@ -1178,6 +1187,8 @@ export const make = Effect.gen(function* () {
         return;
       firstRevealComplete = true;
       pendingMainReveals.delete(window);
+      // SCIENT-FORK: background running.
+      clearAwaitingFirstReveal(window);
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
@@ -1192,6 +1203,8 @@ export const make = Effect.gen(function* () {
       yield* dismissConnectingSplash;
     });
     pendingMainReveals.set(window, revealWhenReady);
+    // SCIENT-FORK: shown when ready; the older second-instance reveal must not show it blank.
+    if (yield* Ref.get(desktopState.background)) markAwaitingFirstReveal(window);
     bindFirstRevealTrigger(revealSubscribers, () => {
       rendererReady = true;
       void runPromise(revealWhenReady);
@@ -1418,6 +1431,13 @@ export const make = Effect.gen(function* () {
       // SCIENT-FORK:END
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
+        // SCIENT-FORK:START — a window whose page failed to load is loaded again, then shown.
+        const reload = failedLoads.get(existingWindow.value);
+        if (reload !== undefined) {
+          failedLoads.delete(existingWindow.value);
+          reload();
+        }
+        // SCIENT-FORK:END
         yield* revealMain(existingWindow.value);
         return;
       }

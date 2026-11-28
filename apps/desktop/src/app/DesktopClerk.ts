@@ -29,6 +29,9 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 // SCIENT-FORK:START clerk-sign-in-return
 import { createClerkBridgeWithSignInReturn } from "./ClerkSignInReturn.ts";
 // SCIENT-FORK:END clerk-sign-in-return
+// SCIENT-FORK:START — a window opened while running in the background is shown once ready.
+import { isAwaitingFirstReveal } from "../scient/backgroundRunning/firstReveal.ts";
+// SCIENT-FORK:END
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -276,7 +279,10 @@ export const make = Effect.gen(function* () {
         void runPromise(
           Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
+            // SCIENT-FORK: DesktopWindow shows a window awaiting its first reveal once it is ready.
+            if (Option.isSome(mainWindow) && !isAwaitingFirstReveal(mainWindow.value)) {
+              yield* electronWindow.reveal(mainWindow.value);
+            }
           }),
         );
       };
