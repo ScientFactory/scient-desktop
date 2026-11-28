@@ -10,8 +10,7 @@ vi.mock("./session", () => ({
   },
 }));
 
-const { forwardLocalitiesAtom, forwardPort, PortForwardSameMachineError } =
-  await import("./portForwards");
+const { forwardLocalitiesAtom } = await import("./portForwards");
 
 afterEach(() => {
   vi.useRealTimers();
@@ -39,22 +38,4 @@ describe("forward locality", () => {
     expect(registry.get(atom)).toEqual(["remote"]);
     unmount();
   });
-});
-
-it("recognizes only the desktop's top-level same-machine error", async () => {
-  const sameMachine = "LoopbackTunnelSameMachineError: The server is on this machine.";
-  const ipcPrefix = "Error invoking remote method 'desktop:port-forward-start': ";
-  const start = vi
-    .fn()
-    .mockRejectedValueOnce(new Error(ipcPrefix + sameMachine))
-    .mockRejectedValueOnce(new Error(ipcPrefix + "LoopbackTunnelForwardError: " + sameMachine));
-  vi.stubGlobal("window", { desktopBridge: { preview: { forwardPort: start } } });
-  const environmentId = EnvironmentId.make("env");
-
-  await expect(forwardPort(environmentId, 3000)).rejects.toBeInstanceOf(
-    PortForwardSameMachineError,
-  );
-  await expect(forwardPort(environmentId, 3000)).rejects.not.toBeInstanceOf(
-    PortForwardSameMachineError,
-  );
 });

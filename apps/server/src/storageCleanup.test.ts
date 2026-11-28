@@ -4934,6 +4934,7 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  // SCIENT-FORK:START — isolated recovery uses the private storage cleanup fixture.
   it.live.each(["linked", "lost gitfile"] as const)(
     "keeps a partially removed checkout and its metadata for recovery (%s)",
     (failure) =>
@@ -4986,6 +4987,7 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
+  // SCIENT-FORK:END
   it.live("removes a clean isolated worktree and its empty private container", () =>
     runCleanupTest(
       Effect.gen(function* () {

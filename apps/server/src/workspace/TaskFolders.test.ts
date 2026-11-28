@@ -591,6 +591,7 @@ it.live("keeps a checkout that gained work while its folder's remove command wai
   ),
 );
 
+// SCIENT-FORK:START — guarded storage cleanup uses the private task-folder fixture.
 it.live("keeps a recovery checkout's Git registration in a guarded storage sweep", () =>
   withState((state) =>
     Effect.gen(function* () {
@@ -620,6 +621,7 @@ it.live("keeps a recovery checkout's Git registration in a guarded storage sweep
   ),
 );
 
+// SCIENT-FORK:END
 it.live("leaves a project's layout commands out for a request that may not run them", () =>
   withState((state) =>
     Effect.gen(function* () {
