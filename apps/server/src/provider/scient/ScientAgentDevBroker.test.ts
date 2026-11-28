@@ -1,8 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - The fixture checks native ownership and symlink targets.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { describe, expect, it } from "@effect/vitest";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { describe, expect, it } from "vitest";
 import { prepareScientAgentDevBroker } from "./ScientAgentDevBroker.ts";
 
 async function fixture() {

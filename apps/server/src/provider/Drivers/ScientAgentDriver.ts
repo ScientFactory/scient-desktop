@@ -161,21 +161,20 @@ export const ScientAgentDriver: ScientProviderDriver<
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
     const userHome = yield* HostProcess.HomeDirectory;
-    const brokerUrl = yield* Effect.tryPromise(() =>
-      prepareScientAgentDevBroker({
-        platform,
-        environment: hostEnvironment,
-        home: userHome,
-        root,
-        userId,
-      }),
-    ).pipe(
-      Effect.catch(() =>
-        Effect.logWarning("Could not attach Scient Agent to the shared dev ChatGPT sign-in.").pipe(
-          Effect.as(undefined),
+    const brokerUrl = yield* Effect.tryPromise({
+      try: () =>
+        prepareScientAgentDevBroker({
+          platform,
+          environment: hostEnvironment,
+          home: userHome,
+          root,
+          userId,
+        }),
+      catch: (cause) =>
+        failure("Could not attach Scient Agent to the shared dev ChatGPT sign-in.")(
+          cause instanceof Error ? cause : {},
         ),
-      ),
-    );
+    }).pipe(Effect.catch((error) => Effect.logWarning(error.detail).pipe(Effect.as(undefined))));
     if (brokerUrl !== undefined) processEnv.SCIENT_AGENT_AUTH_BROKER_URL = brokerUrl;
     // The Codex home whose installed plugins the codex-plugins source reads. A given CODEX_HOME is
     // expanded as Codex expands its home and passed on resolved, so both read the same folder.
