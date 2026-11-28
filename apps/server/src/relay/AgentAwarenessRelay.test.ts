@@ -1986,14 +1986,14 @@ it.effect("lets a stuck acknowledgement hold neither the next notice nor a chat"
       } as unknown as AccountsService["Service"],
     });
     yield* settle;
-    const chats = yield* relay.publishThread(THREAD_ID).pipe(Effect.forkChild);
+    // A chat's publish finishes, though the first acknowledgement never does.
+    yield* relay.publishThread(THREAD_ID);
     yield* settle;
     // regression: the notice queue and every link read waited on the stuck acknowledgement.
     assert.isTrue(
       publications.some((entry) => entry.state?.threadId === "scient-accounts-notice-n14"),
     );
     assert.isTrue(publications.some((entry) => entry.state?.threadId === THREAD_ID));
-    yield* Fiber.join(chats);
   }),
 );
 it.effect("lets a waiting link change go before link reads that come after it", () =>
