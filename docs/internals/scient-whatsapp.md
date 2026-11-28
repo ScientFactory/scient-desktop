@@ -84,13 +84,15 @@ Logs keep wacli's error text (connections, files, WhatsApp's answers), never mes
   not that it was delivered; a request that went out without a complete reply, or whose reply
   says the connection dropped first, is `send-uncertain`. A dispatched send runs to its end even
   when the agent call is cancelled, and keeps its slot meanwhile.
-- **Unlink**: close admission to agent calls and wait for those running, stop the connection,
-  `wacli auth logout`, delete the store. A logout WhatsApp didn't confirm is reported (remove the
-  device from the phone); a store that could not be deleted is `Failed` / `unlink-incomplete`,
-  remembered in `<stateDir>/whatsapp/unlink-pending` so a restart does not resume it and a new
-  link waits until an unlink succeeds. A link that stops after pairing (Cancel, a failure) logs
-  the device out when `doctor` shows it authenticated, and reports a logout WhatsApp didn't
-  confirm.
+- **Unlink**: record `<stateDir>/whatsapp/unlink-pending` first (nothing is undone when it can't
+  be written), close admission to agent calls and wait for those running, stop the connection,
+  `wacli auth logout`, delete the store, then clear the marker. A logout WhatsApp didn't confirm is
+  reported (remove the device from the phone); a store that could not be deleted is `Failed` /
+  `unlink-incomplete`, and the marker keeps a restart from resuming it and a new link from
+  starting until an unlink succeeds. A link that stops without linking (Cancel, a failure) and a
+  new link over an old store forget the pairing the same way: log out unless `doctor` says the
+  store is unpaired, delete, and report what didn't finish. A Cancel pressed while a scanned link
+  is finishing under the control lock is honoured: the link is logged out instead of kept.
 
 The link stays until the phone removes the device, the phone is offline for about 14 days, the
 account is banned or moved to a new phone, or the user unlinks. Restarting Scient reconnects

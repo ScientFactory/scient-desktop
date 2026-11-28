@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
@@ -33,6 +34,12 @@ const LINKED_DOCTOR = JSON.stringify({
     session_revoked: false,
     linked_jid: "972500000001:7@s.whatsapp.net",
   },
+  error: null,
+});
+/** What wacli reports for a store nothing has paired with (yet). */
+const UNLINKED_DOCTOR = JSON.stringify({
+  success: true,
+  data: { authenticated: false, session_revoked: false },
   error: null,
 });
 const event = (name: string, data: Record<string, unknown> = {}, ts = 1_000) =>
@@ -145,7 +152,7 @@ const withService = <A, E>(
       Effect.sync(() => makeFakeWacli(files)),
       (fake) =>
         Effect.sync(() => {
-          for (const key of ["auth", "sync", "sync2"]) fake.release(key);
+          for (const key of ["auth", "sync", "sync2", "doctor"]) fake.release(key);
           fake.cleanup();
         }),
     );
@@ -229,6 +236,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           event("qr_code", { code: "2@second" }, 21_000),
         ].join("\n"),
         "auth.hold": "",
+        "doctor.stdout": UNLINKED_DOCTOR,
       },
       {},
       ({ fake, storeDir }) =>
@@ -292,6 +300,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           message: "WhatsApp requested passkey verification; passkey pairing is not supported",
         }),
         "auth.exit": "1",
+        "doctor.stdout": UNLINKED_DOCTOR,
       },
       {},
       ({ storeDir }) =>
@@ -306,7 +315,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
 
   it.effect("cancelling a link stops it and forgets the partial store", () =>
     withService(
-      { "auth.stderr": event("qr_code", { code: "2@first" }), "auth.hold": "" },
+      {
+        "auth.stderr": event("qr_code", { code: "2@first" }),
+        "auth.hold": "",
+        "doctor.stdout": UNLINKED_DOCTOR,
+      },
       {},
       ({ storeDir }) =>
         Effect.gen(function* () {
@@ -315,6 +328,55 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           yield* statusWhere((state) => state._tag === "AwaitingScan");
           expect((yield* service.cancelLink).state._tag).toBe("Unlinked");
           expect(NodeFS.existsSync(storeDir)).toBe(false);
+        }),
+    ),
+  );
+
+  it.effect("a cancel pressed while a scanned link is finishing stops it from linking", () =>
+    withService(
+      {
+        "auth.stderr": [event("qr_code", { code: "2@first" }), event("connected")].join("\n"),
+        // The link's final check runs under the control lock; Cancel arrives while it does.
+        "doctor.stdout": LINKED_DOCTOR,
+        "doctor.hold": "",
+      },
+      {},
+      ({ fake, storeDir }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          yield* service.startLink;
+          // The final check started: the link's finish now holds the control lock.
+          yield* Effect.promise(() =>
+            expect
+              .poll(() => fake.calls().some((call) => call.includes("|--read-only --json doctor|")))
+              .toBe(true),
+          );
+          const cancel = yield* Effect.forkChild(service.cancelLink);
+          yield* Effect.yieldNow;
+          fake.release("doctor");
+          expect((yield* Fiber.join(cancel)).state._tag).toBe("Unlinked");
+          expect(fake.calls().some((call) => call.includes("auth logout"))).toBe(true);
+          expect(fake.calls().some((call) => call.includes("|sync "))).toBe(false);
+          expect(NodeFS.existsSync(storeDir)).toBe(false);
+        }),
+    ),
+  );
+
+  it.effect("linking again over a store the startup check couldn't read logs it out first", () =>
+    withService(
+      { "doctor.exit": "1", "auth.stderr": event("qr_code", { code: "2@first" }), "auth.hold": "" },
+      { linkedStore: true },
+      ({ fake }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          yield* statusWhere((state) => state._tag === "Failed");
+          yield* service.startLink;
+          yield* statusWhere((state) => state._tag === "AwaitingScan");
+          const calls = fake.calls();
+          const logout = calls.findIndex((call) => call.includes("auth logout"));
+          const auth = calls.findIndex((call) => call.includes("|auth --qr-format"));
+          expect(logout).toBeGreaterThanOrEqual(0);
+          expect(logout).toBeLessThan(auth);
         }),
     ),
   );
@@ -529,6 +591,54 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           expect(error.message).toContain("remove “Test MacBook” from Linked devices");
           expect((yield* service.status).state._tag).toBe("Unlinked");
           expect(NodeFS.existsSync(storeDir)).toBe(false);
+        }),
+    ),
+  );
+
+  it.effect("unlinking changes nothing when it can't record that it started", () =>
+    withService(
+      { "doctor.stdout": LINKED_DOCTOR, "sync.stderr": event("connected"), "sync.hold": "" },
+      { linkedStore: true },
+      ({ fake, storeDir }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          yield* statusWhere((state) => state._tag === "Linked");
+          const whatsappDir = NodePath.dirname(storeDir);
+          NodeFS.chmodSync(whatsappDir, 0o555);
+          const error = yield* Effect.flip(service.unlink).pipe(
+            Effect.ensuring(Effect.sync(() => NodeFS.chmodSync(whatsappDir, 0o755))),
+          );
+          expect(error.message).toContain("can't write to its WhatsApp folder");
+          expect((yield* service.status).state._tag).toBe("Linked");
+          expect(fake.calls().some((call) => call.includes("auth logout"))).toBe(false);
+          expect(NodeFS.existsSync(storeDir)).toBe(true);
+        }),
+    ),
+  );
+
+  it.effect("an unlink that can't delete the store keeps it pending", () =>
+    withService(
+      { "doctor.stdout": LINKED_DOCTOR, "sync.stderr": event("connected"), "sync.hold": "" },
+      { linkedStore: true },
+      ({ storeDir }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          yield* statusWhere((state) => state._tag === "Linked");
+          // A folder inside the store whose entries can't be removed.
+          const locked = NodePath.join(storeDir, "locked");
+          NodeFS.mkdirSync(locked);
+          NodeFS.writeFileSync(NodePath.join(locked, "file"), "");
+          NodeFS.chmodSync(locked, 0o555);
+          const error = yield* Effect.flip(service.unlink).pipe(
+            Effect.ensuring(Effect.sync(() => NodeFS.chmodSync(locked, 0o755))),
+          );
+          expect(error.message).toContain("couldn't delete its copy");
+          expect((yield* service.status).state).toMatchObject({
+            _tag: "Failed",
+            reason: "unlink-incomplete",
+          });
+          const pending = NodePath.join(NodePath.dirname(storeDir), "unlink-pending");
+          expect(NodeFS.existsSync(pending)).toBe(true);
         }),
     ),
   );

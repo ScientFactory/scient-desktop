@@ -127,7 +127,7 @@ const MessagesTool = Tool.make("whatsapp_messages", {
   .annotate(Tool.OpenWorld, true);
 
 const SearchTool = Tool.make("whatsapp_search", {
-  description: `Search the user's WhatsApp messages by text, newest first. ${OTHER_PEOPLES_CONTENT}`,
+  description: `Search the user's WhatsApp messages by text, best matches first. ${OTHER_PEOPLES_CONTENT}`,
   parameters: Schema.Struct({
     query: Text,
     chat: Schema.optional(Chat),

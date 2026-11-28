@@ -187,6 +187,8 @@ const make = Effect.gen(function* () {
   const agentCalls = yield* Semaphore.make(AGENT_CALLS);
   const unlinking = yield* Ref.make(false);
   const linkFiber = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
+  /** Set by Cancel before it waits for the control lock: a link finishing meanwhile honours it. */
+  const cancelRequested = yield* Ref.make(false);
   const connectionFiber = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
   /** The linked number, kept through a restriction for when it ends. */
   const linkedAccount = yield* Ref.make("");
@@ -232,14 +234,42 @@ const make = Effect.gen(function* () {
     // `makeDirectory`'s mode is masked by umask and skipped for an existing directory.
     yield* fileSystem.chmod(storeDir, 0o700).pipe(Effect.ignore);
   });
-  const removeStore = fileSystem
-    .remove(storeDir, { recursive: true, force: true })
-    .pipe(
+  const storeExists = fileSystem.exists(storeDir).pipe(Effect.orElseSucceed(() => false));
+  const unlinkIncomplete = "Scient couldn't delete its copy of your chats. Unlink again.";
+  const markUnlinkPending = fileSystem.writeFileString(unlinkPendingPath, "");
+  const clearUnlinkPending = fileSystem
+    .remove(unlinkPendingPath, { force: true })
+    .pipe(Effect.ignore);
+  /** A pending unlink holds only while its store is still there. */
+  const unlinkPending = Effect.gen(function* () {
+    if (!(yield* fileSystem.exists(unlinkPendingPath).pipe(Effect.orElseSucceed(() => false)))) {
+      return false;
+    }
+    if (yield* storeExists) return true;
+    yield* clearUnlinkPending;
+    return false;
+  });
+  /**
+   * Deletes the store, then forgets any pending unlink. When it can't, the unlink stays pending
+   * (a restart must not resume the copy that stayed) and the state says so: false.
+   */
+  const deleteStore = Effect.gen(function* () {
+    const deleted = yield* fileSystem.remove(storeDir, { recursive: true, force: true }).pipe(
+      Effect.as(true),
       Effect.catchCause((cause) =>
-        Effect.logWarning("whatsapp: could not remove the local store", { cause }),
+        Effect.logWarning("whatsapp: could not delete the local store", { cause }).pipe(
+          Effect.as(false),
+        ),
       ),
     );
-  const storeExists = fileSystem.exists(storeDir).pipe(Effect.orElseSucceed(() => false));
+    if (deleted) {
+      yield* clearUnlinkPending;
+      return true;
+    }
+    yield* markUnlinkPending.pipe(Effect.ignore);
+    yield* setState({ _tag: "Failed", reason: "unlink-incomplete", message: unlinkIncomplete });
+    return false;
+  });
 
   const savedRestriction = fileSystem.readFileString(restrictionPath).pipe(
     Effect.flatMap(decodeSavedRestriction),
@@ -301,20 +331,23 @@ const make = Effect.gen(function* () {
   const stillOnPhone = `On your phone, remove “${deviceName}” from Linked devices.`;
 
   /**
-   * After linking stopped: log out a pairing that completed (the phone already lists this
-   * computer), then forget the store. False when WhatsApp didn't confirm the logout.
+   * Forget a store that may hold a pairing: log it out when it is (or may be) authenticated, then
+   * delete it. `loggedOut` is false when WhatsApp didn't confirm; `deleted` is false when the store
+   * stayed, and the state then shows `unlink-incomplete`.
    */
   const forgetPairing = Effect.gen(function* () {
-    const linked = (yield* storeExists)
-      ? yield* doctor.pipe(Effect.orElseSucceed(() => undefined))
-      : undefined;
-    const loggedOut = linked?.authenticated === true ? yield* logout : true;
-    yield* removeStore;
-    return loggedOut;
+    if (!(yield* storeExists)) {
+      yield* clearUnlinkPending;
+      return { loggedOut: true, deleted: true };
+    }
+    // Remembered first, so a restart in the middle does not resume the pairing.
+    yield* markUnlinkPending.pipe(Effect.ignore);
+    const linked = yield* doctor.pipe(Effect.orElseSucceed(() => undefined));
+    // A check that can't tell is treated as authenticated: the phone may list this computer.
+    const loggedOut = linked?.authenticated === false ? true : yield* logout;
+    const deleted = yield* deleteStore;
+    return { loggedOut, deleted };
   });
-  const unlinkPending = fileSystem
-    .exists(unlinkPendingPath)
-    .pipe(Effect.orElseSucceed(() => false));
 
   // ── Connection ────────────────────────────────────────────────────────────
 
@@ -504,23 +537,28 @@ const make = Effect.gen(function* () {
         }
       }),
     });
-    // Finish under the control lock so a cancel or unlink sees either linking or the outcome.
+    // Finish under the control lock so a cancel or unlink sees either linking or the outcome; a
+    // Cancel pressed while this waited or ran is honoured instead of linking.
     yield* control.withPermits(1)(
       Effect.gen(function* () {
         yield* Ref.set(linkFiber, undefined);
         const linked = exitCode === 0 && paired ? yield* doctor : undefined;
         const account = linked?.authenticated ? accountFromJid(linked.linked_jid) : undefined;
-        if (linked?.authenticated && linked.session_revoked !== true && account !== undefined) {
+        const cancelled = yield* Ref.get(cancelRequested);
+        if (
+          !cancelled &&
+          linked?.authenticated &&
+          linked.session_revoked !== true &&
+          account !== undefined
+        ) {
           yield* setLinked(account);
           yield* startConnection;
           return;
         }
-        const loggedOut = yield* forgetPairing;
         if (failure !== undefined) {
           yield* Effect.logWarning("whatsapp: linking failed", { message: failure.slice(0, 500) });
         }
-        const { reason, message } = classifyLinkFailure(failure);
-        yield* setState({ _tag: "Failed", reason, message: loggedOut ? message : stillOnPhone });
+        yield* endLink(cancelled ? "cancelled" : classifyLinkFailure(failure));
       }),
     );
   }).pipe(
@@ -528,12 +566,29 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* Effect.logWarning("whatsapp: linking failed", { cause });
         yield* Ref.set(linkFiber, undefined);
-        const loggedOut = yield* forgetPairing;
-        const { reason, message } = classifyLinkFailure(undefined);
-        yield* setState({ _tag: "Failed", reason, message: loggedOut ? message : stillOnPhone });
+        yield* endLink(classifyLinkFailure(undefined));
       }),
     ),
   );
+
+  /**
+   * A link that stopped without linking: forget the pairing, then show why (Unlinked for a
+   * cancel). A logout WhatsApp didn't confirm says to remove the device from the phone; a store
+   * that stayed shows `unlink-incomplete`.
+   */
+  const endLink = Effect.fn("WhatsApp.endLink")(function* (
+    outcome: "cancelled" | ReturnType<typeof classifyLinkFailure>,
+  ) {
+    const { loggedOut, deleted } = yield* forgetPairing;
+    if (!deleted) return;
+    if (outcome === "cancelled" && loggedOut) {
+      yield* setState({ _tag: "Unlinked" });
+      return;
+    }
+    const { reason } = outcome === "cancelled" ? classifyLinkFailure(undefined) : outcome;
+    const message = outcome === "cancelled" ? stillOnPhone : outcome.message;
+    yield* setState({ _tag: "Failed", reason, message: loggedOut ? message : stillOnPhone });
+  });
 
   const currentStatus = Effect.map(SubscriptionRef.get(state), toStatus);
 
@@ -560,48 +615,68 @@ const make = Effect.gen(function* () {
         });
       }
       yield* stopFiber(connectionFiber);
-      yield* removeStore;
+      // A store left by a link that failed at startup may still be paired: log it out first.
+      const { loggedOut, deleted } = yield* forgetPairing;
+      if (!deleted) return yield* new WhatsAppError({ message: unlinkIncomplete });
       yield* clearRestriction;
+      if (!loggedOut) {
+        yield* setState({ _tag: "Unlinked" });
+        return yield* new WhatsAppError({
+          message: `Scient couldn't log the old link out. ${stillOnPhone} Then link again.`,
+        });
+      }
       yield* setState({ _tag: "Installing" });
       yield* Ref.set(linkFiber, yield* fork(linkOnce));
       return yield* currentStatus;
     }),
   );
 
-  const cancelLink = control.withPermits(1)(
-    Effect.gen(function* () {
-      const fiber = yield* Ref.getAndSet(linkFiber, undefined);
-      if (fiber === undefined) return yield* currentStatus;
-      yield* Fiber.interrupt(fiber);
-      const loggedOut = yield* forgetPairing;
-      yield* setState({ _tag: "Unlinked" });
-      if (!loggedOut) return yield* new WhatsAppError({ message: stillOnPhone });
-      return yield* currentStatus;
-    }),
+  const cancelLink = Ref.set(cancelRequested, true).pipe(
+    Effect.andThen(
+      control.withPermits(1)(
+        Effect.gen(function* () {
+          const fiber = yield* Ref.getAndSet(linkFiber, undefined);
+          // No fiber: the link already finished, and honoured this cancel if it saw it in time.
+          if (fiber === undefined) return yield* currentStatus;
+          yield* Fiber.interrupt(fiber);
+          const { loggedOut, deleted } = yield* forgetPairing;
+          if (!deleted) return yield* new WhatsAppError({ message: unlinkIncomplete });
+          yield* setState({ _tag: "Unlinked" });
+          if (!loggedOut) return yield* new WhatsAppError({ message: stillOnPhone });
+          return yield* currentStatus;
+        }),
+      ),
+    ),
+    Effect.ensuring(Ref.set(cancelRequested, false)),
   );
 
   const unlinkNow = Effect.gen(function* () {
     const previous = yield* SubscriptionRef.get(state);
-    yield* stopFiber(linkFiber);
-    yield* stopFiber(connectionFiber);
-    let loggedOut = true;
-    if (yield* storeExists) {
-      loggedOut = yield* logout;
-      // Unlinking promises the chats are gone from this computer: say so when they are not, and
-      // remember it, so a restart does not bring the link back from the copy that stayed.
-      yield* fileSystem.remove(storeDir, { recursive: true, force: true }).pipe(
+    const hadStore = yield* storeExists;
+    // Remembered before anything is undone: a restart in the middle must not resume the link.
+    if (hadStore) {
+      yield* markUnlinkPending.pipe(
         Effect.catchCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("whatsapp: could not delete the local store", { cause });
-            yield* fileSystem.writeFileString(unlinkPendingPath, "").pipe(Effect.ignore);
-            const message = "Scient couldn't delete its copy of your chats. Unlink again.";
-            yield* setState({ _tag: "Failed", reason: "unlink-incomplete", message });
-            return yield* new WhatsAppError({ message });
-          }),
+          Effect.logWarning("whatsapp: could not record the unlink", { cause }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new WhatsAppError({
+                  message: "Scient couldn't unlink because it can't write to its WhatsApp folder.",
+                }),
+              ),
+            ),
+          ),
         ),
       );
     }
-    yield* fileSystem.remove(unlinkPendingPath, { force: true }).pipe(Effect.ignore);
+    yield* stopFiber(linkFiber);
+    yield* stopFiber(connectionFiber);
+    let loggedOut = true;
+    if (hadStore) {
+      loggedOut = yield* logout;
+      // Unlinking promises the chats are gone from this computer: say so when they are not.
+      if (!(yield* deleteStore)) return yield* new WhatsAppError({ message: unlinkIncomplete });
+    }
     if (wacliStoreDir !== storeDir) {
       yield* fileSystem.remove(wacliStoreDir, { force: true }).pipe(Effect.ignore);
     }
@@ -818,11 +893,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       if (!(yield* storeExists)) return;
       if (yield* unlinkPending) {
-        yield* setState({
-          _tag: "Failed",
-          reason: "unlink-incomplete",
-          message: "Scient couldn't delete its copy of your chats. Unlink again.",
-        });
+        yield* setState({ _tag: "Failed", reason: "unlink-incomplete", message: unlinkIncomplete });
         return;
       }
       const linked = yield* doctor.pipe(
