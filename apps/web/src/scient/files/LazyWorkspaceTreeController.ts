@@ -122,23 +122,24 @@ export class LazyWorkspaceTreeController {
     return this.refresh();
   }
 
+  /**
+   * Reads the root again with each open folder, the folders above it and those holding the
+   * selection or focus (every listed folder while a search is open). Every other listed folder is
+   * unloaded as if it had never been opened, so it is listed afresh once it is needed.
+   */
   async refresh(): Promise<void> {
     if (this.#destroyed) return;
     const refreshVersion = this.#refreshVersion + 1;
     this.#refreshVersion = refreshVersion;
-    const branchesToRefresh = [...this.#branches.keys()];
     this.#refreshing = true;
+    const branchesToRefresh = this.#unloadClosedBranches();
     this.#emit();
     try {
       const rootLoaded = await this.load("", true);
       if (!rootLoaded) return;
       await Promise.all(
         branchesToRefresh
-          .filter(
-            (relativeDirectory) =>
-              relativeDirectory.length > 0 &&
-              this.#entries.get(relativeDirectory)?.kind === "directory",
-          )
+          .filter((relativeDirectory) => this.#entries.get(relativeDirectory)?.kind === "directory")
           .map((relativeDirectory) => this.load(relativeDirectory, true)),
       );
     } finally {
@@ -438,14 +439,84 @@ export class LazyWorkspaceTreeController {
       hasLoadedOnce: true,
     });
     this.#emit();
-    if (operations.length > 0) {
-      // Every operation here lands among this folder's children.
-      const batchWork = operations.length * Math.max(previousChildren.size, byPath.size);
-      const rebuildWork = Math.max(previousPathCount, this.#entries.size);
-      if (batchWork > REBUILD_COST_IN_FOLDER_OPERATIONS * rebuildWork) this.#rebuild(operations);
-      else this.#model.batch(operations);
-    }
+    // Every operation here lands among this folder's children.
+    this.#commit(operations, Math.max(previousChildren.size, byPath.size), previousPathCount);
     this.#loadExpandedBranches();
+  }
+
+  /**
+   * Forgets the listing of each listed folder that is closed and holds no open folder, selection
+   * or focus, keeping its own row, and returns the folders whose listings stay.
+   */
+  #unloadClosedBranches(): string[] {
+    const listed = [...this.#branches.keys()].filter((path) => path.length > 0);
+    // A search collapses the folders without matches until it closes, so all are read again.
+    if (this.#model.isSearchOpen()) return listed;
+    const kept = new Set<string>();
+    const keepUpTo = (relativeDirectory: string) => {
+      for (let path = relativeDirectory; path.length > 0; path = parentDirectory(path)) {
+        if (kept.has(path)) return;
+        kept.add(path);
+      }
+    };
+    // Any folder row, listed or not: one opened during a refresh waits for it to finish.
+    for (const entry of this.#entries.values()) {
+      if (entry.kind !== "directory") continue;
+      const item = this.#model.getItem(entry.relativePath);
+      if (item && "isExpanded" in item && item.isExpanded()) keepUpTo(entry.relativePath);
+    }
+    const focusedPath = this.#model.getFocusedPath();
+    for (const path of [...this.#model.getSelectedPaths(), ...(focusedPath ? [focusedPath] : [])]) {
+      keepUpTo(parentDirectory(path.replace(/\/$/, "")));
+    }
+    const open = listed.filter((path) => kept.has(path));
+    // A folder inside an unloaded one goes with that folder's rows.
+    const closed = listed.filter((path) => {
+      const parent = parentDirectory(path);
+      return !kept.has(path) && (parent.length === 0 || kept.has(parent));
+    });
+    if (closed.length === 0) return open;
+
+    const previousPathCount = this.#entries.size;
+    const operations: FileTreeBatchOperation[] = [];
+    const children = new Set<string>();
+    let siblingCount = 0;
+    for (const relativeDirectory of closed) {
+      const branch = this.#branches.get(relativeDirectory)!;
+      siblingCount = Math.max(siblingCount, branch.children.size);
+      for (const child of branch.children) {
+        const entry = this.#entries.get(child);
+        if (!entry) continue;
+        children.add(child);
+        operations.push({ type: "remove", path: treePath(entry), recursive: true });
+      }
+    }
+    this.#forgetSubtrees(children);
+    for (const relativeDirectory of closed) {
+      this.#branches.delete(relativeDirectory);
+      this.#requestVersions.set(
+        relativeDirectory,
+        (this.#requestVersions.get(relativeDirectory) ?? 0) + 1,
+      );
+      this.#inFlight.delete(relativeDirectory);
+      if (this.#entries.get(relativeDirectory)?.kind === "directory") {
+        this.#unloadedDirectories.add(relativeDirectory);
+      }
+    }
+    this.#commit(operations, siblingCount, previousPathCount);
+    return open;
+  }
+
+  #commit(
+    operations: FileTreeBatchOperation[],
+    siblingCount: number,
+    previousPathCount: number,
+  ): void {
+    if (operations.length === 0) return;
+    const batchWork = operations.length * siblingCount;
+    const rebuildWork = Math.max(previousPathCount, this.#entries.size);
+    if (batchWork > REBUILD_COST_IN_FOLDER_OPERATIONS * rebuildWork) this.#rebuild(operations);
+    else this.#model.batch(operations);
   }
 
   /**
