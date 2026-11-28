@@ -1116,6 +1116,8 @@ const universityVisit = (
     attemptWhenClosed: [] as boolean[],
     /** The profile each hidden check opened in. */
     checkedIn: [] as unknown[],
+    /** The person's tab closing and the hidden check opening, in order. */
+    order: [] as string[],
   };
   const fake = fakeAccounts({ accounts: rows });
   const write = (accountId: string, state: "signed-in" | "signed-out" | "needs-you") => {
@@ -1156,6 +1158,7 @@ const universityVisit = (
         const input = (request.input ?? {}) as Record<string, unknown>;
         if (request.operation === "close" && request.tabId) {
           seen.closed.push(request.tabId);
+          seen.order.push(`close:${request.tabId}`);
           if (request.tabId === "tab-person")
             seen.attemptWhenClosed.push(
               [...fake.attempts.values()].some(({ tabId }) => tabId === "tab-person"),
@@ -1185,15 +1188,19 @@ const universityVisit = (
         // The hidden check opens a tab of its own.
         if (request.operation === "open" && input.open === false) {
           seen.checkedIn.push(input.profileId);
+          seen.order.push("check");
           return { tabId: "tab-check", tabs: [] } as A;
         }
         const shown =
           seen.phase === "idp" ? "https://idp.example.edu/login" : "https://www.nature.com/";
-        // The browser's default for new tabs is Work; the sign-in's tab opened in Main.
+        // The browser's default for new tabs is Work; the sign-in's tab opened in Main. A closed
+        // tab is gone from the list.
         return {
           tabId: "tab-person",
           defaultProfileId: "work",
-          tabs: [{ tabId: "tab-person", url: shown, profileId: "default" }],
+          tabs: seen.closed.includes("tab-person")
+            ? []
+            : [{ tabId: "tab-person", url: shown, profileId: "default" }],
         } as A;
       }),
   });
@@ -1236,6 +1243,9 @@ it.effect("a university sign-in counts once a check reaches the journal, then ti
       expect.objectContaining({ sites: ["example.edu", "https://idp.example.edu"] }),
     ]);
     expect(visit.seen.closed).toContain("tab-person");
+    // regression: the tab showed the publisher's page while the check ran.
+    expect(visit.seen.order[0]).toBe("close:tab-person");
+    expect(visit.seen.order).toContain("check");
     expect(visit.continued()).toBe(true);
   }),
 );
@@ -1253,6 +1263,7 @@ it.effect("a link back that the check can't confirm is no sign-in", () =>
     // The publisher that asked is no place to leave the person; it stays covered until it closes.
     expect(visit.seen.closed).toContain("tab-person");
     expect(visit.seen.attemptWhenClosed).toEqual([true]);
+    expect(visit.seen.order[0]).toBe("close:tab-person");
   }),
 );
 

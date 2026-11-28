@@ -924,6 +924,8 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
   // What this attempt typed: a refusal is bound to that password, and a refused code that wasn't
   // the saved 2FA key's says nothing about what's saved.
   let submitted: { readonly passwordVersion?: string; readonly totp: boolean } = { totp: false };
+  /** The publisher a person's university sign-in returned to, its tab closed there (traces). */
+  let returnedTo: string | undefined;
   const result = yield* Effect.gen(function* () {
     const version = yield* accounts.passwordVersion(account.accountId);
     const values =
@@ -946,6 +948,15 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
     const typed = typedIn.get(attemptId);
     if (typed && ran.outcome === "signed-in") typed.signedIn = true;
     if (ran.outcome === "signed-in") yield* codes.codes.worked;
+    // The person's university handed back to the publisher that asked: nothing is left for them
+    // there, and every ending closes that tab, so it closes now, not after the check below.
+    if (caller.kind === "person" && university && ran.outcome === "signed-in") {
+      const at = yield* tabUrl(invocation, ran.tabId);
+      if (signInReturned(at)) {
+        returnedTo = at;
+        yield* closeTab(invocation, ran.tabId);
+      }
+    }
     const seen = yield* withEvidence(account, ran, invocation, tabProfile);
     // The person signed out while Scient was signing in by itself: their sign-out stands, and a
     // session the late answer left in the tab's jar goes with the tab.
@@ -1088,10 +1099,11 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
   }
   const ended = "ended" in result ? result.ended : undefined;
   const finalUrl = yield* tabUrl(invocation, result.tabId);
+  const finalHost = returnedTo ?? finalUrl;
   yield* Effect.annotateCurrentSpan({
     "signIn.outcome": ended ?? result.outcome,
     "signIn.route": routeKind(account),
-    ...(finalUrl ? { "signIn.finalHost": new URL(finalUrl).host } : {}),
+    ...(finalHost ? { "signIn.finalHost": new URL(finalHost).host } : {}),
   });
   // The attempt stays registered until its tab closes, so the tab stays covered and closed to agents.
   const tidy =
