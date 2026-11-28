@@ -626,6 +626,9 @@ export const make = Effect.gen(function* () {
         disableHtmlFullscreenWindowResize: true,
       },
     });
+    // SCIENT-FORK: marked before any awaited setup, so the older second-instance reveal, which
+    // can find this window by its native fallback, never shows it blank.
+    if (yield* Ref.get(desktopState.background)) markAwaitingFirstReveal(window);
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
       return Option.none();
@@ -1071,6 +1074,8 @@ export const make = Effect.gen(function* () {
         return;
       }
       clearDevelopmentLoadRetry();
+      // SCIENT-FORK: a page that loaded (crash recovery included) needs no retry.
+      failedLoads.delete(window);
       developmentLoadRetryIndex = 0;
       if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
@@ -1189,6 +1194,7 @@ export const make = Effect.gen(function* () {
       pendingMainReveals.delete(window);
       // SCIENT-FORK: background running.
       clearAwaitingFirstReveal(window);
+      failedLoads.delete(window);
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
@@ -1203,8 +1209,6 @@ export const make = Effect.gen(function* () {
       yield* dismissConnectingSplash;
     });
     pendingMainReveals.set(window, revealWhenReady);
-    // SCIENT-FORK: shown when ready; the older second-instance reveal must not show it blank.
-    if (yield* Ref.get(desktopState.background)) markAwaitingFirstReveal(window);
     bindFirstRevealTrigger(revealSubscribers, () => {
       rendererReady = true;
       void runPromise(revealWhenReady);
@@ -1431,9 +1435,10 @@ export const make = Effect.gen(function* () {
       // SCIENT-FORK:END
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
-        // SCIENT-FORK:START — a window whose page failed to load is loaded again, then shown.
+        // SCIENT-FORK:START — a window whose page is still in its failed load is loaded again,
+        // then shown; one that recovered or was shown is never reloaded here.
         const reload = failedLoads.get(existingWindow.value);
-        if (reload !== undefined) {
+        if (reload !== undefined && pendingMainReveals.has(existingWindow.value)) {
           failedLoads.delete(existingWindow.value);
           reload();
         }

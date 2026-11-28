@@ -1173,6 +1173,63 @@ describe("DesktopWindow", () => {
         ]);
       }).pipe(Effect.scoped),
   );
+
+  it.effect("a window opened while windowless is marked before its awaited setup", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const markedDuringSetup: boolean[] = [];
+      yield* Effect.gen(function* () {
+        const { windows } = yield* windowless(fake);
+        markedDuringSetup.length = 0;
+        yield* windows.activate;
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: fake.window,
+            createCount,
+            mainWindow,
+            // Preview setup can wait on an earlier window's cleanup while the window exists.
+            setPreviewMainWindow: (window) =>
+              Effect.sync(() => void markedDuringSetup.push(isAwaitingFirstReveal(window))),
+          }),
+        ),
+      );
+      assert.deepEqual(markedDuringSetup, [true]);
+    }),
+  );
+
+  it.effect("a window that recovered from a failed load is never reloaded by activation", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealed = Promise.withResolvers<void>();
+      yield* Effect.gen(function* () {
+        const { windows } = yield* windowless(fake);
+        yield* windows.activate;
+        fake.webContentsListeners.get("did-fail-load")?.({}, -105, "NAME_NOT_RESOLVED", "", true);
+        // Crash recovery or a later load finished the page before anyone asked again.
+        fake.webContentsListeners.get("did-finish-load")?.();
+        const loads = fake.loadURL.mock.calls.length;
+        yield* windows.activate;
+        assert.equal(fake.loadURL.mock.calls.length, loads);
+        yield* paint(fake, revealed);
+        yield* windows.activate;
+        assert.equal(fake.loadURL.mock.calls.length, loads);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: fake.window,
+            createCount,
+            mainWindow,
+            onReveal: () => revealed.resolve(),
+          }),
+        ),
+      );
+    }),
+  );
   // SCIENT-FORK:END
 
   it.effect.each(["renderer", "backend"] as const)(
