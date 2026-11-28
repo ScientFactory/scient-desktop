@@ -4069,23 +4069,43 @@
     }
   },
   {
-    "key": "whatsapp-business",
-    "names": ["WhatsApp", "WhatsApp Business"],
+    "key": "whatsapp",
+    "names": ["WhatsApp"],
     "website": "https://www.whatsapp.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/whatsapp.svg",
-      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
-      "color": "#25D366",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
-      "brandSource": "https://about.meta.com/brand/resources/whatsapp/whatsapp-brand",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 4830
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/31/26/2f/31262f80-b90e-c333-685c-75ef95db0ab7/AppIcon-0-0-1x_U007epad-0-0-0-1-0-0-sRGB-0-85-220.png/512x512bb.jpg",
+      "appId": 310633997,
+      "sellerName": "WhatsApp Inc.",
+      "appName": "WhatsApp Messenger",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=310633997",
+      "mode": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "rendering": "tile",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5552
+    }
+  },
+  {
+    "key": "whatsapp-business",
+    "names": ["WhatsApp Business"],
+    "website": "https://business.whatsapp.com",
+    "source": {
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f9/10/13/f91013b0-049c-5bf6-6f3f-200df31093d7/AppIconSMB-0-0-1x_U007ephone-0-0-0-1-0-0-sRGB-0-85-220.png/512x512bb.jpg",
+      "appId": 1386412985,
+      "sellerName": "WhatsApp Inc.",
+      "appName": "WhatsApp Business",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1386412985",
+      "mode": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "rendering": "tile",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5410
     }
   },
   {

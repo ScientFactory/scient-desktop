@@ -854,8 +854,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     accountRequired: true,
     displayName: "WhatsApp Business",
     tagline: "Meta's tools for WhatsApp Business accounts",
-    description:
-      "Set up business numbers, manage message templates and send messages. It can't read your chats.",
+    description: "Numbers, message templates and sending. It can't read your chats.",
     url: "https://mcp.facebook.com/whatsapp_business_tools",
     categories: ["communication"],
     websiteUrl: "https://business.whatsapp.com",

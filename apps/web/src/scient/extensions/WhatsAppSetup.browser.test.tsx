@@ -24,7 +24,8 @@ const localTarget = new PrimaryConnectionTarget({
 });
 const remoteTarget = new RelayConnectionTarget({ environmentId, label: "Lab server" });
 
-vi.mock("./ExtensionsPage", () => ({
+vi.mock("./ExtensionsPage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./ExtensionsPage")>()),
   MutedLine: ({ children }: { readonly children: ReactNode }) => <p>{children}</p>,
   useExtensionsEnvironment: () => ({ environmentId, canWrite: true }),
 }));
@@ -32,7 +33,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   Link: ({ children }: { readonly children?: ReactNode }) => <a>{children}</a>,
 }));
-vi.mock("../../state/environments", () => ({
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
   useEnvironmentHttpBaseUrl: () => (mocks.remote ? null : localTarget.httpBaseUrl),
   useEnvironment: () => {
     const target = mocks.remote ? remoteTarget : localTarget;
@@ -60,7 +62,10 @@ vi.mock("./whatsAppState", async () => {
   };
 });
 
-import { WhatsAppSetup } from "./WhatsAppSetup";
+import { ACCOUNT_SERVICES } from "./accountServices";
+import { WhatsAppDetail } from "./WhatsAppSetup";
+
+const whatsapp = ACCOUNT_SERVICES.find((service) => service.id === "whatsapp")!;
 
 const deviceName = "My Computer";
 const account = "+15550101000";
@@ -86,7 +91,7 @@ async function setup(
     const screen = stack.use(
       await render(
         <RegistryContext value={registry}>
-          <WhatsAppSetup />
+          <WhatsAppDetail service={whatsapp} />
         </RegistryContext>,
         { router: false },
       ),
@@ -101,17 +106,17 @@ async function setup(
 describe("WhatsApp setup", () => {
   it("starts linking only after the person confirms the risks", async () => {
     await using _fixture = await setup();
-    await button("Link WhatsApp").click();
+    await button("Link").click();
     const warning = page.getByRole("dialog", { name: "Before you link" });
     await expect.element(warning).toBeVisible();
-    await expect.element(warning.getByText(/have been restricted/)).toBeVisible();
+    await expect.element(warning.getByText(/temporarily restricted/)).toBeVisible();
     expect(mocks.startLink).not.toHaveBeenCalled();
 
     await warning.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect.element(warning).not.toBeInTheDocument();
     expect(mocks.startLink).not.toHaveBeenCalled();
 
-    await button("Link WhatsApp").click();
+    await button("Link").click();
     await warning.getByRole("button", { name: "Link WhatsApp", exact: true }).click();
     expect(mocks.startLink).toHaveBeenCalledExactlyOnceWith(target);
   });
@@ -145,7 +150,7 @@ describe("WhatsApp setup", () => {
   it("warns when the link runs on a remote machine and still lets the person link", async () => {
     await using fixture = await setup({ _tag: "Unlinked" }, { remote: true });
     await expect.element(fixture.screen.getByText(/Scient is running on Lab server/)).toBeVisible();
-    await button("Link WhatsApp").click();
+    await button("Link").click();
     const warning = page.getByRole("dialog", { name: "Before you link" });
     await expect.element(warning.getByText(/Scient is running on Lab server/)).toBeVisible();
     await warning.getByRole("button", { name: "Link WhatsApp", exact: true }).click();
@@ -157,7 +162,7 @@ describe("WhatsApp setup", () => {
     await expect
       .element(fixture.screen.getByText(/isn't available on this computer/))
       .toBeVisible();
-    await expect.element(button("Link WhatsApp")).not.toBeInTheDocument();
+    await expect.element(button("Link")).not.toBeInTheDocument();
   });
 
   it("shows the restriction's end in local time when WhatsApp provides it", async () => {

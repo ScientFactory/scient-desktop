@@ -14,7 +14,7 @@ import { AboutCard, DetailLayout, DetailHeader, DetailSection } from "./Extensio
 import { ExtensionRow } from "./ExtensionRow";
 import { ExtensionsPage, MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import { AddServicePlugin, ServiceAgents, useAccountService } from "./ServiceAgents";
-import { WhatsAppServiceItem, WhatsAppSetup } from "./WhatsAppSetup";
+import { WhatsAppDetail, WhatsAppServiceItem } from "./WhatsAppSetup";
 
 export function AccountServiceItem({ service }: { readonly service: AccountService }) {
   return service.scientSetup === "whatsapp" ? (
@@ -120,11 +120,7 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
       }
       description={messages(service.description)}
     >
-      {service.scientSetup === "whatsapp" ? (
-        <WhatsAppSetup />
-      ) : (
-        <AgentAccountServiceSetup service={service} />
-      )}
+      <AgentAccountServiceSetup service={service} />
       {service.websiteUrl ? (
         <AboutCard rows={[[gt("Website"), service.websiteUrl.replace(/^https:\/\//, "")]]} />
       ) : null}
@@ -139,7 +135,12 @@ function AccountServiceDetailContent({ serviceId }: { readonly serviceId: string
   const service = accountServicesFrom(
     providerInventory.providers.length > 0 ? providerInventory.providers : providers,
   ).find((candidate) => candidate.id === serviceId);
-  if (service) return <AccountServiceDetail service={service} />;
+  if (service)
+    return service.scientSetup === "whatsapp" ? (
+      <WhatsAppDetail service={service} />
+    ) : (
+      <AccountServiceDetail service={service} />
+    );
   return (
     <MutedLine>
       {["ready", "partial", "error"].includes(providerInventory.phase)

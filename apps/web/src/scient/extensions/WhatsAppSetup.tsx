@@ -9,7 +9,6 @@ import {
   type EnvironmentId,
   WhatsAppError,
   type WhatsAppFailureReason,
-  type WhatsAppLinkState,
   type WhatsAppStatus,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -49,7 +48,13 @@ import {
   accountServiceTagline,
   WHATSAPP_BUSINESS_SERVER,
 } from "./accountServices";
-import { DetailSection } from "./ExtensionDetailPages";
+import {
+  AboutCard,
+  DetailHeader,
+  DetailLayout,
+  DetailSection,
+  PrimaryAction,
+} from "./ExtensionDetailPages";
 import { ActionError } from "./ExtensionsFeedback";
 import { ExtensionRow } from "./ExtensionRow";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
@@ -104,7 +109,7 @@ function ElsewhereWarning({ label }: { readonly label: string }) {
   );
 }
 
-/** What WhatsApp's linking risks are, shown before every new link. */
+/** Before every new link: the risk, and what keeps it low. */
 function RiskDialog({
   elsewhere,
   busy,
@@ -125,16 +130,27 @@ function RiskDialog({
           </DialogTitle>
           <DialogDescription>
             <T>
-              WhatsApp doesn't officially support linking apps like Scient, and some accounts linked
-              this way have been restricted. It's safest on your own computer, with your own number.
+              WhatsApp doesn't officially support apps like Scient, so your account could be
+              temporarily restricted. The risk is lower when you:
             </T>
           </DialogDescription>
         </DialogHeader>
-        {elsewhere ? (
-          <DialogPanel>
-            <ElsewhereWarning label={elsewhere} />
-          </DialogPanel>
-        ) : null}
+        <DialogPanel>
+          <div className="grid gap-3 text-sm">
+            <ul className="grid list-disc gap-1 ps-5">
+              <li>
+                <T>Run Scient on your own computer, not a server or the cloud.</T>
+              </li>
+              <li>
+                <T>Use a number you've had for a while.</T>
+              </li>
+              <li>
+                <T>Don't send many messages at once, or to people who haven't messaged you.</T>
+              </li>
+            </ul>
+            {elsewhere ? <ElsewhereWarning label={elsewhere} /> : null}
+          </div>
+        </DialogPanel>
         <DialogFooter variant="bare">
           <DialogClose render={<Button variant="outline" />}>
             <T>Cancel</T>
@@ -187,22 +203,18 @@ const FAILURE_TEXT: Readonly<Record<Exclude<WhatsAppFailureReason, "failed">, st
   "unsupported-platform": msg("WhatsApp isn't available on this computer yet."),
   "install-failed": msg("Couldn't set up WhatsApp. Check your connection and try again."),
   "client-outdated": msg("Update Scient and try again."),
+  "unlink-incomplete": msg("Scient couldn't delete its copy of your chats. Unlink again."),
 };
 
-function Actions({ children }: { readonly children: ReactNode }) {
-  return <div className="flex flex-wrap gap-2">{children}</div>;
-}
-
-/** Scient's own link: the phone scans a code and this computer becomes one of its linked devices. */
-function DeviceLink({
-  environmentId,
-  status,
-  elsewhere,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly status: WhatsAppStatus;
-  readonly elsewhere: string | null;
-}) {
+/**
+ * The link's controls and what it shows. The header carries Link or Unlink, as Add and Remove
+ * on other pages; the section appears only while there is something to show.
+ */
+function useDeviceLink(
+  environmentId: EnvironmentId,
+  status: WhatsAppStatus | null,
+  elsewhere: string | null,
+) {
   const gt = useGT();
   const locale = useLocale();
   const messages = useMessages();
@@ -225,18 +237,39 @@ function DeviceLink({
     setPending(false);
     setError(linkFailureMessage(result));
   };
+
+  const state = status?.state;
+  const canLinkFromState =
+    status?.platformSupported === true &&
+    (state?._tag === "Unlinked" ||
+      state?._tag === "RemovedByPhone" ||
+      (state?._tag === "Failed" &&
+        state.reason !== "unsupported-platform" &&
+        state.reason !== "unlink-incomplete"));
+  const canUnlinkFromState =
+    state?._tag === "Linked" ||
+    state?._tag === "Restricted" ||
+    (state?._tag === "Failed" && state.reason === "unlink-incomplete");
   const linkDisabled = !canWrite || !canStart || pending;
   const unlinkDisabled = !canWrite || !canUnlink || pending;
-  const linkButton = (label: ReactNode) =>
-    status.platformSupported ? (
-      <Actions>
-        <Button size="sm" disabled={linkDisabled} onClick={() => setDialog("risk")}>
-          {label}
-        </Button>
-      </Actions>
-    ) : null;
+
+  const actions = canLinkFromState ? (
+    <PrimaryAction icon={PlusIcon} disabled={linkDisabled} onClick={() => setDialog("risk")}>
+      {gt("Link", { $context: "verb, links WhatsApp to Scient" })}
+    </PrimaryAction>
+  ) : canUnlinkFromState ? (
+    <Button
+      size="sm"
+      variant="destructive-outline"
+      disabled={unlinkDisabled}
+      onClick={() => setDialog("unlink")}
+    >
+      <T>Unlink</T>
+    </Button>
+  ) : null;
+
   const cancelButton = (
-    <Actions>
+    <div>
       <Button
         size="sm"
         variant="outline"
@@ -245,45 +278,28 @@ function DeviceLink({
       >
         <T>Cancel</T>
       </Button>
-    </Actions>
+    </div>
   );
-  const unlinkButton = (
-    <Actions>
-      <Button
-        size="sm"
-        variant="destructive-outline"
-        disabled={unlinkDisabled}
-        onClick={() => setDialog("unlink")}
-      >
-        <T>Unlink</T>
-      </Button>
-    </Actions>
+  const working = (label: ReactNode) => (
+    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+      <Spinner size="md" tone="muted" />
+      {label}
+    </p>
   );
 
-  const state: WhatsAppLinkState = status.state;
-  const canLinkFromState =
-    status.platformSupported &&
-    (state._tag === "Unlinked" ||
-      state._tag === "RemovedByPhone" ||
-      (state._tag === "Failed" && state.reason !== "unsupported-platform"));
-  const canUnlinkFromState = state._tag === "Linked" || state._tag === "Restricted";
   const body = ((): ReactNode => {
+    if (status === null) return null;
     if (!status.platformSupported && !canUnlinkFromState)
       return (
         <MutedLine>
           <T>WhatsApp isn't available on this computer yet.</T>
         </MutedLine>
       );
-    switch (state._tag) {
-      case "Unlinked":
-        return linkButton(<T>Link WhatsApp</T>);
+    switch (state?._tag) {
       case "Installing":
         return (
           <>
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner size="md" tone="muted" />
-              <T>Getting WhatsApp ready…</T>
-            </p>
+            {working(<T>Getting WhatsApp ready…</T>)}
             {cancelButton}
           </>
         );
@@ -302,129 +318,126 @@ function DeviceLink({
       case "Syncing":
         return (
           <>
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner size="md" tone="muted" />
-              <T>Bringing in your chats…</T>
-            </p>
+            {working(<T>Bringing in your chats…</T>)}
             {cancelButton}
           </>
         );
       case "Linked":
         return (
-          <>
-            <p className="text-sm">
-              <T>
-                Linked to <Var>{state.account}</Var>
-              </T>
-            </p>
-            {unlinkButton}
-          </>
+          <p className="text-sm">
+            <T>
+              Linked to <Var>{state.account}</Var>
+            </T>
+          </p>
         );
       case "Restricted":
         return (
-          <>
-            <p className="text-sm">
-              {state.until === undefined
-                ? gt("WhatsApp has restricted this account for now.")
-                : gt("WhatsApp has restricted this account until {date}.", {
-                    date: new Date(state.until).toLocaleString(locale, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    }),
-                  })}
-            </p>
-            {unlinkButton}
-          </>
+          <p className="text-sm">
+            {state.until === undefined
+              ? gt("WhatsApp has restricted this account for now.")
+              : gt("WhatsApp has restricted this account until {date}.", {
+                  date: new Date(state.until).toLocaleString(locale, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }),
+                })}
+          </p>
         );
       case "RemovedByPhone":
         return (
-          <>
-            <MutedLine>
-              <T>Your phone removed this link.</T>
-            </MutedLine>
-            {linkButton(<T>Link again</T>)}
-          </>
+          <MutedLine>
+            <T>Your phone removed this link.</T>
+          </MutedLine>
         );
       case "Failed":
         return (
-          <>
-            <MutedLine>
-              {state.reason === "failed" ? state.message : messages(FAILURE_TEXT[state.reason])}
-            </MutedLine>
-            {canLinkFromState ? linkButton(<T>Try again</T>) : null}
-          </>
+          <MutedLine>
+            {state.reason === "failed" ? state.message : messages(FAILURE_TEXT[state.reason])}
+          </MutedLine>
         );
+      default:
+        return null;
     }
   })();
 
   const connection =
-    state._tag !== "Linked"
-      ? state._tag === "Restricted"
-        ? gt("Restricted")
-        : undefined
-      : state.connection === "connected"
-        ? gt("Connected")
-        : state.connection === "connecting"
-          ? gt("Reconnecting…")
-          : gt("Offline");
+    state?._tag === "Restricted"
+      ? gt("Restricted")
+      : state?._tag !== "Linked"
+        ? undefined
+        : state.connection === "connected"
+          ? gt("Connected")
+          : state.connection === "connecting"
+            ? gt("Reconnecting…")
+            : gt("Offline");
 
-  return (
-    <DetailSection title={gt("Your WhatsApp")} status={connection}>
-      {elsewhere && state._tag !== "Linked" && state._tag !== "Restricted" ? (
-        <ElsewhereWarning label={elsewhere} />
-      ) : null}
-      {body}
-      <ActionError message={error} />
-      {dialog === "risk" && canLinkFromState ? (
-        <RiskDialog
-          elsewhere={elsewhere}
-          busy={linkDisabled}
-          onLink={() => void run(start)}
-          onClose={() => setDialog(null)}
-        />
-      ) : dialog === "unlink" && canUnlinkFromState ? (
-        <UnlinkDialog
-          disabled={unlinkDisabled}
-          onUnlink={() => void run(unlink)}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-    </DetailSection>
-  );
+  const dialogs =
+    dialog === "risk" && canLinkFromState ? (
+      <RiskDialog
+        elsewhere={elsewhere}
+        busy={linkDisabled}
+        onLink={() => void run(start)}
+        onClose={() => setDialog(null)}
+      />
+    ) : dialog === "unlink" && canUnlinkFromState ? (
+      <UnlinkDialog
+        disabled={unlinkDisabled}
+        onUnlink={() => void run(unlink)}
+        onClose={() => setDialog(null)}
+      />
+    ) : null;
+
+  return { actions, body, connection, dialogs, error };
 }
 
 /**
  * WhatsApp's page: Scient's own link as a device, driven by the server's live status, and Meta's
  * WhatsApp Business tools as the second, labelled way.
  */
-export function WhatsAppSetup() {
+export function WhatsAppDetail({ service }: { readonly service: AccountService }) {
   const gt = useGT();
+  const messages = useMessages();
   const { environmentId, canWrite } = useExtensionsEnvironment();
-  const { status, error } = useWhatsAppStatus(canWrite ? environmentId : null);
+  const { status, error: statusError } = useWhatsAppStatus(canWrite ? environmentId : null);
   const elsewhere = useElsewhereLabel(environmentId);
+  const link = useDeviceLink(environmentId, status, elsewhere);
+  const linked = status?.state._tag === "Linked" || status?.state._tag === "Restricted";
+  const unavailable =
+    status === null
+      ? canWrite
+        ? (statusError ?? gt("Checking WhatsApp…"))
+        : gt("This connection needs permission to change settings to link WhatsApp.")
+      : null;
   return (
-    <>
-      {status ? (
-        <DeviceLink
-          key={environmentId}
-          environmentId={environmentId}
-          status={status}
-          elsewhere={elsewhere}
+    <DetailLayout
+      back="installed"
+      header={
+        <DetailHeader
+          name={service.name}
+          tagline={accountServiceTagline(service, messages) || undefined}
+          actions={link.actions}
         />
-      ) : (
-        <DetailSection title={gt("Your WhatsApp")}>
-          <MutedLine>
-            {canWrite
-              ? (error ?? gt("Checking WhatsApp…"))
-              : gt("This connection needs permission to change settings to link WhatsApp.")}
-          </MutedLine>
+      }
+      description={messages(service.description)}
+      feedback={
+        <>
+          {elsewhere && !linked ? <ElsewhereWarning label={elsewhere} /> : null}
+          {unavailable ? <MutedLine>{unavailable}</MutedLine> : null}
+          <ActionError message={link.error} />
+        </>
+      }
+    >
+      {link.body ? (
+        <DetailSection title={gt("Your WhatsApp")} status={link.connection}>
+          {link.body}
         </DetailSection>
-      )}
+      ) : null}
+      {link.dialogs}
       <DetailSection title={gt("WhatsApp Business")}>
         <MutedLine>
-          <T>Meta's official tools for business accounts.</T>
+          <T>For business accounts, with Meta's tools.</T>
         </MutedLine>
-        <Actions>
+        <div>
           <Button
             size="sm"
             variant="outline"
@@ -437,9 +450,12 @@ export function WhatsAppSetup() {
           >
             <T>Open</T>
           </Button>
-        </Actions>
+        </div>
       </DetailSection>
-    </>
+      {service.websiteUrl ? (
+        <AboutCard rows={[[gt("Website"), service.websiteUrl.replace(/^https:\/\//, "")]]} />
+      ) : null}
+    </DetailLayout>
   );
 }
 

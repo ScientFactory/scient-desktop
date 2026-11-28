@@ -24,6 +24,8 @@ export const WhatsAppFailureReason = Schema.Literals([
   "scan-timed-out",
   /** WhatsApp reports this client as outdated: Scient needs an update. */
   "client-outdated",
+  /** Unlinking stopped the link but could not delete the local store: unlink again. */
+  "unlink-incomplete",
   "failed",
 ]);
 export type WhatsAppFailureReason = typeof WhatsAppFailureReason.Type;

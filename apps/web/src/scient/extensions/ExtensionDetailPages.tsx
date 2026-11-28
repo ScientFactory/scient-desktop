@@ -664,7 +664,7 @@ function OwnWhatsAppSection({ entryName }: { readonly entryName: string | undefi
   return (
     <DetailSection title={gt("Your own WhatsApp")}>
       <MutedLine>
-        <T>To read and send your own messages, link WhatsApp instead.</T>
+        <T>For your personal chats.</T>
       </MutedLine>
       <div>
         <Button

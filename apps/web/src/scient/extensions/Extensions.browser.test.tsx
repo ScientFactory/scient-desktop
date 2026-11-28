@@ -905,7 +905,7 @@ describe("Discover", () => {
     expect(linkIn(fixture.row("WhatsApp"), "WhatsApp")?.getAttribute("href")).toBe(detailPath);
 
     await fixture.render(<AccountServiceDetailPage serviceId="whatsapp" />);
-    await expect.element(page.getByRole("heading", { name: "Your WhatsApp" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Link", exact: true })).toBeVisible();
     await expect
       .element(page.getByRole("heading", { name: "Your agents" }))
       .not.toBeInTheDocument();
