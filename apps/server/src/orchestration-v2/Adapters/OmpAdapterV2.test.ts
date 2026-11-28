@@ -1283,6 +1283,32 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       }),
     ),
   );
+  it.effect(
+    "sends a native OMP image with the media type its bytes have, not the declared one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* imageHarness();
+          yield* h.fs.writeFile(
+            h.path.join(h.config.attachmentsDir, "screenshot.jpg"),
+            new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          );
+          const sent = yield* h.send(1, "mislabelled", [
+            {
+              type: "image",
+              id: ChatAttachmentId.make("screenshot"),
+              name: "screenshot.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 8,
+            },
+          ]);
+          assert.deepEqual(
+            sent.frame.images?.map(({ data, mimeType }) => ({ data, mimeType })),
+            [{ data: "iVBORw0KGgo=", mimeType: "image/png" }],
+          );
+        }),
+      ),
+  );
   it.effect("uses the native OMP peer's advertised physical frame limit", () =>
     Effect.scoped(
       Effect.gen(function* () {
