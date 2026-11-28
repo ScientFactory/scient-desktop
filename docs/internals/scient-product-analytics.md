@@ -1007,8 +1007,9 @@ after windowless time since the previous summary:
 - `daily` and `quit` only: `windowlessCount`, the windowless periods begun since the previous
   summary, and `windowlessTimeBucket`, the time with no window since then, including a period
   still under way. Consecutive `daily` and `quit` summaries cover disjoint intervals, so their
-  totals add up; a forced stop, crash or update install sends no `quit` summary, so the interval
-  since the last summary is lost then.
+  counts add up; time is one bucket per interval, so totals are ranges (two `1-10m` intervals are
+  2 to under 20 minutes) or a distribution of buckets, never an exact sum. A forced stop, crash or
+  update install sends no `quit` summary, so the interval since the last summary is lost then.
 
 `app.background.event` has a closed `kind`:
 
@@ -1020,8 +1021,9 @@ after windowless time since the previous summary:
   window that shows once it is ready.
 - `window-not-shown`: a request for a window failed: no window existed after it although the
   primary backend was ready, its page failed to load for good, or no window showed within two
-  minutes. It is an attempt: the period stays open, Scient stays windowless (so a second launch
-  can retry), and a later `window-returned` can follow for the same period.
+  minutes. Each request counts at most once, whichever failure comes first. It is an attempt: the
+  period stays open, Scient stays windowless, and the next request loads a failed page again (so a
+  second launch can retry); a later `window-returned` can follow for the same period.
 - `quit`: Quit while windowless, told from the period and tray choice when Quit began (a window
   shown during the check does not hide it). `via` is `tray` (Quit completely) or `other` (`Cmd+Q`,
   the Dock menu, logging out); `quitPrompt` is `none` (nothing running), `confirmed` or
@@ -1050,7 +1052,7 @@ installation's history (its setting changes and periods continue under another i
 | Question                                                                | Where the answer is                                                                                                                                                                                                                                                                     |
 | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | How many installs on each platform have it on, by default or by choice? | Per installation, its latest summary folded with any later `setting-changed` (a summary can lag a change until the next launch or day): `platform`, `enabled`, `setBy`                                                                                                                  |
-| How often does Scient run with no window, and for how long?             | Exposure from the `daily` and `quit` summaries: `windowlessCount` and `windowlessTimeBucket`. Do not add the events' `windowlessBucket`, which would count periods twice                                                                                                                |
+| How often does Scient run with no window, and for how long?             | `daily` and `quit` summaries: summed `windowlessCount`, and `windowlessTimeBucket` as a distribution or a range of totals. Do not add the events' `windowlessBucket`, which would count periods twice                                                                                   |
 | How do people come back?                                                | `via` on `window-returned`                                                                                                                                                                                                                                                              |
 | How do they quit while windowless?                                      | `via` and `quitPrompt` on `quit`; actual exits exclude `cancelled`                                                                                                                                                                                                                      |
 | Does it fail?                                                           | `window-not-shown` (attempts), `tray-failed`, `splash-fallback`, `backend-restarted`                                                                                                                                                                                                    |
