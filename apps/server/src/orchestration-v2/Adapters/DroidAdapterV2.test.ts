@@ -477,7 +477,12 @@ const harness = Effect.fnUntraced(function* (
     providerThread,
     writeBlocked,
     releaseWrite,
-    signal: (value: string) => fs.writeFileString(controlPath, value),
+    signal: (value: string) => {
+      const nextControlPath = `${controlPath}.next`;
+      return fs
+        .writeFileString(nextControlPath, value)
+        .pipe(Effect.andThen(fs.rename(nextControlPath, controlPath)));
+    },
     /** Waits until no decoded batch is open, such as the one that carried a recorded event. */
     batchesClosed: Effect.callback<void>((resume) => {
       if (openBatches === 0) return resume(Effect.void);
@@ -896,7 +901,7 @@ function onPrompt(message) {
         update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "completed", rawOutput: { text: "Slept." } });
         update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Edited." } });
       });
-    } else {
+    } else if (next === "checked") {
       update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " Checked." } });
       update({ sessionUpdate: "tool_call_update", toolCallId: "check", status: "completed", rawOutput: { text: "done" } });
       mark("checked");
