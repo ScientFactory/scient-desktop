@@ -1277,20 +1277,19 @@ export const layer = Layer.effect(
       handoffCancelled: Effect.fn("AccountsService.handoffCancelled")((handoffId) =>
         Effect.sync(() => cancelledHandoffs.has(handoffId)),
       ),
-      // Paper recovery runs at every start, before any foreground use: it must not open the
-      // store, so before that the first snapshot carries the queue.
-      setPaperQueue: Effect.fn("AccountsService.setPaperQueue")((queue) =>
-        writes
-          .withPermits(1)(
-            Effect.uninterruptible(
-              Effect.gen(function* () {
-                paperQueues.set(queue.root, queue);
-                if (initialized) yield* publish(false);
-              }),
-            ),
-          )
-          .pipe(Effect.ignore),
-      ),
+      // Paper recovery runs at every start, before any foreground use. While unattended work waits
+      // for the person it must not open the store, so the first snapshot carries the queue.
+      setPaperQueue: Effect.fn("AccountsService.setPaperQueue")((queue) => {
+        const record = Effect.gen(function* () {
+          paperQueues.set(queue.root, queue);
+          if (initialized) yield* publish(false);
+        });
+        return (
+          vault.unattendedWaitsForPerson
+            ? writes.withPermits(1)(Effect.uninterruptible(record))
+            : locked(record)
+        ).pipe(Effect.ignore);
+      }),
       // Never waits: an open under way, or one that needs the person, answers false.
       openWithoutPrompt: Effect.suspend(() =>
         initialized
@@ -1308,6 +1307,7 @@ export const layer = Layer.effect(
               )
               .pipe(Effect.map(Option.getOrElse(() => false))),
       ),
+      unattendedWaitsForPerson: Effect.succeed(vault.unattendedWaitsForPerson),
       showHandoff: Effect.fn("AccountsService.showHandoff")(function* (handoffId) {
         const reveal = yield* locked(
           Effect.sync(() => (handoffs.has(handoffId) ? handoffReveals.get(handoffId) : undefined)),
@@ -2643,7 +2643,7 @@ export const layer = Layer.effect(
     });
     if (sources.modelCatalog) {
       const migrate = migrateModelKeys.pipe(Effect.ignore);
-      // Provider probes resolve saved model keys unattended: when that cannot open the store,
+      // Provider probes resolve saved model keys unattended: while that cannot open the store,
       // they resolve again once the person's first use has opened it.
       const resolveWhenOpen: CustomModelAccountResolver = (accountId, origin, protocol) =>
         service.openWithoutPrompt.pipe(
@@ -2655,7 +2655,10 @@ export const layer = Layer.effect(
                 }).pipe(Effect.andThen(Effect.fail(unopened()))),
           ),
         );
-      reinstallModelKeyResolver = sources.modelCatalog.installResolver(resolveWhenOpen, migrate);
+      reinstallModelKeyResolver = sources.modelCatalog.installResolver(
+        vault.unattendedWaitsForPerson ? resolveWhenOpen : service.resolveCustomModelAccountKey,
+        migrate,
+      );
       yield* reinstallModelKeyResolver;
     }
     return service;

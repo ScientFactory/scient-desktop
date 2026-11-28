@@ -14,7 +14,6 @@ export const WSL_CANDIDATE_ENV_NAMES = [
   "SCIENT_NEXT_HOME",
   "SCIENT_NEXT_DEVELOPMENT_STATE",
   "SCIENT_NEXT_SAFETY_ENVELOPE",
-  "SCIENT_DESKTOP_BACKGROUND_RUNNING",
 ] as const;
 
 function syncTexNavigatorBinaryName(platform: NodeJS.Platform): string {
@@ -57,22 +56,8 @@ interface ScientBackendEnvInput {
   readonly isDevelopment: boolean;
 }
 
-interface ScientLaunchSettings {
-  /** The effective "Keep Scient running in the background"; a change applies at the next start. */
-  readonly keepsRunningInBackground: boolean;
-}
-
-// Matches the server's DESKTOP_BACKGROUND_RUNNING_ENV: while on, unattended Accounts work leaves
-// a macOS or Linux keychain that could ask closed until the person's first use.
-const backgroundRunningEnv = (launch: ScientLaunchSettings) => ({
-  SCIENT_DESKTOP_BACKGROUND_RUNNING: launch.keepsRunningInBackground ? "true" : "false",
-});
-
 /** Environment entries the primary backend gets on top of the inherited ones. */
-export function scientPrimaryBackendEnv(
-  environment: ScientBackendEnvInput,
-  launch: ScientLaunchSettings,
-) {
+export function scientPrimaryBackendEnv(environment: ScientBackendEnvInput) {
   return {
     // Keep the server's derived state directory identical to the
     // desktop-owned data directory. The server still understands
@@ -85,15 +70,11 @@ export function scientPrimaryBackendEnv(
       ? process.env.SCIENT_DEV_SCRATCH_ROOT
       : undefined,
     SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
-    ...backgroundRunningEnv(launch),
   };
 }
 
 /** Environment entries the WSL backend gets on top of the inherited ones. */
-export function scientWslBackendEnv(
-  environment: Pick<ScientBackendEnvInput, "isDevelopment">,
-  launch: ScientLaunchSettings,
-) {
+export function scientWslBackendEnv(environment: Pick<ScientBackendEnvInput, "isDevelopment">) {
   return {
     // Keep WSL state on the Linux filesystem and outside any installed T3
     // home. The server expands this POSIX path against the distro HOME.
@@ -101,6 +82,5 @@ export function scientWslBackendEnv(
     SCIENT_NEXT_HOME: "~/.scient-next",
     SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
     SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
-    ...backgroundRunningEnv(launch),
   };
 }

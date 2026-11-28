@@ -79,11 +79,11 @@ describe("AccountVault", () => {
       const items = new Map<string, Redacted.Redacted<string>>();
       const keychain = {
         read: (account: string) => Effect.succeed(items.get(account) ?? null),
-        readWithoutPrompt: (account: string) => Effect.succeed(items.get(account) ?? null),
         write: (account: string, value: Redacted.Redacted<string>) =>
           Effect.sync(() => {
             items.set(account, value);
           }),
+        unattendedWaitsForPerson: false,
       };
       const first = yield* makeAccountVault(storage.store, "/synthetic/one", keychain);
       expect(yield* first.protection).toBe("keychain");
@@ -102,8 +102,8 @@ describe("AccountVault", () => {
       const storage = memoryStore();
       const vault = yield* makeAccountVault(storage.store, "/synthetic", {
         read: () => Effect.succeed(null),
-        readWithoutPrompt: () => Effect.succeed(null),
         write: noKeychain.write,
+        unattendedWaitsForPerson: false,
       });
       expect(yield* vault.protection).toBe("file");
       storage.blobs.set("accounts-master-key", new Uint8Array(31));
@@ -112,25 +112,23 @@ describe("AccountVault", () => {
     }),
   );
   it.effect(
-    "opens unattended only without a dialog and touches nothing when that needs the person",
+    "opens unattended only a vault set up before, and touches nothing while that waits for the person",
     () =>
       Effect.gen(function* () {
         const storage = memoryStore();
         const items = new Map<string, Redacted.Redacted<string>>();
-        const prompts: string[] = [];
-        let needsPerson = false;
+        const reads: string[] = [];
         const keychain = {
           read: (account: string) =>
             Effect.sync(() => {
-              prompts.push(account);
+              reads.push(account);
               return items.get(account) ?? null;
             }),
-          readWithoutPrompt: (account: string) =>
-            Effect.succeed(needsPerson ? ("needs-person" as const) : (items.get(account) ?? null)),
           write: (account: string, value: Redacted.Redacted<string>) =>
             Effect.sync(() => {
               items.set(account, value);
             }),
+          unattendedWaitsForPerson: false,
         };
         // A vault is set up only with the person there.
         const fresh = yield* makeAccountVault(storage.store, "/synthetic", keychain);
@@ -138,27 +136,26 @@ describe("AccountVault", () => {
         expect(storage.blobs.size).toBe(0);
         const value = material();
         const blob = yield* fresh.encrypt("record", value);
-        prompts.length = 0;
+        reads.length = 0;
         const records = new Map(storage.blobs);
 
-        needsPerson = true;
-        const atLogin = yield* makeAccountVault(storage.store, "/synthetic", keychain);
+        const waiting = { ...keychain, unattendedWaitsForPerson: true };
+        const atLogin = yield* makeAccountVault(storage.store, "/synthetic", waiting);
         expect(yield* atLogin.openWithoutPrompt).toBe(false);
-        expect(prompts).toEqual([]);
+        expect(reads).toEqual([]);
         expect(new Map(storage.blobs)).toEqual(records);
         // The next foreground use opens it as before.
         const decoded = yield* atLogin.decrypt("record", blob);
         expect(
           Buffer.from(Redacted.value(decoded)).equals(Buffer.from(Redacted.value(value))),
         ).toBe(true);
-        expect(prompts).toHaveLength(1);
+        expect(reads).toHaveLength(1);
 
-        needsPerson = false;
-        prompts.length = 0;
-        const trusted = yield* makeAccountVault(storage.store, "/synthetic", keychain);
-        expect(yield* trusted.openWithoutPrompt).toBe(true);
-        yield* trusted.decrypt("record", blob);
-        expect(prompts).toEqual([]);
+        reads.length = 0;
+        const unattended = yield* makeAccountVault(storage.store, "/synthetic", keychain);
+        expect(yield* unattended.openWithoutPrompt).toBe(true);
+        yield* unattended.decrypt("record", blob);
+        expect(reads).toHaveLength(1);
       }),
   );
   it.effect("an unattended open never waits behind a foreground one", () =>
@@ -169,11 +166,11 @@ describe("AccountVault", () => {
         Effect.sync(() => {
           items.set(account, value);
         });
-      const readWithoutPrompt = (account: string) => Effect.succeed(items.get(account) ?? null);
+      const read = (account: string) => Effect.succeed(items.get(account) ?? null);
       const setUp = yield* makeAccountVault(storage.store, "/synthetic", {
-        read: readWithoutPrompt,
-        readWithoutPrompt,
+        read,
         write,
+        unattendedWaitsForPerson: false,
       });
       yield* setUp.encrypt("record", material());
 
@@ -184,10 +181,10 @@ describe("AccountVault", () => {
         read: (account) =>
           Deferred.succeed(reading, undefined).pipe(
             Effect.andThen(Deferred.await(release)),
-            Effect.andThen(readWithoutPrompt(account)),
+            Effect.andThen(read(account)),
           ),
-        readWithoutPrompt,
         write,
+        unattendedWaitsForPerson: false,
       });
       const foreground = yield* Effect.forkChild(vault.protection);
       yield* Deferred.await(reading);

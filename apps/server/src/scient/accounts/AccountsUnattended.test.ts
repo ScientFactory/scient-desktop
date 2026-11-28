@@ -1,9 +1,18 @@
+import { AccountId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Redacted } from "effect";
 import type { CustomModelAccountResolver } from "../../customModels.ts";
 import { makeHarness, memoryStore, recordingKeychain, website } from "./Accounts.testkit.ts";
 
-const backgroundRunning = { mode: "desktop", backgroundRunning: true } as const;
+const backgroundRunning = { desktopBackgroundRunning: true };
+const paperQueue = {
+  root: "/synthetic/project",
+  waiting: 1,
+  saved: 0,
+  failed: 0,
+  requests: [],
+  paused: [],
+};
 const origin = "http://127.0.0.1:8080";
 const modelKey = {
   name: "Synthetic model key",
@@ -49,14 +58,7 @@ it.effect("work before the person's first use of Accounts shows no prompt and lo
 
     const { service } = yield* makeHarness({ storage, keychain });
     // What runs before any foreground use: paper recovery, then unattended work that asks first.
-    yield* service.setPaperQueue({
-      root: "/synthetic/project",
-      waiting: 1,
-      saved: 0,
-      failed: 0,
-      requests: [],
-      paused: [],
-    });
+    yield* service.setPaperQueue(paperQueue);
     expect(yield* service.openWithoutPrompt).toBe(false);
     expect(reads).toEqual([]);
     expect(new Map(storage.blobs)).toEqual(records);
@@ -103,25 +105,38 @@ it.effect(
 );
 
 it.effect.each([
-  { host: "a desktop that quits with its last window", mode: "desktop", backgroundRunning: false },
-  { host: "a server without a desktop", mode: "web", backgroundRunning: true },
-] as const)("on $host, unattended work opens the store as any use does", (host) =>
+  { host: "a desktop that quits with its last window", desktopBackgroundRunning: false },
+  {
+    host: "a backend its desktop did not launch, in a shell with the desktop's old flag",
+    desktopBackgroundRunning: undefined,
+    environment: { SCIENT_DESKTOP_BACKGROUND_RUNNING: "true" },
+  },
+] as const)("on $host, unattended work opens the store as before background running", (host) =>
   Effect.gen(function* () {
     const storage = memoryStore();
     const { keychain, reads } = yield* recordingKeychain(host);
     const { resolvers, modelCatalog } = yield* modelCatalogFixture();
+    // A provider probe before Accounts was ever opened opens it, and finds no such key.
     const before = yield* makeHarness({ storage, keychain, sourceOverrides: { modelCatalog } });
+    const missing = yield* resolvers[0]!(
+      AccountId.make("acc_synthetic-missing"),
+      origin,
+      "openai-completions",
+    ).pipe(Effect.flip);
+    expect(missing.reason).toBe("not-found");
     const { accountId } = yield* before.service.save(modelKey);
 
-    // A provider probe at start opens the store to resolve the linked model's key.
+    // At the next start paper recovery opens the store, and a probe resolves the linked key.
     reads.length = 0;
     resolvers.length = 0;
-    yield* makeHarness({ storage, keychain, sourceOverrides: { modelCatalog } });
+    const restarted = yield* makeHarness({ storage, keychain, sourceOverrides: { modelCatalog } });
+    yield* restarted.service.setPaperQueue(paperQueue);
+    expect(reads).toHaveLength(1);
     const { token } = yield* resolvers[0]!(accountId, origin, "openai-completions");
     expect(Redacted.value(token)).toBe("synthetic-model-key");
     expect(reads).toHaveLength(1);
 
-    // So does other unattended work, such as renewal.
+    // Other unattended work, such as renewal, opens it too.
     reads.length = 0;
     const { service } = yield* makeHarness({ storage, keychain });
     expect(yield* service.openWithoutPrompt).toBe(true);

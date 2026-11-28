@@ -35,6 +35,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
   filePublicationHelperPath: Schema.optionalKey(TrimmedNonEmptyString),
   syncTexNavigatorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  // SCIENT-FORK: the spawning desktop's effective "Keep Scient running in the background", kept
+  // out of the environment that providers and terminals inherit.
+  desktopBackgroundRunning: Schema.optionalKey(Schema.Boolean),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

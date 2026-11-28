@@ -18,10 +18,9 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { Context, Effect, Layer, Option, Redacted, Stream } from "effect";
 import { ServerSecretStore, SecretStorePersistError } from "../../auth/ServerSecretStore.ts";
-import { ServerConfig, type RuntimeMode } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
 import {
   AccountVault,
-  DESKTOP_BACKGROUND_RUNNING_ENV,
   makeAccountKeychain,
   makeAccountVault,
   type AccountKeychain,
@@ -39,17 +38,17 @@ const unavailable = () =>
   new AccountsError({ reason: "unavailable", message: "Synthetic source unavailable." });
 export const noKeychain: AccountKeychain = {
   read: () => Effect.fail(unavailable()),
-  readWithoutPrompt: () => Effect.fail(unavailable()),
+  unattendedWaitsForPerson: false,
   write: () => Effect.fail(unavailable()),
 };
 
 /**
- * A keychain in memory on Linux that records every read, with unattended reads as a backend in
- * `mode` allows them while the desktop's background running is `backgroundRunning`.
+ * A keychain in memory on Linux that records every read, for a desktop-mode backend whose desktop
+ * launched it with `desktopBackgroundRunning` and the inherited `environment`.
  */
 export const recordingKeychain = Effect.fn("AccountsTestkit.recordingKeychain")(function* (host: {
-  readonly mode: RuntimeMode;
-  readonly backgroundRunning: boolean;
+  readonly desktopBackgroundRunning: boolean | undefined;
+  readonly environment?: NodeJS.ProcessEnv;
 }) {
   const items = new Map<string, Redacted.Redacted<string>>();
   const reads: string[] = [];
@@ -64,10 +63,11 @@ export const recordingKeychain = Effect.fn("AccountsTestkit.recordingKeychain")(
         items.set(account, value);
       }),
   }).pipe(
-    Effect.provideService(ServerConfig, { mode: host.mode } as ServerConfig["Service"]),
-    Effect.provideService(HostProcess.Environment, {
-      [DESKTOP_BACKGROUND_RUNNING_ENV]: String(host.backgroundRunning),
-    }),
+    Effect.provideService(ServerConfig, {
+      mode: "desktop",
+      desktopBackgroundRunning: host.desktopBackgroundRunning,
+    } as ServerConfig["Service"]),
+    Effect.provideService(HostProcess.Environment, host.environment ?? {}),
     Effect.provideService(HostProcess.Platform, "linux"),
   );
   return { keychain, reads };
@@ -263,6 +263,7 @@ export function fakeAccounts(
       }),
     setPaperQueue: () => Effect.void,
     openWithoutPrompt: Effect.succeed(true),
+    unattendedWaitsForPerson: Effect.succeed(false),
     showHandoff: () => unsupported,
     cancelHandoff: (id) =>
       Effect.sync(() => {

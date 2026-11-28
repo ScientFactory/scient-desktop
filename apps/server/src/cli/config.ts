@@ -473,6 +473,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
   const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
+  // SCIENT-FORK: only the desktop that spawned this server says so; never the environment.
+  const desktopBackgroundRunning = bootstrap?.desktopBackgroundRunning;
   const filePublicationHelperPath =
     bootstrap?.filePublicationHelperPath ?? env.filePublicationHelperPath;
   const filePublicationRetentionRoot =
@@ -646,6 +648,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopBrowserControlFd,
     resourceMonitorPath,
     syncTexNavigatorPath,
+    ...(desktopBackgroundRunning === undefined ? {} : { desktopBackgroundRunning }),
     ...(filePublicationHelperPath === undefined ? {} : { filePublicationHelperPath }),
     ...(filePublicationRetentionRoot === undefined ? {} : { filePublicationRetentionRoot }),
     ...(env.filePublicationRetentionLimitBytes === undefined

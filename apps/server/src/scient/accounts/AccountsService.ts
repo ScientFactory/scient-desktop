@@ -125,6 +125,11 @@ export interface AccountsServiceShape {
    * opens the store and `changes` emits.
    */
   readonly openWithoutPrompt: Effect.Effect<boolean, AccountsError>;
+  /**
+   * While the desktop may run with no window on macOS or Linux: unattended work that could open
+   * the store asks `openWithoutPrompt` first. False: it opens the store as any use does.
+   */
+  readonly unattendedWaitsForPerson: Effect.Effect<boolean>;
   readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;
   readonly showHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
   readonly cancelHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;

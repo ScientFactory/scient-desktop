@@ -648,6 +648,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         passwordStore: unavailable,
         snapshot: missingService,
         openWithoutPrompt: missingService,
+        unattendedWaitsForPerson: Effect.succeed(false),
         externalIdentities: missingService,
         changes: Stream.empty,
         save: unavailable,

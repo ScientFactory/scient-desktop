@@ -7,9 +7,6 @@ import { Context, Effect, Layer, Option, Redacted, Semaphore } from "effect";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
 
-/** "needs-person" when only a foreground read may open it. */
-export type KeychainReadWithoutPrompt = Redacted.Redacted<string> | null | "needs-person";
-
 const requireKeyring = NodeModule.createRequire(import.meta.url);
 const unavailable = () =>
   new AccountsError({ reason: "unavailable", message: "Scient Accounts store is unavailable." });
@@ -20,18 +17,13 @@ export interface AccountKeychain {
   readonly read: (
     account: string,
   ) => Effect.Effect<Redacted.Redacted<string> | null, AccountsError>;
-  /** Unattended work's read; `makeAccountKeychain` decides when it answers "needs-person". */
-  readonly readWithoutPrompt: (
-    account: string,
-  ) => Effect.Effect<KeychainReadWithoutPrompt, AccountsError>;
   readonly write: (
     account: string,
     key: Redacted.Redacted<string>,
   ) => Effect.Effect<void, AccountsError>;
+  /** Unattended work may not read it: it waits for the person's next foreground use. */
+  readonly unattendedWaitsForPerson: boolean;
 }
-
-/** Set by the desktop at each backend launch: "true" while Scient may keep running windowless. */
-export const DESKTOP_BACKGROUND_RUNNING_ENV = "SCIENT_DESKTOP_BACKGROUND_RUNNING";
 
 /**
  * Credential Manager never asks. A macOS keychain item whose access list no longer trusts this
@@ -39,23 +31,18 @@ export const DESKTOP_BACKGROUND_RUNNING_ENV = "SCIENT_DESKTOP_BACKGROUND_RUNNING
  * run with no window, those open only with one. Otherwise unattended work reads as any use does.
  */
 export const makeAccountKeychain = Effect.fn("AccountKeychain.make")(function* (
-  keychain: Omit<AccountKeychain, "readWithoutPrompt">,
+  keychain: Omit<AccountKeychain, "unattendedWaitsForPerson">,
 ) {
-  const backgroundRunning =
-    (yield* ServerConfig).mode === "desktop" &&
-    (yield* HostProcess.Environment)[DESKTOP_BACKGROUND_RUNNING_ENV] === "true";
-  const waitsForPerson = backgroundRunning && (yield* HostProcess.Platform) !== "win32";
+  const backgroundRunning = (yield* ServerConfig).desktopBackgroundRunning === true;
   return {
     ...keychain,
-    readWithoutPrompt: waitsForPerson
-      ? () => Effect.succeed("needs-person" as const)
-      : keychain.read,
+    unattendedWaitsForPerson: backgroundRunning && (yield* HostProcess.Platform) !== "win32",
   } satisfies AccountKeychain;
 });
 
 const KEYCHAIN_SERVICE = "Scient Accounts";
 
-const nativeKeychain: Omit<AccountKeychain, "readWithoutPrompt"> = {
+const nativeKeychain: Omit<AccountKeychain, "unattendedWaitsForPerson"> = {
   read: Effect.fn("AccountKeychain.read")((account) =>
     Effect.tryPromise({
       try: async () => {
@@ -123,6 +110,11 @@ export class AccountVault extends Context.Service<
     readonly protection: Effect.Effect<"keychain" | "file", AccountsError>;
     /** Opens a vault set up before for unattended work; false when that needs the person. */
     readonly openWithoutPrompt: Effect.Effect<boolean, AccountsError>;
+    /**
+     * Unattended work must not open a keychain-protected vault: it opens only through
+     * `openWithoutPrompt`, which then declines one. False: it opens as any use does.
+     */
+    readonly unattendedWaitsForPerson: boolean;
     readonly encrypt: (
       name: string,
       value: Redacted.Redacted<Uint8Array>,
@@ -205,8 +197,8 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
       return loaded;
     }),
   );
-  // Unattended work opens only a vault set up before, reading its key only as `readWithoutPrompt`
-  // allows: when that needs the person, nothing is read or written and the next foreground use
+  // Unattended work opens only a vault set up before; a keychain-protected one only when the
+  // keychain allows unattended reads, else nothing is read or written and the next foreground use
   // opens it. It never waits behind another open either.
   const openWithoutPrompt = Effect.suspend(() =>
     loaded
@@ -225,8 +217,8 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
                 key = file.value;
                 protection = "file";
               } else if (sentinel.value[0] === 1) {
-                const read = yield* keychain.readWithoutPrompt(account);
-                if (read === "needs-person") return false;
+                if (keychain.unattendedWaitsForPerson) return false;
+                const read = yield* keychain.read(account);
                 if (read === null) return yield* unavailable();
                 key = Buffer.from(Redacted.value(read), "base64");
                 protection = "keychain";
@@ -245,6 +237,7 @@ export const makeAccountVault = Effect.fn("AccountVault.make")(function* (
   return AccountVault.of({
     protection: load.pipe(Effect.map((value) => value.protection)),
     openWithoutPrompt,
+    unattendedWaitsForPerson: keychain.unattendedWaitsForPerson,
     encrypt: Effect.fn("AccountVault.encrypt")(function* (name, value) {
       return yield* encryptBlob((yield* load).key, name, value);
     }),

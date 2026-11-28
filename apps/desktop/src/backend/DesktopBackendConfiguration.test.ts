@@ -1127,7 +1127,7 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("tells native and WSL backends whether Scient keeps running in the background", () =>
+  it.effect("tells native and WSL backends in the bootstrap whether Scient keeps running", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -1138,10 +1138,14 @@ describe("DesktopBackendConfiguration", () => {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           const primary = yield* configuration.resolvePrimary;
           const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
-          assert.include((wsl.env.WSLENV ?? "").split(":"), "SCIENT_DESKTOP_BACKGROUND_RUNNING");
+          // Providers and terminals inherit the backend's environment: the setting stays out of it.
+          for (const env of [primary.env, wsl.env]) {
+            assert.notInclude(Object.keys(env), "SCIENT_DESKTOP_BACKGROUND_RUNNING");
+            assert.notInclude(env.WSLENV ?? "", "BACKGROUND");
+          }
           return [
-            primary.env.SCIENT_DESKTOP_BACKGROUND_RUNNING,
-            wsl.env.SCIENT_DESKTOP_BACKGROUND_RUNNING,
+            primary.bootstrap.desktopBackgroundRunning,
+            wsl.bootstrap.desktopBackgroundRunning,
           ];
         }).pipe(
           Effect.provide(
@@ -1167,9 +1171,9 @@ describe("DesktopBackendConfiguration", () => {
         );
 
       // Unchosen, it follows the platform's default; the person's choice wins.
-      assert.deepEqual(yield* launch("linux", null), ["false", "false"]);
-      assert.deepEqual(yield* launch("darwin", null), ["true", "true"]);
-      assert.deepEqual(yield* launch("linux", true), ["true", "true"]);
+      assert.deepEqual(yield* launch("linux", null), [false, false]);
+      assert.deepEqual(yield* launch("darwin", null), [true, true]);
+      assert.deepEqual(yield* launch("linux", true), [true, true]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
@@ -1281,7 +1285,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
         assert.equal(
           config.env.WSLENV,
-          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:SCIENT_DESKTOP_BACKGROUND_RUNNING:T3CODE_DESKTOP_HOST_SCOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:T3CODE_DESKTOP_HOST_SCOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
           // SCIENT-FORK:END scient-backend-launch
         );
       }).pipe(

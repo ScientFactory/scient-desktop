@@ -238,6 +238,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
   const browser = yield* ServerBrowser;
   const config = yield* ServerConfig;
   const accounts = yield* AccountsService;
+  const unattendedWaitsForPerson = yield* accounts.unattendedWaitsForPerson;
   const sessionRows = yield* Effect.serviceOption(AuthSessionRepository);
   const sessions = yield* Effect.serviceOption(SessionStore);
   // A development server, as the reusable dev sign-in decides it; never a packaged one.
@@ -419,25 +420,28 @@ export const makeRemoteSessions = Effect.gen(function* () {
     return { deleted: yield* exclusive(forget(source)) };
   });
 
-  // Unattended: a sweep never opens a store that waits for the person (`openWithoutPrompt`).
-  // Skipped then, it runs once the store opens, or at the next daily sweep or binding.
+  // Unattended: while unattended work waits for the person, a sweep never opens a store that
+  // needs them (`openWithoutPrompt`). Skipped then, it runs once the store opens, or at the next
+  // daily sweep or binding.
   const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
-    if (!(yield* accounts.openWithoutPrompt)) return;
+    if (unattendedWaitsForPerson && !(yield* accounts.openWithoutPrompt)) return;
     yield* exclusive(sweepSenders);
   }, Effect.ignore);
 
   /**
-   * Runs for the server's life: a sweep at start, once the store first opens, and then daily, and
-   * one whenever a session that a sender last proved its key over is removed, so an idle computer
-   * drops a revoked one's copies.
+   * Runs for the server's life: a sweep at start and then daily, and one whenever a session that
+   * a sender last proved its key over is removed, so an idle computer drops a revoked one's copies.
+   * While unattended work waits for the person, one more once the store first opens.
    */
   const watch = Effect.all(
     [
       sweep().pipe(Effect.repeat(Schedule.spaced(Duration.days(1)))),
-      accounts.changes.pipe(
-        Stream.take(1),
-        Stream.runForEach(() => sweep()),
-      ),
+      unattendedWaitsForPerson
+        ? accounts.changes.pipe(
+            Stream.take(1),
+            Stream.runForEach(() => sweep()),
+          )
+        : Effect.void,
       Option.isNone(sessions)
         ? Effect.never
         : sessions.value.streamChanges.pipe(

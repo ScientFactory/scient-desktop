@@ -120,6 +120,8 @@ export class ServerConfig extends Context.Service<
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly syncTexNavigatorPath?: string | undefined;
+    /** SCIENT-FORK: the spawning desktop keeps Scient running with no window (bootstrap only). */
+    readonly desktopBackgroundRunning?: boolean | undefined;
     /** Host-owned native publisher; never selected by a workspace request. */
     readonly filePublicationHelperPath?: string | undefined;
     /** Shared physical-file history across profiles; tests use isolated storage. */
