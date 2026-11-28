@@ -44,17 +44,22 @@ export function windowlessBucket(ms: number): string {
   return "over-7d";
 }
 
-/** A windowless period; `request` counts the requests for a window made during it. */
+/**
+ * A windowless period. `request` counts the requests for a window made during it; `settled` says
+ * the latest one has already been counted as failed (or there is none), so it counts once.
+ */
 interface Episode {
   readonly id: number;
   readonly since: number;
   readonly via: Option.Option<ReturnVia>;
   readonly request: number;
+  readonly settled: boolean;
 }
 
-/** The windowless period and tray choice when Quit began, so the outcome is told from them. */
+/** The windowless period, its length and the tray choice when Quit was requested. */
 export interface QuitSnapshot {
   readonly episode: Option.Option<Episode>;
+  readonly length: number;
   readonly via: "tray" | "other";
 }
 
@@ -74,6 +79,8 @@ export class DesktopBackgroundFacts extends Context.Service<
     readonly windowNotShown: Effect.Effect<void>;
     /** The tray's Quit completely: the Quit that follows reports `via: tray`. */
     readonly trayQuitChosen: Effect.Effect<void>;
+    /** A Quit request ignored because one is under way: its tray choice must not carry over. */
+    readonly quitIgnored: Effect.Effect<void>;
     readonly quitStarted: Effect.Effect<QuitSnapshot>;
     /**
      * What Quit's running-work check decided. A cancelled Quit leaves Scient windowless; a Quit
@@ -130,10 +137,21 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
     }));
   });
 
-  const notShown = Effect.fn("DesktopBackgroundFacts.notShown")(function* (episode: Episode) {
+  /** Counts the outstanding request as failed, once, when `matches` the period it belongs to. */
+  const settle = Effect.fn("DesktopBackgroundFacts.settle")(function* (
+    matches: (episode: Episode) => boolean,
+  ) {
+    const settled = yield* Ref.modify(episodeRef, (current) => {
+      if (Option.isNone(current) || current.value.settled || !matches(current.value)) {
+        return [Option.none<Episode>(), current];
+      }
+      const next = { ...current.value, settled: true };
+      return [Option.some(next), Option.some(next)];
+    });
+    if (Option.isNone(settled)) return;
     yield* event("window-not-shown", {
-      via: Option.getOrElse(episode.via, () => "other" as const),
-      windowlessBucket: windowlessBucket((yield* Clock.currentTimeMillis) - episode.since),
+      via: Option.getOrElse(settled.value.via, () => "other" as const),
+      windowlessBucket: windowlessBucket((yield* Clock.currentTimeMillis) - settled.value.since),
     });
   });
 
@@ -176,7 +194,7 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
       const started = yield* Ref.modify(episodeRef, (current) =>
         Option.isSome(current)
           ? [false, current]
-          : [true, Option.some({ id, since: now, via: Option.none(), request: 0 })],
+          : [true, Option.some({ id, since: now, via: Option.none(), request: 0, settled: true })],
       );
       if (!started) return;
       nextEpisode += 1;
@@ -190,19 +208,15 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
           ...current.value,
           via: Option.some(via),
           request: current.value.request + 1,
+          settled: false,
         };
         return [Option.some(next), Option.some(next)];
       });
       if (Option.isNone(requested)) return;
       const { id, request } = requested.value;
-      // Still the same period and no later request: this one did not bring a window back.
+      // Unless the request was settled or a later one made, it did not bring a window back.
       yield* Effect.sleep(RETURN_TIMEOUT).pipe(
-        Effect.andThen(Ref.get(episodeRef)),
-        Effect.flatMap((current) =>
-          Option.isSome(current) && current.value.id === id && current.value.request === request
-            ? notShown(current.value)
-            : Effect.void,
-        ),
+        Effect.andThen(settle((current) => current.id === id && current.request === request)),
         Effect.forkIn(scope),
       );
     }).pipe(Effect.withSpan("DesktopBackgroundFacts.windowRequested")),
@@ -215,27 +229,25 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
         windowlessBucket: windowlessBucket((yield* Clock.currentTimeMillis) - episode.value.since),
       });
     }).pipe(Effect.withSpan("DesktopBackgroundFacts.windowShown")),
-    windowNotShown: Effect.gen(function* () {
-      // Settles the request: its timeout no longer counts it a second time.
-      const episode = yield* Ref.updateAndGet(episodeRef, (current) =>
-        Option.map(current, (value) => ({ ...value, request: value.request + 1 })),
-      );
-      if (Option.isSome(episode)) yield* notShown(episode.value);
-    }).pipe(Effect.withSpan("DesktopBackgroundFacts.windowNotShown")),
+    windowNotShown: settle(() => true).pipe(
+      Effect.withSpan("DesktopBackgroundFacts.windowNotShown"),
+    ),
     trayQuitChosen: Ref.set(trayQuit, true),
+    quitIgnored: Ref.set(trayQuit, false),
     quitStarted: Effect.gen(function* () {
       const via = (yield* Ref.getAndSet(trayQuit, false)) ? ("tray" as const) : ("other" as const);
-      return { episode: yield* Ref.get(episodeRef), via };
+      const episode = yield* Ref.get(episodeRef);
+      const now = yield* Clock.currentTimeMillis;
+      const length = Option.match(episode, { onNone: () => 0, onSome: (e) => now - e.since });
+      return { episode, via, length };
     }),
     quitDecided: Effect.fn("DesktopBackgroundFacts.quitDecided")(function* (snapshot, prompt) {
       if (Option.isSome(snapshot.episode)) {
-        const { id, since } = snapshot.episode.value;
-        const length = (yield* Clock.currentTimeMillis) - since;
-        if (prompt !== "cancelled") yield* endEpisode(id);
+        if (prompt !== "cancelled") yield* endEpisode(snapshot.episode.value.id);
         yield* event("quit", {
           via: snapshot.via,
           quitPrompt: prompt,
-          windowlessBucket: windowlessBucket(length),
+          windowlessBucket: windowlessBucket(snapshot.length),
         });
       }
       if (prompt !== "cancelled") yield* summary("quit");

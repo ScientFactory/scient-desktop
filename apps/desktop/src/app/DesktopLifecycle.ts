@@ -182,7 +182,11 @@ function handleBeforeQuit(
     return;
   }
   // SCIENT-FORK:START — quitting stops running work, so it asks first; a quit already under way does not.
-  if (quit.phase === "asking") return;
+  if (quit.phase === "asking") {
+    // A repeated Quit is ignored, so a tray choice it made must not carry over to a later Quit.
+    void runEffect(recordBackground((facts) => facts.quitIgnored));
+    return;
+  }
   quit.phase = "asking";
   void runEffect(
     Effect.gen(function* () {

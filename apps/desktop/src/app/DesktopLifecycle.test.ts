@@ -26,11 +26,14 @@ import { vi } from "vite-plus/test";
 const quitGuard = vi.hoisted(() => ({
   prompt: "none" as "none" | "confirmed" | "cancelled",
   sources: [] as Array<"reported" | "read">,
+  /** While set, the check waits on it, as a person deciding in the dialog. */
+  gate: undefined as Promise<void> | undefined,
 }));
 vi.mock("../scient/quitGuard/quitGuard.ts", () => ({
-  confirmQuitStopsRunningWork: (source: "reported" | "read") => {
+  confirmQuitStopsRunningWork: async (source: "reported" | "read") => {
     quitGuard.sources.push(source);
-    return Promise.resolve(quitGuard.prompt);
+    await quitGuard.gate;
+    return quitGuard.prompt;
   },
 }));
 
@@ -719,6 +722,76 @@ describe("DesktopLifecycle", () => {
           },
         ]);
       }),
+  );
+
+  it.effect("a tray Quit ignored while another Quit asks does not mark the next Quit", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const recorded: Array<Readonly<Record<string, string | number | boolean>>> = [];
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners)),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow(Effect.void, Effect.succeedSome({} as never))),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "win32",
+            appImagePath: Option.none(),
+            isDevelopment: false,
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          DesktopAppSettings.layerTest({
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            keepRunningInBackground: true,
+          }),
+        ),
+        Layer.provideMerge(layerBackgroundFacts("win32", recorded)),
+      );
+      const settle = Effect.promise(() => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setImmediate(resolve);
+        return promise;
+      });
+      const deciding = Promise.withResolvers<void>();
+      quitGuard.prompt = "cancelled";
+      quitGuard.gate = deciding.promise;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+          const facts = yield* DesktopBackgroundFacts.DesktopBackgroundFacts;
+          const quit = () =>
+            appListeners.get("before-quit")?.({ preventDefault: () => {} } as Electron.Event);
+          yield* facts.windowlessStarted;
+          yield* facts.trayQuitChosen;
+          quit();
+          yield* settle;
+          // The tray again while the first Quit's dialog is open: this request is ignored.
+          yield* facts.trayQuitChosen;
+          quit();
+          yield* settle;
+          deciding.resolve();
+          yield* settle;
+          quitGuard.gate = undefined;
+          quit();
+          yield* settle;
+        }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            quitGuard.prompt = "none";
+            quitGuard.gate = undefined;
+          }),
+        ),
+      );
+      assert.deepEqual(
+        recorded.map((fact) => fact.via),
+        ["tray", "other"],
+      );
+    }),
   );
 
   it.effect("the Dock icon asks for a window as the Dock", () =>

@@ -207,6 +207,75 @@ describe("DesktopBackgroundFacts", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "a request counts as failed once, whether its timeout or its page failure comes first",
+    () =>
+      Effect.gen(function* () {
+        const { facts, recorded } = yield* recording();
+        yield* facts.windowlessStarted;
+        yield* facts.windowRequested.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+        );
+        yield* TestClock.adjust(DesktopBackgroundFacts.RETURN_TIMEOUT);
+        yield* facts.windowNotShown;
+        // A page failure with no request outstanding counts nothing either.
+        yield* facts.windowNotShown;
+        assert.deepEqual(
+          recorded.map((fact) => fact.properties),
+          [
+            {
+              kind: "window-not-shown",
+              platform: "windows",
+              via: "tray",
+              windowlessBucket: "1-10m",
+            },
+          ],
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("Quit reports the length and tray choice as of its own request", () =>
+    Effect.gen(function* () {
+      const { facts, recorded } = yield* recording("linux");
+      yield* facts.windowlessStarted;
+      yield* TestClock.adjust("50 seconds");
+      const snapshot = yield* facts.quitStarted;
+      yield* facts.windowShown;
+      yield* TestClock.adjust("15 seconds");
+      yield* facts.quitDecided(snapshot, "confirmed");
+      // A tray Quit ignored while another is under way leaves no choice for the next Quit.
+      yield* facts.windowlessStarted;
+      yield* facts.trayQuitChosen;
+      yield* facts.quitIgnored;
+      yield* facts.quitDecided(yield* facts.quitStarted, "cancelled");
+      assert.deepEqual(
+        recorded.filter((fact) => fact.name === "app.background.event").map((f) => f.properties),
+        [
+          {
+            kind: "window-returned",
+            platform: "linux",
+            via: "other",
+            windowlessBucket: "under-1m",
+          },
+          {
+            kind: "quit",
+            platform: "linux",
+            via: "other",
+            quitPrompt: "confirmed",
+            windowlessBucket: "under-1m",
+          },
+          {
+            kind: "quit",
+            platform: "linux",
+            via: "other",
+            quitPrompt: "cancelled",
+            windowlessBucket: "under-1m",
+          },
+        ],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports failures and setting changes with closed values", () =>
     Effect.gen(function* () {
       const { facts, recorded } = yield* recording("darwin");
