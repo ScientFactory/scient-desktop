@@ -51,8 +51,13 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
-// SCIENT-FORK:START — startup timing, reported through the consented analytics path.
+// SCIENT-FORK:START — startup timing and background running, reported through the analytics path.
 import * as DesktopStartupTiming from "../scient/startupTiming/DesktopStartupTiming.ts";
+import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+import {
+  clearAwaitingFirstReveal,
+  markAwaitingFirstReveal,
+} from "../scient/backgroundRunning/firstReveal.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — near-full default size and one-time size updates for older profiles.
 import { applyOneTimeMainWindowSizing, nearFullMainWindowSize } from "./scientMainWindowSizing.ts";
@@ -71,6 +76,9 @@ import {
 // SCIENT-FORK:END
 // SCIENT-FORK:START — spelling suggestions and languages in the context menu.
 import { spellingMenuItems } from "../scient/spelling/ipc.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: Chromium's eye in a tab's password boxes.
+import { BROWSER_TAB_BLINK_FEATURES } from "../scient/browser/passwordReveal.ts";
 // SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
@@ -457,12 +465,17 @@ export const make = Effect.gen(function* () {
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const telemetry = yield* Effect.serviceOption(DesktopTelemetryPublisher);
   const restartTiming = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
-  // SCIENT-FORK:START — startup timing, reported through the consented analytics path.
+  // SCIENT-FORK:START — startup timing and background running, reported through the analytics path.
   const startupTiming = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
+  const backgroundFacts = yield* Effect.serviceOption(
+    DesktopBackgroundFacts.DesktopBackgroundFacts,
+  );
   // SCIENT-FORK:END
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
   let mainClosedDuringStartup = false;
+  // SCIENT-FORK: the person asked for a window while running in the background; cleared once shown.
+  let windowRequestedInBackground = false;
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -475,6 +488,8 @@ export const make = Effect.gen(function* () {
   // SCIENT-FORK:END
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
+  // SCIENT-FORK: windows whose page failed to load for good, with the call that loads it again.
+  const failedLoads = new WeakMap<Electron.BrowserWindow, () => void>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
@@ -615,6 +630,9 @@ export const make = Effect.gen(function* () {
         disableHtmlFullscreenWindowResize: true,
       },
     });
+    // SCIENT-FORK: marked before any awaited setup, so the older second-instance reveal, which
+    // can find this window by its native fallback, never shows it blank.
+    if (yield* Ref.get(desktopState.background)) markAwaitingFirstReveal(window);
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
       return Option.none();
@@ -755,6 +773,9 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
+      // SCIENT-FORK:START — Scient Browser: Chromium's eye in a tab's password boxes.
+      webPreferences.enableBlinkFeatures = BROWSER_TAB_BLINK_FEATURES;
+      // SCIENT-FORK:END
       // Default mode keys zoom by host across the partition and resets it to app zoom on every
       // cross-document commit; isolated keeps each tab's zoom on its own frame across navigations.
       webPreferences.zoomMode = "isolated";
@@ -1066,6 +1087,8 @@ export const make = Effect.gen(function* () {
         return;
       }
       clearDevelopmentLoadRetry();
+      // SCIENT-FORK: a page that loaded (crash recovery included) needs no retry.
+      failedLoads.delete(window);
       developmentLoadRetryIndex = 0;
       if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
@@ -1093,6 +1116,13 @@ export const make = Effect.gen(function* () {
             ...(retryInMs === undefined ? {} : { retryInMs }),
           }),
         );
+        // SCIENT-FORK:START — background running: a window asked for that will not show. The next
+        // request loads it again instead of reusing a window whose page never loaded.
+        if (retryInMs === undefined && !firstRevealComplete) {
+          failedLoads.set(window, loadApplication);
+          if (Option.isSome(backgroundFacts)) void runPromise(backgroundFacts.value.windowNotShown);
+        }
+        // SCIENT-FORK:END
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
@@ -1175,11 +1205,19 @@ export const make = Effect.gen(function* () {
         return;
       firstRevealComplete = true;
       pendingMainReveals.delete(window);
+      // SCIENT-FORK: background running.
+      clearAwaitingFirstReveal(window);
+      failedLoads.delete(window);
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
       // SCIENT-FORK:START — a startup sub-phase; only the first window shown in this process counts.
       if (Option.isSome(startupTiming)) yield* startupTiming.value.windowShown;
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — a shown app window ends running in the background.
+      yield* Ref.set(desktopState.background, false);
+      windowRequestedInBackground = false;
+      if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.windowShown;
       // SCIENT-FORK:END
       yield* dismissConnectingSplash;
     });
@@ -1273,9 +1311,25 @@ export const make = Effect.gen(function* () {
 
   const createMainIfBackendReady = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
+    // SCIENT-FORK: running in the background opens no window on its own, only one asked for.
+    if ((yield* Ref.get(desktopState.background)) && !windowRequestedInBackground) {
+      if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.backendRestarted;
+      return;
+    }
     if (yield* waitingForBackend) return;
     yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
+
+  // SCIENT-FORK:START — background-running analytics: a request that leaves no window at all,
+  // with the backend ready, failed; a window still loading reports itself when shown.
+  const settleBackgroundRequest = Effect.gen(function* () {
+    if (Option.isNone(backgroundFacts) || (yield* Ref.get(desktopState.quitting))) return;
+    if (!(yield* Ref.get(desktopState.background)) || !(yield* Ref.get(backendReadyRef))) return;
+    if (Option.isNone(yield* electronWindow.currentMainOrFirst)) {
+      yield* backgroundFacts.value.windowNotShown;
+    }
+  });
+  // SCIENT-FORK:END
 
   const showConnectingSplash = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
@@ -1385,8 +1439,23 @@ export const make = Effect.gen(function* () {
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
+      // SCIENT-FORK:START — the person asked for a window; running in the background ends only
+      // once one shows, so a failed attempt can be retried by launching Scient again.
+      if (yield* Ref.get(desktopState.background)) {
+        windowRequestedInBackground = true;
+        if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.windowRequested;
+      }
+      // SCIENT-FORK:END
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
+        // SCIENT-FORK:START — a window whose page is still in its failed load is loaded again,
+        // then shown; one that recovered or was shown is never reloaded here.
+        const reload = failedLoads.get(existingWindow.value);
+        if (reload !== undefined && pendingMainReveals.has(existingWindow.value)) {
+          failedLoads.delete(existingWindow.value);
+          reload();
+        }
+        // SCIENT-FORK:END
         yield* revealMain(existingWindow.value);
         return;
       }
@@ -1403,7 +1472,11 @@ export const make = Effect.gen(function* () {
         }
       }
       yield* createMainIfBackendReady;
-    }).pipe(Effect.withSpan("desktop.window.activate")),
+    }).pipe(
+      // SCIENT-FORK: background-running analytics.
+      Effect.ensuring(settleBackgroundRequest),
+      Effect.withSpan("desktop.window.activate"),
+    ),
     createMainIfBackendReady,
     showConnectingSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {

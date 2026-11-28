@@ -99,7 +99,12 @@ export interface ConnectorForwardRequest {
   /** Server-derived caller identity; never request-supplied. */
   readonly scope: McpInvocationScope;
   /** The calling thread's place; local connectors run in its worktree or project folder. */
-  readonly location?: { readonly projectId: ProjectId; readonly worktreePath: string | null };
+  readonly location?: {
+    readonly projectId: ProjectId;
+    readonly worktreePath: string | null;
+    /** The scheduled task the calling run serves: its pin binds the connector's sign-in. */
+    readonly scheduledTaskId?: string | undefined;
+  };
 }
 
 export interface ConnectorForwardResponse {
@@ -173,6 +178,11 @@ export interface ConnectorRuntimeShape {
   readonly completeSignIn: (
     query: ConnectorSignInCallbackQuery,
   ) => Effect.Effect<ConnectorSignInCallbackOutcome>;
+  /**
+   * Waits for one sign-in flow, named by its OAuth `state`, to end through its callback:
+   * connected, or failed. One that already ended answers at once. Optional for stand-ins.
+   */
+  readonly signInEnded?: (state: string) => Effect.Effect<"connected" | "failed">;
   /** `availability` project ids must exist; they are deduplicated before saving. */
   readonly update: (input: ConnectorUpdateInput) => Effect.Effect<void, ExtensionsError>;
   readonly remove: (input: ConnectorRemoveInput) => Effect.Effect<void, ExtensionsError>;

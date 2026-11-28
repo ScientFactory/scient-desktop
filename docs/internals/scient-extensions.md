@@ -791,6 +791,59 @@ new process starts. When the
 site needs the person, the agent is told to sign in, and the connector shows Needs sign-in with a
 Sign in button.
 
+**Write-back.** A site that rotates its session cookie on each answer would cost a new sign-in
+after every restart. A manifest's `signIn.writeBack { cookie, path?, reads }` names that one cookie
+and the fixed paths of its reads. The program sends `scient/readWithWebsiteSession { operation,
+query? }` on stdout; the host answers it on stdin and the agent never sees either message.
+
+Scient then makes the GET itself, through `readWithWebsiteSession`:
+
+- The read goes to the exact origin. It follows no redirect, takes no caller headers, and sends
+  the profile's cookies and user agent.
+- Only that slot's rotation or deletion goes back into the profile, under the rules of
+  `decideWriteBack` (`packages/shared/src/scientCookieWriteBack.ts`):
+  - The slot must be host-only, Secure and HttpOnly at that path, and sent with this request (the
+    jar is read for the GET's own URL).
+  - Only headers for exactly that slot count (a header without Path takes the request's
+    directory); a same-name cookie elsewhere is another cookie.
+  - No new slot is made, and Secure, HttpOnly and SameSite are never loosened.
+  - A signed-out answer may only delete.
+- Writes are serialized per profile, from the sign-out fence noted first to the commit, and one
+  profile, resolved once, serves the cookies, the checks and the write-back. Right before the GET
+  the row is read again, must be in that profile, and its grant, version and the fence are checked
+  in one locked step, so a sign-out during the jar read sends nothing.
+- After the GET, and at the commit, `unlessSignedOutSince` checks the grant, the row's version and
+  the fence in one locked step. A change meanwhile, a fenced commit included, discards the answer
+  before the program sees it. A session Scient's own sign-in made is published the same way.
+- The browser operation `accountWriteCookie` writes only while the slot is still that Secure,
+  HttpOnly cookie with the SameSite and value Scient sent, then reads it back.
+- The body is streamed and the read cancelled past 4 MB; a bodiless answer (204) keeps its
+  status and headers.
+- The answer gives the program status, content type, body and one of `ok`, `signed-out`,
+  `forbidden` or `unreachable`. It carries no headers or cookie values. Only `signed-out` leads to a
+  new sign-in.
+- Writes apply on the computer that made the read; copies to other computers keep their own
+  rules.
+
+**Service tokens.** A site whose API takes a token it mints from the signed-in session (Moodle's
+mobile launch, Panopto's embed) needs no stored key. `signIn.tokens { <name>: { path, pattern,
+decode?, separator?, part? } }` names the minting page on the site; `{nonce}` in the path becomes
+fresh random hex. The program asks `scient/serviceToken { name, renew? }`. Scient makes the same
+read as above (with write-back when `writeBack` names a cookie), then takes the pattern's first
+group from the redirect's `Location` (first 8 KB) or the body (first 1 MB), with a 100 ms bound on
+the match (`serviceTokens.ts`). It decodes base64 and picks
+a part when the recipe asks, and accepts one printable line only. The token is kept in memory per connector and name, for one sign-in, session and recipe; a new
+sign-in or an edited recipe mints anew, as does `renew`. Before the mint Scient notes the sign-out
+fence, a digest of the profile's cookies for the minting page's own address (so a slot at a deeper
+path counts) but the rotating slot, and the slot's own value. Every delivery, kept or new, needs the link to allow it, no sign-out since (asked again after
+the jar is read), the same digest, and the same slot value or one Scient's own read rotated it to
+and saw land (`rotatedTo`). A sign-out or a
+withdrawn link refuses. Another session in the profile mints anew, and a session replaced during
+the mint refuses that token. The token joins the connector's redacted values at once: its answers,
+its error output and its exit message are all checked against the live set. A
+signed-out or unreachable answer comes back as that outcome, never as a token. Nothing in the
+code knows a site.
+
 **Development candidates** can trust a local test site's certificate: the desktop app reads SPKI
 hashes from `server-browser/dev-trusted-spki.txt` in its own state folder, only when
 `VITE_DEV_SERVER_URL` is set and the app is not packaged.

@@ -30,6 +30,7 @@ it.effect.each([
   "cancel",
   "timeout",
   "unattended",
+  "unattended-code",
   "interrupt",
   "disallowed",
 ] as const)("sign-in hand-off: %s", (scenario) =>
@@ -76,6 +77,7 @@ it.effect.each([
     let polls = 0;
     let inspections = 0;
     let fills = 0;
+    let sent = false;
     let reveals = 0;
     const waiting = yield* Deferred.make<void>();
     const broker = PreviewAutomationBroker.of({
@@ -103,8 +105,12 @@ it.effect.each([
           ) {
             polls++;
             expect(fake.handoffs.size).toBe(1);
+            // The check came back saying the password was wrong: the card says that, not the check.
             if (scenario === "kind" && polls === 2)
-              expect([...fake.handoffs.values()][0]).toMatchObject({ kind: "captcha" });
+              expect([...fake.handoffs.values()][0]).toMatchObject({
+                kind: "captcha",
+                refused: "password",
+              });
             if (scenario === "cancel")
               yield* fake.service.cancelHandoff([...fake.handoffs.keys()][0]!).pipe(Effect.orDie);
             if (scenario === "interrupt") {
@@ -116,14 +122,20 @@ it.effect.each([
             expect((request.input as { text: string }).text).not.toBe("");
             fills++;
           }
+          // The site answers the code when it is sent, not as it is typed.
+          if ((request.operation === "click" || request.operation === "press") && fills > 0)
+            sent = true;
           if (request.operation === "evaluate") {
             inspections++;
             // The first look after the user acts lands mid-navigation and cannot be read.
             if (scenario === "navigating" && polls === 1) return null as A;
             const passwordStep =
               (scenario === "interrupt" || scenario === "cancel") && inspections === 1;
+            // Unattended, the push it waited on turns into a code step nobody here can answer.
+            const codeStep = scenario === "unattended-code" && polls > 0;
             const challenge =
               !passwordStep &&
+              !codeStep &&
               (polls === 0 ||
                 (scenario === "navigating" && polls < 2) ||
                 scenario === "timeout" ||
@@ -134,7 +146,9 @@ it.effect.each([
                 scenario === "disallowed" ? "https://unrelated.test" : "https://login.example.com",
               username: null,
               password: passwordStep ? "#password" : null,
-              otp: scenario === "code" && polls > 0 && fills === 0 ? "#code" : null,
+              otp: (scenario === "code" && polls > 0 && !sent) || codeStep ? "#code" : null,
+              // An authenticator's code box: the saved key answers it.
+              ...(scenario === "code" && polls > 0 && !sent ? { otpApp: true } : {}),
               submit: "button",
               challenge: challenge
                 ? scenario === "kind" && polls === 1
@@ -142,15 +156,17 @@ it.effect.each([
                   : "push"
                 : null,
               number: "42",
-              signedIn: !passwordStep && !challenge && (scenario !== "code" || fills > 0),
+              ...(scenario === "kind" && polls === 1 ? { refused: true } : {}),
+              signedIn: !passwordStep && !challenge && !codeStep && (scenario !== "code" || sent),
             };
           }
           return result as A;
         }),
     });
-    const run = signIn({ ...scope, unattended: scenario === "unattended" }, account, {
+    const unattended = scenario === "unattended" || scenario === "unattended-code";
+    const run = signIn({ ...scope, unattended }, account, {
       password: Redacted.make("synthetic-password"),
-      totp: Redacted.make("123456"),
+      ...(scenario === "unattended-code" ? {} : { totp: Redacted.make("123456") }),
     }).pipe(
       Effect.provideService(AccountsService, fake.service),
       Effect.provideService(PreviewAutomationBroker, broker),
@@ -183,21 +199,26 @@ it.effect.each([
         expect(result).toMatchObject({
           message: "The user did not finish signing in within 3 minutes.",
         });
+      // With nobody here a phone approval is still watched for, then kept waiting at its step:
+      // the step the page shows at the end, not the one it started at.
+      if (unattended)
+        expect(result).toMatchObject({
+          pending: { factor: { kind: scenario === "unattended" ? "push" : "code" } },
+        });
     }
     expect(fake.handoffs.size).toBe(0);
     expect(polls).toBe(
-      scenario === "timeout"
+      scenario === "timeout" || unattended
         ? 90
         : scenario === "kind" || scenario === "navigating"
           ? 2
-          : scenario === "unattended" || scenario === "disallowed"
+          : scenario === "disallowed"
             ? 0
             : 1,
     );
     // The card shows the tab in the conversation; nothing opens the side panel on its own.
     expect(reveals).toBe(0);
     if (scenario === "code") expect(fills).toBe(1);
-    if (scenario === "unattended") expect(inspections).toBe(1);
   }),
 );
 
@@ -250,6 +271,11 @@ const personRun = (
   fake: ReturnType<typeof fakeAccounts>,
   options: Parameters<typeof signIn>[4],
   values: Parameters<typeof signIn>[2] = {},
+  details: AccountSummary["details"] = {
+    kind: "website",
+    sites: ["example.com"],
+    username: "fixture-user",
+  },
 ) => {
   const scope = {
     threadId: ThreadId.make("thread-person"),
@@ -261,7 +287,7 @@ const personRun = (
     {
       accountId: AccountId.make("acc_person_fixture"),
       name: "Fixture",
-      details: { kind: "website", sites: ["example.com"], username: "fixture-user" },
+      details,
       secrets: {},
       controls: {
         access: "allowed",
@@ -323,6 +349,53 @@ it.effect("person mode: a step Scient can't name is the person's, for 15 minutes
   }),
 );
 
+it.effect("a university sign-in waits when Google drops the connection, and ends on return", () =>
+  Effect.gen(function* () {
+    const fake = fakeAccounts();
+    let looks = 0;
+    const { broker } = personBrowser({});
+    const dropped = PreviewAutomationBroker.of({
+      ...broker,
+      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+        request.operation !== "evaluate"
+          ? broker.invoke<A>(request)
+          : Effect.sync(() => {
+              looks += 1;
+              // Google's page failed to load; the person comes back through the Chrome window.
+              const shown = {
+                username: null,
+                password: null,
+                otp: null,
+                submit: null,
+                challenge: null,
+                signedIn: false,
+              };
+              return (
+                looks < 5
+                  ? { ...shown, origin: "https://accounts.google.com", broken: true }
+                  : { ...shown, origin: "https://www.nature.com", url: "https://www.nature.com/" }
+              ) as A;
+            }),
+    });
+    const result = yield* personRun(
+      dropped,
+      fake,
+      { userRun: true, person: { waitMs: 15 * 60_000, lookGapMs: 400, learnOrigins: true } },
+      {},
+      {
+        kind: "website",
+        sites: ["example.edu"],
+        institution: {
+          name: "Example University",
+          entityId: "https://idp.example.edu/shibboleth",
+          domain: "example.edu",
+        },
+      },
+    );
+    expect(result).toMatchObject({ outcome: "signed-in" });
+  }),
+);
+
 it.effect("resume: continues in the kept tab and never submits the password twice", () =>
   Effect.gen(function* () {
     const fake = fakeAccounts();
@@ -348,5 +421,33 @@ it.effect("resume: continues in the kept tab and never submits the password twic
     expect(seen.fills).toBe(0);
     // Kept where it was: no address to go to.
     expect(seen.opens[0]).not.toHaveProperty("url");
+  }),
+);
+
+it.effect("a university's sign-in opens in its own profile, whatever tab the person was on", () =>
+  Effect.gen(function* () {
+    const fake = fakeAccounts();
+    // The person's current tab is in the default profile; this copy of the university is Work's.
+    const { broker, seen } = personBrowser({
+      origin: "https://www.nature.com",
+      url: "https://www.nature.com/",
+    });
+    yield* personRun(
+      broker,
+      fake,
+      { userRun: true, person: { waitMs: 15 * 60_000, lookGapMs: 400, learnOrigins: true } },
+      {},
+      {
+        kind: "website",
+        sites: ["example.edu"],
+        profileId: BrowserProfileId.make("work"),
+        institution: {
+          name: "Example University",
+          entityId: "https://idp.example.edu/shibboleth",
+          domain: "example.edu",
+        },
+      },
+    );
+    expect(seen.opens[0]).toMatchObject({ profileId: "work" });
   }),
 );

@@ -63,6 +63,8 @@ export function withSignedOutSite(profiles: ReadonlyArray<BrowserProfileRecord>,
       main: {
         ...main.main,
         signedOutSites: [...new Set([...(main.main?.signedOutSites ?? []), site])],
+        // Counted even for a site signed out before: a refresh decided earlier is stopped.
+        signOuts: (main.main?.signOuts ?? 0) + 1,
       },
     },
   ];

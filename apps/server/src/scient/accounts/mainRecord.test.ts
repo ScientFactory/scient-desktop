@@ -179,6 +179,9 @@ describe("Main's record", () => {
       });
       yield* TestClock.adjust("1 second");
       expect(yield* signedOut).toEqual(["github.com"]);
+      // Undo brings Main's signed-in row back without signing in again: the later sign-out stays.
+      yield* service.restore(main, (yield* service.remove(main)).removalId);
+      expect(yield* signedOut).toEqual(["github.com"]);
     }),
   );
 });

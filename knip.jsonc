@@ -78,6 +78,7 @@
         "src/overleaf-packaging-probe.ts!",
         "src/scient/documents/document-lab/tools/ooxml/apply_theme.cjs",
         "src/speech-packaging-probe.ts!",
+        "src/sign-in-codes-worker.ts!",
         "src/service-launcher.ts!",
         "src/analytics-worker.ts!",
         "src/pdf-validation-worker.ts!",

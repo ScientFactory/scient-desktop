@@ -473,6 +473,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
   const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
+  // SCIENT-FORK: only the desktop that spawned this server says so; never the environment.
+  const desktopBackgroundRunning = bootstrap?.desktopBackgroundRunning;
   const filePublicationHelperPath =
     bootstrap?.filePublicationHelperPath ?? env.filePublicationHelperPath;
   const filePublicationRetentionRoot =
@@ -638,6 +640,11 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopBootstrapToken,
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
     ...(desktopReadinessSecret === undefined ? {} : { desktopReadinessSecret }),
+    // SCIENT-FORK:START — Scient Accounts: only the desktop's primary backend opens page seals.
+    ...(bootstrap?.desktopPageSealSecret === undefined
+      ? {}
+      : { desktopPageSealSecret: bootstrap.desktopPageSealSecret }),
+    // SCIENT-FORK:END
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,
     desktopTelemetryControlFd,
@@ -646,6 +653,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopBrowserControlFd,
     resourceMonitorPath,
     syncTexNavigatorPath,
+    ...(desktopBackgroundRunning === undefined ? {} : { desktopBackgroundRunning }),
     ...(filePublicationHelperPath === undefined ? {} : { filePublicationHelperPath }),
     ...(filePublicationRetentionRoot === undefined ? {} : { filePublicationRetentionRoot }),
     ...(env.filePublicationRetentionLimitBytes === undefined

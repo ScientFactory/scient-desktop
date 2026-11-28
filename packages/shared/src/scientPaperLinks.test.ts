@@ -5,7 +5,10 @@ import {
   institutionLink,
   openAthensCheckScript,
   institutionLinkFromButton,
+  isSignInProbe,
+  libraryLink,
   openAthensLink,
+  openAthensUniversity,
   publisherOf,
   signInReturn,
   universityLinks,
@@ -60,6 +63,34 @@ describe("university links", () => {
       "https://example.org/unknown-journal",
     );
     expect(links).toEqual([]);
+  });
+
+  it("covers each publisher page a university sign-in passes, a library's address included", () => {
+    expect(isSignInProbe("https://fsso.springer.com/saml/login?idp=x")).toBe(true);
+    expect(isSignInProbe("https://www.nature.com/")).toBe(true);
+    expect(isSignInProbe("https://www-nature-com.ezproxy.huji.ac.il/")).toBe(true);
+    expect(isSignInProbe("https://idp.huji.ac.il/login")).toBe(false);
+  });
+
+  it("reads an OpenAthens link for what it is: the university's domain, through OpenAthens", () => {
+    const redirector = "https://go.openathens.net/redirector/huji.ac.il?url={url}";
+    expect(libraryLink(redirector)).toEqual({ kind: "openathens", domain: "huji.ac.il" });
+    // An old link with a broken escape is read, never thrown on.
+    expect(libraryLink("https://go.openathens.net/redirector/%E0%A4%A?url={url}")).toEqual({
+      kind: "proxy",
+      host: "go.openathens.net",
+    });
+    expect(libraryLink("https://ezproxy.huji.ac.il/login?url={url}")).toEqual({
+      kind: "proxy",
+      host: "ezproxy.huji.ac.il",
+    });
+    expect(openAthensUniversity(website({ proxyUrl: redirector }))).toBe(true);
+    // Its sign-in goes through OpenAthens even when the directory lists another entity.
+    const listed = website({
+      proxyUrl: redirector,
+      institution: { name: "HUJI", entityId: SHIBBOLETH, domain: "huji.ac.il" },
+    });
+    expect(universitySignInLink(listed)).toContain("https://go.openathens.net/redirector/");
   });
 
   it("reads the university's way in off a journal's own button", () => {

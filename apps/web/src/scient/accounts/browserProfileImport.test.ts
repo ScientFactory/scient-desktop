@@ -45,8 +45,15 @@ vi.mock("./googleCopyObservation", () => ({
 vi.mock("./mainFill", () => ({
   fillMainFromProfile: async (_environmentId: string, profileId: string) =>
     void state.filledFrom.push(profileId),
-  importIntoMain: async (_environmentId: string, _source: string, directory: string) => {
-    state.importedIntoMain.push(directory);
+  importIntoMain: async (
+    _environmentId: string,
+    _source: string,
+    directory: string,
+    refresh?: { operationId: string; generation?: number },
+  ) => {
+    state.importedIntoMain.push(
+      refresh ? `${directory}:${refresh.operationId}:g${refresh.generation}` : directory,
+    );
     return {
       units: state.mainUnits,
       unsupported: 1,
@@ -151,6 +158,23 @@ it("fills Main after an import elsewhere, and imports into Main only through the
       importedBucket: "1_10",
     }),
   ]);
+});
+
+it("hands an agent's refresh of Main to Main's coordinator with its operation (round 6i)", async () => {
+  state.importedIntoMain = [];
+  await importBrowserCookiesIntoTarget(
+    bridgeReturning({ imported: 0, skipped: 0, skippedDomains: [] }),
+    { id: "chrome", name: "Chrome", profiles: [{ directory: "Default", name: "Work" }] },
+    EnvironmentId.make("synthetic"),
+    {
+      sourceProfileDirectory: "Default",
+      target: { kind: "existing", profileId: "default", name: "Main" },
+      operationId: "op-main",
+      targetGeneration: 2,
+    },
+  );
+  // regression: Main's fill had no operation, so Main's turn couldn't check it.
+  expect(state.importedIntoMain).toEqual(["Default:op-main:g2"]);
 });
 
 const reasons = (appBoundEncryption: number, decryptFailed = 0) => ({

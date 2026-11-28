@@ -10,6 +10,7 @@ export const SCIENT_PERSON_WAIT_TOOLS = [
   "scient_account_sign_in",
   "scient_connector_setup",
   "scient_connector_add",
+  "scient_connector_control",
 ] as const;
 
 /**

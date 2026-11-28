@@ -5,7 +5,7 @@ export type AccountAuthorization =
   | { readonly decision: "allowed" }
   | {
       readonly decision: "denied";
-      readonly reason: "off" | "declined" | "out-of-scope" | "timed-out";
+      readonly reason: "off" | "declined" | "out-of-scope" | "timed-out" | "pinned";
     };
 
 export type AccountAccessControls = Pick<AccountControls, "access" | "scope" | "allowedProjects">;

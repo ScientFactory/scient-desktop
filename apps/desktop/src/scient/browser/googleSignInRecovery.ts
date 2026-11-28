@@ -12,6 +12,9 @@ type Navigation = { readonly url: string; readonly isMainFrame: boolean };
 
 const isRefusal = (url: string) => googleSignInPage(url) === "rejected";
 
+/** Chromium's errors for a connection the server closed or reset, as Google does mid-sign-in. */
+const DROPPED = new Set([-100, -101, -102, -103]);
+
 /** The latest page of another site in the tab's history, from the page it shows now back. */
 function siteInHistory(tab: Pick<WebContents, "navigationHistory">): string | null {
   const entries = tab.navigationHistory.getAllEntries();
@@ -78,7 +81,19 @@ export function followTabSignIn(tab: WebContents, report: Report): TabSignIn {
       pageUrl: page,
     });
   };
+  // Google can also just close the connection; the same way out applies.
+  const failed = (
+    _event: unknown,
+    code: number,
+    _description: string,
+    url: string,
+    isMainFrame: boolean,
+  ) => {
+    if (isMainFrame && DROPPED.has(code) && googleSignInPage(url) !== null)
+      report({ page: "transit", context: "tab", restartUrl: startedAt, pageUrl: url });
+  };
   tab.on("did-start-navigation", started);
+  tab.on("did-fail-load", failed);
   tab.on("did-redirect-navigation", navigate);
   tab.on("did-navigate", navigated);
   tab.on("did-navigate-in-page", navigatedInPage);
@@ -93,6 +108,7 @@ export function followTabSignIn(tab: WebContents, report: Report): TabSignIn {
   return {
     dispose: () => {
       tab.off("did-start-navigation", started);
+      tab.off("did-fail-load", failed);
       tab.off("did-redirect-navigation", navigate);
       tab.off("did-navigate", navigated);
       tab.off("did-navigate-in-page", navigatedInPage);

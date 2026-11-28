@@ -53,6 +53,30 @@ export function siteUnder(site: string, ancestor: string): boolean {
   return host === above || host.endsWith(`.${above}`);
 }
 
+/**
+ * Whether a cookie belongs to a Sign out's target. A registrable site takes every cookie of the
+ * site, as a site's Sign out always has; any other host only its own and its subdomains', never a
+ * cookie the host's parent domain shares with its siblings.
+ */
+export function inSignOutTarget(cookieDomain: string, target: string): boolean {
+  const host = cookieDomain.replace(/^\./, "").toLowerCase();
+  if (siteOf(target) === target) return siteOf(host) === target;
+  return host === target || host.endsWith(`.${target}`);
+}
+
+/**
+ * A cookie Sign out leaves on a host's parent domain, which the host's siblings share and the
+ * university doesn't own, but which still reaches the host: the host may stay signed in.
+ */
+export function reachesFromParent(
+  cookie: { readonly domain: string; readonly httpOnly?: boolean | undefined },
+  target: string,
+): boolean {
+  if (siteOf(target) === target || cookie.httpOnly !== true) return false;
+  const host = cookie.domain.replace(/^\./, "").toLowerCase();
+  return host !== target && target.endsWith(`.${host}`);
+}
+
 /** Whether a site of `a` and a site of `b` lie one under the other. */
 export function sitesNest(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
   return a.some((left) => b.some((right) => siteUnder(left, right) || siteUnder(right, left)));

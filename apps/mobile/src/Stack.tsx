@@ -104,6 +104,9 @@ import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsD
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
+// SCIENT-FORK:START — Scient Accounts on the phone.
+import { SettingsAccountsRouteScreen } from "./features/settings/SettingsAccountsRouteScreen";
+// SCIENT-FORK:END
 import {
   SettingsIssueTrackerRouteScreen,
   SettingsSourceControlProviderRouteScreen,
@@ -169,6 +172,9 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   Settings: msg("Settings"),
   SettingsEnvironments: msg("Environments"),
   SettingsEnvironmentDetail: msg("Environment"),
+  // SCIENT-FORK:START — Scient Accounts on the phone.
+  SettingsAccounts: msg("Accounts & secrets"),
+  // SCIENT-FORK:END
   SettingsEnvironmentNewThreads: msg("Threads"),
   SettingsEnvironmentSourceControl: msg("Source control & issues"),
   SettingsSourceControlProvider: msg("Provider", {
@@ -251,6 +257,13 @@ const SETTINGS_SCREENS = {
     linking: "settings/environments/:environmentId",
     options: settingsPage(),
   }),
+  // SCIENT-FORK:START — Scient Accounts on the phone.
+  SettingsAccounts: createNativeStackScreen({
+    screen: SettingsAccountsRouteScreen,
+    linking: "settings/environments/:environmentId/accounts",
+    options: settingsPage(),
+  }),
+  // SCIENT-FORK:END
   // Old links to New threads and Agent behavior open Threads, which absorbed them.
   SettingsEnvironmentNewThreads: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,

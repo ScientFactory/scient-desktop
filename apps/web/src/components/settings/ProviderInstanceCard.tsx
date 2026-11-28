@@ -89,6 +89,9 @@ import {
   pendingCustomModelSaves,
   settleCustomModelSave,
 } from "./customModelSaves.logic";
+// SCIENT-FORK:START — Scient Accounts: a saved key variable can follow a key there.
+import { VariableAccountKey } from "~/scient/accounts/VariableAccountKey";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Agent computer control permissions.
 import { ScientAgentComputerControlPermissionsRow } from "~/scient/computerControl/ComputerControlPermissions";
 // SCIENT-FORK:END
@@ -437,6 +440,8 @@ export function ProviderEnvironmentSection(props: {
   readonly managed?: { readonly names: ReadonlySet<string>; readonly reason: string } | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
   readonly environmentId?: EnvironmentId | undefined;
+  // SCIENT-FORK: Scient Accounts links a saved sensitive variable to a key there.
+  readonly instanceId?: ProviderInstanceId | undefined;
 }) {
   const gt = useGT();
   const [storedDraft, setDraft] = useState(() =>
@@ -646,28 +651,43 @@ export function ProviderEnvironmentSection(props: {
                   >
                     {(parts) => layout(parts.source, parts.value)}
                   </SecretSourceInput>
-                ) : (
-                  layout(
-                    null,
-                    <DraftInput
-                      size="sm"
-                      font="mono"
-                      className="min-w-0 flex-1"
-                      value={
-                        variable.valueRedacted || typeof variable.value !== "string"
-                          ? ""
-                          : variable.value
-                      }
-                      onCommit={(value) => updateVariable(variable.id, { value })}
-                      autoComplete="off"
-                      placeholder={gt("value", {
-                        $context: "placeholder for an environment variable value",
-                      })}
-                      spellCheck={false}
-                      aria-label={gt("Environment variable value {number}", { number: index + 1 })}
-                    />,
-                  )
-                )}
+                ) : null}
+                {/* SCIENT-FORK:START — Scient Accounts: a saved key variable can follow a key there. */}
+                {variable.sensitive &&
+                variable.valueRedacted === true &&
+                props.environmentId &&
+                props.instanceId ? (
+                  <VariableAccountKey
+                    environmentId={props.environmentId}
+                    instanceId={props.instanceId}
+                    variable={variable.name}
+                  />
+                ) : null}
+                {/* SCIENT-FORK:END */}
+                {variable.sensitive
+                  ? null
+                  : layout(
+                      null,
+                      <DraftInput
+                        size="sm"
+                        font="mono"
+                        className="min-w-0 flex-1"
+                        value={
+                          variable.valueRedacted || typeof variable.value !== "string"
+                            ? ""
+                            : variable.value
+                        }
+                        onCommit={(value) => updateVariable(variable.id, { value })}
+                        autoComplete="off"
+                        placeholder={gt("value", {
+                          $context: "placeholder for an environment variable value",
+                        })}
+                        spellCheck={false}
+                        aria-label={gt("Environment variable value {number}", {
+                          number: index + 1,
+                        })}
+                      />,
+                    )}
               </Fragment>
             );
           })}
@@ -1720,6 +1740,7 @@ export function ProviderInstanceCard({
                 onChange={updateGenericEnvironment}
                 secretSources={secretSources}
                 environmentId={environmentId}
+                instanceId={instanceId}
                 managed={
                   instanceLocks && {
                     names: instanceLocks.environmentNames,

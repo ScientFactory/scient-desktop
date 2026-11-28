@@ -3,7 +3,7 @@ import { msg } from "gt-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { type AtomCommand, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_1,
   AuthSettingsWriteScope,
   BrowserProfileId,
   defaultBrowserProfileRecord,
@@ -163,7 +163,7 @@ function routeOf(registry: AtomRegistry.AtomRegistry, environmentId: Environment
   if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope))
     return { stopped: "permission" } as const;
   const remote = value(registry.get(accountsState.snapshot({ environmentId, input: {} })));
-  if ((remote?.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL)
+  if ((remote?.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL_1)
     return { stopped: "no-feature" } as const;
   const target = connection.target;
   return {

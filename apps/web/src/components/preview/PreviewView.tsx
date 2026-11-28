@@ -124,6 +124,12 @@ import { observeResize } from "~/lib/observeResize";
 // SCIENT-FORK:START — Scient Accounts: browser profile switcher.
 import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts: a university sign-in's publisher step is covered.
+import {
+  UniversitySignInCover,
+  useUniversityRestart,
+} from "~/scient/accounts/UniversitySignInCover";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
 import { googleSignInPage } from "@t3tools/shared/scientGoogleSignIn";
 import { GoogleSignInBlockedNotice } from "~/scient/accounts/GoogleSignInRecovery";
@@ -347,6 +353,9 @@ export function PreviewView({
     runtimeTabId ? state.byTabId[runtimeTabId] : undefined,
   );
   const dismissSignInBlocked = useGoogleSignInBlocked((state) => state.dismiss);
+  // A university sign-in under way starts again at its own entry route, in the Chrome window and
+  // in this tab, never at its identity provider's bare origin.
+  const restartUrl = useUniversityRestart(threadRef, tabId, signInBlocked?.restartUrl ?? null);
   const signInRecovery = {
     environmentId: threadRef.environmentId,
     profile: { id: activeProfileId, name: activeProfileName, incognito },
@@ -1108,14 +1117,19 @@ export function PreviewView({
           onClose={closeFind}
         />
       ) : null}
+      {/* SCIENT-FORK:START — Scient Accounts: a university sign-in's publisher step is covered. */}
+      {tabId ? <UniversitySignInCover threadRef={threadRef} tabId={tabId} url={url} /> : null}
+      {/* SCIENT-FORK:END */}
       {/* SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained. */}
       {signInBlocked &&
       runtimeTabId &&
       signInBlocked.pageUrl === url &&
-      (signInBlocked.context !== "tab" || googleSignInPage(url) === "rejected") ? (
+      (signInBlocked.context !== "tab" ||
+        googleSignInPage(url) === "rejected" ||
+        signInBlocked.page === "transit") ? (
         <GoogleSignInBlockedNotice
           {...signInRecovery}
-          restartUrl={signInBlocked.restartUrl}
+          restartUrl={restartUrl}
           onSignedIn={(target) => void navigateToResolvedUrl(target)}
           onDismiss={() => dismissSignInBlocked(runtimeTabId)}
         />
@@ -1147,16 +1161,26 @@ export function PreviewView({
         // SCIENT-FORK:END
         // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
         accountsTab={
-          !isServerTab && runtimeTabId && tabId
+          isServerTab && tabId
             ? {
                 environmentId: threadRef.environmentId,
                 threadRef,
-                tabId: runtimeTabId,
+                tabId,
                 previewTabId: tabId,
                 profileId: activeProfileId,
+                serverTab: true,
               }
-            : undefined
+            : runtimeTabId && tabId
+              ? {
+                  environmentId: threadRef.environmentId,
+                  threadRef,
+                  tabId: runtimeTabId,
+                  previewTabId: tabId,
+                  profileId: activeProfileId,
+                }
+              : undefined
         }
+        codesTabId={tabId ?? undefined}
         // SCIENT-FORK:END
         url={url}
         loading={loading || serverStreamPending}

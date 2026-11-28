@@ -358,6 +358,8 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/awaitPerson.ts \
+            apps/server/src/scient/accounts/clientLeases.ts \
             apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/scient/threadSections \
@@ -433,6 +435,10 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/awaitPerson.ts \
+            apps/server/src/scient/accounts/clientLeases.ts \
+            apps/server/src/scient/accounts/AccountsService.ts \
+            apps/server/src/scient/accounts/textGeneratorKeys.ts \
             apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/background \
@@ -512,6 +518,8 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/awaitPerson.ts \
+            apps/server/src/scient/accounts/clientLeases.ts \
             apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/provider \
@@ -574,6 +582,7 @@ jobs:
             apps/server/src/customModels.ts \
             apps/server/src/customModelCapabilities.ts \
             apps/server/src/customModelReadiness.ts \
+            apps/server/src/scient/accounts/awaitPerson.ts \
             packages/provider-core \
             packages/provider-pi \
             packages/provider-testing \
@@ -615,6 +624,8 @@ jobs:
             packages/provider-fx \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/awaitPerson.ts \
+            apps/server/src/scient/accounts/clientLeases.ts \
             apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/settingsDirectoryWatch.ts \
             apps/server/src/settingsSecrets.ts \

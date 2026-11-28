@@ -11,6 +11,8 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { publisherOf, universitiesOf, universityDetails } from "@t3tools/shared/scientPaperLinks";
+import { groupOf, universityGroups } from "@t3tools/shared/scientUniversityGroups";
+import { signedOutOnPurpose } from "@t3tools/shared/scientAccountSignIn";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -25,7 +27,18 @@ import {
   type Paper,
   type PaperVersion,
 } from "./paperLookup.ts";
-import { buttonSteps, routeSteps, type RouteStep, type WorkedRoute } from "./paperRoutes.ts";
+import {
+  buttonSteps,
+  routeSteps,
+  routeUniversities,
+  routeLogin,
+  takeFallback,
+  withButtonSteps,
+  type RouteStep,
+  type WorkedRoute,
+} from "./paperRoutes.ts";
+import { lookBeforeFetch } from "../accounts/checkAccounts.ts";
+import { throughUniversity } from "./universityFetches.ts";
 import { pdfVerdict, readPdfFacts } from "./pdfCheck.ts";
 import { readResearchKeys } from "../sources/researchKeys.ts";
 
@@ -55,6 +68,8 @@ export interface PaperRequester {
   /** The conversation that asked, when an agent did; the user's own request has none. */
   readonly threadId?: ThreadId;
   readonly projectId?: ProjectId;
+  /** The scheduled task the asking run serves: its pin binds the sign-ins papers use. */
+  readonly scheduledTaskId?: string;
   /** False for an agent the user keeps out of the browser: free copies only. */
   readonly browser: boolean;
 }
@@ -70,6 +85,8 @@ export type PaperOutcome =
       readonly route: NonNullable<PaperItem["route"]>;
       readonly published: boolean;
       readonly version: PaperVersion;
+      /** The university it came through. */
+      readonly through?: string;
     }
   | { readonly state: "not-found" | "no-access"; readonly message: string; readonly paper?: Paper }
   | {
@@ -105,6 +122,8 @@ export const laneFor = (site: string) => {
   lanes.set(site, lane);
   return lane;
 };
+/** The way that last reached a paper at this publisher, which article browsing tries first too. */
+export const workedAt = (site: string) => lanes.get(site)?.worked;
 const tabs = Semaphore.makeUnsafe(MOST_TABS);
 const lookups = Semaphore.makeUnsafe(MOST_LOOKUPS);
 /** One sign-in serves every paper, so the first to find it missing stops the others asking. */
@@ -141,6 +160,9 @@ const scopeOf = (requester: PaperRequester): AccountSessionScope => ({
   threadId: requester.threadId ?? PAPERS_THREAD,
   projectId: requester.projectId,
   unattended: true,
+  ...(requester.scheduledTaskId === undefined
+    ? {}
+    : { scheduledTaskId: requester.scheduledTaskId }),
 });
 
 /** How long one decision or use is reused, so a long list doesn't fill Activity. */
@@ -271,7 +293,6 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
 ) {
   const accounts = yield* AccountsService;
   const { accounts: known } = yield* accounts.snapshot;
-  const connected = universitiesOf(known);
   const article = paper.articleUrl ?? paper.landingUrl;
   const site = publisherOf(article);
   const lane = laneFor(site);
@@ -290,6 +311,22 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
     usable.set(account.accountId, allowed);
     return allowed;
   });
+  // Who may be used is decided first, so ranking, the limit of two and one address per profile
+  // only ever choose among universities this request may go through.
+  const all = universitiesOf(known);
+  const eligible = new Set<AccountId>();
+  for (const row of all) if (yield* through(row)) eligible.add(row.accountId);
+  const mayGo = (rows: ReadonlyArray<AccountSummary>) =>
+    rows.filter((row) => !universityDetails(row.details) || eligible.has(row.accountId));
+  // Each one's state is looked at first, so the route order starts where it works now.
+  const looked = routeUniversities(mayGo(known), lane.worked);
+  yield* Effect.forEach(looked, (row) => lookBeforeFetch(row, requester.environmentId), {
+    discard: true,
+  });
+  const connected =
+    looked.length === 0
+      ? looked
+      : routeUniversities(mayGo((yield* accounts.snapshot).accounts), lane.worked);
   // A campus session lives in a university's profile: the publisher opens in the first one allowed.
   let publisherProfile: Option.Option<string | undefined> = Option.none();
   const forPublisher = Effect.gen(function* () {
@@ -315,6 +352,9 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
   const steps = [...routeSteps(paper, connected, lane.worked)];
   const missed: Reached[] = [];
   let checked: Needed | undefined;
+  const groups = universityGroups(known);
+  const logins = new Set<string>();
+  let original: RouteStep | undefined;
   for (const step of steps) {
     const now = yield* Clock.currentTimeMillis;
     const skipDirect =
@@ -331,6 +371,9 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       if (heldBefore.kind === "check" || heldBefore.kind === "terms") checked = heldBefore;
       continue;
     }
+    // Routes reaching one login page in one profile are one try.
+    const login = routeLogin(step, profileId);
+    if (login && logins.has(login)) continue;
     // Checked again on its turn, which can come much later: another paper may have met a sign-in
     // or a check meanwhile, and the user may have changed what this conversation may use.
     const turn = yield* inLane(
@@ -346,7 +389,22 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
             )) && (yield* opens(profileId))
           : yield* opens(profileId);
         if (!allowed) return { withdrawn: true } as const;
-        const fetched = yield* fetchFromPage({
+        // Signed out while this paper waited: its route is no longer the person's to open.
+        const university =
+          step.account &&
+          (yield* accounts.snapshot).accounts.find(
+            (row) => row.accountId === step.account!.accountId,
+          );
+        if (university && signedOutOnPurpose(university.signIn))
+          return { withdrawn: true } as const;
+        // Only a route that will run now is a fallback: charged to the paper's first, once per
+        // login page, and a sign-in gets one in all.
+        if (login && !logins.has(login)) {
+          if (original && !(yield* takeFallback(original))) return { skipped: true } as const;
+          original ??= step;
+          logins.add(login);
+        }
+        const load = fetchFromPage({
           url: step.url,
           profileId,
           caller: { kind: "paper", scope: scopeOf(requester), requester },
@@ -355,6 +413,12 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
             ? { termsTabId: resume.tabId }
             : {}),
         }).pipe(Effect.timeoutOption(ROUTE_DEADLINE));
+        // A Sign out stops a load through its university before it clears the sessions.
+        const ran = step.account
+          ? yield* throughUniversity(step.account.accountId, load)
+          : Option.some(yield* load);
+        if (Option.isNone(ran)) return { withdrawn: true } as const;
+        const fetched = ran.value;
         // Held before the lane is let go, so the next paper doesn't meet the same wall.
         if (Option.isSome(fetched) && fetched.value.status !== "saved") {
           const met = fetched.value;
@@ -382,6 +446,7 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       if (turn.held.kind === "check" || turn.held.kind === "terms") checked = turn.held;
       continue;
     }
+    if ("skipped" in turn) continue;
     if ("withdrawn" in turn) {
       if (step.account) usable.set(step.account.accountId, false);
       continue;
@@ -418,7 +483,8 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       if (step.route === "publisher") lane.directFailedAt = 0;
       lane.worked = { route: step.route, accountId: step.account?.accountId };
       yield* noteSession(step.account, "signed-in");
-      return { saved: result, route: step.route };
+      const through = step.account && groupOf(groups, step.account.accountId);
+      return { saved: result, route: step.route, ...(through ? { through: through.name } : {}) };
     }
     if (result.reason === "timed-out") {
       missed.push({ ...step, result });
@@ -427,7 +493,15 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
     if (result.reason === "sign-in") yield* noteSession(step.account, "signed-out");
     // A journal no rule knows still shows its own way in, and the university goes next.
     if (result.institutionUrl)
-      steps.push(...buttonSteps(result.institutionUrl, article, connected, steps));
+      steps.splice(
+        0,
+        steps.length,
+        ...withButtonSteps(
+          steps,
+          steps.indexOf(step),
+          buttonSteps(result.institutionUrl, article, connected, steps),
+        ),
+      );
     if (result.reason === "refused") noteRefusal(lane, yield* Clock.currentTimeMillis);
     else if (
       step.route === "publisher" &&
@@ -447,8 +521,9 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
     route: undefined,
     tried: {
       missed,
-      universities: connected.filter(({ accountId }) => usable.get(accountId) === true),
-      withheld: connected.filter(({ accountId }) => usable.get(accountId) === false),
+      // One whose access was withdrawn while the paper waited is the access decision's.
+      universities: connected.filter(({ accountId }) => usable.get(accountId) !== false),
+      withheld: all.filter(({ accountId }) => usable.get(accountId) === false),
       checked,
       site,
       lane,
@@ -527,7 +602,7 @@ export const nextMove = (
       ? waitsFor(
           paper,
           { kind: "access", site: kept.name, accountId: kept.accountId },
-          `No free copy. ${kept.name} is connected, but this conversation may not use it; the user can allow it in Settings → Accounts & secrets.`,
+          `No free copy. ${kept.name} is connected, but this conversation may not use it; the user can turn it on for agents from the papers' line in this chat.`,
         )
       : waitsFor(
           paper,
@@ -599,6 +674,7 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
       route: reached.route,
       published: true,
       version: "published",
+      ...("through" in reached && reached.through ? { through: reached.through } : {}),
     } satisfies PaperOutcome;
   const other = yield* firstPdf(
     paper.openAccess.filter((copy) => copy.version !== "published"),

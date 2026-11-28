@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
+import { AccountId } from "./accounts.ts";
 import { ExtensionIconDataUri } from "./extensionIcon.ts";
 import { ProviderStoreApp } from "./providerStore.ts";
 import { ExtensionAgentStores } from "./extensionAudience.ts";
@@ -172,6 +173,8 @@ export const ConnectorAuthSummary = Schema.Union([
     headerName: Schema.optional(TrimmedNonEmptyString),
     /** `owned`: entered for this connector only. `bound`: a user secret from Secrets. */
     storage: Schema.Literals(["owned", "bound"]),
+    /** The Accounts key a bound connector uses, so Accounts and the connector link each other. */
+    accountId: Schema.optional(AccountId),
   }),
   /** Source Control's own credential for `host`, only while it still belongs to `account`. */
   Schema.Struct({
@@ -531,6 +534,10 @@ export const ConnectorUpdateInput = Schema.Struct({
   agents: Schema.optional(Schema.NullOr(ConnectorAgents)),
   /** Local connectors: stop every running copy; agents start a fresh one on their next request. */
   restart: Schema.optional(Schema.Literal(true)),
+  /** A key connector: use this Accounts key (`account:<id>:token`) from now on. */
+  credentialRef: Schema.optional(VaultSecretRef),
+  /** A key connector: use this typed key from now on, saved in Accounts where it can be. */
+  credentialValue: Schema.optional(TrimmedNonEmptyString),
   /** Local connectors: change settings and keys; running copies restart. */
   localSetup: Schema.optional(
     Schema.Struct({

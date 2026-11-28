@@ -16,10 +16,14 @@ import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
+// SCIENT-FORK:START — Scient Accounts: the leases outlive the policy's own build order.
+import { ClientActivityLeases, leasesLayer } from "../scient/accounts/clientLeases.ts";
+// SCIENT-FORK:END
 
 export class BackgroundPolicy extends Context.Service<
   BackgroundPolicy,
@@ -197,7 +201,13 @@ function computeSnapshot(input: {
 export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
+  // SCIENT-FORK:START — Scient Accounts: the shared leases and host power, where provided.
+  const shared = yield* Effect.serviceOption(ClientActivityLeases);
+  if (Option.isSome(shared)) yield* Ref.set(shared.value.hostPower, hostPowerMonitor.snapshot);
+  const leasesRef = Option.isSome(shared)
+    ? shared.value.leases
+    : yield* Ref.make(new Map<string, ClientActivityLease>());
+  // SCIENT-FORK:END
 
   const backgroundActivitySettings = serverSettings.getSettings.pipe(
     Effect.map(resolveServerBackgroundActivitySettings),
@@ -302,4 +312,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(BackgroundPolicy, make());
+export const layer = Layer.effect(BackgroundPolicy, make()).pipe(
+  // SCIENT-FORK: one memoized lease store for the policy and the Accounts vault.
+  Layer.provide(leasesLayer),
+);

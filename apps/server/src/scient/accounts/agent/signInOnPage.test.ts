@@ -1,5 +1,6 @@
 import {
   AccountId,
+  AccountsError,
   BrowserProfileId,
   EnvironmentId,
   ProjectId,
@@ -48,7 +49,7 @@ const input = {
   profileId: "default",
 };
 
-const run = (accounts: ReadonlyArray<AccountSummary>, signedIn = true) => {
+const run = (accounts: ReadonlyArray<AccountSummary>, signedIn = true, refused = false) => {
   const navigated: unknown[] = [];
   let submitted = false;
   const status: PreviewAutomationStatus = {
@@ -88,7 +89,15 @@ const run = (accounts: ReadonlyArray<AccountSummary>, signedIn = true) => {
     values: { password: "synthetic-password" },
   });
   return signInOnPage(scope, input).pipe(
-    Effect.provideService(AccountsService, fake.service),
+    Effect.provideService(AccountsService, {
+      ...fake.service,
+      ...(refused
+        ? {
+            authorizeUse: () =>
+              Effect.fail(new AccountsError({ reason: "denied", message: "Turned Off." })),
+          }
+        : {}),
+    }),
     Effect.provideService(PreviewAutomationBroker, broker),
     Effect.provideService(AgentInvocationContext, {
       ...scope,
@@ -100,6 +109,7 @@ const run = (accounts: ReadonlyArray<AccountSummary>, signedIn = true) => {
     }),
     Effect.map((result) => ({
       result,
+      submitted,
       navigated,
       uses: fake.uses.filter((use) => use.target.type === "account"),
     })),
@@ -194,5 +204,13 @@ it.effect("has nothing to say about a site with no saved sign-in", () =>
       details: { kind: "website" as const, sites: ["other.org"], username: "fixture-user" },
     };
     expect((yield* run([other])).result).toBeUndefined();
+  }),
+);
+
+it.effect("types nothing on the page once the account changed after the sign-in began", () =>
+  Effect.gen(function* () {
+    const { result, submitted } = yield* run([account], true, true);
+    expect(result?.note).not.toBe("Signed in with Fixture.");
+    expect(submitted).toBe(false);
   }),
 );

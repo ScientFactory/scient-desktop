@@ -16,6 +16,7 @@ import {
   // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+import { pageSealKey } from "@t3tools/shared/scientPageSeal";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
@@ -409,6 +410,7 @@ import {
   accountsUserRunsForRpc,
   makeAccountsRpcHandlers,
 } from "./scient/accounts/AccountsRpcHandlers.ts";
+import { vouchedClientKind } from "./scient/accounts/clientLeases.ts";
 import { linkKeyForRpc } from "./scient/accounts/keyLinks.ts";
 import { restoreKeptKeysForRpc } from "./scient/accounts/keptAgentKeys.ts";
 import { makePlainKeys } from "./scient/accounts/plainKeys.ts";
@@ -1753,7 +1755,12 @@ export const layerWsRpc = (
       // SCIENT-FORK:START — Scient Accounts: share the server-lifetime account owner.
       const accounts = yield* accountsForRpc;
       const accountUserRuns = yield* accountsUserRunsForRpc;
-      const accountPlainKeys = yield* makePlainKeys(accounts);
+      const accountPlainKeys = yield* makePlainKeys(
+        accounts,
+        projectStore
+          .listShells()
+          .pipe(Effect.map((projects) => projects.map((project) => project.workspaceRoot))),
+      );
       const linkAccountKey = yield* linkKeyForRpc;
       const restoreKeptAgentKeys = yield* restoreKeptKeysForRpc;
       // SCIENT-FORK:END
@@ -3424,7 +3431,11 @@ export const layerWsRpc = (
               backgroundPolicy.reportClientActivity(
                 currentSessionId,
                 RpcClientId.make(metadata.client.id),
-                input,
+                // SCIENT-FORK: only this computer's desktop sign-in may claim the desktop.
+                {
+                  ...input,
+                  clientKind: vouchedClientKind(currentSession.subject, input.clientKind),
+                },
               ),
             ),
           ),
@@ -4609,10 +4620,22 @@ export const layerWsRpc = (
         WsAccountsRpcGroup.toLayer(
           makeAccountsRpcHandlers({
             accounts,
-            caller: { sessionId: currentSessionId, subject: currentSession.subject },
+            pageSealKey:
+              config.desktopPageSealSecret === undefined
+                ? undefined
+                : pageSealKey(config.desktopPageSealSecret),
+            caller: {
+              sessionId: currentSessionId,
+              subject: currentSession.subject,
+              client:
+                [clientAnalyticsProps.surface, clientAnalyticsProps.clientOs]
+                  .filter((part): part is string => typeof part === "string")
+                  .join(" · ") || "another client",
+            },
             observeRpcEffect,
             observeRpcStream,
             check: accountUserRuns.check,
+            tabShows: accountUserRuns.tabShows,
             paperForSource: accountUserRuns.paperForSource,
             papers: accountUserRuns.papers,
             plainKeys: accountPlainKeys,

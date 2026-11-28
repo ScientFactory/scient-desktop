@@ -61,6 +61,10 @@ import {
   waitForRunOrWorktreeSetupHold,
 } from "../scient/orchestration/WorktreeSetupHoldReport.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts: a task pinned to a sign-in runs only where it works.
+import { ACCOUNTS_AWAIT_PERSON } from "../scient/accounts/awaitPerson.ts";
+import { AWAITS_PERSON, PINNED_WEBHOOK, ScheduledRunGate } from "../scient/accounts/taskPins.ts";
+// SCIENT-FORK:END
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -506,6 +510,9 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    // SCIENT-FORK:START — Scient Accounts: present when Accounts runs beside the scheduler.
+    const runGate = yield* Effect.serviceOption(ScheduledRunGate);
+    // SCIENT-FORK:END
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -533,6 +540,13 @@ export const layer = Layer.effect(
       ReadonlyMap<ScheduledTaskId, ReadonlyArray<number>>
     >(new Map());
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
+    // SCIENT-FORK:START — Scient Accounts: each occurrence waiting at the Accounts gate for the
+    // person (its next run under its schedule): it is not missed while it waits. A save that keeps
+    // both, a new title say, keeps the occurrence.
+    const awaitingPerson = new Map<ScheduledTaskId, string>();
+    const occurrenceOf = (task: ScheduledTask) =>
+      `${task.nextRunAt}\u0000${JSON.stringify(task.schedule)}`;
+    // SCIENT-FORK:END
     // Notifications re-emit the full list; slow subscribers need only the newest dirty signal.
     const changesPubSub = yield* PubSub.sliding<void>(1);
     const dueTasks = DueHint.make();
@@ -1070,6 +1084,25 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
+        // SCIENT-FORK:START — Scient Accounts: a pinned sign-in that doesn't work here skips this
+        // occurrence with its reason; nothing retries it in a loop. An occurrence nobody is there
+        // for stays due while Accounts would ask the person to open. A webhook task is never
+        // pinned (`PINNED_WEBHOOK`): its delivery reads no pin, so it never opens Accounts.
+        if (Option.isSome(runGate) && webhook === undefined) {
+          const blocked = yield* runGate.value.beforeRun(active);
+          if (blocked === AWAITS_PERSON) {
+            if (trigger !== "scheduled")
+              return yield* taskError(ACCOUNTS_AWAIT_PERSON, { taskId: active.id });
+            awaitingPerson.set(active.id, occurrenceOf(active));
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
+          awaitingPerson.delete(active.id);
+          if (blocked !== undefined) {
+            yield* rescheduleMissedRun(active, startedAt, "pinned sign-in", blocked);
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
+        }
+        // SCIENT-FORK:END
         if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
         else
           yield* sql
@@ -1281,7 +1314,12 @@ export const layer = Layer.effect(
                 const next = new Set(active);
                 next.delete(task.id);
                 return next;
-              })
+              }).pipe(
+                // SCIENT-FORK:START — Scient Accounts: a replay waiting on this run wakes once it
+                // can start, not on the run's own earlier change.
+                Effect.andThen(PubSub.publish(changesPubSub, undefined)),
+                // SCIENT-FORK:END
+              )
             : Effect.void,
       );
     });
@@ -1361,7 +1399,9 @@ export const layer = Layer.effect(
           due,
           ({ task, dueAt }) =>
             Effect.suspend(() =>
-              isMissedFixedTimeRun(task.schedule, dueAt, now)
+              isMissedFixedTimeRun(task.schedule, dueAt, now) &&
+              // SCIENT-FORK: an occurrence waiting at the Accounts gate wasn't missed.
+              awaitingPerson.get(task.id) !== occurrenceOf(task)
                 ? rescheduleMissedRun(
                     task,
                     now,
@@ -1479,7 +1519,7 @@ export const layer = Layer.effect(
       },
     );
 
-    const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
+    const upsertNow: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
       // A webhook task the policy blocks can still be edited while it is off.
@@ -1509,6 +1549,20 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      // SCIENT-FORK:START — Scient Accounts: a pinned task never becomes webhook-run, nor does a
+      // new task under the id of a deleted one, whose pin Accounts keeps. A fresh id has no pin.
+      const pinned =
+        input.schedule.type === "webhook" &&
+        existingTask?.schedule.type !== "webhook" &&
+        (input.id !== undefined || input.commandId !== undefined) &&
+        Option.isSome(runGate) &&
+        runGate.value.pinned !== undefined
+          ? yield* runGate.value.pinned(id)
+          : false;
+      // Whether a pin names it can't be read while nobody can answer Accounts' dialog: not yet.
+      if (pinned === AWAITS_PERSON) return yield* taskError(ACCOUNTS_AWAIT_PERSON, { taskId: id });
+      if (pinned) return yield* taskError(PINNED_WEBHOOK, { taskId: id });
+      // SCIENT-FORK:END
       const threadMode = resolveThreadMode(input, existingTask);
       const keptThreadId =
         input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));
@@ -1649,6 +1703,15 @@ export const layer = Layer.effect(
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
+    // SCIENT-FORK:START — Scient Accounts: a trigger edit and a pin of the same task never cross.
+    const upsert: ScheduledTaskService["Service"]["upsert"] = (input) => {
+      const id =
+        input.id ?? (input.commandId ? scheduledTaskIdForCommand(input.commandId) : undefined);
+      return id !== undefined && Option.isSome(runGate) && runGate.value.withTaskEdit !== undefined
+        ? runGate.value.withTaskEdit(id, upsertNow(input))
+        : upsertNow(input);
+    };
+    // SCIENT-FORK:END
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",

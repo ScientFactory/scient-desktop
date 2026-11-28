@@ -29,6 +29,7 @@ import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 // SCIENT-FORK:START — the keep-awake IPC handler needs its service.
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
+import * as DesktopBackgroundRunning from "../scient/backgroundRunning/DesktopBackgroundRunning.ts";
 // SCIENT-FORK:END
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
@@ -209,6 +210,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       // SCIENT-FORK:START — the keep-awake IPC handler needs its service.
       Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
       Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
+      Layer.mock(DesktopBackgroundRunning.DesktopBackgroundRunning, { start: Effect.void }),
       // SCIENT-FORK:END
       Layer.mock(DesktopAppActivation.DesktopAppActivation, { start: Effect.void }),
       Layer.mock(DesktopSnapShot.DesktopSnapShot, { initialize: Effect.void }),

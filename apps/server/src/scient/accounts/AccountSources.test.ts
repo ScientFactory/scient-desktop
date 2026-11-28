@@ -3,7 +3,8 @@ import { it, expect } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import type { ItemCreateParams, ItemField } from "@1password/sdk";
 import { AccountId } from "@t3tools/contracts";
-import { Effect, Layer, Redacted } from "effect";
+import { Deferred, Duration, Effect, Exit, Fiber, Layer, Redacted } from "effect";
+import { TestClock } from "effect/testing";
 import { layerTest as configTestLayer } from "../../config.ts";
 import { layerTest as settingsTestLayer } from "../../serverSettings.ts";
 import { AccountsSecretStore } from "./AccountsSecretStore.ts";
@@ -12,6 +13,10 @@ import { syntheticValue, website } from "./Accounts.testkit.ts";
 
 const fixture = vi.hoisted(() => ({
   items: [] as Array<{ id: string; vaultId: string; tags: string[]; fields: ItemField[] }>,
+  calls: [] as Array<string>,
+  /** While set, a put waits for it. */
+  hold: undefined as Promise<void> | undefined,
+  onPut: undefined as (() => void) | undefined,
 }));
 vi.mock("@1password/sdk", () => ({
   ItemCategory: { Login: "Login" },
@@ -22,7 +27,10 @@ vi.mock("@1password/sdk", () => ({
   createClient: async () => ({
     vaults: { list: async () => [{ id: "vault", title: "Synthetic vault" }] },
     items: {
-      list: async () => structuredClone(fixture.items),
+      list: async () => {
+        fixture.calls.push("list");
+        return structuredClone(fixture.items);
+      },
       get: async (_vault: string, id: string) =>
         structuredClone(fixture.items.find((item) => item.id === id)),
       create: async (input: ItemCreateParams) => {
@@ -36,6 +44,10 @@ vi.mock("@1password/sdk", () => ({
         return structuredClone(item);
       },
       put: async (input: (typeof fixture.items)[number]) => {
+        fixture.calls.push("put");
+        fixture.onPut?.();
+        await fixture.hold;
+        fixture.calls.push("put settled");
         fixture.items[fixture.items.findIndex((item) => item.id === input.id)] =
           structuredClone(input);
         return structuredClone(input);
@@ -114,4 +126,60 @@ it.effect("refuses a legacy source once a connection points at an Accounts key",
     const denied = yield* sources.customModel(connection.id).pipe(Effect.flip);
     expect(denied.message).toContain("Use the saved API key directly in Accounts");
   }),
+);
+
+it.effect(
+  "writes nothing through a new 1Password client while an earlier write still settles",
+  () =>
+    Effect.gen(function* () {
+      fixture.items = [
+        {
+          id: "item",
+          vaultId: "vault",
+          tags: [],
+          fields: [{ id: "password", title: "password", value: "old" } as ItemField],
+        },
+      ];
+      fixture.calls = [];
+      const held = Promise.withResolvers<void>();
+      fixture.hold = held.promise;
+      const sources = yield* AccountSources.pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                configTestLayer(process.cwd(), { prefix: "accounts-sources-queue-" }).pipe(
+                  Layer.provide(NodeServices.layer),
+                ),
+                settingsTestLayer({}),
+                Layer.mock(AccountsSecretStore)({}),
+              ),
+            ),
+          ),
+        ),
+      );
+      const putStarted = yield* Deferred.make<void>();
+      fixture.onPut = () => Deferred.doneUnsafe(putStarted, Exit.void);
+      const connect = sources.onePassword(
+        Redacted.make({ mode: "desktop", accountName: "Synthetic" }),
+      );
+      const first = yield* connect;
+      const write = (client: typeof first) =>
+        client.write!("op://vault/item/password", Redacted.make(syntheticValue()));
+      const writing = yield* write(first).pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(putStarted);
+      fixture.onPut = undefined;
+      // Reconnected while the first put is still running; both callers give up waiting.
+      const second = yield* connect;
+      const later = yield* write(second).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(Duration.minutes(3));
+      yield* Fiber.join(writing);
+      yield* Fiber.join(later);
+      expect(fixture.calls).toEqual(["list", "put"]);
+      held.resolve();
+      fixture.hold = undefined;
+      yield* write(second);
+      const settledWrite = ["list", "put", "put settled"];
+      expect(fixture.calls).toEqual([settledWrite, settledWrite, settledWrite].flat());
+    }),
 );

@@ -4,9 +4,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import {
+  AccountId,
   CloudEngineBindingFields,
   ProjectId,
   isSpeechAccountOrigin,
+  acceptsSpeechKey,
   type CloudDictationChoice,
   type SpeechKeyCandidate,
 } from "@t3tools/contracts";
@@ -19,7 +21,11 @@ import * as Semaphore from "effect/Semaphore";
 import { ScientServerSettings } from "../scientServerSettings.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ServerConfig } from "../config.ts";
-import { AccountsService, SPEECH_KEY_OUTSIDE_PROJECT } from "../scient/accounts/AccountsService.ts";
+import {
+  AccountsService,
+  SPEECH_KEY_OUTSIDE_PROJECT,
+  typedDigest,
+} from "../scient/accounts/AccountsService.ts";
 import { isCloudResponseError, openCloudEngine } from "./cloud.ts";
 import { atomicWrite } from "./ledger.ts";
 import { sampleRate } from "./windows.ts";
@@ -148,6 +154,8 @@ export class CloudEngines extends Context.Service<
     readonly resolve: (
       id: string,
       projectId?: ProjectId,
+      /** An agent's job: the key must be one agents may use in that project. */
+      actor?: "agent",
     ) => Effect.Effect<Resolved, CloudEngineError>;
     /**
      * The key of an OpenAI speech engine the user agreed to send audio to, for a spoken
@@ -220,6 +228,7 @@ export const layer = Layer.effect(
       origin: string,
       usage?: { provider: Config["provider"]; jobId: string },
       projectId?: ProjectId,
+      actor?: "agent",
     ) {
       if (config.accountId && config.customModelConnectionId) return yield* unavailable();
       const connection = config.customModelConnectionId
@@ -235,15 +244,22 @@ export const layer = Layer.effect(
           ? connection.accountId
           : undefined);
       if (accountId) {
-        return yield* accounts
-          .resolveSpeechKey(accountId, origin, usage, projectId)
-          .pipe(
-            Effect.mapError((cause) =>
-              cause.message === SPEECH_KEY_OUTSIDE_PROJECT
-                ? error("key-not-available-in-project", SPEECH_KEY_OUTSIDE_PROJECT)
-                : unavailable(),
-            ),
-          );
+        if (actor === "agent")
+          yield* accounts
+            .authorizeUse(
+              { projectId, unattended: true },
+              { type: "account", accountId },
+              { key: { kind: "voice", id: config.id } },
+            )
+            .pipe(Effect.mapError(() => unavailable()));
+        return yield* accounts.resolveSpeechKey(accountId, origin, usage, projectId, actor).pipe(
+          Effect.map((key) => ({ ...key, accountId })),
+          Effect.mapError((cause) =>
+            cause.message === SPEECH_KEY_OUTSIDE_PROJECT
+              ? error("key-not-available-in-project", SPEECH_KEY_OUTSIDE_PROJECT)
+              : unavailable(),
+          ),
+        );
       }
       if (
         !config.accountId &&
@@ -263,27 +279,24 @@ export const layer = Layer.effect(
       const current = yield* settings.getSettings;
       return [
         ...snapshot.accounts.flatMap((account): SpeechKeyCandidate[] => {
-          const { details, secrets } = account;
-          if (
-            details.kind !== "api-key" ||
-            details.auth.type !== "bearer" ||
-            !details.sites.includes(origin) ||
-            secrets.token?.source.type !== "scient"
-          )
-            return [];
-          return [
-            {
-              id: account.accountId,
-              kind: "account",
-              label: account.name,
-              origin,
-              ...(secrets.token.hint ? { hint: secrets.token.hint } : {}),
-            },
-          ];
+          const hint = account.secrets.token?.hint;
+          return acceptsSpeechKey(account, origin)
+            ? [
+                {
+                  id: account.accountId,
+                  kind: "account",
+                  label: account.name,
+                  origin,
+                  ...(hint ? { hint } : {}),
+                },
+              ]
+            : [];
         }),
         ...current.customModels.connections.flatMap((item): SpeechKeyCandidate[] => {
+          // A connection's key is its own slot, or an Accounts key Voice can also send there.
+          const account = snapshot.accounts.find(({ accountId }) => accountId === item.accountId);
           if (
-            !item.credentialId ||
+            !(item.credentialId || (account && acceptsSpeechKey(account, origin))) ||
             !URL.canParse(item.baseUrl) ||
             new URL(item.baseUrl).origin !== origin
           )
@@ -300,14 +313,19 @@ export const layer = Layer.effect(
         }),
       ];
     }, Effect.mapError(io));
-    const bind = Effect.fn("CloudEngines.bind")(function* (config: Config, projectId?: ProjectId) {
+    const bind = Effect.fn("CloudEngines.bind")(function* (
+      config: Config,
+      projectId?: ProjectId,
+      actor?: "agent",
+    ) {
       const { uploadConsent: _, migrated: _migrated, ...binding } = config;
       const digest = (value: typeof binding) =>
         NodeCrypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
       const fingerprint = digest(binding);
       const url = endpoint(config);
       if (!url) return yield* error("invalid-input", "Invalid cloud speech endpoint or model.");
-      const { name, token } = yield* resolveKey(config, url.origin, undefined, projectId);
+      const resolved = yield* resolveKey(config, url.origin, undefined, projectId, actor);
+      const { name, token } = resolved;
       const secret = Redacted.value(token);
       if (!secret || config.model.includes(secret) || config.baseUrl?.includes(secret))
         return yield* error("invalid-input", "Invalid cloud speech configuration.");
@@ -315,6 +333,13 @@ export const layer = Layer.effect(
         provider: config.provider,
         model: config.model,
         accountName: name.replaceAll(secret, "[redacted]"),
+        // The Accounts key this binding sends, and which value of it, for its answers.
+        ...("accountId" in resolved && resolved.accountId
+          ? {
+              accountId: AccountId.make(String(resolved.accountId)),
+              keyDigest: typedDigest(secret),
+            }
+          : {}),
         maxAudioBytes: config.maxAudioBytes,
         origin: url.origin,
         fingerprint,
@@ -350,6 +375,7 @@ export const layer = Layer.effect(
                       jobId,
                     },
                     projectId,
+                    actor,
                   );
                   return Redacted.value(token);
                 }).pipe(Effect.result),
@@ -370,14 +396,29 @@ export const layer = Layer.effect(
       id: string,
       requireConsent = true,
       projectId?: ProjectId,
+      actor?: "agent",
     ) {
       const config = yield* find(yield* read, id);
       if (requireConsent && !config.uploadConsent) return yield* consentRequired();
-      return yield* bind(config, projectId);
+      return yield* bind(config, projectId, actor);
     });
     const execute = Effect.fn("CloudEngines.execute")(function* (request: Request) {
       if (request.action === "test") {
         const bound = yield* resolve(request.id, false, request.projectId);
+        // Reported for the key and value the binding itself resolved.
+        const report = (outcome: "refused" | "ok") =>
+          bound.accountId && bound.keyDigest && accounts.reportKeyUse
+            ? accounts
+                .reportKeyUse(
+                  bound.accountId,
+                  { kind: "voice", id: request.id },
+                  outcome,
+                  bound.keyDigest,
+                )
+                .pipe(Effect.exit)
+            : Effect.void;
+        // A 403 can be a missing permission or model; only a 401 refuses the key.
+        let keyRefused = false;
         return yield* Effect.tryPromise({
           try: async (signal): Promise<{ ok: true }> => {
             const recognizer = bound.open("auto", signal, "connection-test");
@@ -386,6 +427,7 @@ export const layer = Layer.effect(
           },
           catch: (cause) => {
             if (isCloudResponseError(cause)) {
+              keyRefused = cause.code === "provider-key-rejected" && cause.status === 401;
               if (cause.code === "provider-key-rejected")
                 return error(cause.code, "The provider rejected the speech key.");
               if (cause.code === "provider-response-too-large")
@@ -393,7 +435,10 @@ export const layer = Layer.effect(
             }
             return unavailable();
           },
-        });
+        }).pipe(
+          Effect.tap(() => report("ok")),
+          Effect.tapError(() => (keyRefused ? report("refused") : Effect.void)),
+        );
       }
       return yield* mutex.withPermit(
         Effect.uninterruptible(
@@ -411,14 +456,21 @@ export const layer = Layer.effect(
               yield* write(configs.map((entry) => (entry.id === config.id ? config : entry)));
               return config;
             }
-            if (request.action === "update") yield* find(configs, request.id);
+            const previous =
+              request.action === "update" ? yield* find(configs, request.id) : undefined;
             if (request.action !== "add" && request.action !== "update")
               return yield* error("invalid-input", "Invalid cloud speech command.");
             const { action, projectId, ...fields } = request;
-            const config = {
+            const rebound = {
               ...fields,
               id: action === "add" ? NodeCrypto.randomUUID() : request.id,
             };
+            // Consent is to the destination: a new key for the same endpoint keeps it.
+            const config =
+              previous?.uploadConsent === true &&
+              endpoint(previous)?.origin === endpoint(rebound)?.origin
+                ? { ...rebound, uploadConsent: true }
+                : rebound;
             yield* bind(config, projectId);
             yield* write([...configs.filter((entry) => entry.id !== config.id), config]);
             return config;
@@ -498,11 +550,7 @@ export const layer = Layer.effect(
             const account = accountSnapshot.accounts.find(
               ({ accountId }) => accountId === (config.accountId ?? custom?.accountId),
             );
-            const validAccount =
-              account?.details.kind === "api-key" &&
-              account.details.auth.type === "bearer" &&
-              account.details.sites.includes(url.origin) &&
-              account.secrets.token?.source.type === "scient";
+            const validAccount = account !== undefined && acceptsSpeechKey(account, url.origin);
             const validCustom =
               custom?.credentialId &&
               URL.canParse(custom.baseUrl) &&
@@ -519,6 +567,7 @@ export const layer = Layer.effect(
                 ...(config.customModelConnectionId
                   ? { customModelConnectionId: config.customModelConnectionId }
                   : {}),
+                ...(account ? { accountId: account.accountId } : {}),
                 ...(keyLabel ? { keyLabel } : {}),
                 ...(config.migrated ? { migrated: true } : {}),
                 ...(!(validAccount || validCustom) ? { reconnect: true } : {}),
@@ -568,8 +617,8 @@ export const layer = Layer.effect(
     return CloudEngines.of({
       execute,
       realtimeKey,
-      resolve: Effect.fn("CloudEngines.resolveForProject")((id, projectId) =>
-        resolve(id, true, projectId),
+      resolve: Effect.fn("CloudEngines.resolveForProject")((id, projectId, actor) =>
+        resolve(id, true, projectId, actor),
       ),
       listDictationChoices,
       chooseForDictation,

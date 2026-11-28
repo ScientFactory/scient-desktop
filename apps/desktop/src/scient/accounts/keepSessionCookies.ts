@@ -1,10 +1,10 @@
 // @effect-diagnostics globalDate:off globalTimers:off -- Electron cookie events run outside Effect.
 import type { Cookie, CookiesSetDetails, Session } from "electron";
 
+import { KEPT_SESSION_SECONDS } from "@t3tools/shared/scientSessionCookies";
+import { isGoogleActivity, signalGoogleActivity } from "./googleSessions.ts";
 import { markUpkeep, trackMainInserts } from "./mainInserts.ts";
 
-/** How long a kept sign-in lasts unless the site renews it; sites end their own sessions sooner. */
-const KEPT_SECONDS = 90 * 24 * 60 * 60;
 /** Chromium writes cookies about every 30 seconds; a fresh sign-in should survive a crash. */
 const SAVE_DELAY_MS = 3_000;
 
@@ -22,7 +22,7 @@ export function keptCookie(cookie: Cookie, nowSeconds: number): CookiesSetDetail
     secure: cookie.secure === true,
     httpOnly: cookie.httpOnly === true,
     sameSite: cookie.sameSite,
-    expirationDate: nowSeconds + KEPT_SECONDS,
+    expirationDate: nowSeconds + KEPT_SESSION_SECONDS,
   };
 }
 
@@ -36,6 +36,8 @@ export function keepSessionCookies(session: Pick<Session, "cookies">) {
   let saving: ReturnType<typeof setTimeout> | undefined;
   session.cookies.on("changed", (_event, cookie, _cause, removed) => {
     if (removed) return;
+    // A signed-in Google page: Accounts asks Google again instead of keeping a stale "signed out".
+    if (isGoogleActivity(session, cookie)) signalGoogleActivity();
     if (cookie.session) {
       const kept = keptCookie(cookie, Date.now() / 1000);
       if (kept) {

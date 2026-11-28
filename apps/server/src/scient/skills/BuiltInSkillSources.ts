@@ -82,6 +82,74 @@ For a fuller comparison, when the user asks for one, run the same inputs in fres
 Reply with where the skill lives (a link for files you wrote; the name and status for a personal skill), what you tested and what happened, and what remains untested. Claim automatic discovery only after you've seen an agent load it on its own.
 `;
 
+const websiteAccountAutomation = `---
+name: website-account-automation
+description: >-
+  Check a private status, download your own report, watch for a change or make a
+  specific change on a website with your own account, now or on a schedule, and keep
+  that working when the sign-in lapses or the site refuses an action. Use
+  connector-authoring to build or repair a Scient connector, and playwright for general
+  terminal browser automation.
+---
+
+# Website account automation
+
+Do the requested work as the intended account, and report what you verified: done, partly done, or what blocked the rest and who can unblock it.
+
+## Choose the route
+
+Pick the authorized route that fits the task, the account and where it will run: a documented API or export, an installed connector (\`scient_connector_list\`), or Scient's browser in the person's profile. A task that will repeat and needs structured data may justify a connector over the signed-in session; build it with \`connector-authoring\`. API keys and tokens go into Accounts with \`scient_account_add\` (its \`sites\` say where the key may be sent) and are used through \`scient_account_request\`. Stay within what the person, the site and their organization allow.
+
+## Know whose account you are using
+
+Use \`scient_accounts_list\` to pick the account and browser profile, and keep that profile for every later step and run. A tab keeps its profile. Confirm identity from something only that account sees (a name, an address, a known value). A 200 status, or a page that merely loads, proves nothing. Check on the computer where the work will run: a remote host has its own copy of the sign-in, and some sites bind sessions to a device, network or campus.
+
+## Read the evidence before recovering
+
+Classify each result from what the site shows:
+
+- **signed out:** a sign-in page, a login form or an explicit "not logged in";
+- **not allowed:** the account is signed in but refused this operation. Prove it with a signed-in page, then carry on with the rest;
+- **can't reach:** a network, server or timeout failure. This is never evidence of being signed out;
+- **limited:** a rate limit, a hold or a deliberate sign-out by the person;
+- **needs the person:** a CAPTCHA, passkey, code or terms page;
+- **changed:** an unexpected page or reply;
+- **unknown outcome:** a write you can't confirm.
+
+A 401 or 403 alone leaves the cause open. A rejected page token may mean the page changed rather than the session.
+
+For a confirmed lost sign-in, use \`scient_account_check\` when you're unsure, then \`scient_account_sign_in\` once. Scient spaces its own renewals, and a sign-in that needs the person already raises one Needs-you item: don't add your own or loop. Respect holds and sign-outs. Hand challenges to the person.
+
+## Do the work, then verify it
+
+Resolve real ambiguity about the account, target or effect before a write. Confirm each write by its receipt or by reading the state back. If the outcome is unknown, check the resulting state before you consider repeating it. Repeat only what is safe to repeat or what you know had no effect. Repeat reads only within the site's limits.
+
+**Scripts:** call \`scient_account_browser_session\` at the start of each run, and never reuse an earlier export. Prefer the JSON file when the site uses partitioned cookies.
+
+**Derived tokens:** some services issue their own token through the signed-in session, such as an LMS mobile token or a video platform API. Get it the way the site's own page does, save it with \`scient_account_add\`, and re-derive it once if it's rejected. If the signed-in page also fails, the sign-in is what was lost.
+
+**Sites that allow one session at a time:** a run can sign the person's browser out, and the other way round. Tell them once.
+
+## Keep secrets and sessions private
+
+Passwords stay in Accounts. Cookies, tokens and session files stay in Scient's private session files on that computer. Keep them out of chats, project files, prompts, logs, commits and other machines; Scient copies sign-ins between its computers itself.
+
+Don't promise "signed in until …". Cookie dates mislead, and the site decides. Leave the cookie jar alone rather than deleting cookies to test renewal.
+
+## Schedule when asked
+
+Use \`schedule_task\` on the host that holds the sign-in. The task's prompt names:
+
+- the account and profile;
+- the allowed actions;
+- where results go;
+- when to notify or stop.
+
+Choose a cadence that suits the site and the need, and don't let runs overlap where they could duplicate a write or disturb the session. For a watch, compare one validated value with the last successful one, and keep failures out of the baseline. Skip a missed write rather than catching up blindly.
+
+Notify on the outcomes the person cares about, and send one notice per unresolved blocker. Tell them the next run, where results go, and how to pause it (\`schedule_task\` with \`enabled: false\`). Say whether a first run was verified or is still pending. To withdraw access: the Accounts controls, or "sign out of all devices" at the site.
+`;
+
 const connectorAuthoring = `---
 name: connector-authoring
 description: Connect a service, or build, fix, sign in to or test a Scient connector (MCP server) for a website, API, database, file collection or local program, when existing connectors and Scient tools don't give the access needed or a connector fails or returns wrong data. Use scient-skill-authoring for reusable know-how that needs no new tools.
@@ -876,6 +944,8 @@ For a website session, declare \`_meta["com.scientfactory.scient"].signIn.site\`
 
 The session helper receives \`SCIENT_SIGN_IN_SITE\`, private cookie-file paths and a browser user agent. Hold cookies, CSRF and session tokens in memory only, and trace where each token comes from; never copy them into the connector, logs, fixtures or results. Sign-in happens through Scient's Accounts flow, including any human-only challenge; the connector itself never posts password forms.
 
+When the site rotates its session cookie (a new value on each answer, so a restart loses it), declare \`signIn.writeBack {cookie, path?, reads}\` with the one Secure, HttpOnly, host-only session cookie and each read's fixed path, and read through \`session.read(operation, query)\`. Scient makes those GETs itself, follows no redirect, keeps only that cookie's rotation in the profile, and tells "couldn't reach" from "signed out". Use it for reads only. A site that mints a per-service token from the session (Moodle's mobile launch, Panopto's embed) gets a \`signIn.tokens\` recipe: the minting page's path (\`{nonce}\` for a fresh value), a \`pattern\` whose first group is the token in the redirect address or page, and optional \`decode: "base64"\`, \`separator\` and \`part\`. \`session.serviceToken(name)\` returns it and \`{renew: true}\` mints again after the API refused it; Scient keeps it in memory and hides it from output.
+
 Detect expiry from the site's observed signed-out response; a generic 403 isn't enough. The \`SCIENT_SIGN_IN_EXPIRED\` marker makes the host sign in and replay the call, so emit it only for a read that is known safe to repeat. A write with an uncertain outcome needs a readback, not a replay. Test expiry with synthetic responses.
 
 Bind credential-bearing requests to the intended origin. The inherited session helper strips standard authorization headers on redirects, but not custom secret headers: with custom credentials, either follow no cross-origin redirects or implement and test an explicit origin allowlist, and stop unexpected redirects before sending. The browser user agent is for compatibility, never for passing a bot check.
@@ -1049,6 +1119,34 @@ const events = await session.json("/lib/ajax/service.php?…", {}, { signal });
 \`SCIENT_SIGN_IN_EXPIRED\` error when the site sends them to its sign-in page. For explicitly read-only tools, Scient then signs in
 again and retries. The included MCP helper (\`mcp.mjs\`) suppresses this replay marker for other tools;
 check an uncertain write outcome before retrying. The program never sees the password.
+
+A site that rotates its session cookie on each answer would need a new sign-in after every
+restart. Declare its reads and its one session cookie instead, and use \`session.read\`:
+
+\`\`\`json
+"signIn": { "site": "https://hours.example.com",
+  "writeBack": { "cookie": "sid", "reads": { "hours": "/api/hours" } } }
+\`\`\`
+
+\`\`\`js
+const { body } = await session.read("hours", { month: "2026-11" });
+\`\`\`
+
+Scient makes each read itself, sends no redirect on, and keeps the site's new \`sid\` in the
+user's browser profile. It reports a site it couldn't reach apart from an ended session.
+
+A site whose API takes a token it mints from the signed-in session (a mobile-app or embed token)
+needs no stored key. Declare the page that hands it out and where the token is in the answer, and
+ask for it with \`session.serviceToken\`:
+
+\`\`\`json
+"tokens": { "app": { "path": "/admin/tool/mobile/launch.php?service=app&passport={nonce}",
+  "pattern": "app://token=([A-Za-z0-9+/=]+)", "decode": "base64", "separator": ":::", "part": 1 } }
+\`\`\`
+
+\`\`\`js
+const token = await session.serviceToken("app"); // after the API refused it: { renew: true }
+\`\`\`
 
 ### Libraries
 
@@ -1361,6 +1459,30 @@ export const needsSetup = (what) =>
       "Scient asks the user in a private card. Never ask for keys in chat.",
   );
 
+/** Requests this program sent Scient itself, by id, until Scient answers on stdin. */
+const askedScient = new Map();
+let askedCount = 0;
+
+/**
+ * Asks Scient, not the agent, to do something only it may, such as a read with the user's
+ * session (\`scient/readWithWebsiteSession\`). Resolves to the result; rejects with a ToolError.
+ */
+export const askScient = (method, params) =>
+  new Promise((resolve, reject) => {
+    const id = \`scient-ask-\${++askedCount}\`;
+    askedScient.set(id, { resolve, reject });
+    process.stdout.write(\`\${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\\n\`);
+  });
+
+const answerFromScient = (message) => {
+  const asked = askedScient.get(message.id);
+  if (!asked) return;
+  askedScient.delete(message.id);
+  if (message.error)
+    asked.reject(new ToolError(String(message.error.message ?? "Scient refused.")));
+  else asked.resolve(message.result);
+};
+
 /** Logs go to stderr. Never write to stdout: it carries the protocol. */
 export const log = (...parts) => {
   process.stderr.write(\`\${parts.map((p) => (typeof p === "string" ? p : inspect(p))).join(" ")}\\n\`);
@@ -1638,7 +1760,8 @@ export function serve({ name, version, title, instructions, tools }) {
     if (message === null || typeof message !== "object" || Array.isArray(message)) {
       return failure(null, -32600, "Invalid request");
     }
-    if (typeof message.method !== "string") return undefined; // A response; we send no requests.
+    // A response: only Scient answers this program's requests.
+    if (typeof message.method !== "string") return void answerFromScient(message);
     if (message.id === undefined || message.id === null) {
       // A notification. Only cancellation matters to a tools-only server.
       if (message.method === "notifications/cancelled") {
@@ -1979,10 +2102,14 @@ serve({
 // When the session has ended, throw \`signInExpired(...)\` (session.fetch does it for you). The tool
 // error then starts with SCIENT_SIGN_IN_EXPIRED; Scient signs the user in again, rewrites the
 // cookie files, restarts this program and retries the call once.
+//
+// For a site that rotates its session cookie, declare \`signIn.writeBack\` and use session.read():
+// Scient makes the read itself and keeps the site's new cookie, so the next start needs no new
+// sign-in.
 
 import * as fs from "node:fs";
 
-import { SIGN_IN_EXPIRED, ToolError } from "./mcp.mjs";
+import { SIGN_IN_EXPIRED, ToolError, askScient } from "./mcp.mjs";
 import { snippet } from "./http.mjs";
 
 /** Paths that usually mean "you are being sent to sign in". Add the site's own when it differs. */
@@ -2301,6 +2428,46 @@ export function createSession({
     }
   }
 
+  /**
+   * A read Scient makes itself with the user's session: \`operation\` names a path the manifest's
+   * \`signIn.writeBack.reads\` declares; \`query\` adds parameters. Resolves to {status, contentType,
+   * body}. Throws signInExpired() when the site ended the session, and a plain ToolError when it
+   * couldn't be reached (not a sign-out) or refused the account.
+   */
+  async function read(operation, query) {
+    if (!site) throw notSignedIn();
+    const answer = await askScient("scient/readWithWebsiteSession", {
+      operation,
+      ...(query ? { query } : {}),
+    });
+    if (answer.outcome === "signed-out") throw signInExpired(site, "the site ended the session");
+    if (answer.outcome === "unreachable")
+      throw new ToolError(
+        \`Scient couldn't reach \${site}: it may be down or need another network. The sign-in is not affected.\`,
+      );
+    if (answer.outcome === "forbidden")
+      throw new ToolError(\`\${site} says the account has no access to this (403).\`);
+    return { status: answer.status, contentType: answer.contentType, body: answer.body ?? "" };
+  }
+
+  /**
+   * A token the site mints from the user's session (a mobile-app or embed token), by a recipe the
+   * manifest's \`signIn.tokens\` declares. Scient asks the site and keeps it; \`renew: true\` mints a
+   * new one after the site refused the old. Never log or return it.
+   */
+  async function serviceToken(name, { renew = false } = {}) {
+    if (!site) throw notSignedIn();
+    const answer = await askScient("scient/serviceToken", { name, ...(renew ? { renew } : {}) });
+    if (answer.outcome === "signed-out") throw signInExpired(site, "the site ended the session");
+    if (answer.outcome === "unreachable")
+      throw new ToolError(
+        \`Scient couldn't reach \${site}: it may be down or need another network. The sign-in is not affected.\`,
+      );
+    if (answer.outcome !== "ok")
+      throw new ToolError(\`\${site} refused the account a \${name} token.\`);
+    return answer.token;
+  }
+
   return {
     /** The site's origin, or undefined when Scient gave no sign-in. */
     site,
@@ -2310,9 +2477,32 @@ export function createSession({
     },
     fetch: sessionFetch,
     json,
+    read,
+    serviceToken,
     /** The Cookie header for a URL, for libraries that need it. Never log or return it. */
     cookieHeader: (url) => cookieHeader(new URL(url, site)),
   };
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "website-account-automation",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": websiteAccountAutomation,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.website-account-automation",
+  "version": "0.1.0",
+  "category": "Connector creation",
+  "categoryDescription": "Make and fix connectors that give agents tools for a service.",
+  "displayOrder": 36,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
 }
 `,
     }),

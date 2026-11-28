@@ -1778,6 +1778,22 @@ it("fails a value handed to request_secret that was not pasted in this thread", 
   assert.deepEqual(gradeSecretValues({ values: [pw] }, run([save("an invented one")])), []);
 });
 
+// SCIENT-FORK:START — a key pasted here may be saved to Scient Accounts, as to request_secret.
+it("passes a pasted key saved with scient_account_add, and fails one not pasted here", () => {
+  const key = "FAKE-sk-acct-0001";
+  const add = {
+    tool: "scient_account_add",
+    input: { name: "Acme", reason: "Acme API", value: key },
+    output: JSON.stringify({ status: "saved", accountId: "acc_1", usage: [] }),
+    step: 1,
+  };
+  assert.deepEqual(gradeSecretValues({ values: [key] }, run([add]), `My key: ${key}`), []);
+  assert.deepEqual(gradeSecretValues({ values: [key] }, run([add])), [
+    "value in scient_account_add.value (not pasted in this thread)",
+  ]);
+});
+// SCIENT-FORK:END
+
 // Stage A4 / dev: a Codex cell passes a pasted password with a backtick inside a JS string.
 it("checks exact bytes on the shell command a Codex cell runs, not on the cell's JavaScript", () => {
   const pw = "`fake|Sandbox-Pw-0042";

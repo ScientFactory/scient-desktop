@@ -38,6 +38,9 @@ import {
   scientAnalyticsMetadata,
   SCIENT_ANALYTICS_METADATA_ENV_NAMES,
 } from "./scientAnalyticsMetadata.ts";
+// SCIENT-FORK:START — background running as this desktop process applies it.
+import { backgroundRunningInEffect } from "../scient/backgroundRunning/backgroundRunningInEffect.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient launch environment and bundled SyncTeX navigator.
 import {
   resolveSyncTexNavigatorPath,
@@ -306,6 +309,9 @@ interface SharedBootstrapInput {
   readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
   readonly hostScope: string;
+  // SCIENT-FORK:START — the effective background running setting when this launch resolved.
+  readonly desktopBackgroundRunning: boolean;
+  // SCIENT-FORK:END
 }
 
 // Matches the server's DESKTOP_HOST_SCOPE_ENV.
@@ -608,6 +614,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
       readonly desktopAppUpdate: boolean;
+      // SCIENT-FORK:START — Scient Accounts: the key for the desktop's page seals.
+      readonly pageSealSecret: string;
+      // SCIENT-FORK:END
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -627,6 +636,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       desktopBootstrapSecret: input.bootstrapSecret,
+      // SCIENT-FORK:START — Scient Accounts: only this backend can open the desktop's page seals.
+      desktopPageSealSecret: input.pageSealSecret,
+      // SCIENT-FORK:END
 
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -636,6 +648,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       desktopAppUpdate: input.desktopAppUpdate,
       desktopBrowserFd: 6,
       desktopBrowserControlFd: 7,
+      // SCIENT-FORK: in the bootstrap, not the environment providers and terminals inherit.
+      desktopBackgroundRunning: input.desktopBackgroundRunning,
       ...Option.match(input.resourceMonitorPath, {
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
@@ -698,6 +712,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     readonly port: number;
     readonly distro: string | null;
     readonly readiness: LaunchReadiness;
+    // SCIENT-FORK:START — Scient Accounts: only the primary backend gets one.
+    readonly pageSealSecret?: string;
+    // SCIENT-FORK:END
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -727,7 +744,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    // SCIENT-FORK: in the bootstrap, not the environment providers and terminals inherit.
+    desktopBackgroundRunning: input.desktopBackgroundRunning,
     ...buildObservabilityFragment(input.observabilitySettings, environment.safetyEnvelopeEnabled),
+    // SCIENT-FORK:START — Scient Accounts: only the primary backend can open page seals.
+    ...(input.pageSealSecret === undefined ? {} : { desktopPageSealSecret: input.pageSealSecret }),
+    // SCIENT-FORK:END
   };
 
   const archivePath = environment.path.join(environment.resourcesPath, WSL_RUNTIME_ARCHIVE_NAME);
@@ -944,6 +966,14 @@ export const make = Effect.gen(function* () {
       bootstrapSecret,
       observabilitySettings,
       hostScope: yield* hostScope,
+      // SCIENT-FORK:START — background running as this desktop process applies it, so a backend
+      // started after the switch changed still agrees with window closing.
+      desktopBackgroundRunning: yield* backgroundRunningInEffect.pipe(
+        Effect.provideService(DesktopState.DesktopState, desktopState),
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+        Effect.provideService(DesktopAppSettings.DesktopAppSettings, settings),
+      ),
+      // SCIENT-FORK:END
     } satisfies SharedBootstrapInput;
   });
 
@@ -957,6 +987,9 @@ export const make = Effect.gen(function* () {
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
       readiness: yield* makeLaunchReadiness,
+      // SCIENT-FORK:START — Scient Accounts: the primary backend's own page-sealing secret.
+      pageSealSecret: Hex.encode(yield* random.randomBytes(32)),
+      // SCIENT-FORK:END
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -996,6 +1029,9 @@ export const make = Effect.gen(function* () {
       syncTexNavigatorPath,
       // SCIENT-FORK:END
       desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),
+      // SCIENT-FORK:START — Scient Accounts: the primary backend's own page-sealing secret.
+      pageSealSecret: Hex.encode(yield* random.randomBytes(32)),
+      // SCIENT-FORK:END
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),

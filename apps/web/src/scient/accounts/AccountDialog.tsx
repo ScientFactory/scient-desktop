@@ -1,11 +1,20 @@
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "~/state/server";
+import { keyUseLabel, keyUseLink, referencedKeyUses } from "./keyUses";
+import { Link } from "@tanstack/react-router";
+import { extensionsInventory } from "~/scient/extensions/extensionsState";
+import { useEnvironmentQuery } from "~/state/query";
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_2,
+  ACCOUNTS_PROTOCOL_1,
   AccountSaveInput,
+  PROVIDER_DISPLAY_NAMES,
   DEFAULT_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
   type AccountDetails,
   type AccountId,
+  type ApiKeyAuth,
   type AccountSecretInput,
   type AccountSecretSummary,
   type AccountsSnapshot,
@@ -25,7 +34,11 @@ import {
   SearchIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { toastManager } from "~/components/ui/toast";
+import { PasswordReveal } from "./PasswordReveal";
+import { wrongAccountField } from "./accountsView";
 import { flushSync } from "react-dom";
 
 import { Button } from "~/components/ui/button";
@@ -103,12 +116,13 @@ export function AccountField({
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   password: msg("Password"),
   totp: msg("2FA key"),
+  recovery: msg("Backup codes"),
   token: msg("Key", { $context: "an API key, the secret value" }),
   clientCert: msg("Client certificate"),
   clientKey: msg("Client key"),
   caCert: msg("CA certificate"),
 };
-const OPTIONAL_FIELDS = new Set(["totp", "clientCert", "clientKey", "caCert"]);
+const OPTIONAL_FIELDS = new Set(["totp", "recovery", "clientCert", "clientKey", "caCert"]);
 
 type ValueSource = AccountSecretSummary["source"]["type"];
 const LINK_LABELS: Readonly<Record<Exclude<ValueSource, "scient">, string>> = {
@@ -127,7 +141,10 @@ function SecretField({
   onChange,
   inputRef,
   onKeyPaste,
+  reveal,
 }: {
+  /** Show and Copy for the saved value, beside the label. */
+  reveal?: ReactNode;
   inputRef?: (node: HTMLInputElement | null) => void;
   onKeyPaste?: ((value: string) => boolean) | undefined;
   field: string;
@@ -194,6 +211,7 @@ function SecretField({
             </span>
           ) : null}
         </Label>
+        {reveal}
         {links.length > 0 ? (
           <Menu>
             <MenuTrigger render={<Button size="xs" variant="ghost-muted" />}>
@@ -350,17 +368,19 @@ function SitesField({
         value={draft}
         onChange={(event) => {
           setDraft(event.target.value);
-          onChange(
-            event.target.value
-              .split(",")
-              .map((site) => site.trim().toLowerCase())
-              .filter(Boolean),
-          );
+          onChange(event.target.value.split(",").map(normalizedSite).filter(Boolean));
         }}
         placeholder="example.com"
       />
     </AccountField>
   );
+}
+
+/** A typed site as Accounts keeps it: an address keeps only its origin, a host stays bare. */
+function normalizedSite(text: string) {
+  const site = text.trim().toLowerCase().replace(/\/+$/, "");
+  if (!site.includes("://")) return site.split("/")[0] ?? "";
+  return URL.canParse(site) ? new URL(site).origin : site;
 }
 
 function DetailsFields({
@@ -441,6 +461,27 @@ function MoreOptionsFields({
   return (
     <>
       {details.kind === "website" ? (
+        // The profile it signs in is shown: two logins of one site differ by it.
+        <AccountField label={gt("Browser profile")}>
+          <NativeSelect
+            value={details.profileId ?? ""}
+            onChange={(event) => {
+              const { profileId: _, ...rest } = details;
+              onChange(event.target.value ? { ...details, profileId: event.target.value } : rest);
+            }}
+          >
+            <option value="">{gt("New tabs profile")}</option>
+            {profiles
+              .filter((profile) => profile.kind !== "incognito")
+              .map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+          </NativeSelect>
+        </AccountField>
+      ) : null}
+      {details.kind === "website" ? (
         <details className="grid gap-3">
           <summary className="cursor-pointer text-sm text-muted-foreground">
             <T>More options</T>
@@ -457,26 +498,6 @@ function MoreOptionsFields({
                 }}
                 placeholder={gt("Optional")}
               />
-            </AccountField>
-            <AccountField label={gt("Browser profile")}>
-              <NativeSelect
-                value={details.profileId ?? ""}
-                onChange={(event) => {
-                  const { profileId: _, ...rest } = details;
-                  onChange(
-                    event.target.value ? { ...details, profileId: event.target.value } : rest,
-                  );
-                }}
-              >
-                <option value="">{gt("New tabs profile")}</option>
-                {profiles
-                  .filter((profile) => profile.kind !== "incognito" && profile.id !== "default")
-                  .map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </option>
-                  ))}
-              </NativeSelect>
             </AccountField>
             {universityDetails(details) ? (
               <AccountField label={gt("Library link")}>
@@ -566,6 +587,16 @@ function MoreOptionsFields({
   );
 }
 
+/** A new key's editor, pre-filled for the use that asked for it. */
+export interface InitialApiKey {
+  readonly name: string;
+  readonly envName?: string;
+  readonly customModelProtocol?: "openai-completions" | "openai-responses" | "anthropic-messages";
+  readonly sites?: ReadonlyArray<string>;
+  /** How the use sends the key; Bearer unless named. */
+  readonly auth?: ApiKeyAuth;
+}
+
 export function AccountDialog({
   environmentId,
   snapshot,
@@ -580,13 +611,7 @@ export function AccountDialog({
   account: AccountSummary | null;
   canWrite: boolean;
   onClose: () => void;
-  initialApiKey?: {
-    readonly name: string;
-    readonly envName?: string;
-    readonly speechOnly?: boolean;
-    readonly customModelProtocol?: "openai-completions" | "openai-responses" | "anthropic-messages";
-    readonly sites?: ReadonlyArray<string>;
-  };
+  initialApiKey?: InitialApiKey;
   onSaved?: (accountId: AccountId) => void;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
@@ -646,23 +671,45 @@ export function AccountDialog({
             kind: "api-key",
             sites: initialApiKey.sites ?? [],
             auth:
-              initialApiKey.customModelProtocol === "anthropic-messages"
+              initialApiKey.auth ??
+              (initialApiKey.customModelProtocol === "anthropic-messages"
                 ? { type: "header", name: "x-api-key" }
-                : { type: "bearer" },
+                : { type: "bearer" }),
             ...(initialApiKey.envName ? { envName: initialApiKey.envName } : {}),
             ...(initialApiKey.customModelProtocol ? { purpose: "custom-models" } : {}),
-            ...(initialApiKey.speechOnly ? { speechOnly: true } : {}),
           }
         : null),
   );
   const [name, setName] = useState(account?.name ?? initialApiKey?.name ?? "");
   const [secrets, setSecrets] = useState<Record<string, AccountSecretInput>>({});
   const [saveTo, setSaveTo] = useState<ReadonlyArray<AccountWriteStore>>([{ type: "scient" }]);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | false>(false);
   const [busy, setBusy] = useState(false);
   const save = useAccountCommand(accountsState.save, environmentId);
+  const putBack = useAccountCommand(accountsState.putBackPassword, environmentId);
+  const removeVersion = useAccountCommand(accountsState.removePasswordVersion, environmentId);
+  const restoreVersion = useAccountCommand(accountsState.restorePasswordVersion, environmentId);
   const gt = useGT();
   const messages = useMessages();
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
+  const usedBy = account
+    ? (referencedKeyUses(
+        {
+          keyConsumers: snapshot.keyConsumers,
+          accounts: snapshot.accounts,
+          keyLinks: snapshot.keyLinks,
+          instances: settings?.providerInstances,
+          driverName: (driver) =>
+            PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
+          connectors: inventory.data?.connectors,
+          keyRefusals: snapshot.keyRefusals,
+          textGenerators: settings?.textGenerators,
+          libraryKeys: settings?.scientSources?.keys,
+        },
+        messages,
+      ).get(account.accountId) ?? [])
+    : [];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce local keychain metadata discovery and discard stale responses.
   useEffect(() => {
     if (details || !query.trim() || !snapshot.stores.keychain.available) return;
@@ -727,7 +774,9 @@ export function AccountDialog({
       ),
     });
     if (Option.isNone(input)) {
-      setError(true);
+      // Name the field to fix; the draft stays as typed.
+      const field = wrongAccountField(name, details);
+      setError(field ? messages(field) : messages(msg("Check the account fields.")));
       return;
     }
     setBusy(true);
@@ -737,6 +786,14 @@ export function AccountDialog({
     if (result.ok) {
       setSecrets({});
       onSaved?.(result.value.accountId);
+      // Each copy that didn't take the new password says so; it needs attention on its row.
+      const [first, ...rest] = result.value.warnings ?? [];
+      if (first)
+        toastManager.add({
+          type: "warning",
+          title: first,
+          ...(rest.length ? { description: rest.join(" ") } : {}),
+        });
       onClose();
     }
   };
@@ -965,7 +1022,7 @@ export function AccountDialog({
                   action={
                     !account &&
                     details.kind === "website" &&
-                    (snapshot.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL ? (
+                    (snapshot.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL_1 ? (
                       <Button
                         size="xs"
                         variant="ghost-muted"
@@ -1022,37 +1079,172 @@ export function AccountDialog({
                   />
                 </AccountField>
                 <DetailsFields details={details} onChange={setDetails} />
+                {usedBy.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    <T>
+                      Used by{" "}
+                      <Var>
+                        {usedBy.map((use, index) => (
+                          <Fragment
+                            key={`${use.href}:${use.consumerId ?? use.link?.variable ?? index}`}
+                          >
+                            {index > 0 ? ", " : null}
+                            <Link {...keyUseLink(use, environmentId)} className="underline">
+                              {keyUseLabel(use, messages)}
+                            </Link>
+                          </Fragment>
+                        ))}
+                      </Var>
+                    </T>
+                  </p>
+                ) : null}
                 {secretFields(details).map((field) => (
-                  <SecretField
+                  <Fragment
                     key={`${details.kind}:${details.kind === "cli-login" ? details.tool : ""}:${field}`}
-                    field={field}
-                    saved={
-                      account?.secrets[field] ??
-                      (secrets[field]?.type === "keychain" ? { source: secrets[field] } : undefined)
-                    }
-                    inputRef={(node) => {
-                      if (!node) {
-                        secretInputs.current.delete(field);
-                        return;
+                  >
+                    <SecretField
+                      field={field}
+                      {...(account?.details.kind === "website" &&
+                      field === "password" &&
+                      (snapshot.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL_2 &&
+                      account.secrets.password
+                        ? {
+                            reveal: (
+                              <PasswordReveal
+                                // A new password, from anywhere, hides what was shown of the old.
+                                key={account.updatedAt}
+                                environmentId={environmentId}
+                                accountId={account.accountId}
+                                field="password"
+                              />
+                            ),
+                          }
+                        : {})}
+                      saved={
+                        account?.secrets[field] ??
+                        (secrets[field]?.type === "keychain"
+                          ? { source: secrets[field] }
+                          : undefined)
                       }
-                      secretInputs.current.set(field, node);
-                    }}
-                    onKeyPaste={
-                      details.kind === "api-key" || details.kind === "cli-login"
-                        ? recognizePaste
-                        : undefined
-                    }
-                    environmentId={environmentId}
-                    snapshot={snapshot}
-                    onChange={(input) =>
-                      setSecrets((current) => {
-                        const next = { ...current };
-                        if (input) next[field] = input;
-                        else delete next[field];
-                        return next;
-                      })
-                    }
-                  />
+                      inputRef={(node) => {
+                        if (!node) {
+                          secretInputs.current.delete(field);
+                          return;
+                        }
+                        secretInputs.current.set(field, node);
+                      }}
+                      onKeyPaste={
+                        details.kind === "api-key" || details.kind === "cli-login"
+                          ? recognizePaste
+                          : undefined
+                      }
+                      environmentId={environmentId}
+                      snapshot={snapshot}
+                      onChange={(input) =>
+                        setSecrets((current) => {
+                          const next = { ...current };
+                          if (input) next[field] = input;
+                          else delete next[field];
+                          return next;
+                        })
+                      }
+                    />
+                    {field === "password" &&
+                    account &&
+                    (account.secrets.password?.history ||
+                      account.secrets.password?.removedVersions) ? (
+                      <>
+                        {(account.secrets.password?.history ?? []).map((earlier) => (
+                          <div
+                            key={earlier.version}
+                            className="flex items-center justify-between gap-3 text-xs text-muted-foreground"
+                          >
+                            <T>
+                              Previous password ·{" "}
+                              <Var>
+                                {earlier.savedAt
+                                  ? formatRelativeTimeLabel(earlier.savedAt, undefined, messages)
+                                  : ""}
+                              </Var>
+                            </T>
+                            <span className="flex items-center gap-1">
+                              <PasswordReveal
+                                key={account.updatedAt}
+                                environmentId={environmentId}
+                                accountId={account.accountId}
+                                field="version"
+                                version={earlier.version}
+                              />
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={busy}
+                                onClick={() =>
+                                  void putBack({
+                                    accountId: account.accountId,
+                                    version: earlier.version,
+                                  })
+                                }
+                              >
+                                {gt("Use this one")}
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={busy}
+                                onClick={() =>
+                                  void removeVersion({
+                                    accountId: account.accountId,
+                                    version: earlier.version,
+                                  })
+                                }
+                              >
+                                {gt("Remove")}
+                              </Button>
+                            </span>
+                          </div>
+                        ))}
+                        {/* Each removal keeps its own Undo until it ends (the server lists them). */}
+                        {(account.secrets.password?.removedVersions ?? []).map(({ undoId }) => (
+                          <div
+                            key={undoId}
+                            className="flex items-center justify-between gap-3 text-xs text-muted-foreground"
+                          >
+                            <T>Password removed</T>
+                            <Button
+                              size="xs"
+                              variant="ghost-muted"
+                              disabled={busy}
+                              onClick={() => void restoreVersion({ undoId })}
+                            >
+                              {gt("Undo")}
+                            </Button>
+                          </div>
+                        ))}
+                      </>
+                    ) : field === "password" &&
+                      (snapshot.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL_2 &&
+                      account?.secrets.password?.previousAt ? (
+                      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                        <T>
+                          Previous password ·{" "}
+                          <Var>
+                            {formatRelativeTimeLabel(
+                              account.secrets.password.previousAt,
+                              undefined,
+                              messages,
+                            )}
+                          </Var>
+                        </T>
+                        <PasswordReveal
+                          key={account.updatedAt}
+                          environmentId={environmentId}
+                          accountId={account.accountId}
+                          field="previous"
+                        />
+                      </div>
+                    ) : null}
+                  </Fragment>
                 ))}
                 {details.kind === "api-key" && details.speechOnly ? null : (
                   <MoreOptionsFields details={details} onChange={setDetails} />
@@ -1070,7 +1262,7 @@ export function AccountDialog({
             )}
             {error ? (
               <p role="alert" className="text-sm text-destructive-foreground">
-                <T>Check the account fields.</T>
+                {error}
               </p>
             ) : null}
           </div>

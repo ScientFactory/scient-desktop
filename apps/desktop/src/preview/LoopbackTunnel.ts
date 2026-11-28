@@ -31,6 +31,9 @@ import * as Socket from "effect/socket/Socket";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL } from "../ipc/channels.ts";
+// SCIENT-FORK:START — the session's one before-request listener is shared with Accounts.
+import { setTunnelBeforeRequest } from "./sessionBeforeRequest.ts";
+// SCIENT-FORK:END
 
 const ACCESS_TIMEOUT = "15 seconds";
 const PROBE_TIMEOUT = "3 seconds";
@@ -654,13 +657,14 @@ const make = Effect.gen(function* () {
               },
         );
         // The bypass rules don't cover the unspecified address, so it would reach this machine.
-        if (port === null) session.webRequest.onBeforeRequest(null);
-        else {
-          session.webRequest.onBeforeRequest(
-            { urls: UNSPECIFIED_ADDRESS_URLS },
-            sendUnspecifiedToLocalhost,
-          );
-        }
+        // SCIENT-FORK:START — the session's one before-request listener is shared with Accounts.
+        setTunnelBeforeRequest(
+          session,
+          port === null
+            ? null
+            : { urls: UNSPECIFIED_ADDRESS_URLS, handle: sendUnspecifiedToLocalhost },
+        );
+        // SCIENT-FORK:END
         await session.closeAllConnections();
       },
       catch: (cause) => new LoopbackTunnelRouteError({ environmentId, cause }),

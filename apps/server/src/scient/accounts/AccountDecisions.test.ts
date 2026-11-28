@@ -100,16 +100,46 @@ describe("account grant decisions", () => {
 });
 
 describe("sign-in holds", () => {
+  const summary = (fields: Partial<AccountSummary>) => fields as AccountSummary;
   const at = "2026-10-31T10:00:00.000Z";
   const now = Date.parse(at);
   const minutes = (count: number) => now + count * 60_000;
 
-  it("holds every attempt that didn't sign in, however long ago, and nothing else", () => {
-    for (const held of ["failed", "needs-you", "password-rejected", "code-rejected", "limited"])
-      expect(signInHeld({ state: held as "failed", at })).toBe(true);
-    for (const free of ["signed-in", "signed-out", "unknown"])
-      expect(signInHeld({ state: free as "unknown", at })).toBe(false);
-    expect(signInHeld(undefined)).toBe(false);
+  const totp = { totp: { source: { type: "scient" as const } } };
+
+  it("lifts each stop by itself, except a refusal of what's saved", () => {
+    const held = (signIn: AccountSummary["signIn"], when: number, secrets = {}) =>
+      signInHeld({ signIn, secrets }, when);
+    // A failure retries after half an hour; a second one in a row waits a day.
+    expect(held({ state: "failed", at }, minutes(29))).toBe(true);
+    expect(held({ state: "failed", at }, minutes(31))).toBe(false);
+    expect(held({ state: "failed", at, failures: 2 }, minutes(31))).toBe(true);
+    expect(held({ state: "failed", at, failures: 2 }, minutes(24 * 60 + 1))).toBe(false);
+    expect(held({ state: "limited", at }, minutes(59))).toBe(true);
+    expect(held({ state: "limited", at }, minutes(61))).toBe(false);
+    // A one-time code the site refused says nothing saved is wrong, unless it came from the 2FA key.
+    expect(held({ state: "code-rejected", at }, minutes(31))).toBe(false);
+    expect(held({ state: "code-rejected", at }, minutes(100_000), totp)).toBe(true);
+    expect(held({ state: "password-rejected", at }, minutes(100_000))).toBe(true);
+    for (const free of ["signed-in", "signed-out", "unknown"] as const)
+      expect(held({ state: free, at }, now)).toBe(false);
+    expect(held(undefined, now)).toBe(false);
+  });
+
+  it("waits for the person on a needs-you, and only for them", () => {
+    const needed = { signIn: { state: "needs-you", at } } as const;
+    expect(signInHeld(needed, minutes(100_000))).toBe(true);
+    expect(signInHeld(needed, now, true)).toBe(false);
+  });
+
+  it("counts failed attempts in a row, and starts again after anything else", () => {
+    const failed = summary({ signIn: { state: "failed", at } });
+    const twice = withSignIn(failed, { state: "failed", at }, now, "attempt");
+    expect(twice.signIn?.failures).toBe(2);
+    expect(withSignIn(twice, { state: "failed", at }, now, "attempt").signIn?.failures).toBe(3);
+    const worked = withSignIn(twice, { state: "signed-in", at }, now, "attempt");
+    expect(worked.signIn?.failures).toBeUndefined();
+    expect(withSignIn(worked, { state: "failed", at }, now, "attempt").signIn?.failures).toBe(1);
   });
 
   it("won't sign back in by itself right after a sign-in that worked", () => {
@@ -123,7 +153,7 @@ describe("sign-in holds", () => {
     expect(automaticSignInOnHold({}, later)).toBe(false);
     expect(automaticSignInOnHold({ signIn: { state: "signed-in", at } }, later)).toBe(false);
     expect(automaticSignInOnHold({ signIn: { state: "needs-you", at } }, later)).toBe(true);
-    expect(automaticSignInOnHold({ signIn: { state: "failed", at } }, later)).toBe(true);
+    expect(automaticSignInOnHold({ signIn: { state: "failed", at } }, minutes(10))).toBe(true);
     // A session seen to end is when signing back in by itself helps.
     expect(automaticSignInOnHold({ signIn: { state: "signed-out", at } }, later)).toBe(false);
   });
@@ -182,6 +212,15 @@ describe("what a sign-in or a look leaves on an account", () => {
     expect(state(withSignIn(signedIn, { state: "signed-out", at }, now + 3_600_000, "look"))).toBe(
       "signed-out",
     );
+  });
+
+  it("keeps a sign-out the person chose until they sign in themselves", () => {
+    const chosen = summary({ signIn: { state: "signed-out", at, by: "action" } });
+    expect(withSignIn(chosen, { state: "signed-out", at }, now + 7_200_000, "look")).toBe(chosen);
+    // A look that read a signed-in page before the sign-out, or an attempt under way then.
+    expect(withSignIn(chosen, { state: "signed-in", at }, now, "look")).toBe(chosen);
+    expect(withSignIn(chosen, { state: "signed-in", at }, now, "attempt")).toBe(chosen);
+    expect(state(withSignIn(chosen, { state: "needs-you", at }, now, "press"))).toBe("needs-you");
   });
 
   it("clears a result that only needed a person, never a refused password", () => {

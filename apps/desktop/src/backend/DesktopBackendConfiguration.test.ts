@@ -1126,6 +1126,60 @@ describe("DesktopBackendConfiguration", () => {
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+  it.effect("tells native and WSL backends in the bootstrap whether Scient keeps running", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const launch = (platform: NodeJS.Platform, keepRunningInBackground: boolean | null) =>
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const primary = yield* configuration.resolvePrimary;
+          // A backend started after the switch changed keeps this start's value, as windows do.
+          yield* (yield* DesktopAppSettings.DesktopAppSettings).setKeepRunningInBackground(
+            primary.bootstrap.desktopBackgroundRunning !== true,
+          );
+          const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
+          // Providers and terminals inherit the backend's environment: the setting stays out of it.
+          for (const env of [primary.env, wsl.env]) {
+            assert.notInclude(Object.keys(env), "SCIENT_DESKTOP_BACKGROUND_RUNNING");
+            assert.notInclude(env.WSLENV ?? "", "BACKGROUND");
+          }
+          return [
+            primary.bootstrap.desktopBackgroundRunning,
+            wsl.bootstrap.desktopBackgroundRunning,
+          ];
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(
+                DesktopAppSettings.layerTest({
+                  ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+                  keepRunningInBackground,
+                }),
+              ),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: () => Option.some("172.27.0.99"),
+                }),
+              ),
+              Layer.provideMerge(layerEnvironment(baseDir, { platform })),
+            ),
+          ),
+        );
+
+      // Unchosen, it follows the platform's default; the person's choice wins.
+      assert.deepEqual(yield* launch("linux", null), [false, false]);
+      assert.deepEqual(yield* launch("darwin", null), [true, true]);
+      assert.deepEqual(yield* launch("linux", true), [true, true]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
   // SCIENT-FORK:END scient-backend-launch
 
   it.effect("gives the Windows and WSL backends one host scope that survives a restart", () =>

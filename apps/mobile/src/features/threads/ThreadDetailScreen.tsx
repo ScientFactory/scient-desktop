@@ -1954,7 +1954,7 @@ function ThreadDetailBody(
                       {/* SCIENT-FORK:START — Scient Accounts: sign-ins reach the phone. */}
                       <ThreadAccountRequests
                         environmentId={props.environmentId}
-                        threadId={props.selectedThread.id}
+                        scope={{ threadId: props.selectedThread.id }}
                       />
                       {/* MCP servers that need a sign-in, outside the transcript. */}
                       <ThreadMcpStatusRequests

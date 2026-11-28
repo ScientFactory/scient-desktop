@@ -56,6 +56,30 @@ import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
+// SCIENT-FORK:START — Scient Accounts: the jar's quarantine, as the jar hands it over (round 6m).
+const quarantined: string[] = [];
+/** Each profile's own context, as the pool knows it (round 6o). */
+const profileContexts = new WeakMap<object, string>();
+let onContextMade: ((context: ReturnType<typeof makeContext>) => void) | null = null;
+/** A close waiting for a copy's hold on the profile (round 6s). */
+let closeWait: {
+  readonly entered: PromiseWithResolvers<void>;
+  readonly released: PromiseWithResolvers<void>;
+} | null = null;
+const jarQuarantine = vi.hoisted(() => ({ hold: undefined as (() => void) | undefined }));
+vi.mock("../scient/accounts/profileCookieJar.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../scient/accounts/profileCookieJar.ts")>()),
+  openProfileCookieJar: async (
+    _context: unknown,
+    _stopping: unknown,
+    _deadline: unknown,
+    quarantineProfile: () => void,
+  ) => {
+    jarQuarantine.hold = quarantineProfile;
+    return { jar: { quarantined: () => false }, close: async () => undefined };
+  },
+}));
+// SCIENT-FORK:END
 vi.mock("./ServerBrowserContexts.ts", () => ({
   presentAsChrome: async () => {},
   ServerBrowserContexts: class {
@@ -70,6 +94,8 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       contextEntered?.resolve();
       await contextGate?.promise;
       const context = makeContext(this.onClose);
+      if (isolationKey === undefined) profileContexts.set(context, profileId);
+      onContextMade?.(context);
       const setupFailure = pageSetupFailure;
       if (setupFailure) {
         context.newCDPSession = async () => {
@@ -94,6 +120,43 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async close() {
       for (const context of contexts) await context.close();
     }
+    // SCIENT-FORK:START — Scient Accounts: a Clear closes a profile's context.
+    /** Closes the profile's shared context, as a Clear does before its next page opens. */
+    async closeProfile(profileId: string) {
+      // A fenced profile's close is refused, as the pool refuses it (round 6q).
+      if (quarantined.includes(profileId))
+        throw new Error("This profile is unavailable until the server restarts.");
+      // A copy's hold it waits for; fenced meanwhile, it is refused after the wait (6r, 6s).
+      if (closeWait) {
+        closeWait.entered.resolve();
+        await closeWait.released.promise;
+        if (quarantined.includes(profileId))
+          throw new Error("This profile is unavailable until the server restarts.");
+      }
+      for (const [index, request] of contextRequests.entries())
+        if (request.profileId === profileId && !request.isolated) await contexts[index]?.close();
+    }
+    /** A copy's hold on a profile's context (round 6m: what a quarantine starts from). */
+    readonly leases = {
+      lease: async (_profileId: string) => ({
+        context: {} as BrowserContext,
+        stopping: () => false,
+        release: async () => undefined,
+      }),
+    };
+    contextGeneration() {
+      return 0;
+    }
+    quarantineProfile(profileId: string) {
+      quarantined.push(profileId);
+    }
+    isQuarantined(profileId: string) {
+      return quarantined.includes(profileId);
+    }
+    profileOf(context: object) {
+      return profileContexts.get(context);
+    }
+    // SCIENT-FORK:END
   },
 }));
 
@@ -700,6 +763,9 @@ const openDesktopViewer = Effect.gen(function* () {
 
 beforeEach(() => {
   contexts.length = 0;
+  quarantined.length = 0;
+  onContextMade = null;
+  closeWait = null;
   encoderPageOverride = undefined;
   realContextOverride = undefined;
   encoderStreams.length = 0;
@@ -2677,6 +2743,334 @@ it.effect("a tab whose renderer crashes stays open instead of vanishing", () =>
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+// SCIENT-FORK:START — Scient Accounts: a tab being set up during a Clear isn't left behind.
+it.effect("reopens a tab still being set up when a Clear rolls the profile over (round 6d)", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      // The tab's page is still being made when the Clear comes.
+      contextGate = Promise.withResolvers<void>();
+      contextEntered = Promise.withResolvers<void>();
+      const opening = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => contextEntered!.promise);
+      const clearing = yield* browser.closeProfile!("profile-work").pipe(Effect.forkChild);
+      // The Clear goes as far as it can before the page is made.
+      for (let turn = 0; turn < 20; turn++) {
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => Promise.resolve());
+      }
+      contextGate.resolve();
+      const opened = yield* Fiber.join(opening);
+      yield* Fiber.join(clearing);
+      // regression: the rollover missed it, and it stayed on the profile's old data.
+      expect(contextRequests).toHaveLength(2);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: PreviewTabId.make(opened.tabId!),
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabId).toBe(opened.tabId);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: a quarantined profile's tabs leave Scient (round 6m).
+it.effect("drops a quarantined profile's tabs, so nothing of Scient writes there again", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+      });
+      yield* Effect.scoped(browser.profileCookies!("profile-work"));
+      jarQuarantine.hold!();
+      expect(quarantined).toContain("profile-work");
+      // regression: its old tab stayed Scient's, and could still write to the held profile.
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: PreviewTabId.make(opened.tabId!),
+        operation: "status",
+        input: {},
+      });
+      expect([status.available, status.tabId]).toEqual([false, null]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: a tab set up across a quarantine isn't published (6n).
+it.effect("never publishes a tab whose profile was held while its page was being made", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      // The tab is admitted, and its context is still being made, when the profile is held.
+      contextGate = Promise.withResolvers<void>();
+      contextEntered = Promise.withResolvers<void>();
+      const opening = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => contextEntered!.promise);
+      quarantined.push("profile-work");
+      contextGate.resolve();
+      const opened = yield* Fiber.join(opening);
+      // regression: it was published on the held profile's old context, after the tab sweep.
+      expect(opened._tag).toBe("Failure");
+      // Refused before its page was made (round 6o).
+      expect(contexts[0]!.page.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: a popup from a held profile's page isn't adopted (6n).
+it.effect("closes a popup its held profile's old page opens, instead of adopting it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+      });
+      const outcome = Promise.withResolvers<string>();
+      onManagerEventHandled = (event) =>
+        Effect.sync(() => {
+          if (event.type === "opened" && event.tabId !== opened.tabId) outcome.resolve("adopted");
+        });
+      const popup = makeContext();
+      // A popup opens in its opener's context.
+      popup.page.context = () => contexts[0]!;
+      const close = popup.page.close.getMockImplementation()!;
+      popup.page.close.mockImplementation(async (...args) => {
+        outcome.resolve("closed");
+        return close(...args);
+      });
+      // The profile is held; its hung browser's page still opens a popup.
+      quarantined.push("profile-work");
+      contexts[0]!.page.emit("popup", popup.page);
+      // regression: the popup was published as a tab on the held profile's context.
+      expect(yield* Effect.promise(() => outcome.promise)).toBe("closed");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: no page is made in a profile held meanwhile (6o).
+it.effect("makes no page in a profile held while its context was being prepared", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      const newPage = vi.fn();
+      // The hold lands while the context is being prepared for the tab.
+      onContextMade = (context) => {
+        const grant = context.grantPermissions;
+        context.grantPermissions = vi.fn(async (...args: Parameters<typeof grant>) => {
+          quarantined.push("profile-work");
+          return grant(...args);
+        });
+        const made = context.newPage;
+        context.newPage = async () => {
+          newPage();
+          return made();
+        };
+      };
+      const opened = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+        })
+        .pipe(Effect.exit);
+      expect(opened._tag).toBe("Failure");
+      // regression: a page was made, and could load and write, before the publication check.
+      expect(newPage).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("adopts a popup of a popup by the context it is in, not by its opener's tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      // The agent's tab is in its own context; the default profile is held.
+      quarantined.push("default");
+      const opener = contexts[0]!;
+      const opened = yield* Deferred.make<void>();
+      let popups = 0;
+      onManagerEventHandled = (event) =>
+        event.type === "opened" && event.tabId !== tabId && ++popups === 2
+          ? Deferred.succeed(opened, undefined).pipe(Effect.asVoid)
+          : Effect.void;
+      // Each popup is in the agent's context, not the profile's.
+      const first = makeContext();
+      opener.page.emit("popup", first.page);
+      // Its own popup, once the first is a tab.
+      yield* Effect.promise(() => vi.waitFor(() => expect(popups).toBe(1)));
+      const second = makeContext();
+      first.page.emit("popup", second.page);
+      // regression: the first popup's tab counted as the profile's, so its popup was refused.
+      yield* Deferred.await(opened);
+      expect(second.page.close).not.toHaveBeenCalled();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toHaveLength(3);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: a refused close fails, never succeeds (round 6r).
+it.effect("fails a fenced profile's close, so Accounts records it failed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      yield* browserHostReady;
+      quarantined.push("profile-work");
+      const closed = yield* browser.closeProfile!("profile-work").pipe(Effect.exit);
+      // regression: the refusal was swallowed, and the close reported success.
+      expect(Exit.isFailure(closed)).toBe(true);
+      expect(yield* browser.closeProfile!("profile-home").pipe(Effect.exit)).toEqual(Exit.void);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: fenced during a Clear's wait, nothing ends the server (6s).
+it.effect("fails a Clear fenced while it waited, and handles every tab it was reopening", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+      });
+      // The Clear's close waits for a copy's hold; its tab is queued to reopen after it.
+      closeWait = { entered: Promise.withResolvers(), released: Promise.withResolvers() };
+      const clearing = yield* browser.closeProfile!("profile-work").pipe(
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => closeWait!.entered.promise);
+      // The copy's write stalls and fences the profile, then its hold ends.
+      quarantined.push("profile-work");
+      closeWait.released.resolve();
+      const closed = yield* Fiber.join(clearing);
+      // The typed failure Accounts records as failed.
+      expect(Exit.isFailure(closed)).toBe(true);
+      expect(JSON.stringify(closed)).toContain("ProfileCookiesError");
+      // regression: the queued reopen was refused with no handler, and the backend exited.
+      // The tab can't open again in the fenced profile: asked for, it is refused, not crashed.
+      const status = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: PreviewTabId.make(opened.tabId!),
+          operation: "status",
+          input: {},
+        })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(status)).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Accounts: a Clear reopens server tabs in the new data (round 6c).
+it.effect("a Clear reopens the profile's tab in its new data, same tab and page (round 6c)", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* browserHostReady;
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const url = "https://example.com/app";
+      contexts[0]!.page.commit(url);
+      yield* browser.closeProfile!("profile-work");
+      // Its tab is still there, on the page it was on, in a context opened after the Clear.
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabId).toBe(tabId);
+      expect(contexts).toHaveLength(2);
+      expect(contexts[1]!.page.goto).toHaveBeenCalledWith(url, expect.anything());
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
 
 it.effect("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(

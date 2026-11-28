@@ -631,7 +631,20 @@ export interface ResearchKeys {
   readonly googleBooks?: Redacted.Redacted<string>;
   /** Unpaywall takes an email address instead of a key. */
   readonly unpaywallEmail?: Redacted.Redacted<string>;
+  /**
+   * An agent's keys are checked again as each request carrying one leaves (`gatedRequest`): Off,
+   * Remove, a narrower scope or a new value since they were read sends nothing.
+   */
+  readonly beforeSend?: (url: URL, headers: Readonly<Record<string, string>>) => Promise<boolean>;
 }
+
+/** The request as `keys` allow it: one its gate refuses goes nowhere and answers unavailable. */
+export const gatedRequest =
+  (request: MetadataRequest, keys: ResearchKeys): MetadataRequest =>
+  async (url, headers, limits) =>
+    keys.beforeSend === undefined || (await keys.beforeSend(url, headers))
+      ? request(url, headers, limits)
+      : { status: 0, body: "", url };
 
 async function lookupBeforeDeadline(
   scheme: SourceAddIdentifierScheme,
@@ -641,10 +654,16 @@ async function lookupBeforeDeadline(
   const answered = new Map<string, Lookup>();
   const stop = new AbortController();
   const lookup = IDENTIFIER_SCHEMES[scheme]
-    .lookup(values, options.request ?? requestMetadata, options.pace, options.keys ?? {}, {
-      signal: stop.signal,
-      answer: (value, answer) => answered.set(value, answer),
-    })
+    .lookup(
+      values,
+      gatedRequest(options.request ?? requestMetadata, options.keys ?? {}),
+      options.pace,
+      options.keys ?? {},
+      {
+        signal: stop.signal,
+        answer: (value, answer) => answered.set(value, answer),
+      },
+    )
     .catch(() => null);
   const deadline = NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, null, {
     ref: false,

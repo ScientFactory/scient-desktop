@@ -276,6 +276,7 @@ describe("Scient skill session planning", () => {
         ["teach", "explicit"],
         ["to-questionnaire", "automatic"],
         ["transcripts", "automatic"],
+        ["website-account-automation", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -318,6 +319,7 @@ describe("Scient skill session planning", () => {
         "teach",
         "to-questionnaire",
         "transcripts",
+        "website-account-automation",
       ]);
     }),
   );

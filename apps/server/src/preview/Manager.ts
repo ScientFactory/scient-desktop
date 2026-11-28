@@ -71,6 +71,11 @@ export class PreviewManager extends Context.Service<
       handler: (snapshots: ReadonlyArray<PreviewSessionSnapshot>) => Effect.Effect<void>,
     ) => Effect.Effect<void, never, Scope.Scope>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
+    // SCIENT-FORK:START — Scient Accounts: a profile's open tabs, before it is removed.
+    readonly profileTabs: (
+      profileId: string,
+    ) => Effect.Effect<ReadonlyArray<{ readonly threadId: string; readonly tabId: string }>>;
+    // SCIENT-FORK:END
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
   }
@@ -455,6 +460,16 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  // SCIENT-FORK:START — Scient Accounts: a profile's open tabs, before it is removed.
+  const profileTabs: PreviewManager["Service"]["profileTabs"] = (profileId) =>
+    SynchronizedRef.get(stateRef).pipe(
+      Effect.map((state) =>
+        [...state.sessions.values()].flatMap(({ threadId, tabId, snapshot }) =>
+          (snapshot.profileId ?? "default") === profileId ? [{ threadId, tabId }] : [],
+        ),
+      ),
+    );
+  // SCIENT-FORK:END
   const list: PreviewManager["Service"]["list"] = Effect.fn("PreviewManager.list")(
     function* (input) {
       return yield* SynchronizedRef.get(stateRef).pipe(
@@ -513,6 +528,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     close,
     registerBeforeClose,
     list,
+    // SCIENT-FORK:START — Scient Accounts: a profile's open tabs, before it is removed.
+    profileTabs,
+    // SCIENT-FORK:END
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),
   });

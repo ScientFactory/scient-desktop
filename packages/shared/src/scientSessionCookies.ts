@@ -14,6 +14,9 @@ import * as Base64Url from "effect/encoding/Base64Url";
 
 import { siteHost, siteOf } from "./scientSiteMatch.ts";
 
+/** How long a kept sign-in lasts unless the site renews it; sites end their own sessions sooner. */
+export const KEPT_SESSION_SECONDS = 90 * 24 * 60 * 60;
+
 /** A cookie as CDP's `Storage.getCookies` and `Network.getAllCookies` return it. */
 export interface CdpCookie {
   readonly name: string;
@@ -108,12 +111,16 @@ export async function readJar(send: CdpSend) {
   };
   const cookies: SessionCookie[] = [];
   let unsupported = 0;
+  // Where each one no API can address is: a sign-out counts those of its site (round 6f).
+  const unsupportedDomains: string[] = [];
   for (const cookie of read.cookies) {
     const converted = sessionCookieFromCdp(cookie);
-    if ("unsupported" in converted) unsupported += 1;
-    else cookies.push(converted);
+    if ("unsupported" in converted) {
+      unsupported += 1;
+      unsupportedDomains.push(cookie.domain);
+    } else cookies.push(converted);
   }
-  return { cookies, unsupported };
+  return { cookies, unsupported, unsupportedDomains };
 }
 
 /** Removes exactly these cookies: name, domain, path and partition must all match. */
@@ -167,6 +174,14 @@ const cookieKey = (cookie: Pick<SessionCookie, "name" | "domain" | "path" | "par
     cookie.partitionKey?.hasCrossSiteAncestor ?? null,
   ]);
 
+/**
+ * A unit naming hosts alone, below their registrable site, as a university Sign out deletes a
+ * library vendor's host: it is delivered as those hosts, never merged up to their site.
+ */
+export const isHostUnit = (unit: ReadonlyArray<string>) =>
+  unit.length > 0 &&
+  unit.every((entry) => !entry.includes("://") && siteOf(siteHost(entry)) !== siteHost(entry));
+
 /** The registrable sites of a unit, whose entries may be bare sites or `https://` origins. */
 export const unitSites = (unit: ReadonlyArray<string>) =>
   new Set(unit.map((site) => siteOf(siteHost(site))));
@@ -197,7 +212,8 @@ function unitState(
   return live.length === 0 ? "empty" : { live };
 }
 
-const sameCookie = (a: SessionCookie, b: SessionCookie) =>
+/** The same cookie with every attribute the same: value, flags and expiry (to the second). */
+export const sameCookie = (a: SessionCookie, b: SessionCookie) =>
   cookieKey(a) === cookieKey(b) &&
   a.value === b.value &&
   a.hostOnly === b.hostOnly &&
@@ -606,9 +622,22 @@ export function planDelivery(input: {
       head,
     };
   }
-  const entries = (log?.units ?? []).filter(({ sites }) => input.travels(sites));
+  const travelling = (log?.units ?? []).filter(({ sites }) => input.travels(sites));
   const floor = applied.withdrawn ?? -1;
   const units: PlannedUnit[] = [];
+  // A host's own delete goes as itself, so its site's other hosts are never deleted with it.
+  const sameUnit = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+    a.length === b.length && a.every((entry) => b.includes(entry));
+  for (const entry of travelling)
+    if (entry.kind === "delete" && isHostUnit(entry.sites)) {
+      const held = applied.units.filter((unit) => sameUnit(unit.sites, entry.sites));
+      const appliedRevision = held.length ? Math.max(...held.map((unit) => unit.revision)) : -1;
+      if (entry.revision > Math.max(appliedRevision, floor))
+        units.push({ sites: entry.sites, revision: entry.revision, kind: "delete" });
+    }
+  const entries = travelling.filter(
+    (entry) => !(entry.kind === "delete" && isHostUnit(entry.sites)),
+  );
   const components = mergeUnits([
     ...entries.map(({ sites }) => sites),
     ...(log?.jar === undefined ? [] : jar),

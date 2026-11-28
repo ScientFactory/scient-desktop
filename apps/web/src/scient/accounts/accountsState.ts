@@ -116,6 +116,16 @@ export const accountsState = {
     tag: WS_METHODS.accountsRemove,
     ...lane,
   }),
+  undoPassword: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:undoPassword",
+    tag: WS_METHODS.accountsUndoPassword,
+    ...lane,
+  }),
+  restore: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:restore",
+    tag: WS_METHODS.accountsRestore,
+    ...lane,
+  }),
   test: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:test",
     tag: WS_METHODS.accountsTest,
@@ -154,6 +164,10 @@ export const accountsState = {
     tag: WS_METHODS.accountsSetCodeSources,
     ...lane,
   }),
+  checkCodeSources: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:checkCodeSources",
+    tag: WS_METHODS.accountsCheckCodeSources,
+  }),
   paperForSource: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:paperForSource",
     tag: WS_METHODS.accountsPaperForSource,
@@ -174,7 +188,15 @@ export const accountsState = {
     label: "accounts:signInAsPerson",
     tag: WS_METHODS.accountsSignInAsPerson,
   }),
-  /** The same sign-in under its old name, for a server older than `ACCOUNTS_PROTOCOL`. */
+  pageKeep: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:pageKeep",
+    tag: WS_METHODS.accountsPageKeep,
+  }),
+  pending: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:pending",
+    tag: WS_METHODS.accountsPending,
+  }),
+  /** The same sign-in under its old name, for a server older than `ACCOUNTS_PROTOCOL_1`. */
   universitySignIn: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:universitySignIn",
     tag: WS_METHODS.accountsUniversitySignIn,
@@ -182,6 +204,10 @@ export const accountsState = {
   universityBrowse: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:universityBrowse",
     tag: WS_METHODS.accountsUniversityBrowse,
+  }),
+  universitySignOut: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:universitySignOut",
+    tag: WS_METHODS.accountsUniversitySignOut,
   }),
   searchUniversities: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:searchUniversities",
@@ -221,6 +247,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsSetAgentAccess,
     ...lane,
   }),
+  setRenewAutomatically: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:setRenewAutomatically",
+    tag: WS_METHODS.accountsSetRenewAutomatically,
+    ...lane,
+  }),
   updateProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:updateProfile",
     tag: WS_METHODS.accountsProfileUpdate,
@@ -229,6 +260,31 @@ export const accountsState = {
   removeProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:removeProfile",
     tag: WS_METHODS.accountsProfileRemove,
+    ...lane,
+  }),
+  claimProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:claimProfile",
+    tag: WS_METHODS.accountsProfilesClaim,
+    ...lane,
+  }),
+  profileStoreDone: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileStoreDone",
+    tag: WS_METHODS.accountsProfilesStoreDone,
+    ...lane,
+  }),
+  undoProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:undoProfile",
+    tag: WS_METHODS.accountsProfilesUndo,
+    ...lane,
+  }),
+  operateProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:operateProfile",
+    tag: WS_METHODS.accountsProfilesOperate,
+    ...lane,
+  }),
+  reportProfiles: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:reportProfiles",
+    tag: WS_METHODS.accountsProfilesReport,
     ...lane,
   }),
   chooseProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -335,6 +391,21 @@ export const accountsState = {
     tag: WS_METHODS.accountsHandoffCancel,
     ...lane,
   }),
+  dismissNeedsYou: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:dismissNeedsYou",
+    tag: WS_METHODS.accountsNeedsYouDismiss,
+    ...lane,
+  }),
+  insertHandoffCode: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:insertHandoffCode",
+    tag: WS_METHODS.accountsHandoffInsertCode,
+    ...lane,
+  }),
+  typeSavedInHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:useSavedInHandoff",
+    tag: WS_METHODS.accountsHandoffUseSaved,
+    ...lane,
+  }),
   respondApproval: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:respondApproval",
     tag: WS_METHODS.accountsApprovalRespond,
@@ -371,10 +442,44 @@ export const accountsState = {
     label: "accounts:fillValues",
     tag: WS_METHODS.accountsFillValues,
   }),
+  neverAsk: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:neverAsk",
+    tag: WS_METHODS.accountsNeverAsk,
+  }),
+  reveal: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:reveal",
+    tag: WS_METHODS.accountsReveal,
+  }),
+  putBackPassword: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:usePassword",
+    tag: WS_METHODS.accountsUsePassword,
+  }),
+  removePasswordVersion: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:removePasswordVersion",
+    tag: WS_METHODS.accountsRemovePasswordVersion,
+  }),
+  restorePasswordVersion: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:restorePasswordVersion",
+    tag: WS_METHODS.accountsRestorePasswordVersion,
+  }),
 };
 export const accountsAvailability = Atom.family((environmentId: EnvironmentId | null) =>
   Atom.make(
     (get) =>
       environmentId !== null && get(snapshot({ environmentId, input: {} }))._tag === "Success",
   ),
+);
+
+/** Something on this computer waits for the person: an approval, a hand-off or a Needs-you entry. */
+export const accountsNeedYou = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) => {
+    if (environmentId === null) return false;
+    const result = get(snapshot({ environmentId, input: {} }));
+    return (
+      result._tag === "Success" &&
+      (result.value.approvals.length > 0 ||
+        (result.value.handoffs?.length ?? 0) > 0 ||
+        (result.value.needsYou?.length ?? 0) > 0)
+    );
+  }),
 );

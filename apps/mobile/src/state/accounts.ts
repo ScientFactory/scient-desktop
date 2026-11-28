@@ -22,6 +22,46 @@ export const accountsEnvironment = {
     refreshTrigger: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
       changes({ environmentId, input: {} }),
   }),
+  setAgentAccess: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:setAgentAccess",
+    tag: WS_METHODS.accountsSetAgentAccess,
+  }),
+  setRenewAutomatically: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:setRenewAutomatically",
+    tag: WS_METHODS.accountsSetRenewAutomatically,
+  }),
+  setControls: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:setControls",
+    tag: WS_METHODS.accountsSetControls,
+  }),
+  check: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:check",
+    tag: WS_METHODS.accountsCheck,
+  }),
+  test: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:test",
+    tag: WS_METHODS.accountsTest,
+  }),
+  showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:showHandoff",
+    tag: WS_METHODS.accountsHandoffShow,
+  }),
+  signInAsPerson: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:signInAsPerson",
+    tag: WS_METHODS.accountsSignInAsPerson,
+  }),
+  continuePapers: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:continuePapers",
+    tag: WS_METHODS.accountsPapersContinue,
+  }),
+  reveal: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:reveal",
+    tag: WS_METHODS.accountsReveal,
+  }),
+  universitySignIn: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:universitySignIn",
+    tag: WS_METHODS.accountsUniversitySignIn,
+  }),
   respondApproval: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:respondApproval",
     tag: WS_METHODS.accountsApprovalRespond,
@@ -29,5 +69,17 @@ export const accountsEnvironment = {
   cancelHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:cancelHandoff",
     tag: WS_METHODS.accountsHandoffCancel,
+  }),
+  dismissNeedsYou: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:dismissNeedsYou",
+    tag: WS_METHODS.accountsNeedsYouDismiss,
+  }),
+  insertHandoffCode: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:insertHandoffCode",
+    tag: WS_METHODS.accountsHandoffInsertCode,
+  }),
+  typeSavedInHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:useSavedInHandoff",
+    tag: WS_METHODS.accountsHandoffUseSaved,
   }),
 };

@@ -14,9 +14,12 @@ import {
   DialogFooter,
 } from "~/components/ui/dialog";
 import { SettingsSection, SettingsRow } from "~/components/settings/settingsLayout";
+import { useHasSecretProvidersEnvironment } from "~/components/settings/useAvailableSettingsSearchItems";
+import { Link } from "@tanstack/react-router";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
 import { useAccountCommand } from "./useAccounts";
+import { readImageQr } from "./imageQr";
 import { ControlsMenu } from "./AccountControls";
 import { MenuItem } from "~/components/ui/menu";
 import { StoreTitle } from "./StoreTitle";
@@ -114,6 +117,7 @@ export function PasswordStores({
   const [busy, setBusy] = useState(false);
   const disconnect = useAccountCommand(accountsState.disconnectOnePassword, environmentId);
   const status = snapshot.stores.onePassword;
+  const secretProviders = useHasSecretProvidersEnvironment();
   const gt = useGT();
   return (
     <SettingsSection title={gt("Password stores")} id="accounts-password-stores">
@@ -182,11 +186,24 @@ export function PasswordStores({
           canWrite={canWrite}
         />
       ))}
+      {secretProviders ? (
+        <SettingsRow
+          title={gt("Secrets")}
+          control={
+            <Button size="xs" variant="outline" render={<Link to="/settings/secrets" />}>
+              <T>Open</T>
+            </Button>
+          }
+        />
+      ) : null}
     </SettingsSection>
   );
 }
 
-/** The hidden file picker behind Accounts ▸ + ▸ Import passwords…; CSV exports from any browser. */
+/**
+ * The hidden file picker behind Accounts ▸ + ▸ Import passwords…: CSV exports from any browser, or
+ * photos or screenshots of Google Authenticator's export QR codes, read on this device.
+ */
 export function PasswordFileInput({
   environmentId,
   canWrite,
@@ -198,41 +215,61 @@ export function PasswordFileInput({
 }) {
   const [busy, setBusy] = useState(false);
   const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
+  const readFiles = async (files: ReadonlyArray<File>) => {
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    if (images.length === 0) return files[0] ? await files[0].text() : "";
+    const texts = await Promise.all(
+      images.map((image) => readImageQr(image).catch(() => undefined)),
+    );
+    return texts.filter((text) => text?.startsWith("otpauth-migration://")).join("\n");
+  };
   return (
     <input
       ref={inputRef}
       type="file"
-      accept=".csv,text/csv"
+      accept=".csv,text/csv,image/*"
+      multiple
       hidden
       onChange={async (event) => {
-        const file = event.currentTarget.files?.[0];
+        const files = Array.from(event.currentTarget.files ?? []);
         event.currentTarget.value = "";
-        if (!file || !canWrite || busy) return;
-        if (file.size > 10_000_000) {
+        if (files.length === 0 || !canWrite || busy) return;
+        if (files.some((file) => file.size > 10_000_000)) {
           toastManager.add({ type: "error", title: m(msg("Password file is too large")) });
           return;
         }
         setBusy(true);
-        try {
-          const result = await importPasswords({ format: "auto", content: await file.text() });
-          if (result.ok)
-            toastManager.add({
-              type: "success",
-              title:
-                [
-                  result.value.created
-                    ? m(msg("Added {count}", { count: result.value.created }))
-                    : "",
-                  result.value.updated
-                    ? m(msg("Updated {count}", { count: result.value.updated }))
-                    : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || m(msg("Nothing new to import")),
-            });
-        } catch {
+        const content = await readFiles(files).catch(() => "");
+        if (!content) {
           toastManager.add({ type: "error", title: m(msg("Could not read password file")) });
+          setBusy(false);
+          return;
         }
+        const result = await importPasswords({ format: "auto", content }).catch(() => undefined);
+        if (!result)
+          toastManager.add({ type: "error", title: m(msg("Could not read password file")) });
+        else if (result.ok)
+          toastManager.add({
+            type: "success",
+            title:
+              [
+                result.value.created
+                  ? m(msg("Added {count}", { count: result.value.created }))
+                  : "",
+                result.value.updated
+                  ? m(msg("Updated {count}", { count: result.value.updated }))
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" · ") || m(msg("Nothing new to import")),
+            ...(result.value.unmatched?.length
+              ? {
+                  description: m(
+                    msg("No login for {names}", { names: result.value.unmatched.join(", ") }),
+                  ),
+                }
+              : {}),
+          });
         setBusy(false);
       }}
     />

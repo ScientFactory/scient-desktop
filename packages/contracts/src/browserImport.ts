@@ -101,6 +101,10 @@ export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   targetProfileId: BrowserProfileId,
   // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
   keepSites: BrowserImportInput.fields.keepSites,
+  /** Round 6e: the generation an agent's refresh was decided in; its cookies go there. */
+  targetGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Round 6f: an agent's refresh, whose write asks its own backend if it still stands. */
+  operationId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
   // SCIENT-FORK:END
 });
 

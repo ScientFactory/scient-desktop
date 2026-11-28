@@ -67,6 +67,7 @@
     "apps/web/src/scientPreviewMiniPlayerArtifacts.ts",
     "apps/server/src/scient/ScientAssetUrls.ts",
     "apps/server/src/scient/ScientWsServices.ts",
+    "apps/server/src/scient/keepAwake/http.ts",
     "apps/web/src/components/files/FileRenameButton.tsx",
     "apps/web/src/scient/markdownEditor/fileCitationNavigation.ts",
     "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.ts",
@@ -374,11 +375,6 @@
       "path": "apps/server/src/os-jank.ts",
       "anchor": "DISCOVERY_VARIABLES",
       "purpose": "Read the variables that say where a person's scientific tools live from their login shell, so Compute finds what their terminal finds."
-    },
-    {
-      "path": "apps/web/src/routes/__root.tsx",
-      "anchor": "ComputeQuitGuardReport",
-      "purpose": "Keep the desktop app told how many runs Quit would stop, so Quit can ask first."
     },
     {
       "path": "vite.config.ts",

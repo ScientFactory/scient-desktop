@@ -25,6 +25,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.update.outcome",
   "app.update.summary",
   "app.startup.timing",
+  "app.background.summary",
+  "app.background.event",
   "server.boot.heartbeat",
   "install.owner_observed",
   "install.account_observed",
@@ -1158,6 +1160,86 @@ function startupTimingProperties(input: Readonly<Record<string, unknown>>) {
   };
 }
 
+// Windowless time: minutes after a window closes up to days left running in the background.
+const BACKGROUND_TIME_BUCKETS = [
+  "under-1m",
+  "1-10m",
+  "10-60m",
+  "1-6h",
+  "6-24h",
+  "1-3d",
+  "3-7d",
+  "over-7d",
+];
+const BACKGROUND_SET_BY = ["default", "person"];
+const BACKGROUND_RETURN_VIA = ["tray", "dock", "second-launch", "other"];
+/** Each kind with the `via` values it can carry; a kind not listed carries none. */
+const BACKGROUND_EVENT_VIA: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "window-returned": BACKGROUND_RETURN_VIA,
+  "window-not-shown": BACKGROUND_RETURN_VIA,
+  quit: ["tray", "other"],
+};
+const BACKGROUND_EVENT_KINDS = [
+  ...Object.keys(BACKGROUND_EVENT_VIA),
+  "tray-failed",
+  "splash-fallback",
+  "backend-restarted",
+  "setting-changed",
+];
+
+function backgroundSummaryProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const reason = closedCategory(property(input, "reason"), ["launch", "daily", "quit"]);
+  return {
+    reason,
+    platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
+    enabled: normalizedBoolean(property(input, "enabled")),
+    setBy: closedCategory(property(input, "setBy"), BACKGROUND_SET_BY),
+    ...(reason === "daily" || reason === "quit"
+      ? {
+          windowlessCount: countOrZero(property(input, "windowlessCount")),
+          windowlessTimeBucket: closedCategory(
+            property(input, "windowlessTimeBucket"),
+            BACKGROUND_TIME_BUCKETS,
+          ),
+        }
+      : {}),
+  };
+}
+
+function backgroundEventProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const kind = closedCategory(property(input, "kind"), BACKGROUND_EVENT_KINDS);
+  const via = BACKGROUND_EVENT_VIA[kind];
+  return {
+    kind,
+    platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
+    ...(via === undefined ? {} : { via: closedCategory(property(input, "via"), via) }),
+    // `prompt` is a free-text key the wire contract refuses, so the field is `quitPrompt`.
+    ...(kind === "quit"
+      ? {
+          quitPrompt: closedCategory(property(input, "quitPrompt"), [
+            "none",
+            "confirmed",
+            "cancelled",
+          ]),
+        }
+      : {}),
+    ...(kind === "tray-failed"
+      ? { reason: closedCategory(property(input, "reason"), ["no-icon", "error"]) }
+      : {}),
+    ...(kind === "setting-changed"
+      ? {
+          enabled: normalizedBoolean(property(input, "enabled")),
+          previousSetBy: closedCategory(property(input, "previousSetBy"), BACKGROUND_SET_BY),
+        }
+      : {}),
+    ...(via === undefined
+      ? {}
+      : optionalClosed(input, "windowlessBucket", BACKGROUND_TIME_BUCKETS)),
+  };
+}
+
 const HOUR_MS = 3_600_000;
 
 /**
@@ -1487,6 +1569,20 @@ function normalizeEvent(
         privacyLevel: "essential",
         priority: "core",
         properties: startupTimingProperties(input),
+      };
+    case "app.background.summary":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "summary",
+        properties: backgroundSummaryProperties(input),
+      };
+    case "app.background.event":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "core",
+        properties: backgroundEventProperties(input),
       };
     case "app.session.started":
       return {

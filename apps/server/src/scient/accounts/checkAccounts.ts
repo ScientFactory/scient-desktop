@@ -1,3 +1,4 @@
+import { UNKNOWN_RUN } from "./taskPinRules.ts";
 import {
   AccountsError,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -8,6 +9,7 @@ import {
   type AccountSummary,
   type AccountsCheckInput,
   type EnvironmentId,
+  type PreviewAutomationError,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -19,7 +21,7 @@ import * as Semaphore from "effect/Semaphore";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import { isGoogleSessionRow } from "./AccountDecisions.ts";
+import { isGoogleSessionRow, signedOutOnPurpose } from "./AccountDecisions.ts";
 import { AccountsService } from "./AccountsService.ts";
 import { browserFailure, previewInvoker } from "./agent/broker.ts";
 import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
@@ -29,12 +31,15 @@ import {
   signInReturn,
   universityDetails,
   universitySignInLink,
-  usesOpenAthens,
+  openAthensUniversity,
 } from "@t3tools/shared/scientPaperLinks";
 import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./agent/profileDetection.ts";
 import { guardedSignIn } from "./agent/guardedSignIn.ts";
+import { mayAskCode, personActive } from "./signInCodes.ts";
+import { nameAfterInstitution } from "./universityNames.ts";
+import { glanceKey } from "@t3tools/shared/scientUniversityGroups";
 
 const MAX_CHECKED = 40;
 const PAUSE_MS = 1_500;
@@ -48,7 +53,7 @@ const decodePage = Schema.decodeUnknownEffect(ProfileDetection);
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 
 /** The user's own check is not an agent's use, so it runs under its own identity. */
-const CHECK_THREAD = ThreadId.make("scient-accounts-check");
+export const CHECK_THREAD = ThreadId.make("scient-accounts-check");
 
 const run = Semaphore.makeUnsafe(1);
 
@@ -57,8 +62,8 @@ const fullRun = Semaphore.makeUnsafe(1);
 
 /** A glance trusts a look this recent. An unchanged look writes nothing, so `signIn.at` can't tell. */
 const GLANCE_FRESH_MS = 2 * 60 * 1000;
-/** When this server last got a clear answer about each account. */
-const lookedAt = new Map<AccountId, number>();
+/** When this server last got a clear answer for each membership, route and profile. */
+const lookedAt = new Map<string, number>();
 
 /** The browser identity of something the user asked for, which is no agent's run. */
 export const userRunInvocation = (threadId: ThreadId, environmentId: EnvironmentId) => ({
@@ -72,22 +77,33 @@ export const userRunInvocation = (threadId: ThreadId, environmentId: Environment
 
 const siteUrl = (site: string) => (site.startsWith("https://") ? site : `https://${site}`);
 
-const openAthensUniversity = (account: Pick<AccountSummary, "details">) => {
-  const institution = universityDetails(account.details)?.institution;
-  return institution !== undefined && usesOpenAthens(institution);
+const openAthensRow = (account: Pick<AccountSummary, "details">) => {
+  const university = universityDetails(account.details);
+  return university !== undefined && openAthensUniversity(university);
 };
+
+/** Microsoft's sign-in hosts, for work or school accounts and for personal ones. */
+const MICROSOFT_WORK =
+  /^(?:https:\/\/)?(?:login\.microsoftonline\.com|login\.windows\.net|(?:[\w-]+\.)?office\.com|(?:[\w-]+\.)?microsoft365\.com|myaccount\.microsoft\.com)(?:\/|$)/iu;
+const MICROSOFT_PERSONAL =
+  /^(?:https:\/\/)?(?:login\.live\.com|account\.live\.com|account\.microsoft\.com)(?:\/|$)/iu;
 
 /**
  * Where the account's session shows. Many sign-in pages stay up for a signed-in user. OpenAthens
  * says itself whether the person is signed in, so its universities are asked there, and no
- * journal is involved.
+ * journal is involved. A Microsoft account's sign-in page always lists it, so its own account page
+ * is asked: it opens signed in, or sends the visitor to sign in, and the visit keeps it alive.
  */
 export const checkAddress = (account: AccountSummary) => {
   const { details } = account;
-  if (openAthensUniversity(account)) return OPEN_ATHENS_CHECK_PAGE;
+  if (openAthensRow(account)) return OPEN_ATHENS_CHECK_PAGE;
   const university = universityDetails(details);
   if (university) return universitySignInLink(university);
   if (details.kind !== "website") return undefined;
+  if (details.sites.some((site) => MICROSOFT_WORK.test(site)))
+    return "https://myaccount.microsoft.com/";
+  if (details.sites.some((site) => MICROSOFT_PERSONAL.test(site)))
+    return "https://account.microsoft.com/";
   const site = details.sites[0];
   return site === undefined ? details.loginUrl : siteUrl(site);
 };
@@ -178,16 +194,43 @@ const askOpenAthens = Effect.fn("AccountsCheck.openAthens")(function* (
   );
 });
 
+/** The browser reached nothing: DNS, TLS, refused or timed out (its `navigation_network`). */
+const navigationFailed = (error: PreviewAutomationError) =>
+  error._tag === "PreviewAutomationExecutionError" &&
+  typeof error.cause === "object" &&
+  error.cause !== null &&
+  "detail" in error.cause &&
+  typeof error.cause.detail === "object" &&
+  error.cause.detail !== null &&
+  "failureClass" in error.cause.detail &&
+  error.cause.detail.failureClass === "navigation_network";
+
+/**
+ * What a look may do when it finds the row signed out: nothing, or one sign-in for this caller.
+ * `task`: renewal's look for a run that needs the row now, which may sign in with nobody there.
+ */
+type AfterLook = "look" | "check" | "renewal" | "task";
+
 const lookOnce = Effect.fn("AccountsCheck.one")(function* (
   listed: AccountSummary,
   url: string,
-  observeOnly: boolean,
+  after: AfterLook,
+  forSignIn = false,
+  /** Renewal's look with nobody there: its profile and evidence, never a sign-in. */
+  lookOnly = false,
+  /** This visit's own reach, apart from what the row keeps: a stale university row stays signed in. */
+  visit: { unreachable: boolean } = { unreachable: false },
+  /** The pinned scheduled task a `task` look is for. */
+  taskId?: string,
 ) {
   const accounts = yield* AccountsService;
   // A run can take minutes, and an agent's result since then decides whether to sign in.
   const account =
     (yield* accounts.snapshot).accounts.find((item) => item.accountId === listed.accountId) ??
     listed;
+  // Opening its sign-in link could sign the person back in through their identity provider. Only
+  // the look that confirms their own Sign in goes there.
+  if (!forSignIn && signedOutOnPurpose(account.signIn)) return "signed-out" as const;
   const broker = yield* PreviewAutomationBroker;
   const scope = yield* AgentInvocationContext;
   const invoke = previewInvoker(broker, scope, {
@@ -196,15 +239,44 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
   });
   // A tab without a profile is a throwaway session, so name the one the account lives in.
   const browser = yield* invoke<PreviewAutomationStatus>("status", {});
-  const opened = yield* invoke<PreviewAutomationStatus>("open", {
+  // Read again right before opening it: a Sign out may have come while the browser answered.
+  const now = (yield* accounts.snapshot).accounts.find(
+    (item) => item.accountId === account.accountId,
+  );
+  if (!forSignIn && signedOutOnPurpose(now?.signIn)) return "signed-out" as const;
+  // A page the network couldn't reach fails the open itself: that row is unreachable, not signed out.
+  const opened = yield* previewInvoker(broker, scope, {
+    updateCurrentTab: false,
+  })<PreviewAutomationStatus>("open", {
     url,
+    // A university with no profile of its own lives in Main, where its sign-in opens too; renewal
+    // looks where its sign-out check looked: the row's profile, else Main.
     profileId:
       ("profileId" in account.details ? account.details.profileId : undefined) ??
-      browser.defaultProfileId ??
+      (universityDetails(account.details) || after === "renewal" || after === "task"
+        ? undefined
+        : browser.defaultProfileId) ??
       DEFAULT_BROWSER_PROFILE_ID,
     open: false,
     reuseExistingTab: false,
-  });
+  }).pipe(
+    Effect.map((status): PreviewAutomationStatus | undefined => status),
+    Effect.catch((error) =>
+      navigationFailed(error)
+        ? Effect.undefined
+        : Effect.fail(browserFailure("The browser could not open this site.")(error)),
+    ),
+  );
+  if (opened === undefined) {
+    visit.unreachable = true;
+    if (!keepsLastSeen(account, "unknown"))
+      yield* accounts.recordCheck(account.accountId, {
+        state: "unknown",
+        unreachable: true,
+        detail: "Couldn't reach the site from this computer.",
+      });
+    return "unknown" as const;
+  }
   const tabId = opened.tabId;
   if (!tabId)
     return yield* new AccountsError({
@@ -213,7 +285,21 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
     });
   const tabs = new Set<PreviewTabId>([tabId]);
   return yield* Effect.gen(function* () {
-    yield* invoke("accountWaitForLoad", {}, tabId);
+    // A page that never loads was never reached: not a sign-out, whatever the session holds.
+    const loaded = yield* invoke("accountWaitForLoad", {}, tabId).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!loaded) {
+      visit.unreachable = true;
+      if (!keepsLastSeen(account, "unknown"))
+        yield* accounts.recordCheck(account.accountId, {
+          state: "unknown",
+          unreachable: true,
+          detail: "Couldn't reach the site from this computer.",
+        });
+      return "unknown" as const;
+    }
     const look = invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId).pipe(
       Effect.flatMap(decodePage),
     );
@@ -248,25 +334,39 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
           cookies.some((cookie) => cookie.httpOnly),
         ),
         identity: page.identity,
+        // The browser's own error page: nothing reached the site, so nothing about the sign-in.
+        unreachable: !/^https?:/u.test(page.finalUrl),
       };
     });
-    const openAthens = openAthensUniversity(account);
-    const { state, identity } = openAthens
-      ? { state: yield* askOpenAthens(invoke, tabId), identity: undefined }
+    const openAthens = openAthensRow(account);
+    const { state, identity, unreachable } = openAthens
+      ? { state: yield* askOpenAthens(invoke, tabId), identity: undefined, unreachable: false }
       : yield* readPage;
+    if (unreachable) visit.unreachable = true;
     if (keepsLastSeen(account, state)) return state;
+    // Renewal, asked again now: off, it only looks; with nobody at a window, so does a row that
+    // may send a code.
+    const quiet =
+      after === "look" ||
+      lookOnly ||
+      (after === "renewal" &&
+        (!(yield* accounts.renewAutomatically) ||
+          (!(yield* personActive) &&
+            mayAskCode((yield* accounts.signInFactors)[account.accountId]))));
     // Check is the user's own press: a signed-out sign-in with a saved password gets one attempt.
-    if (state !== "signed-out" || account.secrets.password === undefined || observeOnly) {
+    if (state !== "signed-out" || account.secrets.password === undefined || quiet) {
       yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "signed-in" && identity ? { username: identity } : {}),
-        ...(state === "unknown"
-          ? {
-              detail: openAthens
-                ? "OpenAthens didn't answer."
-                : "Couldn't tell from the site's page.",
-            }
-          : {}),
+        ...(state === "unknown" && unreachable
+          ? { unreachable: true as const, detail: "Couldn't reach the site from this computer." }
+          : state === "unknown"
+            ? {
+                detail: openAthens
+                  ? "OpenAthens didn't answer."
+                  : "Couldn't tell from the site's page.",
+              }
+            : {}),
         ...(state === "limited"
           ? { detail: "The site is limiting access from this network." }
           : {}),
@@ -276,7 +376,7 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
     const result = yield* guardedSignIn({
       page: { tabId },
       signIn: account,
-      caller: { kind: "check" },
+      caller: after === "task" ? { kind: "renewal", task: taskId ?? UNKNOWN_RUN } : { kind: after },
     });
     // A sign-in waiting at a second factor keeps its tab, for the person to finish there.
     if (result.pending && result.tabId) tabs.delete(result.tabId);
@@ -287,7 +387,8 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
         state,
         ...(result.message === undefined ? {} : { detail: result.message }),
       });
-    return state;
+    // Where it stands now: signed in again, else what the look found.
+    return result.outcome === "signed-in" ? ("signed-in" as const) : state;
   }).pipe(
     Effect.ensuring(
       Effect.forEach(tabs, (tab) => invoke("close", {}, tab).pipe(Effect.ignore), {
@@ -298,13 +399,21 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
 });
 
 /** A look that couldn't tell earns no skip, so the next glance asks again. */
-const checkOne = (account: AccountSummary, url: string, observeOnly = false) =>
-  lookOnce(account, url, observeOnly).pipe(
+const checkOne = (
+  account: AccountSummary,
+  url: string,
+  after: AfterLook = "check",
+  forSignIn = false,
+  lookOnly = false,
+  visit?: { unreachable: boolean },
+  taskId?: string,
+) =>
+  lookOnce(account, url, after, forSignIn, lookOnly, visit, taskId).pipe(
     Effect.tap((state) =>
       state === "unknown"
         ? Effect.void
         : Clock.currentTimeMillis.pipe(
-            Effect.map((now) => void lookedAt.set(account.accountId, now)),
+            Effect.map((now) => void lookedAt.set(glanceKey(account), now)),
           ),
     ),
   );
@@ -317,27 +426,30 @@ const runGlance = Effect.fn("AccountsCheck.glance")(function* (accountId: Accoun
   const accounts = yield* AccountsService;
   const account = (yield* accounts.snapshot).accounts.find((item) => item.accountId === accountId);
   const url = account && universityDetails(account.details) ? checkAddress(account) : undefined;
-  if (!account || url === undefined) return 0;
+  if (!account || url === undefined) return { checked: 0 };
+  yield* nameAfterInstitution(account);
   const now = yield* Clock.currentTimeMillis;
-  const last = lookedAt.get(accountId);
-  if (last !== undefined && now - last < GLANCE_FRESH_MS) return 0;
-  return yield* checkOne(account, url, true).pipe(
-    Effect.as(1),
-    Effect.orElseSucceed(() => 0),
+  const last = lookedAt.get(glanceKey(account));
+  if (last !== undefined && now - last < GLANCE_FRESH_MS) return { checked: 0 };
+  return yield* checkOne(account, url, "look").pipe(
+    Effect.map((state) => ({ checked: 1, ...(state === "unknown" ? { unclear: true } : {}) })),
+    Effect.orElseSucceed(() => ({ checked: 0, unclear: true })),
   );
 });
 
 const runCheck = Effect.fn("AccountsCheck.run")(function* (input: AccountsCheckInput) {
   const accounts = yield* AccountsService;
   const snapshot = yield* accounts.snapshot;
-  const chosen = snapshot.accounts
+  // Google says itself whether these work (`accounts.googleSessions.seen`).
+  const checkable = snapshot.accounts.filter(
+    (account) => !isGoogleSessionRow(account) && checkAddress(account) !== undefined,
+  );
+  const chosen = checkable
     .filter((account) =>
       input.accountId === undefined
         ? worthChecking(account)
         : account.accountId === input.accountId,
     )
-    // Google says itself whether these work (`accounts.googleSessions.seen`).
-    .filter((account) => !isGoogleSessionRow(account))
     // Least recently seen first, so repeated presses reach every row past the cap.
     .toSorted((a, b) => (a.signIn?.at ?? "").localeCompare(b.signIn?.at ?? ""))
     .slice(0, MAX_CHECKED);
@@ -361,15 +473,23 @@ const runCheck = Effect.fn("AccountsCheck.run")(function* (input: AccountsCheckI
       }),
     { discard: true },
   );
-  return chosen.length;
+  return {
+    checked: chosen.length,
+    ...(input.accountId === undefined && checkable.length > chosen.length
+      ? { skipped: checkable.length - chosen.length }
+      : {}),
+  };
 });
 
-/** One account looked at now, in a hidden tab, for a sign-in that just finished. */
+/**
+ * One account looked at now, in a hidden tab, for a sign-in that just finished: what the look
+ * found, and nothing more. It never signs in, so it can run inside that sign-in's own attempt.
+ */
 export const checkAccountNow = (account: AccountSummary, environmentId: EnvironmentId) => {
   const url = checkAddress(account);
   return url === undefined
-    ? Effect.void
-    : checkOne(account, url).pipe(
+    ? Effect.succeed<AccountSignInState>("unknown")
+    : checkOne(account, url, "look", true).pipe(
         Effect.provideService(
           AgentInvocationContext,
           userRunInvocation(CHECK_THREAD, environmentId),
@@ -377,7 +497,99 @@ export const checkAccountNow = (account: AccountSummary, environmentId: Environm
       );
 };
 
-type CheckResult = { readonly checked: number; readonly alreadyRunning?: boolean };
+/**
+ * A quiet look at a university a paper is about to go through, where only a look can tell: an
+ * OpenAthens university answers on its keep-alive visit instead. Skipped when one was just taken,
+ * or while a check holds the browser, so a paper never waits on it.
+ */
+export const lookBeforeFetch = (account: AccountSummary, environmentId: EnvironmentId) => {
+  const university = universityDetails(account.details);
+  if (!university || openAthensUniversity(university)) return Effect.void;
+  return runGlance(account.accountId).pipe(
+    Effect.provideService(AgentInvocationContext, userRunInvocation(CHECK_THREAD, environmentId)),
+    run.withPermitsIfAvailable(1),
+    Effect.asVoid,
+  );
+};
+
+/** Scient's own upkeep: no user press, so it signs in only as an automatic caller may. */
+const RENEWAL_THREAD = ThreadId.make("scient-accounts-renewal");
+
+/**
+ * Renews one row as its due quiet visit: the look Check does, and if signed out, one sign-in that
+ * respects every stop. What it found, or `undefined` when the browser couldn't be reached and
+ * nothing was recorded. Waits behind a Check or glance, which share the browser's one look at a
+ * time.
+ */
+export const renewAccount = (
+  account: AccountSummary,
+  environmentId: EnvironmentId,
+  /** Only the look: a sign-in now could text the person a code nobody is there to expect. */
+  lookOnly = false,
+) => {
+  const url = checkAddress(account);
+  return url === undefined
+    ? Effect.succeed<AccountSignInState | undefined>("unknown")
+    : checkOne(account, url, "renewal", false, lookOnly).pipe(
+        Effect.orElseSucceed((): AccountSignInState | undefined => undefined),
+        Effect.provideService(
+          AgentInvocationContext,
+          userRunInvocation(RENEWAL_THREAD, environmentId),
+        ),
+        run.withPermits(1),
+      );
+};
+
+export interface RunLook {
+  readonly state: AccountSignInState;
+  readonly unreachable: boolean;
+}
+
+/**
+ * Before a pinned task's run: the renewal look in the row's own profile, which signs in once by
+ * itself if signed out and nothing stops it. What this visit found, and whether it reached the
+ * site; a browser that can't be reached reaches nothing.
+ */
+export const lookBeforeRun = (
+  account: AccountSummary,
+  environmentId: EnvironmentId,
+  taskId: string,
+) => {
+  const url = checkAddress(account);
+  // A Google row is what Google last said of it.
+  if (isGoogleSessionRow(account))
+    return Effect.succeed<RunLook>({
+      state: account.signIn?.state ?? "unknown",
+      unreachable: false,
+    });
+  if (url === undefined) return Effect.succeed<RunLook>({ state: "unknown", unreachable: false });
+  const visit = { unreachable: false };
+  return checkOne(account, url, "task", false, false, visit, taskId).pipe(
+    Effect.map((state): RunLook => ({ state, unreachable: visit.unreachable })),
+    Effect.orElseSucceed((): RunLook => ({ state: "unknown", unreachable: true })),
+    Effect.provideService(AgentInvocationContext, userRunInvocation(RENEWAL_THREAD, environmentId)),
+    run.withPermits(1),
+  );
+};
+
+/**
+ * An agent's Check: one look at a website in its own profile, which never signs in, as that
+ * agent (its browser access applies), queued with the person's checks.
+ */
+export const lookAtAccount = (account: AccountSummary) => {
+  const url = checkAddress(account);
+  // Google answers for its own rows; a generic look at its pages would misread them.
+  return url === undefined || isGoogleSessionRow(account)
+    ? Effect.void
+    : checkOne(account, url, "look").pipe(Effect.asVoid, run.withPermits(1));
+};
+
+type CheckResult = {
+  readonly checked: number;
+  readonly skipped?: number;
+  readonly alreadyRunning?: boolean;
+  readonly unclear?: boolean;
+};
 
 /**
  * Opens each browser sign-in in its own profile, one at a time, and keeps what it found on the
@@ -393,7 +605,7 @@ export const checkAccounts = (input: AccountsCheckInput, environmentId: Environm
       : runGlance(input.accountId).pipe(
           Effect.provideService(AgentInvocationContext, invocation),
           run.withPermits(1),
-          Effect.map((checked): CheckResult => ({ checked })),
+          Effect.map((glanced): CheckResult => glanced),
         );
   // A press waits behind a glance, which is short; only another full check turns it away.
   return runCheck(input).pipe(
@@ -403,7 +615,7 @@ export const checkAccounts = (input: AccountsCheckInput, environmentId: Environm
     Effect.map(
       Option.match({
         onNone: (): CheckResult => ({ checked: 0, alreadyRunning: true }),
-        onSome: (checked): CheckResult => ({ checked }),
+        onSome: (result): CheckResult => result,
       }),
     ),
   );

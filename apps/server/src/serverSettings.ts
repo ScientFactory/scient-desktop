@@ -382,6 +382,24 @@ export class ServerSettingsService extends Context.Service<
 
     // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
     readonly setRemovedAgentKeeper?: (keeper: RemovedAgentKeeper) => Effect.Effect<void>;
+    /**
+     * Changes one provider variable to what `next` returns for its current value, in the same
+     * write that reads it; `undefined` leaves it. False when the variable or agent is gone.
+     */
+    readonly updateProviderVariable?: (
+      instanceId: ProviderInstanceId,
+      name: string,
+      next: (
+        value: NonNullable<ProviderInstanceConfig["environment"]>[number]["value"],
+      ) => string | undefined,
+    ) => Effect.Effect<boolean, ServerSettingsError>;
+    // SCIENT-FORK:END
+
+    // SCIENT-FORK:START — Scient Library: a write that lands only while the settings still allow it.
+    readonly updateSettingsIf?: (
+      precondition: (current: ServerSettings) => boolean,
+      patch: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     // SCIENT-FORK:END
 
     readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -525,6 +543,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       ),
     withSettingsSnapshot: (use) =>
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
+    // SCIENT-FORK:START — Scient Library: a write that lands only while the settings still allow it.
+    updateSettingsIf: (precondition, patch) =>
+      updateTestSettings((current) =>
+        Effect.succeed(precondition(current) ? applyServerSettingsPatch(current, patch) : current),
+      ),
+    // SCIENT-FORK:END
     streamChanges: Stream.empty,
     subscribeChanges: Effect.succeed(Stream.empty),
   } satisfies ServerSettingsService["Service"];
@@ -2073,11 +2097,43 @@ const make = Effect.gen(function* () {
         }),
       ),
     withSettingsSnapshot,
+    // SCIENT-FORK:START — Scient Library: a write that lands only while the settings still allow it.
+    updateSettingsIf: (precondition, patch) =>
+      updateAndPersistSettings(patch, (current) =>
+        Effect.succeed(precondition(current) ? applyServerSettingsPatch(current, patch) : current),
+      ),
+    // SCIENT-FORK:END
     // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
     setRemovedAgentKeeper: (keeper) =>
       Effect.sync(() => {
         removedAgentKeeper = keeper;
       }),
+    updateProviderVariable: (instanceId, name, next) => {
+      let found = false;
+      return updateAndPersistSettings({}, (current) =>
+        Effect.gen(function* () {
+          const instance = (yield* materializeSettingsSecrets(current)).providerInstances[
+            instanceId
+          ];
+          const variable = instance?.environment?.find((item) => item.name === name);
+          found = variable !== undefined;
+          const value = variable ? next(variable.value) : undefined;
+          if (!instance || value === undefined) return current;
+          const mutation = {
+            operation: "upsert" as const,
+            instanceId,
+            instance: {
+              ...instance,
+              environment: (instance.environment ?? []).map((item) =>
+                item.name === name ? { name, value, sensitive: true } : item,
+              ),
+            },
+          };
+          yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
+          return applyProviderInstanceMutation(current, mutation);
+        }),
+      ).pipe(Effect.map(() => found));
+    },
     // SCIENT-FORK:END
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));

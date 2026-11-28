@@ -9,6 +9,7 @@
   ],
   "ownedFiles": [
     "apps/web/src/testUtils/shardWeights.json",
+    "evals/mcp-tool-use/cases/accounts.ndjson",
     "packages/contracts/src/scient/accounts.ts",
     "packages/contracts/src/scient/accountRpcs.ts",
     "packages/contracts/src/scient/desktopAccountsBridge.ts",
@@ -26,7 +27,10 @@
     "apps/mobile/src/state/accounts.ts",
     "apps/mobile/src/features/threads/ThreadAccountRequests.tsx",
     "apps/server/src/preview/ServerBrowserContexts.scient.test.ts",
-    "scripts/dev-identity.mjs"
+    "scripts/dev-identity.mjs",
+    "apps/server/src/scient/extensions/connectors/connectorKeyMigration.ts",
+    "apps/server/src/scient/extensions/connectors/connectorKeyMigration.test.ts",
+    "apps/server/src/sign-in-codes-worker.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -41,6 +45,21 @@
       "path": ".github/workflows/ci.yml",
       "anchor": "SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory",
       "purpose": "Run the desktop Accounts and browser import tests, and real Chrome and Edge sign-in windows, on Windows."
+    },
+    {
+      "path": "evals/mcp-tool-use/run.ts",
+      "anchor": "accountsAccess: setup.world?.accounts === true,",
+      "purpose": "List the Accounts tools and text for an eval case whose world grants Accounts."
+    },
+    {
+      "path": "evals/mcp-tool-use/secret-grading.ts",
+      "anchor": "SCIENT-FORK: so is saving it to Scient Accounts.",
+      "purpose": "Grade a pasted key saved with scient_account_add as a safe handoff."
+    },
+    {
+      "path": "apps/server/src/auth/EnvironmentAuth.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the desktop app's own sign-in subject is reserved.",
+      "purpose": "Refuse a caller-chosen desktop-bootstrap session subject, so only the desktop app's verified sign-in carries it and Accounts can trust it as this computer's desktop."
     },
     {
       "path": "packages/contracts/src/browserProfile.ts",
@@ -68,6 +87,31 @@
       "purpose": "Resolve registered guest contents and bind sessions to profile identities."
     },
     {
+      "path": "apps/desktop/src/ipc/methods/preview.ts",
+      "anchor": "generation = profileGeneration(environmentId",
+      "purpose": "Open a cleared profile in the partition of its current generation."
+    },
+    {
+      "path": "apps/web/src/browser/HostedBrowserWebview.tsx",
+      "anchor": "const shownPartition = useRef(config?.partition);",
+      "purpose": "Reload an open tab in its profile's new partition after a Clear."
+    },
+    {
+      "path": "apps/web/src/browser/previewWebviewConfigState.ts",
+      "anchor": "syncProfileGenerations(environmentId)",
+      "purpose": "Tell the desktop a profile's generation before a tab asks for its partition."
+    },
+    {
+      "path": "apps/server/src/preview/Manager.ts",
+      "anchor": "const profileTabs: PreviewManager",
+      "purpose": "List a profile's open tabs, so Remove refuses while a chat uses it."
+    },
+    {
+      "path": "apps/server/src/background/BackgroundPolicy.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the leases outlive the policy's own build order.",
+      "purpose": "The Accounts vault reads the clients' foreground leases live, so a keychain open waits for someone at a window."
+    },
+    {
       "path": "apps/desktop/src/preview/BrowserSession.ts",
       "anchor": "if (persistent) keepSessionCookies(browserSession);",
       "purpose": "Sign-ins marked as ending with the browser outlive the app."
@@ -81,6 +125,21 @@
       "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
       "anchor": "<ThreadAccountRequests",
       "purpose": "The phone answers approvals and shows sign-ins waiting for the user."
+    },
+    {
+      "path": "apps/server/vite.config.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: an unhandled rejection fails the test (round 6s).",
+      "purpose": "Fail any server browser or Accounts test during which a promise was rejected with no handler."
+    },
+    {
+      "path": "apps/mobile/vite.config.ts",
+      "anchor": "src/features/home/HomeAccountWaits.test.tsx",
+      "purpose": "The home screen's sign-in waits are tested in the DOM test project."
+    },
+    {
+      "path": "apps/mobile/src/features/home/HomeScreen.tsx",
+      "anchor": "placement=\"empty-home\"",
+      "purpose": "Home shows sign-ins waiting with no chat in the list, on an empty home and on an empty filtered list."
     },
     {
       "path": "apps/server/src/orchestration-v2/runtimeLayer.ts",
@@ -150,7 +209,7 @@
     {
       "path": "apps/web/src/components/preview/PreviewView.tsx",
       "anchor": "Scient Accounts: native credentials use the desktop runtime tab id.",
-      "purpose": "Pass the owning environment, thread, runtime tab and profile to preview account controls, and show the profile switcher in place of the profile-name badge."
+      "purpose": "Pass the owning environment, thread, runtime tab and profile to preview account controls, show the profile switcher in place of the profile-name badge, and cover a university sign-in's publisher step."
     },
     {
       "path": "apps/web/src/routeTree.gen.ts",
@@ -396,6 +455,121 @@
       "path": "packages/client-runtime/src/t3ToolSummary.ts",
       "anchor": "SCIENT-FORK:START — Scient Accounts: summarize grouped account calls.",
       "purpose": "Summarize collapsed groups of Scient's account tool calls in the work log."
+    },
+    {
+      "path": "apps/server/src/textGeneration/TextGenerators.ts",
+      "anchor": "import * as TextGeneratorKeys from \"../scient/accounts/textGeneratorKeys.ts\";",
+      "purpose": "Text generators read a key chosen in Accounts, checked against their endpoint."
+    },
+    {
+      "path": "apps/web/src/components/settings/TextGeneratorsSettings.tsx",
+      "anchor": "import { TextGeneratorAccountKey } from \"~/scient/accounts/TextGeneratorAccountKey\";",
+      "purpose": "A text generator's key field offers the keys saved in Accounts."
+    },
+    {
+      "path": "apps/server/src/textGeneration/textGeneratorDrivers.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: an error never repeats the key the request sent.",
+      "purpose": "Provider error text never repeats the key a text generator sent, typed or from Accounts."
+    },
+    {
+      "path": "apps/web/src/components/settings/ProviderInstanceCard.tsx",
+      "anchor": "import { VariableAccountKey } from \"~/scient/accounts/VariableAccountKey\";",
+      "purpose": "A saved sensitive agent variable can follow a key in Accounts, through the shared key picker."
+    },
+    {
+      "path": "apps/mobile/src/Stack.tsx",
+      "anchor": "screen: SettingsAccountsRouteScreen,",
+      "purpose": "Register the phone's Accounts & secrets screen and its title."
+    },
+    {
+      "path": "apps/mobile/src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx",
+      "anchor": "navigation.navigate(\"SettingsAccounts\"",
+      "purpose": "Open Accounts & secrets from the phone's environment settings."
+    },
+    {
+      "path": "apps/mobile/src/features/browser/BrowserPreviewRouteScreen.tsx",
+      "anchor": "<BrowserSignInKey",
+      "purpose": "Sign in on a phone browser tab with a saved login."
+    },
+    {
+      "path": "apps/web/src/components/chat/SecretRequestCard.tsx",
+      "anchor": "accountCardAccountId(accounts, item.id)",
+      "purpose": "Accounts cards show their outcome, link to the saved row and take no reference."
+    },
+    {
+      "path": "apps/web/src/components/ChatMarkdown.tsx",
+      "anchor": "<AccountRowLink href={href}>",
+      "purpose": "An agent's link to a row it saved opens that row in Accounts."
+    },
+    {
+      "path": "apps/desktop/src/backend/DesktopBackendConfiguration.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: only this backend can open the desktop's page seals.",
+      "purpose": "Give the desktop's page-seal key only to its primary backend."
+    },
+    {
+      "path": "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a background sign-in's notice opens Accounts, not a chat.",
+      "purpose": "Open Accounts from an Android notice about a background sign-in."
+    },
+    {
+      "path": "apps/mobile/src/features/agent-awareness/notificationPayload.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a background sign-in's notice opens Accounts, not a chat.",
+      "purpose": "Route a background sign-in's phone notice to Accounts."
+    },
+    {
+      "path": "apps/server/src/cli/config.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: only the desktop's primary backend opens page seals.",
+      "purpose": "Read the desktop's page-seal key from the backend's bootstrap."
+    },
+    {
+      "path": "apps/server/src/cli/connect.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a running server changes its own link, in its relay's turn.",
+      "purpose": "Let a running server change its own relay link, so code notices stay in order."
+    },
+    {
+      "path": "apps/server/src/cloud/CloudLink.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the CLI's drop of a revoked link, in the relay's turn.",
+      "purpose": "Drop a revoked relay link in the relay's acknowledgement turn."
+    },
+    {
+      "path": "apps/server/src/cloud/http.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the CLI's drop of a revoked link, in the relay's turn.",
+      "purpose": "Serve the CLI's request to drop a revoked relay link."
+    },
+    {
+      "path": "apps/server/src/config.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the key for the desktop's page seals (primary only).",
+      "purpose": "Carry the desktop's page-seal key in the server config."
+    },
+    {
+      "path": "apps/server/src/scheduledTasks/ScheduledTaskService.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a task pinned to a sign-in runs only where it works.",
+      "purpose": "Run a scheduled task pinned to a sign-in only where that sign-in works."
+    },
+    {
+      "path": "infra/relay/src/agentActivity/agentActivityAggregate.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a silent row stays silent in every aggregate.",
+      "purpose": "Keep a code notice's silent outcome row silent in the relay's aggregates."
+    },
+    {
+      "path": "infra/relay/src/agentActivity/agentActivityAlerts.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.",
+      "purpose": "Show a code notice's silent outcome row without an alert."
+    },
+    {
+      "path": "packages/contracts/src/desktopBootstrap.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the key for page seals, given only to the primary backend.",
+      "purpose": "Carry the page-seal key in the desktop's bootstrap to its primary backend."
+    },
+    {
+      "path": "packages/contracts/src/environmentHttp.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a running server drops a revoked link itself, in its",
+      "purpose": "Contract for a running server's drop of a revoked relay link."
+    },
+    {
+      "path": "packages/contracts/src/relay.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: shown on the phone, never alerted (a notice's outcome).",
+      "purpose": "Mark a code notice's outcome row as silent in the relay contract."
     }
   ],
   "scientMounts": [
@@ -631,7 +805,7 @@
     },
     {
       "path": "apps/server/src/transcription/CloudEngines.ts",
-      "anchor": "import { AccountsService, SPEECH_KEY_OUTSIDE_PROJECT } from \"../scient/accounts/AccountsService.ts\";",
+      "anchor": "} from \"../scient/accounts/AccountsService.ts\";",
       "purpose": "Cloud transcription engines read their keys from Accounts."
     },
     {
@@ -648,6 +822,16 @@
       "path": "packages/contracts/src/customModels.ts",
       "anchor": "import { AccountId } from \"./scient/accounts.ts\";",
       "purpose": "Custom model connections reference an Accounts key by ID."
+    },
+    {
+      "path": "packages/contracts/src/scient/environmentHttpGroups.ts",
+      "anchor": "EnvironmentScientAccountsHttpApi",
+      "purpose": "What only the desktop's main process asks its own backend: passwords handed straight to Accounts, and the write check for a desktop part."
+    },
+    {
+      "path": "apps/desktop/src/preview/sessionBeforeRequest.ts",
+      "anchor": "Scient Accounts' watch for a made password's own request share it here",
+      "purpose": "Share one onBeforeRequest per session between the loopback tunnel and the new-password submit watch."
     }
   ]
 }

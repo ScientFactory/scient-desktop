@@ -198,6 +198,8 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
 /** Runs that quitting would stop, running or waiting, in every project. */
 export const ComputeActiveWork = Schema.Struct({ count: Schema.Int });
 export type ComputeActiveWork = typeof ComputeActiveWork.Type;
+/** The desktop reads this computer's count when the person quits, with no window to report it. */
+export const COMPUTE_ACTIVE_WORK_PATH = "/api/scient/compute/active-work";
 
 export const ComputeInspectRuntimesInput = Schema.Struct({
   cwd: Schema.NullOr(ComputeCwd),

@@ -90,5 +90,26 @@ it("keeps a connected university's session used, without judging it from a quiet
     accountId: university.accountId,
     url: "https://my.openathens.net/check",
     tellsSessionState: false,
+    confirm: true,
   });
+  // An OpenAthens link with no directory entry is the same university to keep, and confirm.
+  const library: AccountSummary = {
+    ...university,
+    details: {
+      kind: "website",
+      sites: ["huji.ac.il"],
+      profileId: "work",
+      proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
+    },
+  };
+  expect(nextQuietVisit([library], {}, 100 * HOUR)).toMatchObject({
+    url: "https://my.openathens.net/check",
+    confirm: true,
+  });
+  // Signed out on purpose: no visit keeps it, and no glance confirms it again.
+  const out = {
+    ...university,
+    signIn: { state: "signed-out" as const, at: "2026-11-25T00:00:00.000Z", by: "action" as const },
+  };
+  expect(nextQuietVisit([out], {}, 100 * HOUR)).toBeUndefined();
 });

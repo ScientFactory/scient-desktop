@@ -127,6 +127,9 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  // SCIENT-FORK:START — Scient Accounts: shown on the phone, never alerted (a notice's outcome).
+  silent: Schema.optional(Schema.Literal(true)),
+  // SCIENT-FORK:END
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -140,6 +143,9 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  // SCIENT-FORK:START — Scient Accounts: shown on the phone, never alerted (a notice's outcome).
+  silent: Schema.optional(Schema.Literal(true)),
+  // SCIENT-FORK:END
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
 

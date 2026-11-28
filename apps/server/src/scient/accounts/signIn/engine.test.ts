@@ -1,5 +1,6 @@
 import {
   AccountId,
+  AccountsError,
   BrowserProfileId,
   EnvironmentId,
   ProjectId,
@@ -19,6 +20,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
+import { signInDetectionScript } from "./detection.ts";
 import { signIn } from "./engine.ts";
 
 it.effect("handles sequential login steps and bounds retries without returning filled values", () =>
@@ -66,6 +68,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
     let rejected = false;
     let pending = 0;
     let settles = 0;
+    /** The code page stays as it is until the code is sent. */
+    let atCode = false;
     const cleared: unknown[] = [];
     const broker = PreviewAutomationBroker.of({
       connect: () => Effect.succeed(Stream.empty),
@@ -76,28 +80,41 @@ it.effect("handles sequential login steps and bounds retries without returning f
           expect(request.scope.threadId).toBe(scope.threadId);
           let result: unknown = {};
           if (request.operation === "status" || request.operation === "open") result = status;
+          // The key's steadiness reads wait half a second each; they are not counted here.
           if (
             request.operation === "accountWaitForLoad" &&
-            (request.input as { settleMs?: number }).settleMs
+            (request.input as { settleMs?: number }).settleMs &&
+            (request.input as { settleMs?: number }).settleMs !== 500
           )
             settles++;
+          if (request.operation === "click" || request.operation === "press") atCode = false;
           if (request.operation === "accountType") {
             if ((request.input as { text: string }).text === "") cleared.push(request.input);
             else fills++;
           }
-          if (request.operation === "evaluate") {
-            const step = stuck ? 0 : steps;
-            steps++;
+          // The page changes only between full looks; a look right before a submit isn't one.
+          if (
+            request.operation === "evaluate" &&
+            (request.input as { expression?: string }).expression === signInDetectionScript
+          ) {
+            // A run starts over at the first page.
+            if (steps === 0) atCode = false;
+            const step = stuck ? 0 : atCode ? 2 : steps;
+            if (!atCode) steps++;
             result = {
               origin: "https://login.example.com",
               username: step === 0 ? "#user" : null,
               password:
                 rejected || step === 1 || (step === 2 && pending-- > 0) ? "#password" : null,
               otp: step === 2 ? "#otp" : null,
+              // An authenticator's code box: the saved key answers it.
+              ...(step === 2 ? { otpApp: true } : {}),
               submit: "button",
               challenge: null,
               signedIn: step === 3 && !rejected,
             };
+            if (step === 2 && (result as { password: string | null }).password === null)
+              atCode = true;
           }
           return result as A;
         }),
@@ -249,8 +266,14 @@ it.effect(
             return status as A;
           }),
       });
-      const run = (tabId?: string) =>
-        signIn(scope, account, { password: Redacted.make("synthetic-password") }, tabId).pipe(
+      const run = (tabId?: string, options?: { readonly personTab: true }) =>
+        signIn(
+          scope,
+          account,
+          { password: Redacted.make("synthetic-password") },
+          tabId,
+          options,
+        ).pipe(
           Effect.provideService(
             AccountsService,
             fakeAccounts({
@@ -291,6 +314,20 @@ it.effect(
       status = { ...status, tabs: [{ ...status.tabs![0]!, profileId: work }] };
       yield* run();
       expect(opens[2]).toMatchObject({ url: "https://example.com", reuseExistingTab: true });
+      // The person's own tab on the site, which no agent owns: signed in right there.
+      status = {
+        ...status,
+        tabs: [
+          {
+            tabId: "tab-person",
+            url: "https://example.com/login",
+            profileId: main,
+            ownedByCaller: false,
+          },
+        ],
+      };
+      yield* run("tab-person", { personTab: true });
+      expect(opens[3]).toMatchObject({ reuseExistingTab: true, tabId: "tab-person" });
     }),
 );
 
@@ -580,5 +617,160 @@ it.effect("never types a saved password on a page the person hasn't signed in on
     });
     expect(result.outcome).toBe("needs-user");
     expect(typed).toEqual([]);
+  }),
+);
+
+it.effect("types nothing for an agent's sign-in once the account changed since it was read", () =>
+  Effect.gen(function* () {
+    const profileId = BrowserProfileId.make("default");
+    const scope = {
+      threadId: ThreadId.make("thread-fixture"),
+      projectId: ProjectId.make("project-fixture"),
+      unattended: false,
+    };
+    const account: AccountSummary = {
+      accountId: AccountId.make("acc_fixture1"),
+      name: "Fixture",
+      details: { kind: "website", sites: ["example.com"], username: "fixture-user" },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: defaultAccountControls("website"),
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const status: PreviewAutomationStatus = {
+      available: true,
+      visible: false,
+      tabId: "tab-fixture",
+      url: "https://example.com/login",
+      title: null,
+      loading: false,
+      defaultProfileId: profileId,
+      profiles: [{ id: profileId, name: "Default" }],
+      tabs: [{ tabId: "tab-fixture", url: null, profileId, ownedByCaller: true }],
+    };
+    const typed: unknown[] = [];
+    const broker = PreviewAutomationBroker.of({
+      connect: () => Effect.succeed(Stream.empty),
+      focusHost: () => Effect.void,
+      respond: () => Effect.void,
+      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+        Effect.sync(() => {
+          if (request.operation === "accountType") typed.push(request.input);
+          if (request.operation === "evaluate")
+            return {
+              origin: "https://example.com",
+              username: "#user",
+              password: "#password",
+              otp: null,
+              submit: "button",
+              challenge: null,
+              signedIn: false,
+            } as A;
+          return (
+            request.operation === "status" || request.operation === "open" ? status : {}
+          ) as A;
+        }),
+    });
+    const fake = fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] });
+    const result = yield* signIn(
+      scope,
+      account,
+      { password: Redacted.make("synthetic-password") },
+      undefined,
+      {
+        // Turned Off while its password store was read.
+        beforeType: () =>
+          Effect.fail(new AccountsError({ reason: "denied", message: "Turned Off." })),
+      },
+    ).pipe(
+      Effect.provideService(AccountsService, fake.service),
+      Effect.provideService(PreviewAutomationBroker, broker),
+      Effect.provideService(AgentInvocationContext, {
+        ...scope,
+        environmentId: EnvironmentId.make("env-fixture"),
+        providerSessionId: "session-fixture",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview", "accounts"] as const),
+        issuedAt: 0,
+      }),
+    );
+    expect(result).toMatchObject({ outcome: "failed", message: "Turned Off." });
+    expect(typed).toEqual([]);
+  }),
+);
+
+it.effect("a limit page after the password is a limit, never a refused password", () =>
+  Effect.gen(function* () {
+    const profileId = BrowserProfileId.make("default");
+    const scope = {
+      threadId: ThreadId.make("thread-fixture"),
+      projectId: ProjectId.make("project-fixture"),
+      unattended: true,
+    };
+    const account: AccountSummary = {
+      accountId: AccountId.make("acc_fixture1"),
+      name: "Fixture",
+      details: { kind: "website", sites: ["example.com"], username: "fixture-user" },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: defaultAccountControls("website"),
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const status: PreviewAutomationStatus = {
+      available: true,
+      visible: false,
+      tabId: "tab-fixture",
+      url: "https://example.com",
+      title: null,
+      loading: false,
+      defaultProfileId: profileId,
+      profiles: [{ id: profileId, name: "Default" }],
+      tabs: [{ tabId: "tab-fixture", url: null, profileId, ownedByCaller: true }],
+    };
+    let submitted = false;
+    const broker = PreviewAutomationBroker.of({
+      connect: () => Effect.succeed(Stream.empty),
+      focusHost: () => Effect.void,
+      respond: () => Effect.void,
+      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+        Effect.sync(() => {
+          if (request.operation === "click" || request.operation === "press") submitted = true;
+          if (
+            request.operation === "evaluate" &&
+            (request.input as { expression?: string }).expression === signInDetectionScript
+          )
+            // The site answers the password with a 429 page that still shows the form.
+            return {
+              origin: "https://example.com",
+              username: "#user",
+              password: "#password",
+              otp: null,
+              submit: "button",
+              challenge: null,
+              signedIn: false,
+              limited: submitted,
+            } as A;
+          return (request.operation === "evaluate" ? {} : status) as A;
+        }),
+    });
+    const fake = fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] });
+    const result = yield* signIn(scope, account, {
+      password: Redacted.make("synthetic-password"),
+    }).pipe(
+      Effect.provideService(AccountsService, fake.service),
+      Effect.provideService(PreviewAutomationBroker, broker),
+      Effect.provideService(AgentInvocationContext, {
+        ...scope,
+        environmentId: EnvironmentId.make("env-fixture"),
+        providerSessionId: "session-fixture",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview", "accounts"] as const),
+        issuedAt: 0,
+      }),
+    );
+    expect(submitted).toBe(true);
+    expect(result.outcome).toBe("limited");
   }),
 );

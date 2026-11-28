@@ -71,6 +71,7 @@ vi.mock("./extensionsState", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     extensionsPluginKeys: () => null,
+    extensionsInventory: () => null,
     bindPluginKey: { kind: "bind", permissionAtom: () => Atom.make(true) },
     unbindPluginKey: { kind: "unbind" },
   };

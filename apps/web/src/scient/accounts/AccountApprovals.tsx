@@ -16,6 +16,7 @@ import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 
 import { HandoffBrowser } from "./HandoffBrowser";
+import { HandoffCodeButtons } from "./HandoffCodes";
 import { ThreadPaperRequests } from "./PaperRequests";
 
 const revealed = new Set<string>();
@@ -50,7 +51,9 @@ export function AccountHandoffs({
 }) {
   const show = useAccountCommand(accountsState.showHandoff, environmentId);
   const cancel = useAccountCommand(accountsState.cancelHandoff, environmentId);
+  const typeSaved = useAccountCommand(accountsState.typeSavedInHandoff, environmentId);
   const gt = useGT();
+  const messages = useMessages();
   return (
     <div className="grid gap-2">
       {handoffs.map((handoff) => (
@@ -67,7 +70,8 @@ export function AccountHandoffs({
             <span className="min-w-0 flex-1 truncate text-muted-foreground">
               <span className="font-medium text-foreground">{handoff.accountName}</span>
               {" · "}
-              {accountHandoffInstruction(handoff.kind)}
+              {/* The number shows apart, so a narrow card never cuts it off. */}
+              {accountHandoffInstruction({ ...handoff, number: undefined }, messages)}
             </span>
             {handoff.kind === "push" && handoff.number ? (
               <span className="shrink-0 rounded bg-muted px-1.5 text-sm font-semibold tabular-nums text-foreground">
@@ -75,6 +79,33 @@ export function AccountHandoffs({
                   Tap <Var>{handoff.number}</Var>
                 </T>
               </span>
+            ) : null}
+            {handoff.notLoaded ? (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={!canWrite}
+                onClick={() => void show({ handoffId: handoff.handoffId })}
+              >
+                {gt("Open in browser")}
+              </Button>
+            ) : null}
+            {handoff.useSaved !== undefined && handoff.useSavedRevision !== undefined ? (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={!canWrite}
+                onClick={() =>
+                  void typeSaved({
+                    handoffId: handoff.handoffId,
+                    revision: handoff.useSavedRevision ?? "",
+                  })
+                }
+              >
+                {handoff.useSaved
+                  ? gt("Use saved {username}", { username: handoff.useSaved })
+                  : gt("Use saved password")}
+              </Button>
             ) : null}
             <Button
               variant="ghost"
@@ -88,6 +119,15 @@ export function AccountHandoffs({
           </div>
           {handoff.reason ? (
             <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">{handoff.reason}</p>
+          ) : null}
+          {handoff.codes?.length ? (
+            <div className="flex flex-wrap gap-2 border-t px-3 py-1.5">
+              <HandoffCodeButtons
+                environmentId={environmentId}
+                handoff={handoff}
+                canWrite={canWrite}
+              />
+            </div>
           ) : null}
           {handoff.tabId ? (
             <HandoffBrowser
@@ -161,23 +201,31 @@ export function AccountApprovals({
             <span className="text-muted-foreground">
               {" "}
               · {messages(ACTION_LABELS[approval.action])}
+              {approval.turnOn ? ` · ${messages(msg("Off for agents"))}` : null}
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
-            {(
-              [
-                ["once", msg("Allow in this conversation")],
-                ["project", msg("Always in this project")],
-                ["always", msg("Always", { $context: "approval decision, allow always" })],
-                ["deny", msg("Deny")],
-              ] as const
+            {(approval.turnOn
+              ? ([
+                  ["always", msg("Turn on for agents")],
+                  ["once", msg("This conversation")],
+                  ["deny", msg("Not now")],
+                ] as const)
+              : ([
+                  ["once", msg("Allow in this conversation")],
+                  ["project", msg("Always in this project")],
+                  ["always", msg("Always", { $context: "approval decision, allow always" })],
+                  ["deny", msg("Deny")],
+                ] as const)
             )
               .filter(([decision]) => decision !== "project" || approval.projectId)
               .map(([decision, label]) => (
                 <Button
                   key={decision}
                   size="xs"
-                  variant={decision === "once" ? "default" : "outline"}
+                  variant={
+                    decision === (approval.turnOn ? "always" : "once") ? "default" : "outline"
+                  }
                   disabled={!canWrite || busy.has(approval.approvalId)}
                   onClick={() => void run(approval.approvalId, decision)}
                 >

@@ -18,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import type { ServerSecretStore } from "./auth/ServerSecretStore.ts";
+// SCIENT-FORK: a store waiting for the person, told apart from a lost key.
+import { ACCOUNTS_AWAIT_PERSON, awaitsPerson } from "./scient/accounts/awaitPerson.ts";
 
 export const customModelSecretName = (id: string) => `custom-model-${id}`;
 const failure = (message: string) => new CustomModelError({ message });
@@ -163,7 +165,8 @@ export const prepareCustomModelSave = Effect.fn("CustomModels.prepareSave")(func
     ...input.connection,
     credentialId,
     ...(accountId ? { accountId } : {}),
-    ...(resolved.credentialError
+    // SCIENT-FORK: a store waiting for the person keeps saying so; the key isn't lost.
+    ...(resolved.credentialError && resolved.credentialError !== ACCOUNTS_AWAIT_PERSON
       ? { credentialError: "Saved API key is unavailable. Re-enter or remove it." }
       : resolved),
   };
@@ -286,6 +289,9 @@ export const resolveCustomModelKey = Effect.fn("CustomModels.resolveKey")(functi
     stored._tag === "Success" && Option.isSome(stored.success)
       ? usableStoredKey(stored.success.value)
       : undefined;
+  // A key in a store that waits for the person isn't lost: it reads once they're back.
+  if (stored._tag === "Failure" && awaitsPerson(stored.failure.cause))
+    return { credentialError: ACCOUNTS_AWAIT_PERSON };
   if (
     stored._tag === "Failure" ||
     (connection.credentialId && Option.isNone(stored.success)) ||

@@ -19,6 +19,8 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
     profileId?: string,
     /** Opens beside this conversation, for a sign-in in the middle of its work. */
     conversation?: ScopedThreadRef,
+    /** The tab it opened, once it is open. */
+    onOpened?: (tab: { readonly threadId: string; readonly tabId: string }) => void,
   ) => {
     const threadRef = conversation ?? (await scratchThread());
     if (!threadRef) return false;
@@ -28,6 +30,12 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
       url: /^https?:\/\//.test(url) ? url : `https://${url}`,
       openPreview,
       ...(profileId === undefined ? {} : { profileId: BrowserProfileId.make(profileId) }),
+      ...(onOpened
+        ? {
+            onOpened: (snapshot) =>
+              onOpened({ threadId: snapshot.threadId, tabId: snapshot.tabId }),
+          }
+        : {}),
     });
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: m(msg("Could not open the site")) });

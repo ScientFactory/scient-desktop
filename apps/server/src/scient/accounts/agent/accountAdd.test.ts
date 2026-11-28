@@ -4,6 +4,7 @@ import {
   ProjectId,
   SecretRef,
   ThreadId,
+  defaultAccountControls,
   type AccountSummary,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
@@ -18,7 +19,7 @@ import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { addSignIn, askForAccountKey, cardEndedNote } from "./accountAdd.ts";
+import { addSignIn, askForAccountKey, askForLoginSecret, cardEndedNote } from "./accountAdd.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
 
 const signIns = vi.hoisted(() => ({
@@ -79,7 +80,7 @@ const run = (
   const cards: Array<OrchestratorMcpRequestSecretInput> = [];
   return askForAccountKey(sessionScope, input).pipe(
     Effect.provideService(AccountsService, fake.service),
-    Effect.provideService(McpInvocationContext, {} as never),
+    Effect.provideService(McpInvocationContext, { environmentId: "env-add" } as never),
     Effect.provideService(OrchestratorMcpService, {
       requestSecret: (_scope: unknown, card: OrchestratorMcpRequestSecretInput) =>
         Effect.sync(() => {
@@ -156,7 +157,7 @@ it.effect("keeps a new key as an API-key account and never returns its value", (
       name: "Anthropic",
       details: {
         kind: "api-key",
-        sites: ["api.anthropic.com"],
+        sites: ["https://api.anthropic.com"],
         auth: { type: "header", name: "x-api-key" },
         envName: "ANTHROPIC_API_KEY",
       },
@@ -166,32 +167,67 @@ it.effect("keeps a new key as an API-key account and never returns its value", (
       status: "saved",
       accountId: "acc_saved_0001",
       usage: ["scient_account_credentials", "scient_account_request"],
+      open: "[Anthropic](scient-account://env-add/acc_saved_0001)",
     });
     expect(JSON.stringify(result)).not.toContain("sk-synthetic");
   }),
 );
 
-it.effect("returns a matching account instead of asking, and never duplicates one turned off", () =>
+it.effect("saves a key with a new name as a new row, never asking about another key", () =>
   Effect.gen(function* () {
-    const reason = "To call the OpenAI API.";
-    const allowed = yield* run(fakeAccounts({ accounts: [openAi] }), {
-      name: "openai",
-      reason,
+    const reason = "A second OpenRouter key.";
+    const off = {
+      ...openAi,
+      name: "OpenRouter",
+      details: {
+        kind: "api-key" as const,
+        sites: ["https://openrouter.ai"],
+        auth: { type: "bearer" as const },
+      },
+      controls: { ...openAi.controls, access: "off" as const },
+    };
+    // regression: run 4 asked to read the Off OpenRouter key instead of opening the save card.
+    for (const name of ["Test key 2", "OpenRouter"]) {
+      const fake = fakeAccounts({ accounts: [off], denied: true });
+      const added = yield* run(fake, { name, reason, sites: ["https://openrouter.ai"] });
+      expect(added.cards).toHaveLength(1);
+      expect(fake.calls.filter((call) => call.startsWith("authorize"))).toEqual([]);
+      expect(fake.saves[0]).toMatchObject({ name });
+      expect(fake.saves[0]).not.toHaveProperty("accountId");
+      expect(added.result).toMatchObject({ status: "saved" });
+    }
+  }),
+);
+
+it.effect("saves a key the agent already has with no card, and links to it", () =>
+  Effect.gen(function* () {
+    const fake = fakeAccounts({ accounts: [openAi] });
+    const { result, cards } = yield* run(fake, {
+      name: "OpenAI (lab)",
+      reason: "The key the user pasted in this chat.",
+      sites: ["api.openai.com"],
+      value: "  sk-pasted-in-chat\n",
     });
-    expect(allowed.cards).toHaveLength(0);
-    expect(allowed.result).toMatchObject({ status: "exists", accountId: openAi.accountId });
-    const off = { ...openAi, controls: { ...openAi.controls, access: "off" as const } };
-    const turnedOff = yield* run(fakeAccounts({ accounts: [off] }), {
-      name: "Other name",
-      reason,
-      sites: ["https://api.openai.com"],
+    expect(cards).toHaveLength(0);
+    expect(fake.saves[0]).toMatchObject({
+      name: "OpenAI (lab)",
+      secrets: { token: { type: "scient", value: "sk-pasted-in-chat" } },
     });
-    expect(turnedOff.cards).toHaveLength(0);
-    expect(turnedOff.result).toEqual({
-      status: "turned_off",
-      accountId: openAi.accountId,
-      name: "OpenAI",
-    });
+    expect(fake.saves[0]).not.toHaveProperty("accountId");
+    expect(result).toMatchObject({ status: "saved" });
+    const saved = result as { readonly accountId: string; readonly open?: string };
+    expect(saved.open).toBe(`[OpenAI (lab)](scient-account://env-add/${saved.accountId})`);
+    // The value never comes back.
+    expect(JSON.stringify(result)).not.toContain("sk-pasted");
+    // Unattended too: no one needs to answer a card.
+    const later = fakeAccounts();
+    const unattended = yield* run(
+      later,
+      { name: "Brave", reason: "r", value: "brave-key" },
+      undefined,
+      { ...scope, unattended: true },
+    );
+    expect(unattended.result).toMatchObject({ status: "saved" });
   }),
 );
 
@@ -212,9 +248,24 @@ it.effect("replaces only the key, and sends linked keys back to where they live"
     });
     expect(result).toMatchObject({ status: "saved", accountId: openAi.accountId });
 
-    const linked = {
+    // A key in 1Password is replaced there through Scient; one Scient only reads stays put.
+    const vaulted = {
       ...openAi,
       secrets: { token: { source: { type: "1password" as const, reference: "op://v/i/f" } } },
+    };
+    const vaultFake = fakeAccounts({ accounts: [vaulted] });
+    const toVault = yield* run(vaultFake, {
+      name: "OpenAI",
+      reason: "Rejected.",
+      accountId: openAi.accountId,
+    });
+    expect(toVault.cards).toHaveLength(1);
+    expect(vaultFake.saves[0]).toMatchObject({
+      secrets: { token: { type: "scient", saveTo: [{ type: "scient" }] } },
+    });
+    const linked = {
+      ...openAi,
+      secrets: { token: { source: { type: "custom-model" as const, connectionId: "conn-1" } } },
     };
     const fromVault = yield* run(fakeAccounts({ accounts: [linked] }), {
       name: "OpenAI",
@@ -245,6 +296,16 @@ it.effect("asks no one when nobody can answer, and keeps nothing when declined",
     expect(late.result).toEqual({ status: "timed_out", note: cardEndedNote("timed_out") });
     expect(cardEndedNote("timed_out")).toContain("Don't open it again this turn");
     expect(fake.saves).toHaveLength(0);
+    // Nobody was there: the card waits in Needs you, for its chat, until it is saved.
+    expect([...fake.needs.values()]).toEqual([
+      expect.objectContaining({
+        action: "save",
+        name: "Replicate API key",
+        threadId: scope.threadId,
+      }),
+    ]);
+    yield* run(fake, input);
+    expect(fake.needs.size).toBe(0);
   }),
 );
 
@@ -388,5 +449,171 @@ it.effect("asks no one in an unattended run, and passes on a cancel or a timeout
       status: "timed_out",
       note: expect.stringContaining("Don't open it again this turn"),
     });
+  }),
+);
+
+it.effect("saves a password from the private card on its login, keeping a 1Password link", () =>
+  Effect.gen(function* () {
+    const lab: AccountSummary = {
+      ...openAi,
+      accountId: AccountId.make("acc_website001"),
+      name: "Lab",
+      details: { kind: "website", sites: ["lab.example"], username: "ada" },
+      secrets: { password: { source: { type: "1password", reference: "op://v/i/password" } } },
+    };
+    const ask = (input: Parameters<typeof askForLoginSecret>[1]) => {
+      const fake = fakeAccounts({ accounts: [lab] });
+      const cards: Array<OrchestratorMcpRequestSecretInput> = [];
+      return askForLoginSecret(scope, input).pipe(
+        Effect.provideService(AccountsService, fake.service),
+        Effect.provideService(McpInvocationContext, {} as never),
+        Effect.provideService(OrchestratorMcpService, {
+          requestSecret: (_scope: unknown, card: OrchestratorMcpRequestSecretInput) =>
+            Effect.sync(() => {
+              cards.push(card);
+              return { status: "saved", secretRef: SecretRef.make(`secret-ref:${"b".repeat(32)}`) };
+            }),
+        } as never),
+        Effect.provideService(SecretRequests, {
+          consume: () => Effect.succeed("synthetic-password"),
+        } as never),
+        Effect.map((result) => ({ result, cards, saves: fake.saves })),
+      );
+    };
+    const replaced = yield* ask({
+      kind: "website",
+      name: "Lab",
+      reason: "r",
+      accountId: lab.accountId,
+      secret: "password",
+    });
+    expect(replaced.cards[0]?.label).toBe("Password for “Lab”");
+    expect(replaced.result).toMatchObject({ status: "saved", accountId: lab.accountId });
+    expect(replaced.saves[0]).toMatchObject({
+      accountId: lab.accountId,
+      secrets: { password: { type: "scient", saveTo: [{ type: "scient" }] } },
+    });
+    // Another username in another case is another login: a new row.
+    const other = yield* ask({
+      kind: "website",
+      name: "Lab",
+      reason: "r",
+      site: "lab.example",
+      username: "ADA",
+      secret: "password",
+    });
+    expect(other.saves[0]).not.toHaveProperty("accountId");
+  }),
+);
+
+it.effect("updates an Off login found by its identity, never asking to read or turn it on", () =>
+  Effect.gen(function* () {
+    const lab: AccountSummary = {
+      ...openAi,
+      accountId: AccountId.make("acc_website002"),
+      name: "Lab",
+      details: { kind: "website", sites: ["lab.example"], username: "ada" },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: { ...defaultAccountControls("website"), access: "off" },
+    };
+    const fake = fakeAccounts({ accounts: [lab], denied: true });
+    const cards: Array<OrchestratorMcpRequestSecretInput> = [];
+    const result = yield* askForLoginSecret(scope, {
+      kind: "website",
+      name: "Lab",
+      reason: "The site refused the old password.",
+      site: "lab.example",
+      username: "ada",
+      secret: "password",
+    }).pipe(
+      Effect.provideService(AccountsService, fake.service),
+      Effect.provideService(McpInvocationContext, {} as never),
+      Effect.provideService(OrchestratorMcpService, {
+        requestSecret: (_scope: unknown, card: OrchestratorMcpRequestSecretInput) =>
+          Effect.sync(() => {
+            cards.push(card);
+            return { status: "saved", secretRef: SecretRef.make(`secret-ref:${"c".repeat(32)}`) };
+          }),
+      } as never),
+      Effect.provideService(SecretRequests, {
+        consume: () => Effect.succeed("synthetic-password"),
+      } as never),
+    );
+    expect(fake.calls.filter((call) => call.startsWith("authorize"))).toEqual([]);
+    expect(cards).toHaveLength(1);
+    expect(fake.saves[0]).toMatchObject({ accountId: lab.accountId });
+    expect(result).toMatchObject({ status: "saved", accountId: lab.accountId });
+  }),
+);
+
+it.effect("asks the agent to choose between saved tenants, and honours a sign-in address", () =>
+  Effect.gen(function* () {
+    const tenant = (id: string, path: string): AccountSummary => ({
+      ...openAi,
+      accountId: AccountId.make(id),
+      name: "Lab",
+      details: {
+        kind: "website",
+        sites: ["lab.example"],
+        username: "ada",
+        loginUrl: `https://lab.example${path}`,
+      },
+      secrets: { password: { source: { type: "scient" } } },
+    });
+    const rows = [
+      tenant("acc_tenantacme", "/login/acme"),
+      tenant("acc_tenantother", "/login/other"),
+    ];
+    const ask = (input: Parameters<typeof askForLoginSecret>[1]) => {
+      const fake = fakeAccounts({ accounts: rows });
+      return askForLoginSecret(scope, input).pipe(
+        Effect.provideService(AccountsService, fake.service),
+        Effect.provideService(McpInvocationContext, {} as never),
+        Effect.provideService(OrchestratorMcpService, {
+          requestSecret: () =>
+            Effect.succeed({
+              status: "saved",
+              secretRef: SecretRef.make(`secret-ref:${"c".repeat(32)}`),
+            }),
+        } as never),
+        Effect.provideService(SecretRequests, {
+          consume: () => Effect.succeed("synthetic-password"),
+        } as never),
+        Effect.map(() => fake.saves),
+      );
+    };
+    const named = {
+      kind: "website" as const,
+      name: "Lab",
+      reason: "r",
+      site: "lab.example",
+      username: "ada",
+      secret: "password" as const,
+    };
+    const tie = yield* ask(named).pipe(Effect.flip);
+    expect(tie.message).toContain("Several saved sign-ins match");
+    const saves = yield* ask({ ...named, loginUrl: "https://lab.example/login/other" });
+    expect(saves[0]).toMatchObject({ accountId: "acc_tenantother" });
+    // A row without a password answers only for its own address, in the card and in Add.
+    const acmeOnly = (origin?: "browser-session"): AccountSummary => ({
+      ...tenant("acc_sessionacme", "/login/acme"),
+      details: {
+        kind: "website",
+        sites: ["lab.example"],
+        username: "ada",
+        loginUrl: "https://lab.example/login/acme",
+        ...(origin ? { origin } : {}),
+      },
+      secrets: {},
+    });
+    rows.splice(0, rows.length, acmeOnly());
+    const other = { ...named, loginUrl: "https://lab.example/login/other" };
+    expect((yield* ask(other))[0]).not.toMatchObject({ accountId: "acc_sessionacme" });
+    expect((yield* ask({ ...named, loginUrl: "https://lab.example/login/acme" }))[0]).toMatchObject(
+      { accountId: "acc_sessionacme" },
+    );
+    const { secret: _, ...signInInput } = other;
+    yield* signInWith(fakeAccounts({ accounts: [acmeOnly("browser-session")] }), signInInput);
+    expect(signIns.calls[0]).not.toMatchObject({ signIn: { accountId: "acc_sessionacme" } });
   }),
 );

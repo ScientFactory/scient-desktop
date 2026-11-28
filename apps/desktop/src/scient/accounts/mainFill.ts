@@ -29,7 +29,7 @@ import {
   type MainCopy,
   type UnitOutcome,
 } from "@t3tools/shared/scientSessionCookies";
-import { siteOf } from "@t3tools/shared/scientSiteMatch";
+import { reachesFromParent, siteOf } from "@t3tools/shared/scientSiteMatch";
 import type * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -39,6 +39,7 @@ import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { mainCopyRecords } from "./mainCopies.ts";
+import { inJarTurn } from "./jarTurns.ts";
 import {
   jarGeneration,
   mainInsertTracker,
@@ -68,14 +69,23 @@ export const FillMainInput = Schema.Struct({
   replaceAllowedSince: Schema.optional(Schema.Record(Site, IsoDateTime)),
   replaceGoogle: Schema.optional(Schema.Boolean),
   skipSites: Schema.Array(Site).check(Schema.isMaxLength(20_000)),
+  /**
+   * An agent's refresh of Main (round 6i): its operation, checked in Main's turn, and the data it
+   * was decided in.
+   */
+  operationId: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
+  generation: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type FillMainInput = typeof FillMainInput.Type;
 /** What a copy into Main may do, whatever it copies from. */
-export type CopyRules = Omit<FillMainInput, "from" | "environmentId">;
+export type CopyRules = Omit<
+  FillMainInput,
+  "from" | "environmentId" | "operationId" | "generation"
+>;
 
 /** One lock per environment: Scient's copies into its Main never interleave. */
 const locks = new Map<string, Promise<unknown>>();
-function underMainLock<A>(environmentId: string, run: () => Promise<A>): Promise<A> {
+export function underMainLock<A>(environmentId: string, run: () => Promise<A>): Promise<A> {
   const next = (locks.get(environmentId) ?? Promise.resolve()).then(run, run);
   locks.set(
     environmentId,
@@ -83,6 +93,10 @@ function underMainLock<A>(environmentId: string, run: () => Promise<A>): Promise
   );
   return next;
 }
+
+/** The person signed out of a site in Main: copies may write it again from now on. */
+export const startAfresh = (main: Electron.Session, site: string) =>
+  void refusedIn(main).delete(siteOf(site));
 
 /**
  * Units whose restore failed are refused until the user signs out of them in Main (or restarts);
@@ -241,7 +255,11 @@ export async function copyIntoMain(
  * by its controls; an import goes through a throwaway in-memory partition, so the upstream
  * importer never writes Main. Null when refused or when a jar can't be opened.
  */
-export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: FillMainInput) {
+export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (
+  input: FillMainInput,
+  /** An agent's refresh of Main: its desktop write check, asked in Main's turn (round 6i). */
+  check?: MainRefresh["check"],
+) {
   const environmentId = input.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
   const from = input.from;
   if (
@@ -272,18 +290,48 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
     );
   }
   const browserImport = yield* BrowserImport;
-  return yield* fillMainStaged(environmentId, input, (scope) =>
-    browserImport.importCookies({
-      input: {
-        sourceId: from.importSourceId,
-        sourceProfileDirectory: from.sourceProfileDirectory,
-        targetProfileId: BrowserProfileId.make("scient-import-staging"),
-      },
-      scope,
-      persistent: false,
-    }),
+  const { operationId, generation, ...rules } = input;
+  return yield* fillMainStaged(
+    environmentId,
+    rules,
+    (scope) =>
+      browserImport.importCookies({
+        input: {
+          sourceId: from.importSourceId,
+          sourceProfileDirectory: from.sourceProfileDirectory,
+          targetProfileId: BrowserProfileId.make("scient-import-staging"),
+        },
+        scope,
+        persistent: false,
+      }),
+    undefined,
+    operationId === undefined
+      ? undefined
+      : {
+          operationId,
+          generation,
+          check,
+        },
   );
 });
+
+/** An agent's refresh of Main, carried through its fill (round 6i). */
+export interface MainRefresh {
+  readonly operationId: string;
+  readonly generation: number | undefined;
+  /** Undefined for another computer's operation, which gives agents no part here. */
+  readonly check: (() => Promise<boolean>) | undefined;
+}
+
+/**
+ * Main's fill for an agent's refresh, in Main's turn from its check to its last write: written
+ * only while the operation still stands (its grants, its link, Main unchanged since, so no
+ * sign-out came between). Refused, Main is untouched. A refresh has no Undo (round 6m).
+ */
+async function refreshInMain(copy: () => Promise<DesktopFillMainResult>, refresh: MainRefresh) {
+  if (refresh.check && !(await refresh.check().catch(() => false))) return null;
+  return copy();
+}
 
 /**
  * A copy into Main of what `stage` puts in a throwaway in-memory partition, so Main itself is
@@ -296,9 +344,14 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
   stage: (scope: string) => Effect.Effect<BrowserImportResult | void, E, R>,
   /** Asked under Main's lock, right before Main first changes; false leaves Main untouched. */
   proceed: () => boolean = () => true,
+  refresh?: MainRefresh,
 ) {
   const manager = yield* PreviewManager;
-  const mainScope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  const mainScope = resolvePartitionScope(
+    environmentId,
+    DEFAULT_BROWSER_PROFILE_ID,
+    ...(refresh?.generation === undefined ? [] : [refresh.generation]),
+  );
   const main = yield* manager
     .getBrowserSession(mainScope.scope, mainScope.persistent, mainScope.namespace)
     .pipe(Effect.option);
@@ -307,9 +360,10 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
   const staged = yield* stage(scope);
   const staging = yield* manager.getBrowserSession(scope, false).pipe(Effect.option);
   if (staging._tag === "None") return null;
+  const copy = () => copyIntoMain(staging.value, main.value, input, undefined, proceed);
   const filled = yield* Effect.promise(() =>
     underMainLock(environmentId, () =>
-      copyIntoMain(staging.value, main.value, input, undefined, proceed),
+      refresh ? inJarTurn([main.value], () => refreshInMain(copy, refresh)) : copy(),
     )
       .catch(() => null)
       .finally(() => staging.value.clearStorageData().catch(() => undefined)),
@@ -365,11 +419,18 @@ export const withdrawFromMain = Effect.fn("DesktopAccounts.withdrawFromMain")(fu
   );
 });
 
-/** Removes a site's cookies from a session's jar, the way Accounts' Sign out does. */
+/**
+ * Removes a site's cookies from a session's jar, the way Accounts' Sign out does: true unless a
+ * shared parent-domain cookie it may not delete still reaches the host.
+ */
 export async function removeSiteCookies(session: Electron.Session, site: string) {
   const removals = siteCookieRemovals(await session.cookies.get({}), site);
   await Promise.all(removals.map(({ url, name }) => session.cookies.remove(url, name)));
   await session.cookies.flushStore();
+  return !(await session.cookies.get({})).some(
+    (cookie) =>
+      cookie.domain !== undefined && reachesFromParent({ ...cookie, domain: cookie.domain }, site),
+  );
 }
 
 /** Accounts' Sign out on Main, under the same lock as every copy into it. */
@@ -382,11 +443,12 @@ export const signOutMainSite = Effect.fn("DesktopAccounts.signOutMainSite")(func
   const main = yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace);
   return yield* Effect.promise(() =>
     underMainLock(environmentId, async () => {
-      await removeSiteCookies(main, site);
+      const cleared = await removeSiteCookies(main, site);
       // The user's own sign-out starts the site afresh: copies may write it again.
       refusedIn(main).delete(siteOf(site));
+      return cleared;
     }).then(
-      () => true,
+      (cleared) => cleared,
       () => false,
     ),
   );

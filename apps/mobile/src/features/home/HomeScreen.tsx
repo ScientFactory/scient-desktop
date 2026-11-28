@@ -105,6 +105,9 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { HostPressureBanner } from "./HostPressureBanner";
 import { ThreadListFilters } from "./ThreadListFilters";
 import { deriveHomeEmptyState } from "./home-empty-state";
+// SCIENT-FORK:START — Scient Accounts: sign-ins waiting with no chat reach the phone too.
+import { HomeAccountWaits } from "./HomeAccountWaits";
+// SCIENT-FORK:END
 
 interface HomeScreenProps {
   /** Whether this list is the one on screen; see `useHomeRouteVisible`. */
@@ -651,6 +654,13 @@ export function HomeScreen(props: HomeScreenProps) {
             <View className="w-full max-w-[430px]">
               {/* A strained machine with no threads still needs its warning. */}
               <HostPressureBanner />
+              {/* SCIENT-FORK:START — Scient Accounts: an empty home still shows what waits. */}
+              <HomeAccountWaits
+                environmentIds={searchEnvironmentIds}
+                threads={props.threads}
+                placement="empty-home"
+              />
+              {/* SCIENT-FORK:END */}
               <EmptyState
                 title={emptyState.title}
                 detail={emptyState.detail}
@@ -687,6 +697,13 @@ export function HomeScreen(props: HomeScreenProps) {
     <>
       {listHeader}
       <HostPressureBanner />
+      {/* SCIENT-FORK:START — Scient Accounts: what a sign-in outside any chat waits on. */}
+      <HomeAccountWaits
+        environmentIds={searchEnvironmentIds}
+        threads={props.threads}
+        placement="list"
+      />
+      {/* SCIENT-FORK:END */}
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           gutter={sidebarSurface ? 8 : 0}
@@ -762,6 +779,13 @@ export function HomeScreen(props: HomeScreenProps) {
           <View className="w-full">
             <HostPressureBanner />
           </View>
+          {/* SCIENT-FORK:START — Scient Accounts: an empty filtered list still shows what waits. */}
+          <HomeAccountWaits
+            environmentIds={searchEnvironmentIds}
+            threads={props.threads}
+            placement="empty-list"
+          />
+          {/* SCIENT-FORK:END */}
           {v2ListEmpty}
         </View>
       </ScreenContent>

@@ -1179,6 +1179,43 @@ it.effect("imports a standalone Hebrew transcript as a completed recording witho
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("checks an agent's cloud key for the agent and its project", () => {
+  const asked: Array<ReadonlyArray<unknown>> = [];
+  const resolve: Cloud.CloudEngines["Service"]["resolve"] = (...args) => {
+    asked.push(args);
+    return Effect.fail(
+      new Cloud.CloudEngineError({ code: "unavailable", detail: "Not for agents here." }),
+    );
+  };
+  return Effect.gen(function* () {
+    const jobs = yield* Jobs.TranscriptionJobs;
+    yield* jobs.startScoped("/project", { source: "audio.wav" }, 0).pipe(Effect.result);
+    expect(asked).toEqual([["synthetic-engine", ProjectId.make("registered-project"), "agent"]]);
+  }).pipe(
+    Effect.provide(
+      layerFor(
+        undefined,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        () => ({
+          ...DEFAULT_SERVER_SETTINGS,
+          transcription: { agentsMayUseCloudEngines: true },
+          recordingDefaults: {
+            models: {},
+            engines: { auto: { kind: "cloud", engineId: "synthetic-engine" } },
+            correction: "off",
+            notify: true,
+          },
+        }),
+        undefined,
+        resolve,
+      ),
+    ),
+  );
+});
+
 it.effect(
   "names a lesson's caption engine, keeps its captions and transcribes it as a lesson when it ends",
   () =>

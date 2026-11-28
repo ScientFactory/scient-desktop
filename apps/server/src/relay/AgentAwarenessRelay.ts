@@ -33,6 +33,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -51,8 +53,14 @@ import {
 import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 // SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
-import { accountRequestsByThread } from "@t3tools/shared/scientSignInPage";
+import type { AccountCodeNotice, AccountsSnapshot } from "@t3tools/contracts";
+import {
+  accountRequestsByThread,
+  isScientBackgroundThread,
+} from "@t3tools/shared/scientSignInPage";
+import type { AccountsError } from "@t3tools/contracts";
 import { AccountsService } from "../scient/accounts/AccountsService.ts";
+import { isCodeNotice } from "../scient/accounts/signInCodes.ts";
 // SCIENT-FORK:END
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -65,6 +73,10 @@ export class AgentAwarenessRelay extends Context.Service<
     readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
     readonly drain: Effect.Effect<void>;
     readonly requestCatchUp: () => Effect.Effect<void>;
+    // SCIENT-FORK:START — Scient Accounts: a link change waits for a notice acknowledgement's commit.
+    /** Runs a change of the relay link in the acknowledgements' turn, then ends the old connection. */
+    readonly replacingLink: <A, E, R>(change: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+    // SCIENT-FORK:END
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/relay/AgentAwarenessRelay") {}
@@ -381,7 +393,29 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
 function withAccountRequest<S extends { readonly state: RelayAgentActivityState | null }>(
   snapshot: S,
   request: string | undefined,
+  /** Scient's own background thread, which has no shell: its waiting sign-in still reaches the phone. */
+  background?: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly updatedAt: string;
+  },
 ): S {
+  if (request !== undefined && snapshot.state === null && background !== undefined)
+    return {
+      ...snapshot,
+      state: {
+        environmentId: background.environmentId,
+        threadId: background.threadId,
+        projectTitle: "Scient",
+        threadTitle: "Accounts",
+        phase: "waiting_for_approval",
+        headline: "An account needs you",
+        detail: request,
+        modelTitle: "Scient",
+        updatedAt: background.updatedAt,
+        deepLink: `/threads/${encodeURIComponent(background.environmentId)}/${encodeURIComponent(background.threadId)}`,
+      },
+    };
   if (request === undefined || snapshot.state === null) return snapshot;
   return {
     ...snapshot,
@@ -391,6 +425,66 @@ function withAccountRequest<S extends { readonly state: RelayAgentActivityState 
       headline: "An account needs you",
       detail: request,
     },
+  };
+}
+/**
+ * A phone notice is two rows. The notice itself never changes while it stands, so a push the relay
+ * queued for it stays the one to deliver; "Signed in" or "Not signed in" is a second row. Both go
+ * once the notice's time is up (`NOTICE_ROW_MS`).
+ */
+const noticeThread = (noticeId: string) => ThreadId.make(`scient-accounts-notice-${noticeId}`);
+const settledThread = (noticeId: string) =>
+  ThreadId.make(`scient-accounts-notice-${noticeId}-done`);
+/** Link reads and acknowledgements share the link turn; a link change takes all of it. */
+const LINK_TURN_PERMITS = 1024;
+/** A link change waits this long, at most, for the acknowledgements under way. */
+const LINK_CHANGE_WAIT_MS = 15_000;
+/** Each acknowledgement try is bounded; a busy Accounts is tried again after these waits. */
+const ACK_TRY_MS = 10_000;
+const ACK_RETRY_MS = [1_000, 5_000, 30_000, 120_000, 600_000];
+/** How long a notice and its outcome stand on the phone; a code is long expired by then. */
+const NOTICE_ROW_MS = 30 * 60 * 1000;
+
+interface NoticeRow {
+  readonly notice: AccountCodeNotice;
+  readonly role: "notice" | "settled";
+}
+
+/** The row as the phone shows it now, or null once its time is up or before there is anything. */
+function noticeState(
+  environmentId: EnvironmentId,
+  { notice, role }: NoticeRow,
+  nowMs: number,
+): RelayAgentActivityState | null {
+  if (nowMs - Date.parse(notice.at) >= NOTICE_ROW_MS) return null;
+  const threadId =
+    role === "notice" ? noticeThread(notice.noticeId) : settledThread(notice.noticeId);
+  const deepLink = `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
+  const common = {
+    environmentId,
+    threadId,
+    projectTitle: "Accounts",
+    modelTitle: "Scient",
+    deepLink,
+  };
+  if (role === "notice")
+    return {
+      ...common,
+      threadTitle: notice.text,
+      phase: "waiting_for_approval",
+      headline: notice.text,
+      updatedAt: notice.at,
+    };
+  if (notice.settled === undefined || notice.settledAt === undefined) return null;
+  const outcome = notice.settled === "signed-in" ? "Signed in" : "Not signed in";
+  return {
+    ...common,
+    threadTitle: `${notice.text} · ${outcome}`,
+    phase: "completed",
+    headline: outcome,
+    // Shown, not pushed: a silent row adds no second alert to the notice's, dated as it settled.
+    updatedAt: notice.settledAt,
+    silent: true,
   };
 }
 // SCIENT-FORK:END
@@ -456,6 +550,9 @@ export const make = Effect.gen(function* () {
   // SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
   const accounts = yield* Effect.serviceOption(AccountsService);
   let accountRequests: ReadonlyMap<string, string> = new Map();
+  let codeNotices: ReadonlyMap<string, NoticeRow> = new Map();
+  /** Notices whose retirement is already scheduled. */
+  const retiring = new Set<string>();
   // SCIENT-FORK:END
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
@@ -499,6 +596,75 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
   let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
+  // SCIENT-FORK:START — Scient Accounts: a publish begun on an older connection doesn't stand for the new one.
+  /**
+   * Bumped on every reset. A publish that finishes on an older connection caches no client,
+   * records nothing as published and acknowledges no notice: it goes again on the new one.
+   */
+  let connection = 0;
+  /**
+   * Runs a notice acknowledgement in the link turn, a bounded try at a time, retried while Accounts
+   * is busy; it stops once its link is replaced (and the row goes again on the new one).
+   */
+  const acknowledgeTries = Effect.fn("AgentAwarenessRelay.acknowledgeNotice")(function* (
+    ack: () => Effect.Effect<void, AccountsError>,
+    stale: () => boolean,
+    threadId: ThreadId,
+  ) {
+    // Until it lands or its link is replaced, whatever the publish dedup holds.
+    for (let attempt = 0; ; attempt++) {
+      if (stale()) return yield* publishAgain(threadId);
+      const done = yield* linkShare(Effect.suspend(ack)).pipe(
+        Effect.timeoutOption(ACK_TRY_MS),
+        Effect.result,
+      );
+      if (Result.isSuccess(done) && Option.isSome(done.success))
+        return stale() ? yield* publishAgain(threadId) : undefined;
+      yield* Effect.logWarning("Accounts didn't keep the notice acknowledgement; it is retried", {
+        threadId,
+        reason: Result.isFailure(done) ? done.failure.message : "Accounts was busy",
+      });
+      yield* Effect.sleep(ACK_RETRY_MS[Math.min(attempt, ACK_RETRY_MS.length - 1)]!);
+    }
+  });
+  const acknowledge = (
+    ack: () => Effect.Effect<void, AccountsError>,
+    stale: () => boolean,
+    threadId: ThreadId,
+  ) => acknowledgeTries(ack, stale, threadId).pipe(Effect.forkIn(scope), Effect.asVoid);
+  /** Queues a thread's publish again, on its own queue; set once the queues exist. */
+  let publishAgain: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  /**
+   * Shared by link reads and notice acknowledgements (one permit each, side by side), whole for a
+   * link change: no acknowledgement commits, and no link is read, while the link changes.
+   */
+  const linkTurn = yield* Semaphore.make(LINK_TURN_PERMITS);
+  /** Taken by a link change for its whole wait: a reader arriving meanwhile goes after it. */
+  const linkGate = yield* Semaphore.make(1);
+  const linkShare = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    linkGate
+      .withPermits(1)(Effect.void)
+      .pipe(Effect.andThen(linkTurn.withPermits(1)(effect)));
+  /**
+   * A link change waits for the acknowledgements under way, a bounded time: one stuck in
+   * Accounts' write can't hold the link. Its generation ends with the change either way.
+   */
+  const linkChange = <A, E, R>(change: Effect.Effect<A, E, R>) =>
+    linkGate.withPermits(1)(
+      Effect.gen(function* () {
+        const turn = yield* linkTurn
+          .take(LINK_TURN_PERMITS)
+          .pipe(Effect.timeoutOption(LINK_CHANGE_WAIT_MS));
+        if (Option.isNone(turn))
+          yield* Effect.logWarning(
+            "A notice acknowledgement held the relay link too long; the link changes anyway",
+          );
+        return yield* change.pipe(
+          Effect.ensuring(Option.isSome(turn) ? linkTurn.release(LINK_TURN_PERMITS) : Effect.void),
+        );
+      }),
+    );
+  // SCIENT-FORK:END
   let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
@@ -521,6 +687,9 @@ export const make = Effect.gen(function* () {
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
+    // SCIENT-FORK:START — Scient Accounts: a publish begun on an older connection doesn't stand for the new one.
+    connection += 1;
+    // SCIENT-FORK:END
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
@@ -538,23 +707,38 @@ export const make = Effect.gen(function* () {
       });
       return;
     }
-    const relayConfig = yield* readRelayConfig;
-    if (!relayConfig) {
-      yield* cancelPublishRetries;
-      yield* resetPublishedConnection;
+    // SCIENT-FORK:START — Scient Accounts: the link and its generation are read together, in the
+    // acknowledgement turn, so a relink can't pair the old link with the new generation.
+    const captured = yield* linkShare(
+      Effect.gen(function* () {
+        // SCIENT-FORK:END
+        const relayConfig = yield* readRelayConfig;
+        if (!relayConfig) {
+          yield* cancelPublishRetries;
+          yield* resetPublishedConnection;
+          return undefined;
+        }
+        if (
+          publishedRelayConfig?.url !== relayConfig.url ||
+          publishedRelayConfig.issuer !== relayConfig.issuer ||
+          publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
+        ) {
+          yield* resetPublishedConnection;
+          publishedRelayConfig = relayConfig;
+        }
+        // SCIENT-FORK:START — Scient Accounts: the link and its generation, read together.
+        return { relayConfig, generation: connection };
+      }),
+    );
+    if (captured === undefined) {
       yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
         threadId,
       });
       return;
     }
-    if (
-      publishedRelayConfig?.url !== relayConfig.url ||
-      publishedRelayConfig.issuer !== relayConfig.issuer ||
-      publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
-    ) {
-      yield* resetPublishedConnection;
-      publishedRelayConfig = relayConfig;
-    }
+    const { relayConfig, generation } = captured;
+    const stale = () => connection !== generation;
+    // SCIENT-FORK:END
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
     const publishState = Effect.fn("relay.agent_activity.publish")(function* (input: {
@@ -562,10 +746,13 @@ export const make = Effect.gen(function* () {
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
     }) {
-      if (cachedRelayClient === undefined) {
-        cachedRelayClient = yield* makeRelayClient(relayConfig);
-      }
-      const relayClient = cachedRelayClient;
+      // SCIENT-FORK:START — Scient Accounts: only the current connection keeps its client.
+      const relayClient =
+        cachedRelayClient !== undefined && !stale()
+          ? cachedRelayClient
+          : yield* makeRelayClient(relayConfig);
+      if (!stale()) cachedRelayClient = relayClient;
+      // SCIENT-FORK:END
       const proof = yield* makePublishProof({
         relayIssuer: relayConfig.issuer,
         environmentId,
@@ -622,19 +809,43 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = withAccountRequest(
-      resolveAgentAwarenessRelayPublishSnapshot({
-        environmentId,
-        thread,
-        project,
-        pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
-      }),
-      accountRequests.get(threadId),
-    );
+    // SCIENT-FORK:START — Scient Accounts: a code notice is its own row, from Accounts alone.
+    const notice = codeNotices.get(threadId);
+    const nowMs = (yield* DateTime.now).epochMilliseconds;
+    // SCIENT-FORK:END
+    const snapshot =
+      notice !== undefined
+        ? {
+            projectId: null,
+            state: noticeState(environmentId, notice, nowMs),
+            subagentWait: null,
+            reason: "snapshot" as const,
+          }
+        : withAccountRequest(
+            resolveAgentAwarenessRelayPublishSnapshot({
+              environmentId,
+              thread,
+              project,
+              pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
+            }),
+            accountRequests.get(threadId),
+            // SCIENT-FORK:START — Scient Accounts: a background sign-in's notice reaches the phone too.
+            Option.isNone(thread) && isScientBackgroundThread(threadId)
+              ? {
+                  environmentId,
+                  threadId,
+                  updatedAt: DateTime.formatIso(yield* DateTime.now),
+                }
+              : undefined,
+            // SCIENT-FORK:END
+          );
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
+      // SCIENT-FORK:START — Scient Accounts: a notice's outcome row is new, never a replay.
+      notice === undefined &&
+      // SCIENT-FORK:END
       !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
@@ -706,6 +917,9 @@ export const make = Effect.gen(function* () {
           state: completion,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
+        // SCIENT-FORK:START — Scient Accounts: a publish begun on an older connection goes again.
+        if (stale()) return yield* publishAgain(threadId);
+        // SCIENT-FORK:END
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -745,14 +959,33 @@ export const make = Effect.gen(function* () {
       state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
+    // SCIENT-FORK:START — Scient Accounts: the notice reached the relay, which takes it to the phone;
+    // once its time is up and it is off the phone, Accounts lets it go. Reached an older
+    // connection only, it goes again on the new one, with nothing recorded or acknowledged.
+    if (stale()) return yield* publishAgain(threadId);
+    // Acknowledged off the queue, so a busy Accounts holds no publish: each try is bounded and
+    // retried, and none outlives the link it is for.
+    if (notice !== undefined && Option.isSome(accounts)) {
+      const account = accounts.value;
+      const ack =
+        notice.role === "notice" && state?.phase === "waiting_for_approval"
+          ? () => account.codeNoticeDelivered(notice.notice.noticeId, () => !stale())
+          : state === null && nowMs - Date.parse(notice.notice.at) >= NOTICE_ROW_MS
+            ? () => account.codeNoticeCleared(notice.notice.noticeId, notice.role, () => !stale())
+            : undefined;
+      if (ack !== undefined) yield* acknowledge(ack, stale, threadId);
+    }
+    // SCIENT-FORK:END
     if (state !== null && childRequestId !== undefined) {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
     }
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
+    // SCIENT-FORK:START — Scient Accounts: recorded only while its connection is still the current one.
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-      new Map(publishedStates).set(threadId, publishIdentity),
+      stale() ? publishedStates : new Map(publishedStates).set(threadId, publishIdentity),
     );
+    // SCIENT-FORK:END
   });
 
   const readAwarenessThread = (threadId: ThreadId) =>
@@ -847,23 +1080,66 @@ export const make = Effect.gen(function* () {
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
   enqueueTopLevelPublish = enqueueThreadPublish;
   // SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
+  /** Notice rows have a queue of their own: other threads' backlog never delays them. */
+  const noticeWorker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
+  const publishNoticeRow = (threadId: ThreadId) => noticeWorker.enqueue(threadId);
+  /** A notice row's retries and confirmations stay on its queue. */
+  const queueFor = (threadId: ThreadId) => (codeNotices.has(threadId) ? noticeWorker : worker);
+  publishAgain = (threadId) => queueFor(threadId).enqueue(threadId);
+  const onAccounts = Effect.fnUntraced(function* (snapshot: AccountsSnapshot) {
+    const previous = accountRequests;
+    // A background thread's code notice reaches the phone as its own row, once.
+    accountRequests = accountRequestsByThread({
+      ...snapshot,
+      needsYou: (snapshot.needsYou ?? []).filter(
+        (need) => !(isScientBackgroundThread(need.threadId ?? "") && isCodeNotice(need.detail)),
+      ),
+    });
+    const previousNotices = codeNotices;
+    codeNotices = new Map(
+      (snapshot.codeNotices ?? []).flatMap((notice): Array<readonly [string, NoticeRow]> => [
+        [noticeThread(notice.noticeId), { notice, role: "notice" }],
+        [settledThread(notice.noticeId), { notice, role: "settled" }],
+      ]),
+    );
+    const changedRequests = [...new Set([...previous.keys(), ...accountRequests.keys()])].filter(
+      (threadId) => previous.get(threadId) !== accountRequests.get(threadId),
+    );
+    const changedNotices = [...new Set([...previousNotices.keys(), ...codeNotices.keys()])].filter(
+      (threadId) =>
+        JSON.stringify(previousNotices.get(threadId)?.notice) !==
+        JSON.stringify(codeNotices.get(threadId)?.notice),
+    );
+    yield* Effect.forEach(
+      changedRequests,
+      (threadId) => enqueueThreadPublish(ThreadId.make(threadId)),
+      {
+        discard: true,
+      },
+    );
+    yield* Effect.forEach(changedNotices, (threadId) => publishNoticeRow(ThreadId.make(threadId)), {
+      discard: true,
+    });
+    // Each notice's time runs out once, here or after a restart: both rows go, then Accounts
+    // lets the notice go.
+    const nowMs = (yield* DateTime.now).epochMilliseconds;
+    for (const notice of snapshot.codeNotices ?? []) {
+      if (retiring.has(notice.noticeId)) continue;
+      retiring.add(notice.noticeId);
+      const left = Math.max(0, Date.parse(notice.at) + NOTICE_ROW_MS - nowMs);
+      yield* Effect.sleep(left).pipe(
+        Effect.andThen(publishNoticeRow(settledThread(notice.noticeId))),
+        Effect.andThen(publishNoticeRow(noticeThread(notice.noticeId))),
+        Effect.forkIn(scope),
+      );
+    }
+  });
   if (Option.isSome(accounts))
-    yield* Stream.runForEach(accounts.value.changes, (snapshot) =>
-      Effect.suspend(() => {
-        const previous = accountRequests;
-        accountRequests = accountRequestsByThread(snapshot);
-        const changed = [...new Set([...previous.keys(), ...accountRequests.keys()])].filter(
-          (threadId) => previous.get(threadId) !== accountRequests.get(threadId),
-        );
-        return Effect.forEach(
-          changed,
-          (threadId) => enqueueThreadPublish(ThreadId.make(threadId)),
-          {
-            discard: true,
-          },
-        );
-      }),
-    ).pipe(Effect.forkIn(scope));
+    // What stands now first, so a restart settles rows it last published, then each change.
+    yield* Stream.concat(
+      Stream.fromEffect(accounts.value.snapshot).pipe(Stream.catch(() => Stream.empty)),
+      accounts.value.changes,
+    ).pipe(Stream.runForEach(onAccounts), Effect.forkIn(scope));
   // SCIENT-FORK:END
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
@@ -890,7 +1166,9 @@ export const make = Effect.gen(function* () {
         Effect.suspend(() => {
           if (publishRetries.get(threadId) !== retry) return Effect.void;
           retry.timer = undefined;
-          return worker.enqueue(threadId);
+          // SCIENT-FORK:START — Scient Accounts: a notice row retries on its own queue.
+          return queueFor(threadId).enqueue(threadId);
+          // SCIENT-FORK:END
         }),
       ),
       Effect.forkIn(scope),
@@ -938,6 +1216,13 @@ export const make = Effect.gen(function* () {
       projects: projectSnapshot.projects,
       threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
     });
+    // SCIENT-FORK:START — Scient Accounts: a link or relink republishes every notice row standing.
+    yield* Effect.forEach(
+      [...codeNotices.keys()],
+      (threadId) => publishNoticeRow(ThreadId.make(threadId)),
+      { discard: true },
+    );
+    // SCIENT-FORK:END
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
       return "published" as const;
@@ -985,7 +1270,9 @@ export const make = Effect.gen(function* () {
   schedulePublishConfirm = (threadId) =>
     Effect.forkIn(
       Effect.sleep("5 seconds").pipe(
-        Effect.andThen(worker.enqueue(threadId)),
+        // SCIENT-FORK:START — Scient Accounts: a notice row confirms on its own queue.
+        Effect.andThen(queueFor(threadId).enqueue(threadId)),
+        // SCIENT-FORK:END
         Effect.catchCause((cause) =>
           Effect.logWarning("deferred agent activity confirmation failed", {
             threadId,
@@ -1045,9 +1332,42 @@ export const make = Effect.gen(function* () {
 
   return AgentAwarenessRelay.of({
     publishThread,
-    drain: worker.drain,
+    drain: worker.drain.pipe(Effect.andThen(noticeWorker.drain)),
+    // SCIENT-FORK:START — Scient Accounts: a link change waits for a notice acknowledgement's commit.
+    replacingLink: Effect.fn("AgentAwarenessRelay.replacingLink")(function* <A, E, R>(
+      change: Effect.Effect<A, E, R>,
+    ) {
+      return yield* linkChange(change.pipe(Effect.ensuring(resetPublishedConnection)));
+    }),
+    // SCIENT-FORK:END
     requestCatchUp: Effect.fn("AgentAwarenessRelay.requestCatchUp")(function () {
-      return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
+      // SCIENT-FORK:START — Scient Accounts: a new link's commit ends the old connection at once,
+      // so an answer from it that comes later stands for nothing.
+      return readRelayConfig.pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.flatMap((link) =>
+          publishedRelayConfig !== undefined &&
+          (link?.url !== publishedRelayConfig.url ||
+            link.issuer !== publishedRelayConfig.issuer ||
+            link.environmentCredential !== publishedRelayConfig.environmentCredential)
+            ? resetPublishedConnection
+            : Effect.void,
+        ),
+        linkChange,
+        Effect.andThen(Queue.offer(catchUpRequests, undefined)),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — Scient Accounts: notice rows reconcile on their own queue, whatever
+        // holds the chats' catch-up.
+        Effect.andThen(
+          Effect.suspend(() =>
+            Effect.forEach([...codeNotices.keys()], (id) => publishNoticeRow(ThreadId.make(id)), {
+              discard: true,
+            }),
+          ),
+        ),
+        // SCIENT-FORK:END
+        Effect.asVoid,
+      );
     }),
     start,
   });

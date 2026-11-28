@@ -46,10 +46,12 @@ export class ProfileContextLeases {
     const waiting = this.released(key).then(open);
     const tabs = this.waitingTabs.get(key) ?? new Set();
     this.waitingTabs.set(key, tabs.add(waiting));
-    void waiting.finally(() => {
+    // Both outcomes handled: a tab refused once the hold ends rejects for its caller only (6m).
+    const done = () => {
       tabs.delete(waiting);
       if (tabs.size === 0 && this.waitingTabs.get(key) === tabs) this.waitingTabs.delete(key);
-    });
+    };
+    waiting.then(done, done);
     return waiting;
   }
 

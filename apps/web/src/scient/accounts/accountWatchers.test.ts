@@ -19,9 +19,19 @@ const watcher = (name: string) => (_registry: unknown, environmentId: string) =>
   return () => state.stopped.push(`${name}:${environmentId}`);
 };
 vi.mock("./accountAutofill", () => ({ watchAccountAutofill: watcher("autofill") }));
+vi.mock("./newPasswords", () => ({ watchPasswordFixes: () => () => undefined }));
 vi.mock("./googleSessions", () => ({ watchGoogleSessions: watcher("google") }));
 vi.mock("./keepSignedIn", () => ({ watchKeepSignedIn: watcher("keep") }));
 vi.mock("./mainFill", () => ({ watchMainFill: watcher("main") }));
+const told = vi.hoisted(() => ({ started: [] as string[], stopped: [] as string[] }));
+vi.mock("./profileReports", () => ({ watchProfileReports: () => () => undefined }));
+vi.mock("./profileDataWatcher", () => ({ watchProfileData: () => () => undefined }));
+vi.mock("./passwordUpdates", () => ({
+  watchPasswordUpdates: (_registry: unknown, environmentId: string) => {
+    told.started.push(environmentId);
+    return () => told.stopped.push(environmentId);
+  },
+}));
 vi.mock("./signInKeeps", () => ({ watchSignInKeeps: watcher("typed") }));
 vi.mock("./remoteSessions", () => ({ watchRemoteSessions: watcher("deliver") }));
 vi.mock("./qualifyRemoteSessions", () => ({ offerRemoteQualification: () => undefined }));
@@ -101,8 +111,12 @@ it("runs the background work in the one window the desktop names, and moves it w
     registry.set(primary.ids as Atom.Writable<ReadonlyArray<string>>, ["desktop", "lab-server"]);
     return { ...elected, stop };
   };
+  told.started = [];
+  told.stopped = [];
   const first = openWindow(true);
   const second = openWindow(false);
+  // regression: a password kept on another computer was told only for this desktop's own.
+  expect(told.started).toEqual(["desktop", "lab-server"]);
   const once = (name: string) => state.started.filter((started) => started === name).length;
   // Filling and keeping what is typed follow each window's own tabs; the rest runs once.
   expect([once("autofill:desktop"), once("typed:desktop")]).toEqual([2, 2]);
@@ -112,6 +126,7 @@ it("runs the background work in the one window the desktop names, and moves it w
   // The first window closes: the second takes the role, and nothing runs twice.
   first.stop();
   second.tell(true);
+  expect(told.started).toEqual(["desktop", "lab-server", "desktop", "lab-server"]);
   expect(state.stopped).toContain("main:desktop");
   expect([once("main:desktop"), once("deliver:lab-server")]).toEqual([2, 2]);
   second.stop();

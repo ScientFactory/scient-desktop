@@ -140,14 +140,22 @@ it("imports a Chromium profile's saved passwords through the Accounts importer, 
   });
   state.toast.mockReset();
   state.command.mockClear();
-  const passwords = Promise.withResolvers<{ content: string; skipped: number }>();
+  const passwords = Promise.withResolvers<{
+    result: { created: number; updated: number; skipped: number };
+    skipped: number;
+  }>();
+  const handed: unknown[] = [];
   using _bridge = stubGlobal("desktopBridge", {
     getLocalEnvironmentBootstraps: () => [],
     accounts: {
       sourceProfiles: async () => [
         { sourceId: "chrome", directory: "Default", name: "Personal", passwordCount: 7 },
       ],
-      readBrowserPasswords: () => passwords.promise,
+      // The desktop reads and hands them to its own backend itself (round 6f).
+      importBrowserPasswords: (input: unknown) => {
+        handed.push(input);
+        return passwords.promise;
+      },
     },
   });
   await using _screen = await render(
@@ -165,7 +173,7 @@ it("imports a Chromium profile's saved passwords through the Accounts importer, 
     .toBeChecked();
   await page.getByRole("button", { name: "Import (1)", exact: true }).click();
   await expect.element(page.getByRole("status")).toHaveTextContent("Importing saved passwords…");
-  passwords.resolve({ content: "synthetic csv", skipped: 3 });
+  passwords.resolve({ result: { created: 3, updated: 0, skipped: 1 }, skipped: 3 });
   await expect.element(page.getByRole("status")).not.toBeInTheDocument();
   await vi.waitFor(() =>
     expect(state.toast).toHaveBeenCalledWith({
@@ -173,11 +181,11 @@ it("imports a Chromium profile's saved passwords through the Accounts importer, 
       title: "Imported 3 passwords, 4 skipped",
     }),
   );
-  expect(state.command).toHaveBeenCalledWith({
-    format: "chrome",
-    content: "synthetic csv",
-    profileId: expect.stringMatching(/^profile-/),
-  });
+  // regression: the page read the CSV and chose where to send it.
+  expect(state.command).not.toHaveBeenCalledWith(expect.objectContaining({ format: "chrome" }));
+  expect(handed).toEqual([
+    { sourceId: "chrome", directory: "Default", profileId: expect.stringMatching(/^profile-/) },
+  ]);
 });
 
 it("lists Chrome and Edge on Windows as protected, each offering a window of the installed browser", async () => {

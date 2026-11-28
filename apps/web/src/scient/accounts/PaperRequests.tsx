@@ -12,7 +12,9 @@ import { LoaderCircleIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
 import { accountsState } from "./accountsState";
+import { universitiesOf } from "@t3tools/shared/scientPaperLinks";
 import { UniversityPicker } from "./University";
+import { speaksUniversityProtocol } from "./universityView";
 import { useSignIn } from "./useSignIn";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
@@ -65,7 +67,7 @@ const ACTION_LABELS: Readonly<Record<PaperRequest["kind"], string>> = {
   "sign-in": msg("Sign in"),
   check: msg("Open", { $context: "verb, opens the site's check page" }),
   terms: msg("Open", { $context: "verb, opens the site's terms page" }),
-  access: msg("Allow in Settings"),
+  access: msg("Turn on for agents"),
 };
 
 /** One line per thing only the user can do; acting on it releases every paper waiting on it. */
@@ -82,20 +84,31 @@ function Requests({
   threadId?: ThreadId;
 }) {
   const resume = useAccountCommand(accountsState.continuePapers, environmentId);
+  const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const openBrowser = useAccountBrowser(environmentId);
   const signIn = useSignIn(environmentId);
   const navigate = useNavigate();
   const messages = useMessages();
   const [connecting, setConnecting] = useState(false);
+  // A connected university only needs signing in; one for this conversation to use is elsewhere.
+  const connected = universitiesOf(useAccounts(environmentId).data?.accounts ?? [])[0];
   const act = (request: PaperRequest) => {
+    if (request.kind === "university" && connected)
+      return void signIn(connected.accountId, threadId ? { threadId } : {});
     if (request.kind === "university") return setConnecting((current) => !current);
     if (request.kind === "terms" && request.site && request.profileId)
       return void resume({
         root: queue.root,
         terms: { site: request.site, profileId: request.profileId },
       });
-    // The papers keep trying for a while, so a change made there lets them through.
-    if (request.kind === "access") void navigate({ to: "/settings/accounts" });
+    // In place: the papers waiting on it go on.
+    if (request.kind === "access" && request.accountId)
+      return void setControls({
+        target: { type: "account", accountId: request.accountId },
+        access: "allowed",
+      }).then(() => resume({ root: queue.root }));
+    if (request.kind === "access")
+      void navigate({ to: "/settings/accounts", search: { machine: environmentId } });
     // Papers go on by themselves when the sign-in finishes.
     if (request.kind === "sign-in" && request.accountId)
       return void signIn(request.accountId, threadId ? { threadId } : {});
@@ -118,7 +131,9 @@ function Requests({
             {requestLine(request, messages)}
           </span>
           <Button size="xs" variant="outline" disabled={!canWrite} onClick={() => act(request)}>
-            {messages(ACTION_LABELS[request.kind])}
+            {request.kind === "university" && connected
+              ? messages(ACTION_LABELS["sign-in"])
+              : messages(ACTION_LABELS[request.kind])}
           </Button>
         </div>
       ))}
@@ -139,14 +154,18 @@ function UnreachedPapers({
   environmentId,
   root,
   count,
+  canWrite,
   onDismiss,
 }: {
   environmentId: EnvironmentId;
   root: string;
   count: number;
+  canWrite: boolean;
   onDismiss: () => void;
 }) {
   const list = useAccountCommand(accountsState.listPapers, environmentId);
+  const resume = useAccountCommand(accountsState.continuePapers, environmentId);
+  const kept = speaksUniversityProtocol(useAccounts(environmentId).data);
   const [items, setItems] = useState<ReadonlyArray<PaperItem> | null>(null);
   const gt = useGT();
   const show = async () => {
@@ -170,7 +189,23 @@ function UnreachedPapers({
             <T>Show</T>
           </Button>
         ) : null}
-        <Button size="icon-xs" variant="ghost" aria-label={gt("Dismiss")} onClick={onDismiss}>
+        {kept ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!canWrite}
+            onClick={() => void resume({ root, unreached: "retry" })}
+          >
+            <T>Retry</T>
+          </Button>
+        ) : null}
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label={gt("Dismiss")}
+          disabled={kept && !canWrite}
+          onClick={() => (kept ? void resume({ root, unreached: "dismiss" }) : onDismiss())}
+        >
           <XIcon />
         </Button>
       </div>
@@ -214,10 +249,15 @@ export function PaperQueueBand({
                   sites: queue.paused.map((item) => item.site).join(", "),
                 },
               )
-            : gt(
-                "Getting {count, plural, one {{count} paper} other {{count} papers}}, {saved} saved",
-                { count: queue.waiting, saved: queue.saved },
-              )}
+            : queue.through
+              ? gt(
+                  "Getting {count, plural, one {{count} paper} other {{count} papers}}, {saved} saved through {university}",
+                  { count: queue.waiting, saved: queue.saved, university: queue.through },
+                )
+              : gt(
+                  "Getting {count, plural, one {{count} paper} other {{count} papers}}, {saved} saved",
+                  { count: queue.waiting, saved: queue.saved },
+                )}
         </div>
       ) : null}
       <Requests
@@ -231,6 +271,7 @@ export function PaperQueueBand({
           environmentId={environmentId}
           root={root}
           count={failed}
+          canWrite={canWrite}
           onDismiss={() => setDismissedFailed(failed)}
         />
       ) : null}

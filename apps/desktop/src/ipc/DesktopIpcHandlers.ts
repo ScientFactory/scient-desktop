@@ -3,7 +3,6 @@ import { installAccountsIpc } from "../scient/accounts/ipc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer badge owns the app icon (docs/internals/answer-attention.md).
 import { installUnreadAnswerBadge } from "../scient/answerAttention/ipc.ts";
-import { installRunningWorkReport } from "../scient/quitGuard/ipc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 import { noteSpellingSample } from "../scient/spelling/ipc.ts";
@@ -24,6 +23,15 @@ import * as Effect from "effect/Effect";
 
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keeps running in the background.
+import {
+  getKeepRunningInBackground,
+  setKeepRunningInBackground,
+} from "../scient/backgroundRunning/DesktopBackgroundRunning.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Quit reads this computer's running work when the person quits.
+import { installRunningWorkReader, setRunningWork } from "../scient/quitGuard/quitGuard.ts";
 // SCIENT-FORK:END
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
@@ -135,9 +143,14 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:START — keep the computer awake while threads work.
   yield* ipc.handle(keepAwake);
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient keeps running in the background.
+  yield* ipc.handleSync(getKeepRunningInBackground);
+  yield* ipc.handle(setKeepRunningInBackground);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — replaces upstream's installNotificationBadge(): one owner for the app icon.
   yield* installUnreadAnswerBadge();
-  yield* installRunningWorkReport;
+  yield* installRunningWorkReader;
+  yield* ipc.handle(setRunningWork);
   // SCIENT-FORK:END
   yield* PreviewIpc.installPreviewEventForwarding();
 

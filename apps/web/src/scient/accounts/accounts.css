@@ -5,6 +5,7 @@
   outline: none;
   box-shadow: inset 0 0 0 1px var(--muted-foreground);
 }
-.scient-accounts-settings[data-agent-access="false"] [data-account-access] {
+:is(.scient-accounts-settings, [data-accounts-dialog])[data-agent-access="false"]
+  [data-account-access] {
   opacity: 0.4;
 }

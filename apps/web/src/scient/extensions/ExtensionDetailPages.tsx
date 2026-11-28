@@ -103,6 +103,7 @@ import {
 } from "./extensionsView";
 import { useInstalledEntries } from "./installedEntries";
 import { providerInventoryMessage } from "./providerInventoryCopy";
+import { ConnectorAccountKey } from "./ConnectorAccountKey";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 
@@ -515,7 +516,7 @@ function connectionDetail(
     return resolve(
       connector.auth.type === "credential" && connector.auth.storage === "bound"
         ? msg("The secret this service used is no longer available.")
-        : msg("The stored key is gone. Remove this service and add it again."),
+        : msg("The stored key is gone. Choose a key."),
     );
   }
   if (connector.local !== undefined) {
@@ -770,6 +771,14 @@ function ConnectorDetail({
               ) : null}
             </MoreMenu>
           </CardRow>
+          {connector.auth.type === "credential" ? (
+            <CardRow>
+              <span className="min-w-0 flex-1 text-sm">
+                <T>Key</T>
+              </span>
+              <ConnectorAccountKey environmentId={environmentId} connector={connector} />
+            </CardRow>
+          ) : null}
           {local !== undefined && (local.changedBy !== undefined || local.forkedFrom) ? (
             <CardRow>
               <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">

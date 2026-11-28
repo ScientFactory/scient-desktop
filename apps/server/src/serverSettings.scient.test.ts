@@ -119,6 +119,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("removed agent ke
         instanceId,
         variable: "OPENAI_API_KEY",
         accountId: AccountId.make("acc_linked01"),
+        // Owns nothing, so the take-back at startup leaves the typed key alone.
+        copies: [],
       };
       let keyLinks: ReadonlyArray<AccountKeyLink> = [linked];
       const dropped = yield* Deferred.make<void>();

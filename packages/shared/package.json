@@ -15,6 +15,10 @@
       "types": "./src/scientOwnedProcessTree.ts",
       "import": "./src/scientOwnedProcessTree.ts"
     },
+    "./scientAccountLinks": {
+      "types": "./src/scientAccountLinks.ts",
+      "import": "./src/scientAccountLinks.ts"
+    },
     "./scientAccountSecretRequest": {
       "types": "./src/scientAccountSecretRequest.ts",
       "import": "./src/scientAccountSecretRequest.ts"
@@ -27,17 +31,45 @@
       "types": "./src/scientAccountSignIn.ts",
       "import": "./src/scientAccountSignIn.ts"
     },
+    "./scientLoginIdentity": {
+      "types": "./src/scientLoginIdentity.ts",
+      "import": "./src/scientLoginIdentity.ts"
+    },
     "./scientLoginFields": {
       "types": "./src/scientLoginFields.ts",
       "import": "./src/scientLoginFields.ts"
+    },
+    "./scientSetupPage": {
+      "types": "./src/scientSetupPage.ts",
+      "import": "./src/scientSetupPage.ts"
+    },
+    "./scientPageSeal": {
+      "types": "./src/scientPageSeal.ts",
+      "import": "./src/scientPageSeal.ts"
+    },
+    "./scientStrongPassword": {
+      "types": "./src/scientStrongPassword.ts",
+      "import": "./src/scientStrongPassword.ts"
     },
     "./scientSiteMatch": {
       "types": "./src/scientSiteMatch.ts",
       "import": "./src/scientSiteMatch.ts"
     },
+    "./scientConnectorKeys": {
+      "types": "./src/scientConnectorKeys.ts",
+      "import": "./src/scientConnectorKeys.ts"
+    },
+    "./scientLibraryKeys": {
+      "types": "./src/scientLibraryKeys.ts",
+      "import": "./src/scientLibraryKeys.ts"
+    },
     "./scientPaperLinks": {
       "types": "./src/scientPaperLinks.ts",
       "import": "./src/scientPaperLinks.ts"
+    },
+    "./scientUniversityGroups": {
+      "types": "./src/scientUniversityGroups.ts",
+      "import": "./src/scientUniversityGroups.ts"
     },
     "./scientJournalIdentity": {
       "types": "./src/scientJournalIdentity.ts",
@@ -54,6 +86,10 @@
     "./scientBrowserProfileChoice": {
       "types": "./src/scientBrowserProfileChoice.ts",
       "import": "./src/scientBrowserProfileChoice.ts"
+    },
+    "./scientCookieWriteBack": {
+      "types": "./src/scientCookieWriteBack.ts",
+      "import": "./src/scientCookieWriteBack.ts"
     },
     "./scientSessionCookies": {
       "types": "./src/scientSessionCookies.ts",

@@ -5,23 +5,17 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import { AccountsService, type AccountsServiceShape } from "../accounts/AccountsService.ts";
-
-const ZOTERO_ENV_NAME = "ZOTERO_API_KEY";
+import { libraryKey } from "./libraryKeys.ts";
+import { libraryKeyFits } from "@t3tools/shared/scientLibraryKeys";
 
 /** Who is asking Sources to reach zotero.org; agents follow the Accounts switches. */
 export type ZoteroKeyUse =
   | { readonly actor: "user" }
   | { readonly actor: "agent"; readonly projectId?: ProjectId | undefined };
 
-function isZoteroSite(site: string): boolean {
-  const host = site.replace(/^https:\/\//u, "").replace(/[:/].*$/u, "");
-  return host === "zotero.org" || host.endsWith(".zotero.org");
-}
-
-function allowedFor(account: AccountSummary, snapshot: AccountsSnapshot, use: ZoteroKeyUse) {
-  if (account.controls.access === "off") return false;
+function agentMayUse(account: AccountSummary, snapshot: AccountsSnapshot, use: ZoteroKeyUse) {
   if (use.actor === "user") return true;
-  if (!snapshot.agentAccess) return false;
+  if (account.controls.access === "off" || !snapshot.agentAccess) return false;
   const scope = account.controls.scope;
   // Like a connector binding: the user's saved key is the approval, so Ask counts as allowed.
   return (
@@ -30,21 +24,23 @@ function allowedFor(account: AccountSummary, snapshot: AccountsSnapshot, use: Zo
   );
 }
 
-/** The newest usable Zotero API key account, by its site or its ZOTERO_API_KEY variable. */
-export function zoteroAccountFor(
+/**
+ * The Zotero key the Library chose, by its site or its ZOTERO_API_KEY variable; the newest such
+ * key not Off becomes the choice when there is none.
+ */
+export const zoteroAccountFor = Effect.fn("ZoteroAccountKey.account")(function* (
   snapshot: AccountsSnapshot,
   use: ZoteroKeyUse,
-): AccountSummary | undefined {
-  return snapshot.accounts
-    .filter(
-      (account) =>
-        account.details.kind === "api-key" &&
-        account.secrets.token !== undefined &&
-        (account.details.sites.some(isZoteroSite) || account.details.envName === ZOTERO_ENV_NAME),
-    )
-    .filter((account) => allowedFor(account, snapshot, use))
-    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-}
+) {
+  return yield* libraryKey({
+    use: "zotero",
+    caller: use.actor === "user" ? "person" : "agent",
+    candidates: snapshot.accounts.filter((account) => libraryKeyFits("zotero", account)),
+    pick: (keys) =>
+      keys.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0],
+    agentMayUse: (account) => agentMayUse(account, snapshot, use),
+  });
+});
 
 export type ZoteroKeyLookup = () => Promise<string | null>;
 
@@ -54,14 +50,30 @@ const lastRecordedUse = new Map<string, number>();
 
 /** Reads the Zotero key from Accounts; the value never leaves the server's request headers. */
 export const readZoteroApiKey = Effect.fn("ZoteroAccountKey.read")(function* (
-  accounts: Pick<AccountsServiceShape, "snapshot" | "resolveSecrets" | "recordUse">,
+  accounts: Pick<
+    AccountsServiceShape,
+    "snapshot" | "resolveSecrets" | "recordUse" | "authorizeUse"
+  >,
   use: ZoteroKeyUse,
 ) {
   const snapshot = yield* accounts.snapshot;
-  const account = zoteroAccountFor(snapshot, use);
+  const account = yield* zoteroAccountFor(snapshot, use);
   if (!account) return Option.none<Redacted.Redacted<string>>();
   const { token } = yield* accounts.resolveSecrets(account.accountId, ["token"]);
   if (!token || !Redacted.value(token).trim()) return Option.none<Redacted.Redacted<string>>();
+  // An agent's key passes the use-time gate after the read, as the lookup sends it: Off, Remove,
+  // a narrower scope or a new value since the row was read wins.
+  if (
+    use.actor === "agent" &&
+    !(yield* accounts
+      .authorizeUse(
+        { projectId: use.projectId, unattended: true },
+        { type: "account", accountId: account.accountId },
+        { linked: true, since: account },
+      )
+      .pipe(Effect.isSuccess))
+  )
+    return Option.none<Redacted.Redacted<string>>();
   const now = yield* Clock.currentTimeMillis;
   const recordKey = `${account.accountId}\0${use.actor}`;
   if (now - (lastRecordedUse.get(recordKey) ?? -Infinity) >= USE_RECORD_INTERVAL_MS) {

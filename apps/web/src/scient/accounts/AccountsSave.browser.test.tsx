@@ -20,6 +20,7 @@ import { render } from "../../../test/render";
 
 const server = vi.hoisted(() => ({
   accounts: [] as Array<unknown>,
+  changes: [] as Array<unknown>,
   keyLinks: [] as Array<unknown>,
   linked: [] as Array<unknown>,
   providerInstances: {} as Record<string, unknown>,
@@ -49,6 +50,7 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
             ...base,
             accounts: [...server.accounts],
             keyLinks: [...server.keyLinks],
+            ...(server.changes.length ? { changes: [...server.changes] } : {}),
           } as AccountsSnapshot;
         },
         catch: (error) => new Cause.UnknownError(error, "Synthetic snapshot failure"),
@@ -67,6 +69,7 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
   };
   const handle = (label: string, input: unknown) => {
     if (label === "accounts:plainKeys") return [];
+    if (label === "accounts:activity") return [];
     if (label === "accounts:linkKey") {
       // As the server does for a link without an account: the variable's key becomes one.
       const link = input as { instanceId: string; variable: string };
@@ -309,6 +312,44 @@ it("lists session rows under their profile, one this client doesn't list too, an
   expect(page.getByRole("dialog").element().textContent).toContain("Signed in as");
 });
 
+it("shows a profile's Activity with what an agent changed on it", async () => {
+  server.accounts = [
+    {
+      ...summary(AccountId.make("acc_synthetic_session"), "github.com", {
+        kind: "website",
+        sites: ["github.com"],
+        profileId: "work",
+        origin: "browser-session",
+      }),
+      secrets: {},
+    },
+  ];
+  // regression: an agent's change to a profile's controls had no view for the person.
+  server.changes = [
+    {
+      at: "2026-11-26T10:00:00.000Z",
+      target: { type: "profile", profileId: "work" },
+      change: "controls",
+    },
+  ];
+  server.gate = Promise.resolve();
+  await using _screen = await render(
+    <RegistryContext.Provider value={AtomRegistry.make()}>
+      <AccountsPage />
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(page.getByRole("button", { name: "Signed-in sites for Profile from another device" }))
+    .toBeVisible();
+  const menus = page.getByRole("button", { name: "Account menu" }).elements();
+  await page.elementLocator(menus.at(-1)!).click();
+  await page.getByRole("menuitem", { name: "Activity" }).click();
+  await expect
+    .poll(() => document.querySelector("[role=dialog]")?.textContent ?? "")
+    .toContain("Controls tightened by an agent");
+  server.changes = [];
+});
+
 it("lists every key in one API keys card and keeps an agent's own key in Accounts", async () => {
   const openai = AccountId.make("acc_synthetic_openai");
   server.accounts = [apiKey(openai, "OpenAI")];
@@ -333,7 +374,9 @@ it("lists every key in one API keys card and keeps an agent's own key in Account
   await expect.element(page.getByRole("button", { name: "Edit OpenAI" })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Show api keys" }).click();
   const dialog = page.getByRole("dialog");
-  await expect.element(dialog.getByText("Used by Codex", { exact: true })).toBeVisible();
+  await expect
+    .element(dialog.getByText("Used by Codex · OPENAI_API_KEY", { exact: true }))
+    .toBeVisible();
   await expect.element(dialog.getByText("Only in Work settings")).toBeVisible();
   await dialog.getByRole("button", { name: "Keep in Accounts" }).click();
   await vi.waitFor(() =>
@@ -341,7 +384,7 @@ it("lists every key in one API keys card and keeps an agent's own key in Account
   );
   // Kept: the variable now follows its own row in Accounts, and nothing is left to keep.
   await expect.element(dialog.getByText("Only in Work settings")).not.toBeInTheDocument();
-  await expect.element(dialog.getByText("Used by Work", { exact: true })).toBeVisible();
+  await expect.element(dialog.getByText("Used by Work · HF_TOKEN", { exact: true })).toBeVisible();
   await expect
     .element(dialog.getByRole("button", { name: "Keep in Accounts" }))
     .not.toBeInTheDocument();

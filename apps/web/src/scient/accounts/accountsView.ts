@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { loginUserKey } from "@t3tools/shared/scientLoginIdentity";
 import * as Schema from "effect/Schema";
 import {
   type ServerProvider,
@@ -9,11 +10,14 @@ import {
   GOOGLE_SITE,
   type DesktopLoginForm,
   ProfileColor,
+  AccountSite,
   ACCOUNT_SECRET_FIELDS,
   defaultBrowserProfileRecord,
   isBuiltInBrowserProfileId,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   type AccountActivityEntry,
+  type AccountChange,
+  type AccountTarget,
   type AccountControls,
   type AccountDetails,
   type ApiKeyAuth,
@@ -41,6 +45,7 @@ import { loginValueFits, type LoginBox } from "@t3tools/shared/scientLoginFields
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
 import { activeProfiles } from "./activeProfiles";
+import { type KeyUseSources, referencedKeyUses } from "./keyUses";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
@@ -87,24 +92,32 @@ export const matchingAccounts = (
 
 /**
  * What fills a page's login boxes: the first sign-in whose username fits a box (of those with that
- * username, the newest password, else one that last worked, never a refused one), and another
- * sign-in's username for the second box, so a page asking for an ID and an email gets both.
+ * username, the newest password, else one that last worked, never a refused one), none when no
+ * username fits, and another sign-in's username for the second box, so a page asking for an ID
+ * and an email gets both.
  */
 export function fillChoice<Account extends Pick<AccountSummary, "details" | "secrets" | "signIn">>(
   matches: ReadonlyArray<Account>,
   boxes: ReadonlyArray<LoginBox>,
 ) {
-  const usable = matches.filter((match) => match.signIn?.state !== "password-rejected");
+  const usable = matches.filter(
+    (match) =>
+      match.signIn?.state !== "password-rejected" &&
+      match.secrets.password?.refusedAt === undefined,
+  );
   const name = ({ details }: Account) =>
     details.kind === "website" ? details.username : undefined;
   const fits = (box: LoginBox | undefined, exact: boolean) => (account: Account) => {
     const username = name(account);
     return box !== undefined && username !== undefined && loginValueFits(box, username, exact);
   };
+  // Nothing fits the page's username box: fill nothing, and the key offers every login.
   const first =
-    usable.find(fits(boxes[0], false)) ?? usable.find(fits(boxes[1], false)) ?? usable[0];
+    usable.find(fits(boxes[0], false)) ??
+    usable.find(fits(boxes[1], false)) ??
+    (boxes.length === 0 ? usable[0] : undefined);
   const recency = (account: Account) => [
-    account.secrets["password"]?.changedAt ?? "",
+    account.secrets.password?.changedAt ?? account.secrets.password?.previousAt ?? "",
     account.signIn?.state === "signed-in" ? account.signIn.at : "",
     account.secrets["password"]?.verifiedAt ?? "",
   ];
@@ -166,7 +179,9 @@ export function unlistedProfiles(
       details.profileId !== undefined &&
       !isBuiltInBrowserProfileId(details.profileId) &&
       !listed.some((profile) => profile.id === details.profileId) &&
-      !snapshot.profiles.some((record) => record.profileId === details.profileId && record.retired)
+      !snapshot.profiles.some(
+        (record) => record.profileId === details.profileId && (record.retired || record.removed),
+      )
         ? [details.profileId]
         : [],
     ),
@@ -177,7 +192,7 @@ export function unlistedProfiles(
       defaultBrowserProfileRecord(id);
     return {
       id,
-      name: record.source?.profileName ?? "Profile from another device",
+      name: record.name ?? record.source?.profileName ?? "Profile from another device",
       kind: "persistent" as const,
       record,
     };
@@ -542,6 +557,33 @@ export function secretFields(details: AccountDetails): ReadonlyArray<string> {
     : ACCOUNT_SECRET_FIELDS[details.kind];
 }
 
+const isSite = Schema.is(AccountSite);
+
+/** The field the person has to fix before an account saves, in the dialog's words. */
+export function wrongAccountField(name: string, details: AccountDetails) {
+  if (!name.trim() || name.trim().length > 80) return msg("Check the name.");
+  if ("sites" in details && details.kind === "website") {
+    if (details.sites.length === 0 || details.sites.length > 16 || !details.sites.every(isSite))
+      return msg("Check the site: a name like example.com, or an https:// address.");
+    if (
+      details.loginUrl !== undefined &&
+      (!/^https?:\/\//.test(details.loginUrl) || details.loginUrl.length > 2048)
+    )
+      return msg("Check the sign-in address: it starts with https://.");
+    if (
+      details.proxyUrl !== undefined &&
+      (!/^https?:\/\//.test(details.proxyUrl) ||
+        details.proxyUrl.length > 2048 ||
+        !details.proxyUrl.includes("{url}"))
+    )
+      return msg("Check the library link: paste one that shows {url} for the article.");
+    if ((details.username?.length ?? 0) > 256) return msg("Check the username.");
+  }
+  if (details.kind === "api-key" && !details.sites.every(isSite))
+    return msg("Check the API hosts: names like api.example.com.");
+  return undefined;
+}
+
 export function capturedSignInInput(
   capture: DesktopCapturedSignIn,
   accounts: ReadonlyArray<AccountSummary>,
@@ -550,7 +592,7 @@ export function capturedSignInInput(
   const existing = matchingAccounts(accounts, capture.url, capture.profileId).find(
     (account) =>
       account.details.kind === "website" &&
-      (account.details.username === capture.username ||
+      (loginUserKey(account.details.username) === loginUserKey(capture.username) ||
         ((account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === capture.profileId &&
           !account.details.username &&
           !account.secrets.password)),
@@ -560,7 +602,8 @@ export function capturedSignInInput(
     name: existing?.name ?? new URL(origin).hostname,
     details:
       existing?.details.kind === "website"
-        ? { ...existing.details, username: capture.username }
+        ? // The saved identity keeps its own spelling of an email.
+          { ...existing.details, username: existing.details.username || capture.username }
         : (existing?.details ?? {
             kind: "website",
             sites: [origin],
@@ -817,6 +860,8 @@ type ProviderManagedAccount = {
   instanceId: ProviderInstanceId;
   name: string;
   href: "/settings/extensions/installed";
+  /** Set when a known connection stopped working, or while it is being checked. */
+  connection?: "needs-sign-in" | "failed" | "checking";
 };
 
 /** One GitHub login, with each use of it kept apart: one working use never marks another. */
@@ -863,14 +908,17 @@ function claudeRows(
   servers: NonNullable<ServerProvider["mcpServers"]>,
   previous: ReadonlyArray<ProviderManagedAccount>,
 ) {
+  // A refused connection shows from the first load; one being checked shows once it was listed.
+  const known = (server: { readonly name: string }) =>
+    previous.some((row) => row.id === JSON.stringify([provider.instanceId, server.name]));
   return servers
     .filter(
       (server) =>
         server.scope === "claudeai" &&
         (server.status === "connected" ||
-          // A server still starting keeps the place it had; a refusal removes it.
-          ((server.status === "pending" || server.status === "unknown") &&
-            previous.some((row) => row.id === JSON.stringify([provider.instanceId, server.name])))),
+          server.status === "needs-auth" ||
+          server.status === "failed" ||
+          (server.status !== "disabled" && known(server))),
     )
     .map((server) => ({
       kind: "claude" as const,
@@ -879,6 +927,13 @@ function claudeRows(
       // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
       name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
       href: "/settings/extensions/installed" as const,
+      ...(server.status === "needs-auth"
+        ? { connection: "needs-sign-in" as const }
+        : server.status === "failed"
+          ? { connection: "failed" as const }
+          : server.status === "pending" || server.status === "unknown"
+            ? { connection: "checking" as const }
+            : {}),
     }));
 }
 
@@ -976,6 +1031,16 @@ export function providerManagedAccounts(
   return { rows, next };
 }
 
+/** Agents the person turned on that report no sign-in: each is a connection to reconnect. */
+export const signedOutAgents = (providers: ReadonlyArray<ServerProvider>) =>
+  providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.auth.status === "unauthenticated" &&
+      provider.auth.required !== false,
+  );
+
 export type ProviderRowsCache = Map<string, { connection: object; rows: ManagedRowsByInstance }>;
 
 /** Kept rows belong to the connection that read them; a new, lost or unpermitted one clears them. */
@@ -1031,6 +1096,19 @@ export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
   glab: "glab auth login",
 };
 
+/**
+ * A row left at Needs you that Needs you no longer holds: its hand-off ended with a restart, or the
+ * person dismissed it. The row then says Interrupted beside Sign in, as the band and dot show nothing.
+ */
+export const signInInterrupted = (
+  account: Pick<AccountSummary, "accountId" | "signIn">,
+  snapshot: Pick<AccountsSnapshot, "attempts" | "handoffs" | "needsYou">,
+) =>
+  account.signIn?.state === "needs-you" &&
+  ![...(snapshot.attempts ?? []), ...(snapshot.handoffs ?? []), ...(snapshot.needsYou ?? [])].some(
+    (waiting) => waiting.accountId === account.accountId,
+  );
+
 /** The account's sign-in state in a few words, or nothing when there is nothing to say. */
 export function accountStatusLabel(
   account: Pick<AccountSummary, "signIn"> & {
@@ -1038,6 +1116,7 @@ export function accountStatusLabel(
   },
   relativeTime: (iso: string) => string,
   resolve: MessageResolver = m,
+  interrupted = false,
 ) {
   const signIn = account.signIn;
   // A refused key is the one thing a key's check says.
@@ -1054,9 +1133,12 @@ export function accountStatusLabel(
         : resolve(msg("Signed in · {time}", { time }));
     }
     case "signed-out":
-      return university ? resolve(msg("Sign in needed")) : resolve(msg("Signed out"));
+      // A university the person signed out of stays that way until they sign in.
+      return university && signIn.by !== "action"
+        ? resolve(msg("Sign in needed"))
+        : resolve(msg("Signed out"));
     case "needs-you":
-      return resolve(msg("Needs you"));
+      return interrupted ? resolve(msg("Interrupted")) : resolve(msg("Needs you"));
     case "password-rejected":
       return resolve(msg("Password rejected"));
     case "code-rejected":
@@ -1064,6 +1146,8 @@ export function accountStatusLabel(
     case "limited":
       return resolve(msg("Site is limiting access"));
     case "unknown":
+      // The site wasn't reached from this computer: nothing is known about the sign-in.
+      if (signIn.unreachable) return resolve(msg("Can't reach"));
       return signIn.from === "import"
         ? resolve(msg("Imported"))
         : signIn.from === "copy"
@@ -1072,9 +1156,9 @@ export function accountStatusLabel(
             signIn.by === "action" && signIn.detail
             ? signIn.detail
             : resolve(msg("Couldn't check"));
-    // A failed attempt holds automatic sign-ins until the person signs in.
+    // A failed attempt holds automatic sign-ins for a while (`signInHeld`); Sign in sits beside it.
     case "failed":
-      return resolve(msg("Sign in needed"));
+      return resolve(msg("Sign-in failed · {time}", { time: relativeTime(signIn.at) }));
   }
 }
 
@@ -1145,9 +1229,18 @@ export function keptAgentKeys(accounts: ReadonlyArray<AccountSummary>, agent: st
 /** A place that uses a key, and the settings page where it does. */
 export interface KeyUse {
   readonly label: string;
-  readonly href: "/settings/providers" | "/settings/custom-models" | "/settings/voice";
+  readonly href:
+    | "/settings/providers"
+    | "/settings/custom-models"
+    | "/settings/voice"
+    | "/settings/extensions/installed"
+    | "/settings/documents";
   readonly consumerName?: string;
   readonly consumerId?: string;
+  /** The service refused the key here, as it is now. */
+  readonly refused?: boolean;
+  /** A connector's own page, where it is repaired. */
+  readonly connectorId?: string;
   /** The agent variable that follows the key. */
   readonly link?: { readonly instanceId: string; readonly variable: string };
 }
@@ -1159,7 +1252,12 @@ export type ApiKeyRow = {
   readonly service: string | undefined;
   readonly uses: ReadonlyArray<KeyUse>;
 } & (
-  | { readonly stored: "accounts"; readonly account: AccountSummary }
+  | {
+      readonly stored: "accounts";
+      readonly account: AccountSummary;
+      /** Files with their own copy of this key, which editing here doesn't rewrite. */
+      readonly files: ReadonlyArray<string>;
+    }
   /** Custom models' own store, which Accounts seals: kept already. */
   | { readonly stored: "custom-models" }
   | { readonly stored: "agent"; readonly instanceId: string; readonly variable: string }
@@ -1195,6 +1293,12 @@ export function apiKeyRows(input: {
   >;
   readonly customModelKeys: AccountsSnapshot["customModelKeys"];
   readonly keyConsumers?: AccountsSnapshot["keyConsumers"];
+  readonly keyRefusals?: KeyUseSources["keyRefusals"];
+  readonly connectors?: KeyUseSources["connectors"];
+  readonly libraryKeys?: KeyUseSources["libraryKeys"];
+  readonly textGenerators?:
+    | Readonly<Record<string, { readonly label?: string | undefined; readonly apiKey: unknown }>>
+    | undefined;
   readonly plainKeys: ReadonlyArray<AccountPlainKey>;
   readonly driverName: (driver: string) => string;
   readonly resolve?: MessageResolver;
@@ -1204,17 +1308,21 @@ export function apiKeyRows(input: {
   const keys = input.accounts.filter((account) => account.details.kind === "api-key");
   const used = (accountId: string, use: KeyUse) =>
     uses.set(accountId, [...(uses.get(accountId) ?? []), use]);
-  for (const consumer of input.keyConsumers ?? []) {
-    used(consumer.accountId, {
-      label:
-        consumer.kind === "custom-model"
-          ? resolve(msg("Custom models"))
-          : resolve(msg("Transcription")),
-      href: consumer.kind === "custom-model" ? "/settings/custom-models" : "/settings/voice",
-      consumerName: consumer.name,
-      consumerId: consumer.id,
-    });
-  }
+  const byReference = (sources: KeyUseSources) => {
+    for (const [accountId, found] of referencedKeyUses(sources, resolve))
+      for (const use of found) used(accountId, use);
+  };
+  byReference({
+    keyConsumers: input.keyConsumers,
+    accounts: input.accounts,
+    keyLinks: input.keyLinks,
+    instances: input.instances,
+    driverName: input.driverName,
+    textGenerators: input.textGenerators,
+    connectors: input.connectors,
+    libraryKeys: input.libraryKeys,
+    keyRefusals: input.keyRefusals,
+  });
   const migratedIds = new Set(
     (input.keyConsumers ?? []).filter(({ kind }) => kind === "custom-model").map(({ id }) => id),
   );
@@ -1228,9 +1336,7 @@ export function apiKeyRows(input: {
       )?.accountId;
       const link = { instanceId, variable: variable.name };
       // A link to a removed account leaves its last key in the variable only.
-      if (accountId && keys.some((account) => account.accountId === accountId))
-        used(accountId, { label, href: "/settings/providers", link });
-      else
+      if (!accountId || !keys.some((account) => account.accountId === accountId))
         others.push({
           id: `agent:${instanceId}:${variable.name}`,
           name: variable.name,
@@ -1240,6 +1346,7 @@ export function apiKeyRows(input: {
           ...link,
         });
     }
+
   for (const connection of input.customModelKeys.filter(
     ({ connectionId }) => !migratedIds.has(connectionId),
   )) {
@@ -1272,6 +1379,11 @@ export function apiKeyRows(input: {
         uses: uses.get(account.accountId) ?? [],
         stored: "accounts",
         account,
+        files: input.plainKeys.flatMap(({ file, name, kept }) =>
+          kept && account.details.kind === "api-key" && account.details.envName === name
+            ? [file]
+            : [],
+        ),
       })),
       ...others.filter((row) => row.stored === "custom-models"),
     ].toSorted(byName),
@@ -1293,4 +1405,75 @@ export function apiKeyRows(input: {
       ),
     ].toSorted(byName),
   ];
+}
+
+/**
+ * What a typed sign-in leads to once it works: `update` the same login with its new password (no
+ * card), `save-new` another username where a saved one was refused, `offer` the Save card for
+ * anything else new, `none` for the saved password.
+ */
+export function captureFollowUp(
+  result: {
+    readonly result: "new" | "password-changed" | "same";
+    readonly accountId?: string | undefined;
+    readonly choices?: ReadonlyArray<string> | undefined;
+  },
+  sameSite: ReadonlyArray<AccountSummary>,
+): "update" | "save-new" | "offer" | "none" {
+  if (result.result === "same") return "none";
+  if (result.result === "password-changed")
+    return (result.choices?.length ?? 0) > 1 || result.accountId === undefined ? "offer" : "update";
+  const refused = sameSite.some(
+    (account) =>
+      isSavedPassword(account) &&
+      (account.secrets.password?.refusedAt !== undefined ||
+        account.signIn?.state === "password-rejected"),
+  );
+  return refused ? "save-new" : "offer";
+}
+
+/** One line of an account's Activity: a use, or a change an agent made (AMENDMENTS 56). */
+export type ActivityItem = AccountActivityEntry | AccountChange;
+
+const CHANGE_LABELS: Readonly<Record<AccountChange["change"], string>> = {
+  edit: msg("Edited by an agent"),
+  controls: msg("Controls tightened by an agent"),
+  remove: msg("Removed by an agent"),
+  restore: msg("Brought back by an agent"),
+  "save-offer": msg("Offer to save turned back on by an agent"),
+  clear: msg("Cleared by an agent"),
+  "sign-out": msg("Signed out by an agent"),
+  copy: msg("Copied by an agent"),
+  move: msg("Moved by an agent"),
+  merge: msg("Merged by an agent"),
+  fold: msg("Merged into Main by an agent"),
+  refresh: msg("Refreshed from its browser by an agent"),
+};
+
+/** An account's uses and agents' changes to it, newest first. */
+export function activityWithChanges(
+  entries: ReadonlyArray<AccountActivityEntry>,
+  changes: ReadonlyArray<AccountChange> | undefined,
+  target: AccountTarget,
+): ReadonlyArray<ActivityItem> {
+  const same = (other: AccountTarget) =>
+    other.type === target.type &&
+    (other.type === "account"
+      ? target.type === "account" && other.accountId === target.accountId
+      : target.type === "profile" && other.profileId === target.profileId);
+  return [...entries, ...(changes ?? []).filter((change) => same(change.target))].toSorted((a, b) =>
+    b.at.localeCompare(a.at),
+  );
+}
+
+export function activityItemLine(
+  item: ActivityItem,
+  where: string | undefined,
+  resolve: MessageResolver = m,
+) {
+  if (!("change" in item)) return activityLine(item, where, resolve);
+  const what = item.detail
+    ? `${resolve(CHANGE_LABELS[item.change])}: ${item.detail}`
+    : resolve(CHANGE_LABELS[item.change]);
+  return where ? `${what} · ${where}` : what;
 }

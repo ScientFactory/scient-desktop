@@ -12,9 +12,22 @@ import {
   AccountActivityInput,
   AccountApprovalRespondInput,
   AccountHandoffCancelInput,
+  AccountHandoffUseSavedInput,
+  AccountHandoffInsertCodeInput,
+  AccountNeedsYouDismissInput,
   AccountFillValues,
   AccountFillValuesInput,
+  AccountRevealInput,
+  AccountRemovePasswordVersionResult,
+  AccountRestorePasswordVersionInput,
+  AccountUsePasswordInput,
+  AccountNeverAskInput,
+  AccountPasswordUndoInput,
+  AccountPasswordUndoResult,
+  AccountRevealResult,
   AccountRemoveInput,
+  AccountRemoveResult,
+  AccountRestoreInput,
   AccountSaveInput,
   AccountSaveResult,
   AccountSetControlsInput,
@@ -35,7 +48,13 @@ import {
   Institution,
   UniversitySearchInput,
   AccountSignInAsPersonInput,
+  AccountPageKeepInput,
+  AccountPageKeepResult,
+  AccountPendingInput,
+  AccountPendingResult,
   UniversityBrowseInput,
+  UniversitySignOutInput,
+  UniversitySignOutResult,
   AccountKeyUnlinkInput,
   AccountRestoreKeptKeysInput,
   AccountMainBackfilledInput,
@@ -73,12 +92,22 @@ import {
   AccountsCheckInput,
   AccountsError,
   AccountsSetAgentAccessInput,
+  AccountsSetRenewAutomaticallyInput,
   AccountsExternalIdentitiesResult,
   AccountsSnapshot,
+  AccountKeyCheck,
   AccountsTestInput,
   AccountStoresStatus,
   BrowserProfileChoiceInput,
   BrowserProfileRecordRemoveInput,
+  ProfileStoreDoneInput,
+  ProfileClaimInput,
+  ProfileClaimResult,
+  ProfileUndoInput,
+  ProfileOperation,
+  ProfileOperateResult,
+  ProfileOperateInput,
+  BrowserProfilesReportInput,
   BrowserProfileRetireInput,
   BrowserProfileRecordUpdateInput,
   KeychainCandidatesInput,
@@ -98,6 +127,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSubscribeChanges: "accounts.subscribeChanges",
   accountsSave: "accounts.save",
   accountsRemove: "accounts.remove",
+  accountsRestore: "accounts.restore",
   accountsTest: "accounts.test",
   accountsCheck: "accounts.check",
   accountsSignInSeen: "accounts.signInSeen",
@@ -106,6 +136,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsKeepTyped: "accounts.keepTyped",
   accountsSessionEnded: "accounts.sessionEnded",
   accountsSetCodeSources: "accounts.codeSources.set",
+  accountsCheckCodeSources: "accounts.codeSources.check",
+  accountsUndoPassword: "accounts.passwords.undo",
   accountsLinkKey: "accounts.keys.link",
   accountsPaperForSource: "accounts.papers.getForSource",
   accountsPapersRequest: "accounts.papers.request",
@@ -113,17 +145,26 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsPapersList: "accounts.papers.list",
   accountsUniversitySearch: "accounts.universities.search",
   accountsSignInAsPerson: "accounts.signInAsPerson",
+  accountsPageKeep: "accounts.page.keep",
+  accountsPending: "accounts.pending",
   /** The old name of `accountsSignInAsPerson`, answered for one more release. */
   accountsUniversitySignIn: "accounts.universities.signIn",
   accountsUniversityBrowse: "accounts.universities.browse",
+  accountsUniversitySignOut: "accounts.universities.signOut",
   accountsPlainKeys: "accounts.plainKeys.find",
   accountsKeepPlainKey: "accounts.plainKeys.keep",
   accountsUnlinkKey: "accounts.keys.unlink",
   accountsRestoreKeptKeys: "accounts.keys.restoreKept",
   accountsSetControls: "accounts.setControls",
   accountsSetAgentAccess: "accounts.setAgentAccess",
+  accountsSetRenewAutomatically: "accounts.setRenewAutomatically",
   accountsProfileUpdate: "accounts.profiles.update",
   accountsProfileRemove: "accounts.profiles.remove",
+  accountsProfilesStoreDone: "accounts.profiles.storeDone",
+  accountsProfilesClaim: "accounts.profiles.claim",
+  accountsProfilesUndo: "accounts.profiles.undo",
+  accountsProfilesOperate: "accounts.profiles.operate",
+  accountsProfilesReport: "accounts.profiles.report",
   accountsProfileRetire: "accounts.profiles.retire",
   accountsProfileChoose: "accounts.profiles.choose",
   accountsMainFilled: "accounts.main.filled",
@@ -147,6 +188,9 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsKeepSenderKey: "accounts.computers.keepSenderKey",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
+  accountsHandoffInsertCode: "accounts.handoffs.insertCode",
+  accountsNeedsYouDismiss: "accounts.needsYou.dismiss",
+  accountsHandoffUseSaved: "accounts.handoffs.useSaved",
   accountsApprovalRespond: "accounts.approvals.respond",
   accountsActivity: "accounts.activity",
   accountsKeychainCandidates: "accounts.keychain.candidates",
@@ -154,6 +198,11 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsOnePasswordDisconnect: "accounts.onePassword.disconnect",
   accountsImportPasswords: "accounts.importPasswords",
   accountsFillValues: "accounts.fillValues",
+  accountsReveal: "accounts.reveal",
+  accountsUsePassword: "accounts.usePassword",
+  accountsRemovePasswordVersion: "accounts.passwordVersions.remove",
+  accountsRestorePasswordVersion: "accounts.passwordVersions.restore",
+  accountsNeverAsk: "accounts.neverAsk",
   accountsMatchSignIn: "accounts.matchSignIn",
 } as const;
 
@@ -203,14 +252,24 @@ export const WsAccountsSaveRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSave
 
 export const WsAccountsRemoveRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsRemove, {
   payload: AccountRemoveInput,
+  success: AccountRemoveResult,
+  error: AccountsRpcError,
+});
+
+/** Undo of Remove, while the server still keeps the row (Accounts protocol 2). */
+export const WsAccountsRestoreRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsRestore, {
+  payload: AccountRestoreInput,
   success: Empty,
   error: AccountsRpcError,
 });
 
-/** Resolves every linked value without returning it; fails with the first problem. */
+/**
+ * Resolves every linked value without returning it, failing with the first problem; a key's
+ * service is then asked whether it accepts the key (absent from older servers).
+ */
 export const WsAccountsTestRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsTest, {
   payload: AccountsTestInput,
-  success: Empty,
+  success: Schema.Struct({ result: Schema.optional(AccountKeyCheck) }),
   error: AccountsRpcError,
 });
 
@@ -219,7 +278,11 @@ export const WsAccountsCheckRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsChe
   payload: AccountsCheckInput,
   success: Schema.Struct({
     checked: Schema.Int,
+    /** A whole run: sign-ins it left for another press, or with nothing to check yet. */
+    skipped: Schema.optional(Schema.Int),
     alreadyRunning: Schema.optional(Schema.Boolean),
+    /** A glance that looked and couldn't tell; the last known state stays. */
+    unclear: Schema.optional(Schema.Boolean),
   }),
   error: AccountsRpcError,
 });
@@ -245,6 +308,18 @@ export const WsAccountsSetCodeSourcesRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsSetCodeSources,
   { payload: AccountCodeSources, success: AccountCodeSourcesResult, error: AccountsRpcError },
 );
+
+/** Asks macOS afresh whether Messages or Mail opens; writes nothing. */
+export const WsAccountsCheckCodeSourcesRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsCheckCodeSources,
+  { payload: Empty, success: AccountCodeSourcesResult, error: AccountsRpcError },
+);
+
+export const WsAccountsUndoPasswordRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsUndoPassword, {
+  payload: AccountPasswordUndoInput,
+  success: AccountPasswordUndoResult,
+  error: AccountsRpcError,
+});
 
 export const WsAccountsPaperForSourceRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsPaperForSource,
@@ -283,6 +358,20 @@ export const WsAccountsSignInAsPersonRpc = Rpc.make(
   signInAsPerson,
 );
 
+/** Holds what the person's tab shows (a 2FA setup, backup codes) as a pending secret. */
+export const WsAccountsPageKeepRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsPageKeep, {
+  payload: AccountPageKeepInput,
+  success: AccountPageKeepResult,
+  error: AccountsRpcError,
+});
+
+/** Starts, settles, saves or discards a secret Scient holds privately until it is settled. */
+export const WsAccountsPendingRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsPending, {
+  payload: AccountPendingInput,
+  success: AccountPendingResult,
+  error: AccountsRpcError,
+});
+
 /** The same sign-in under its old name, for clients of the last release. */
 export const WsAccountsUniversitySignInRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySignIn,
@@ -296,6 +385,11 @@ export const WsAccountsUniversityBrowseRpc = Rpc.make(
     success: Schema.Struct({ routed: Schema.Boolean }),
     error: AccountsRpcError,
   },
+);
+
+export const WsAccountsUniversitySignOutRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySignOut,
+  { payload: UniversitySignOutInput, success: UniversitySignOutResult, error: AccountsRpcError },
 );
 
 export const WsAccountsUniversitySearchRpc = Rpc.make(
@@ -351,6 +445,11 @@ export const WsAccountsSetAgentAccessRpc = Rpc.make(
   { payload: AccountsSetAgentAccessInput, success: Empty, error: AccountsRpcError },
 );
 
+export const WsAccountsSetRenewAutomaticallyRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSetRenewAutomatically,
+  { payload: AccountsSetRenewAutomaticallyInput, success: Empty, error: AccountsRpcError },
+);
+
 export const WsAccountsProfileUpdateRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfileUpdate,
   { payload: BrowserProfileRecordUpdateInput, success: Empty, error: AccountsRpcError },
@@ -359,6 +458,44 @@ export const WsAccountsProfileUpdateRpc = Rpc.make(
 export const WsAccountsProfileRemoveRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfileRemove,
   { payload: BrowserProfileRecordRemoveInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsProfilesStoreDoneRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfilesStoreDone,
+  {
+    payload: ProfileStoreDoneInput,
+    success: Empty,
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsProfilesClaimRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfilesClaim,
+  { payload: ProfileClaimInput, success: ProfileClaimResult, error: AccountsRpcError },
+);
+
+export const WsAccountsProfilesUndoRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsProfilesUndo, {
+  payload: ProfileUndoInput,
+  success: ProfileOperation,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsProfilesOperateRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfilesOperate,
+  {
+    payload: ProfileOperateInput,
+    success: ProfileOperateResult,
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsProfilesReportRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfilesReport,
+  {
+    payload: BrowserProfilesReportInput,
+    success: Empty,
+    error: AccountsRpcError,
+  },
 );
 
 export const WsAccountsProfileRetireRpc = Rpc.make(
@@ -403,6 +540,42 @@ export const WsAccountsFillValuesRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
   error: AccountsRpcError,
 });
 
+export const WsAccountsRevealRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsReveal, {
+  payload: AccountRevealInput,
+  success: AccountRevealResult,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsUsePasswordRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsUsePassword, {
+  payload: AccountUsePasswordInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsRemovePasswordVersionRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsRemovePasswordVersion,
+  {
+    payload: AccountUsePasswordInput,
+    success: AccountRemovePasswordVersionResult,
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsRestorePasswordVersionRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsRestorePasswordVersion,
+  {
+    payload: AccountRestorePasswordVersionInput,
+    success: Empty,
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsNeverAskRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsNeverAsk, {
+  payload: AccountNeverAskInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
 export const WsAccountsProfileChooseRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfileChoose,
   { payload: BrowserProfileChoiceInput, success: Empty, error: AccountsRpcError },
@@ -417,6 +590,21 @@ export const WsAccountsMatchSignInRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accou
 export const WsAccountsHandoffCancelRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsHandoffCancel,
   { payload: AccountHandoffCancelInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsNeedsYouDismissRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsNeedsYouDismiss,
+  { payload: AccountNeedsYouDismissInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsHandoffInsertCodeRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsHandoffInsertCode,
+  { payload: AccountHandoffInsertCodeInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsHandoffUseSavedRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsHandoffUseSaved,
+  { payload: AccountHandoffUseSavedInput, success: Empty, error: AccountsRpcError },
 );
 
 export const WsAccountsHandoffShowRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsHandoffShow, {

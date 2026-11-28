@@ -1,4 +1,4 @@
-import { collectLoginFields } from "@t3tools/shared/scientLoginFields";
+import { collectLoginFields, loginFieldsKit } from "@t3tools/shared/scientLoginFields";
 
 /** What a submit sent: the password step, or a username step before it (empty password). */
 export interface CapturedStep {
@@ -7,6 +7,8 @@ export interface CapturedStep {
   readonly step: "password" | "username";
   readonly username: string;
   readonly password: string;
+  /** A sign-up or change form's new password, where it has one. */
+  readonly newPassword?: string;
 }
 
 export function createCaptureDeduplicator() {
@@ -37,23 +39,29 @@ export function installSignInCapture(
   send: (capture: CapturedStep) => void,
 ) {
   const accept = createCaptureDeduplicator();
-  const capture = (form: HTMLFormElement | null) => {
+  // A click or Enter on a form the browser won't send (a required box empty, a pattern unmet)
+  // sends nothing; the form's own submit event comes only after that check.
+  const capture = (form: HTMLFormElement | null, checked = false) => {
     if (!form || !allowed() || !/^https?:$/.test(location.protocol)) return;
-    const fields = collectLoginFields(Array.from(form.querySelectorAll("input")));
+    if (!checked && !form.noValidate && !form.checkValidity()) return;
+    const inputs = Array.from(form.querySelectorAll("input"));
+    const fields = collectLoginFields(inputs);
     const password = fields.inputs[fields.password]?.value ?? "";
     const username = fields.inputs[fields.username]?.value ?? "";
-    if (!password && !username) return;
+    const newPassword = loginFieldsKit.newPasswordBoxes(inputs)[0]?.value ?? "";
+    if (!password && !username && !newPassword) return;
     const value: CapturedStep = {
       url: location.origin,
       path: location.pathname,
       step: password ? "password" : "username",
       username,
       password,
+      ...(newPassword ? { newPassword } : {}),
     };
     if (accept(value, performance.now())) send(value);
   };
   const submit = (event: SubmitEvent) => {
-    if (event.isTrusted && event.target instanceof HTMLFormElement) capture(event.target);
+    if (event.isTrusted && event.target instanceof HTMLFormElement) capture(event.target, true);
   };
   const click = (event: MouseEvent) => {
     if (!event.isTrusted || !(event.target instanceof Element)) return;

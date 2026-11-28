@@ -333,10 +333,21 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             />
           ) : null}
           <SettingsRow
-            title={gt("Speech accounts")}
-            description={gt("Manage saved API keys or reuse a compatible key from Custom models.")}
+            title={gt("Keys")}
             control={
-              <Button size="sm" variant="outline" render={<Link to="/settings/accounts" />}>
+              <Button
+                size="sm"
+                variant="outline"
+                render={
+                  <Link
+                    to="/settings/accounts"
+                    search={{
+                      show: "api-keys",
+                      ...(environmentId ? { machine: environmentId } : {}),
+                    }}
+                  />
+                }
+              >
                 <T>Open</T>
               </Button>
             }

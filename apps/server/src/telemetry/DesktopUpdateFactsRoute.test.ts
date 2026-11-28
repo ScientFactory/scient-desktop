@@ -85,6 +85,21 @@ it.effect("ingests the desktop's facts and acknowledges the ids the outbox holds
   }),
 );
 
+it.effect("ingests the desktop's background-running facts", () =>
+  Effect.gen(function* () {
+    const background: DesktopUpdateFact = {
+      ...fact,
+      id: "fact-2",
+      name: "app.background.event",
+      properties: { kind: "window-returned", platform: "windows", via: "tray" },
+    };
+    const ingested: unknown[][] = [];
+    const response = yield* post({}, JSON.stringify({ facts: [background] }), ingested);
+    expect(yield* Effect.promise(() => response.json())).toEqual({ ids: ["fact-2"] });
+    expect(ingested).toEqual([[background]]);
+  }),
+);
+
 it.effect("acknowledges nothing when the outbox did not take the facts", () =>
   Effect.gen(function* () {
     const response = yield* post({ settled: false }, valid);

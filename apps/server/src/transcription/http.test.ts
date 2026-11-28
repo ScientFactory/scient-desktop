@@ -281,7 +281,8 @@ it.live(
         (yield* command({ action: "update", ...options, id, maxAudioBytes: 50_000 })).body
           .maxAudioBytes,
       ).toBe(50_000);
-      expect((yield* command({ action: "list" })).body[0].uploadConsent).toBeUndefined();
+      // The same destination keeps the person's consent.
+      expect((yield* command({ action: "list" })).body[0].uploadConsent).toBe(true);
       const projectId = ProjectId.make("project-intended");
       const scopedAccount = (yield* accounts.snapshot).accounts.find(
         (row) => row.accountId === accountId,
@@ -371,6 +372,88 @@ it.live("migrates origin-bound keys once and keeps external references on the le
       expect((yield* accounts.snapshot).accounts).toHaveLength(0);
     }).pipe(Effect.provide(engines));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "offers a connection whose key is in Accounts, and keeps consent when an engine moves to it",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const { service: accounts } = yield* makeHarness();
+      const { accountId } = yield* accounts.save({
+        name: "OpenRouter",
+        details: { kind: "api-key", sites: ["openrouter.ai"], auth: { type: "bearer" } },
+        secrets: { token: { type: "scient", value: "synthetic-shared-key" } },
+      });
+      const connection = {
+        id: "shared-router",
+        name: "OpenRouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        protocol: "openai-completions" as const,
+        models: [],
+        credentialId: null,
+        accountId,
+      };
+      const engines = Cloud.layer.pipe(
+        Layer.provide(Layer.succeed(AccountsService, accounts)),
+        Layer.provide(
+          Layer.mock(ScientServerSettings)({
+            committedCustomModels: () => ({ revision: 0, connections: [connection] }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              customModels: { revision: 0, connections: [connection] },
+            }),
+          }),
+        ),
+        Layer.provide(ServerConfig.layerTest(dir, dir)),
+        Layer.provide(NodeServices.layer),
+      );
+      const service = yield* Cloud.CloudEngines.pipe(Effect.provide(engines));
+      expect(
+        (yield* service.savedKeys("https://openrouter.ai")).map(({ id, kind }) => [kind, id]),
+      ).toEqual([
+        ["account", accountId],
+        ["custom-model", connection.id],
+      ]);
+      // Moving the engine to the connection's key keeps the person's consent to that destination.
+      const engine = {
+        provider: "openrouter" as const,
+        model: "whisper",
+        maxAudioBytes: 1_000_000,
+      };
+      const added = (yield* service.execute({ action: "add", ...engine, accountId })) as {
+        id: string;
+      };
+      yield* service.execute({ action: "set-upload-consent", id: added.id, allowed: true });
+      const rebound = yield* service.execute({
+        action: "update",
+        id: added.id,
+        ...engine,
+        customModelConnectionId: connection.id,
+      });
+      expect(rebound).toMatchObject({ uploadConsent: true });
+      // A new destination asks again.
+      const other = yield* accounts.save({
+        name: "Other speech",
+        details: { kind: "api-key", sites: ["speech.example.com"], auth: { type: "bearer" } },
+        secrets: { token: { type: "scient", value: "synthetic-other-key" } },
+      });
+      const moved = yield* service.execute({
+        action: "update",
+        id: added.id,
+        provider: "compatible",
+        baseUrl: "https://speech.example.com/v1",
+        model: "whisper",
+        maxAudioBytes: 1_000_000,
+        accountId: other.accountId,
+      });
+      expect(moved).not.toHaveProperty("uploadConsent");
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.live("uses the saved Custom models binding by reference and reconnects after removal", () =>

@@ -1508,6 +1508,10 @@ export interface DesktopPreviewBridge {
     readonly targetProfileId: string;
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
     readonly keepSites?: ReadonlyArray<string>;
+    /** Round 6e: the generation an agent's refresh was decided in; its cookies go there. */
+    readonly targetGeneration?: number;
+    /** Round 6f: an agent's refresh, whose write asks its own backend if it still stands. */
+    readonly operationId?: string;
     // SCIENT-FORK:END
   }) => Promise<BrowserImportResult>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;

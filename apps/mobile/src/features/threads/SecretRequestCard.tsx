@@ -1,6 +1,8 @@
 import {
   secretRequestAnswerInput,
   secretRequestDisplay,
+  accountCardLabel,
+  accountCardOutcome,
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestLink,
@@ -38,7 +40,13 @@ import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
 // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
-import { isSignInCodeRequest } from "@t3tools/shared/scientAccountSecretRequest";
+import {
+  isAccountSecretRequest,
+  isSignInCodeRequest,
+} from "@t3tools/shared/scientAccountSecretRequest";
+import { useNavigation } from "@react-navigation/native";
+import { accountsEnvironment } from "../../state/accounts";
+import { useEnvironmentQuery } from "../../state/query";
 // SCIENT-FORK:END
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
@@ -51,9 +59,18 @@ export function SecretRequestCard(props: {
   readonly iconColor: ColorValue;
 }) {
   const m = useMessages();
+  const gt = useGT();
+  const navigation = useNavigation();
   const { item, visibility } = props.projectedItem;
+  // SCIENT-FORK:START — Scient Accounts: an Accounts card ends as Accounts says it did.
+  const { data: accounts } = useEnvironmentQuery(
+    accountsEnvironment.snapshot({ environmentId: props.environmentId, input: {} }),
+  );
+  // SCIENT-FORK:END
   if (item.type !== "secret_request") return null;
   const display = secretRequestDisplay(item, visibility, m);
+  const outcome = accountCardOutcome(accounts, item.id);
+  const accountLabel = accountCardLabel(item, outcome, m);
   if (display.kind === "pending") {
     return (
       <PendingSecretRequestForm
@@ -73,8 +90,17 @@ export function SecretRequestCard(props: {
     <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
       <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
       <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
-        {item.label} · {display.label}
+        {item.label} · {accountLabel ?? display.label}
       </Text>
+      {outcome === "saved" ? (
+        <Button
+          label={gt("Open in Accounts")}
+          tone="text"
+          onPress={() =>
+            navigation.navigate("SettingsAccounts", { environmentId: props.environmentId })
+          }
+        />
+      ) : null}
     </View>
   );
 }
@@ -100,7 +126,7 @@ function PendingSecretRequestForm(props: {
   const canUseReferences = useEnvironmentScope(props.environmentId, AuthProvidersManageScope);
   // A reference answers one value, so a card with fields is always typed.
   const sources =
-    multiple || !canUseReferences
+    multiple || !canUseReferences || isAccountSecretRequest(item.id)
       ? NO_SOURCES
       : secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
@@ -289,7 +315,13 @@ function PendingSecretRequestForm(props: {
       ) : null}
       <Button
         // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
-        label={isSignInCodeRequest(item.id) ? gt("Send code") : gt("Save securely")}
+        label={
+          isSignInCodeRequest(item.id)
+            ? gt("Send code")
+            : isAccountSecretRequest(item.id)
+              ? gt("Save to Accounts")
+              : gt("Save securely")
+        }
         // SCIENT-FORK:END
         tone="primary"
         fullWidth

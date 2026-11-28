@@ -18,9 +18,13 @@ Go to **Settings → Providers → Text generators** and choose **Add generator*
   `http://localhost:11434/v1` or LM Studio. Local endpoints usually need no key. The environment's
   server makes the requests, so on a remote environment `localhost` means that machine, not yours.
 
-Give it a name if you add more than one from the same service. Your key is stored on the
-environment, like other [secrets](./secrets.md), and can come from a secret provider instead of
-being typed in.
+Give it a name if you add more than one from the same service. A key saved in
+[Accounts & secrets](./accounts.md) for that service appears above the key field: choose it, and the
+generator uses whatever that key is now, so replacing it in Accounts reaches the generator too. The
+key goes only to an address it is saved for, and only a key for all projects fits, since a
+generator writes for every project. **Add new…** saves a key there. Choose **Type a key** to read
+it from a secret provider instead, like other [secrets](./secrets.md). A key typed into a
+generator moves into Accounts once, as a key for that generator only.
 
 Scient lists the service's models to check the connection, then shows the model picker for each
 text task so you can switch any of them to the new generator, or keep what they use. **Test** next

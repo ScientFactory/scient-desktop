@@ -19,7 +19,12 @@ export interface TextGeneratorConnection {
 /** Why a model API call failed, worded for the person who configured it. */
 export class TextGeneratorRequestError extends Schema.TaggedError<TextGeneratorRequestError>()(
   "TextGeneratorRequestError",
-  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    // SCIENT-FORK: Scient Accounts records a refused key from the API's answer.
+    status: Schema.optional(Schema.Number),
+  },
 ) {}
 
 export interface TextGeneratorDriver {
@@ -97,11 +102,22 @@ const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema
   );
   const body = yield* response.json.pipe(Effect.orElseSucceed((): unknown => undefined));
   if (response.status < 200 || response.status >= 300) {
-    const message = decodeApiErrorBody(body).pipe((option) =>
+    // SCIENT-FORK:START — Scient Accounts: an error never repeats the key the request sent.
+    const reported = decodeApiErrorBody(body).pipe((option) =>
       option._tag === "Some" ? option.value.error.message : undefined,
     );
+    const sent = [
+      request.headers["x-api-key"],
+      request.headers.authorization?.replace(/^Bearer\s+/i, ""),
+    ].filter((key): key is string => Boolean(key && key.length >= 4));
+    const message = sent.reduce(
+      (text, key) => text?.replaceAll(key, "[redacted]"),
+      reported as string | undefined,
+    );
+    // SCIENT-FORK:END
     return yield* new TextGeneratorRequestError({
       detail: describeStatus(label, response.status, message),
+      status: response.status,
     });
   }
   return yield* Schema.decodeUnknownEffect(schema)(body).pipe(

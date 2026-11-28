@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { detectLoginFields, type LoginField } from "@t3tools/shared/scientLoginFields";
+import { answerStaySignedIn } from "./loginFields.ts";
 
 const field = (type: string, autocomplete = "", usable = true): LoginField => ({
   type,
@@ -97,5 +98,56 @@ describe("login field selection", () => {
           labelled(label, "password"),
         ]),
       ).toEqual({ username: 0, password: 1, otp: -1, other: -1 });
+  });
+});
+
+describe("answerStaySignedIn", () => {
+  /** Microsoft's page after a sign-in: "Don't show this again", No and Yes. */
+  const kmsi = (origin = "https://login.microsoftonline.com") => {
+    const clicked: string[] = [];
+    const element = (name: string, extra: Record<string, unknown> = {}) => ({
+      textContent: name,
+      value: "",
+      click: () => void clicked.push(name),
+      ...extra,
+    });
+    const box = element("don't show again", {
+      checked: false,
+      disabled: false,
+      name: "DontShowAgain",
+    });
+    const buttons = [element("No"), element("Yes")];
+    const page = {
+      origin,
+      document: {
+        body: { innerText: "Stay signed in?\nDon't show this again" },
+        querySelector: () => null,
+        querySelectorAll: (selector: string) =>
+          (selector.includes("checkbox") ? [box] : buttons) as never,
+      },
+    };
+    const login = {
+      visible: () => true,
+      rememberBox: (boxes: ReadonlyArray<unknown>) => boxes[0],
+    } as unknown as Parameters<typeof answerStaySignedIn>[3];
+    return { page, login, clicked };
+  };
+
+  it("ticks Don't show this again and answers Yes, on the sign-in's own origin only", () => {
+    const here = kmsi();
+    expect(
+      answerStaySignedIn(here.page, "https://login.microsoftonline.com", undefined, here.login),
+    ).toBe(true);
+    expect(here.clicked).toEqual(["don't show again", "Yes"]);
+    const elsewhere = kmsi("https://evil.example");
+    expect(
+      answerStaySignedIn(
+        elsewhere.page,
+        "https://login.microsoftonline.com",
+        undefined,
+        elsewhere.login,
+      ),
+    ).toBe(false);
+    expect(elsewhere.clicked).toEqual([]);
   });
 });

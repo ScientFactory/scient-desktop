@@ -51,7 +51,8 @@ times out, or returns an invalid correction, Scient falls back to the exact
 original transcript.
 
 To use a cloud speech engine, choose its card in **Settings → Voice & Transcription**.
-The card shows where audio goes. Speech keys are managed in **Accounts & secrets**.
+The card shows where audio goes. Its keys are in **Accounts & secrets**; **Keys** on the Voice page
+opens them.
 
 Voice dictation is available in the desktop app. The macOS voice runtime
 requires macOS 12 or newer. A recording is limited to three minutes. If no
@@ -132,8 +133,10 @@ model. The original audio stays at its source.
 
 ## Cloud speech engines
 
-Under **Cloud engines**, select **Add a provider…**. The picker can use a
-sealed bearer key from **Accounts & secrets** or a saved **Custom models**
-connection for the provider's exact origin. A connection test sends a short
+Under **Cloud engines**, select **Add a provider…**. **Key** offers the keys in
+**Accounts & secrets** and the saved **Custom models** connections for the provider's
+address, and starts on a connection's key when one matches. **Add a key in Accounts…** saves an
+ordinary key there. **Manage key…** on an engine opens its key in Accounts. Changing an engine's
+key for the same address keeps your choice to send it dictation; a new address asks again. A connection test sends a short
 silent sample. Choose **Use for dictation** to allow that engine to receive
 microphone clips and any supported Words hints. Choose a default engine for lessons and meetings separately under **Recordings**.

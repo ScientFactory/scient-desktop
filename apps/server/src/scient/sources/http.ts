@@ -208,8 +208,9 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
       ...(yield* ZoteroTransports),
       webKey: yield* zoteroKeyLookup({ actor: "user" }),
     };
-    const researchKeys = yield* researchKeysReader();
-    readSourceCategoryKeysFrom(researchKeys);
+    const researchKeys = yield* researchKeysReader("person");
+    // Background category passes aren't the person's own action: agents' rules apply.
+    readSourceCategoryKeysFrom(yield* researchKeysReader());
     const lookup = yield* SourceIdentifierLookup;
     const batchLookup = yield* SourceIdentifierBatchLookup;
     const keyed = {

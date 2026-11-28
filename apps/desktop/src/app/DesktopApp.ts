@@ -17,6 +17,9 @@ import { configureSpelling } from "../scient/spelling/ipc.ts";
 // SCIENT-FORK:START — standing dev app controller channel
 import * as DevLaunchControl from "../scient/devLaunch/DevLaunchControl.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keeps running in the background.
+import * as DesktopBackgroundRunning from "../scient/backgroundRunning/DesktopBackgroundRunning.ts";
+// SCIENT-FORK:END
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
@@ -463,6 +466,9 @@ const startup = Effect.gen(function* () {
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* DesktopStartupRecovery.listen;
+  // SCIENT-FORK:START — Scient keeps running in the background: the Windows/Linux tray icon.
+  yield* (yield* DesktopBackgroundRunning.DesktopBackgroundRunning).start;
+  // SCIENT-FORK:END
   const backendStarted = yield* startLocalBackend.pipe(
     Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
   );

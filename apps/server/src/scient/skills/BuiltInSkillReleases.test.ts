@@ -29,6 +29,7 @@ describe("Scient built-in skill releases", () => {
       "scient.improve-workspace-readiness": true,
       "scient.skill-authoring": true,
       "scient.connector-authoring": true,
+      "scient.website-account-automation": true,
       "scient.pdf-authoring": true,
       "scient.latex-authoring": true,
       "scient.overleaf-sync": true,

@@ -1,12 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+// SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+import * as Schema from "effect/Schema";
+// SCIENT-FORK:END
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
   attentionTransitionRows,
   terminalTransitionRows,
   shouldAlertForActivity,
+  // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+  alertForTerminalAggregate,
+  // SCIENT-FORK:END
 } from "./agentActivityAlerts.ts";
+// SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+import { androidAlertForState } from "./FcmDeliveries.ts";
+// SCIENT-FORK:END
 
 const state: RelayAgentActivityState = {
   environmentId: EnvironmentId.make("env"),
@@ -27,6 +36,10 @@ const preferences = {
   notifyOnCompletion: true,
   notifyOnFailure: true,
 };
+// SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+const encodeStored = Schema.encodeSync(Schema.fromJsonString(RelayAgentActivityState));
+const decodeStored = Schema.decodeSync(Schema.fromJsonString(RelayAgentActivityState));
+// SCIENT-FORK:END
 const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
@@ -102,4 +115,34 @@ describe("shared agent activity policy", () => {
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
   });
+
+  // SCIENT-FORK:START — Scient Accounts: a silent row is shown, never alerted.
+  it("shows a silent row, fresh and truly dated, and alerts on it on neither platform", () => {
+    const done = { ...state, phase: "completed" as const, headline: "Signed in" };
+    const silent = { ...done, silent: true as const };
+    // Kept as the relay keeps a row, in its stored JSON.
+    expect(decodeStored(encodeStored(silent))).toEqual(silent);
+    const previousAggregate = aggregate([state]);
+    const nextAggregate = aggregate([silent]);
+    expect(nextAggregate.activities).toMatchObject([{ phase: "completed", silent: true }]);
+    const transition = { previousAggregate, preferences, nowMs: 0, includeUnobserved: true };
+    // The same row, not silent, would alert: only the flag keeps it quiet.
+    expect(
+      terminalTransitionRows({ ...transition, nextAggregate: aggregate([done]) }),
+    ).toHaveLength(1);
+    expect(terminalTransitionRows({ ...transition, nextAggregate })).toEqual([]);
+    expect(shouldAlertForActivity({ ...silent, preferences, nowMs: 0 })).toBe(false);
+    expect(alertForTerminalAggregate({ aggregate: nextAggregate, preferences })).toBeNull();
+    expect(androidAlertForState(silent, preferences, 0)).toBeNull();
+    expect(androidAlertForState(done, preferences, 0)).not.toBeNull();
+    const waiting = { ...state, phase: "waiting_for_approval" as const, silent: true as const };
+    expect(
+      attentionTransitionRows({
+        previousAggregate,
+        nextAggregate: aggregate([waiting]),
+        preferences,
+      }),
+    ).toEqual([]);
+  });
+  // SCIENT-FORK:END
 });

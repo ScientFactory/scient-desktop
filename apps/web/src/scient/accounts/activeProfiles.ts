@@ -14,12 +14,15 @@ import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import { accountsState } from "./accountsState";
 
-type Records = ReadonlyArray<Pick<BrowserProfileRecord, "profileId" | "retired">>;
+type Records = ReadonlyArray<Pick<BrowserProfileRecord, "profileId" | "retired" | "removed">>;
 
 const NONE: ReadonlySet<string> = new Set();
 
+/** Profiles merged into Main, or removed (with Undo, or for good): none of them is in use. */
 const retiredIn = (records: Records): ReadonlySet<string> =>
-  new Set(records.flatMap((record) => (record.retired ? [record.profileId] : [])));
+  new Set(
+    records.flatMap((record) => (record.retired || record.removed ? [record.profileId] : [])),
+  );
 
 /** Profiles this desktop's server says the fold merged into Main; none until it answers. */
 const retiredAtom = Atom.make((get) => {

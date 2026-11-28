@@ -74,6 +74,9 @@ export interface ScientDesktopBridge {
   }) => Promise<boolean>;
   /** Scient: reads the keep-awake state, after applying a thread's choice when one is given. */
   keepAwake?: (choice?: KeepAwakeChoice) => Promise<KeepAwakeState>;
+  /** Scient: this machine's "Keep Scient running in the background" switch. */
+  getKeepRunningInBackground?: () => boolean;
+  setKeepRunningInBackground?: (enabled: boolean) => Promise<void>;
   /**
    * Scient: shows the threads with an unread answer on the app icon; zero clears it. `image` is
    * the Windows taskbar overlay. Resolves whether the platform accepted it.

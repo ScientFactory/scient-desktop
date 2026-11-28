@@ -466,6 +466,9 @@ jobs:
       - name: Explain Google's sign-in refusal in Electron's browser
         if: ${{ !cancelled() && matrix.part == 6 }}
         run: xvfb-run --auto-servernum node apps/desktop/scripts/google-sign-in-smoke.mjs
+      - name: Show a password's eye in Electron's browser
+        if: ${{ !cancelled() && matrix.part == 6 }}
+        run: xvfb-run --auto-servernum node apps/desktop/scripts/password-reveal-smoke.mjs
       # SCIENT-FORK:END
 
   # The web suite is the largest outside the server. In the shared Test job it
@@ -968,6 +971,10 @@ jobs:
       - name: Explain Google's sign-in refusal in Electron's browser on Windows
         working-directory: apps/desktop
         run: node scripts/google-sign-in-smoke.mjs
+      # Real Electron <webview> tab: a typed password's eye reveals it; a filled one has none.
+      - name: Show a password's eye in Electron's browser on Windows
+        working-directory: apps/desktop
+        run: node scripts/password-reveal-smoke.mjs
       # Managed references.bib: hard link, move aside, exchange, exclusive-copy fallback.
       - name: Sources project file publication tests on Windows
         working-directory: packages/scient-sources
@@ -1033,6 +1040,10 @@ jobs:
       - name: Explain Google's sign-in refusal in Electron's browser on macOS
         working-directory: apps/desktop
         run: node scripts/google-sign-in-smoke.mjs
+      # Real Electron <webview> tab: a typed password's eye reveals it; a filled one has none.
+      - name: Show a password's eye in Electron's browser on macOS
+        working-directory: apps/desktop
+        run: node scripts/password-reveal-smoke.mjs
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — a reused main push skips the jobs that save main's dependency store,

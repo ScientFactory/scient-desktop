@@ -72,30 +72,48 @@ export const installedChromiumBrowsers = (locations: Locations) =>
   });
 
 /**
- * Both launches store cookies the same way, so the second reads what the first wrote. On macOS
- * the user's own Keychain item is never asked for, and on Linux no keyring is.
+ * The folder is kept, one per Scient profile, so Google offers the account next time. Both launches
+ * leave cookie encryption to the browser's own store (macOS Keychain, Windows DPAPI, Linux's
+ * keyring), so no cookie stays on disk in plain text and the second reads what the first wrote.
  */
-const storageSwitch = (platform: NodeJS.Platform) =>
-  platform === "darwin"
-    ? ["--use-mock-keychain"]
-    : platform === "linux"
-      ? ["--password-store=basic"]
-      : [];
-
-const profileArgs = (folder: string, platform: NodeJS.Platform) => [
+const profileArgs = (folder: string, _platform: NodeJS.Platform) => [
   `--user-data-dir=${folder}`,
   "--no-first-run",
   "--no-default-browser-check",
-  ...storageSwitch(platform),
 ];
 
-/** An ordinary browser window: no debugging and no automation while the person signs in. */
-export const windowArgs = (folder: string, url: string, platform: NodeJS.Platform) => [
+export const WINDOW_SIZE = { width: 520, height: 760 } as const;
+
+/**
+ * An ordinary browser window: no debugging and no automation while the person signs in. Placed
+ * centred over Scient's window where it is given (not full screen).
+ */
+export const windowArgs = (
+  folder: string,
+  url: string,
+  platform: NodeJS.Platform,
+  position?: { readonly x: number; readonly y: number },
+) => [
   ...profileArgs(folder, platform),
-  "--window-size=520,760",
+  `--window-size=${WINDOW_SIZE.width},${WINDOW_SIZE.height}`,
+  ...(position ? [`--window-position=${Math.round(position.x)},${Math.round(position.y)}`] : []),
   "--new-window",
   url,
 ];
+
+const ACTIVATE_BY_PID = (pid: number) =>
+  `ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid}).activateWithOptions(3)`;
+
+/**
+ * macOS: the browser comes to the front, switching Spaces when Scient is full screen, which no
+ * other app's window can cover. Windows and Linux raise a new window themselves.
+ */
+function activate(child: NodeChildProcess.ChildProcess, platform: NodeJS.Platform) {
+  if (platform !== "darwin" || child.pid === undefined) return;
+  NodeChildProcess.spawn("osascript", ["-l", "JavaScript", "-e", ACTIVATE_BY_PID(child.pid)], {
+    stdio: "ignore",
+  }).on("error", () => undefined);
+}
 
 /** The same profile again, unseen, answering the DevTools protocol on two pipes and no port. */
 export const readArgs = (folder: string, platform: NodeJS.Platform) => [
@@ -267,6 +285,7 @@ export type ChromeWindowOutcome =
     };
 
 interface Run {
+  folder: string;
   window?: NodeChildProcess.ChildProcess;
   reader?: NodeChildProcess.ChildProcess;
   keep: boolean;
@@ -274,6 +293,8 @@ interface Run {
   quitRequested: boolean;
 }
 
+/** Folders being forgotten: no window opens on one until that ends. */
+const forgetting = new Set<string>();
 /** The one sign-in in progress, held from the first step until its folder is removed. */
 let running: Run | undefined;
 
@@ -283,26 +304,33 @@ let running: Run | undefined;
  */
 export async function signInInWindow(input: {
   readonly browser: ChromiumBrowser;
+  /** The Scient profile's own folder: kept, so the browser remembers its sign-ins there. */
   readonly folder: string;
   readonly url: string;
   readonly platform: NodeJS.Platform;
+  readonly position?: { readonly x: number; readonly y: number } | undefined;
+  /** False without a protected store: the folder goes once read, so no cookie stays on disk. */
+  readonly remember?: boolean;
 }): Promise<ChromeWindowOutcome> {
-  if (running) return { outcome: "busy" };
-  const run: Run = { keep: true, ended: false, quitRequested: false };
+  // Busy while its folder is being forgotten: the window never opens on a folder going away.
+  if (running || forgetting.has(input.folder)) return { outcome: "busy" };
+  const run: Run = { folder: input.folder, keep: true, ended: false, quitRequested: false };
   running = run;
   const { browser, folder, url, platform } = input;
   try {
-    // A folder left by an attempt whose clean-up failed would sign this one in as that one.
-    if (!(await removeFolder(folder))) return { outcome: "failed" };
     await NodeFS.promises.mkdir(folder, { recursive: true, mode: 0o700 });
     // Cancel may come before the window opens.
     if (!run.keep) return { outcome: "cancelled" };
-    const window = NodeChildProcess.spawn(browser.executable, windowArgs(folder, url, platform), {
-      stdio: "ignore",
-    });
+    const window = NodeChildProcess.spawn(
+      browser.executable,
+      windowArgs(folder, url, platform, input.position),
+      { stdio: "ignore" },
+    );
     run.window = window;
     const { started, ended } = lifecycle(window);
     if (!(await started)) return { outcome: "failed" };
+    activate(window, platform);
+    // Round 6m: it finishes only with Done, or the person closing it (Linux).
     await ended;
     if (!run.keep) return { outcome: "cancelled" };
     const jar = await readProfile(browser, folder, platform, run);
@@ -314,8 +342,37 @@ export async function signInInWindow(input: {
   } catch {
     return { outcome: "failed" };
   } finally {
-    await removeFolder(folder);
+    if (input.remember === false) await removeFolder(folder);
     running = undefined;
+  }
+}
+
+/** When the browser last wrote its sign-ins there: the folder's own time or its Local State's. */
+const lastUsed = async (folder: string) =>
+  Math.max(
+    ...(await Promise.all(
+      [folder, `${folder}/Local State`].map((path) =>
+        NodeFS.promises.stat(path).then(
+          (stat) => stat.mtimeMs,
+          () => 0,
+        ),
+      ),
+    )),
+  );
+
+/**
+ * Forget the sign-in window: its folder and every sign-in the browser kept there go. Not while
+ * its window is open (false: try again later), and with `since`, not if it was signed in to after.
+ */
+export async function forgetSignInWindow(folder: string, since?: string) {
+  if (running?.folder === folder || forgetting.has(folder)) return false;
+  // Marked at once, before any await: a sign-in starting meanwhile waits as busy (round 6d).
+  forgetting.add(folder);
+  try {
+    if (since !== undefined && (await lastUsed(folder)) > Date.parse(since)) return true;
+    return await removeFolder(folder);
+  } finally {
+    forgetting.delete(folder);
   }
 }
 

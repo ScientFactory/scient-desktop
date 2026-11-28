@@ -657,4 +657,133 @@ describe("Scient analytics contract", () => {
     expect(sparse?.properties).not.toHaveProperty("backendReadyBucket");
     expect(sparse?.properties).not.toHaveProperty("windowShownBucket");
   });
+
+  it("sends background-running summaries with closed values, counts only daily and at Quit", () => {
+    const daily = normalizeInheritedEvent(
+      "app.background.summary",
+      {
+        reason: "daily",
+        platform: "windows",
+        enabled: true,
+        setBy: "person",
+        windowlessCount: 4,
+        windowlessTimeBucket: "1-6h",
+        machineName: "PRIVATE-HOST",
+      },
+      context,
+    );
+    expect(daily).toEqual({
+      name: "app.background.summary",
+      privacyLevel: "essential",
+      priority: "summary",
+      properties: {
+        appVersion: "0.0.32",
+        buildChannel: "development",
+        contractRevision: ANALYTICS_CONTRACT_REVISION,
+        reason: "daily",
+        platform: "windows",
+        enabled: true,
+        setBy: "person",
+        windowlessCount: 4,
+        windowlessTimeBucket: "1-6h",
+      },
+    });
+
+    const launch = normalizeInheritedEvent(
+      "app.background.summary",
+      { reason: "launch", platform: "linux", enabled: "yes", setBy: "admin", windowlessCount: 2 },
+      context,
+    );
+    expect(launch?.properties).toMatchObject({
+      reason: "launch",
+      platform: "linux",
+      enabled: false,
+      setBy: "unknown",
+    });
+    expect(launch?.properties).not.toHaveProperty("windowlessCount");
+    const quit = normalizeInheritedEvent(
+      "app.background.summary",
+      { reason: "quit", platform: "windows", windowlessCount: 1, windowlessTimeBucket: "1-10m" },
+      context,
+    );
+    expect(quit?.properties).toMatchObject({
+      reason: "quit",
+      windowlessCount: 1,
+      windowlessTimeBucket: "1-10m",
+    });
+  });
+
+  it("sends background-running events with each kind's closed fields only", () => {
+    const normalize = (properties: Record<string, unknown>) =>
+      normalizeInheritedEvent("app.background.event", properties, context);
+    expect(
+      normalize({
+        kind: "quit",
+        platform: "linux",
+        via: "tray",
+        quitPrompt: "confirmed",
+        windowlessBucket: "6-24h",
+        reason: "error",
+        enabled: true,
+      }),
+    ).toEqual({
+      name: "app.background.event",
+      privacyLevel: "essential",
+      priority: "core",
+      properties: {
+        appVersion: "0.0.32",
+        buildChannel: "development",
+        contractRevision: ANALYTICS_CONTRACT_REVISION,
+        kind: "quit",
+        platform: "linux",
+        via: "tray",
+        quitPrompt: "confirmed",
+        windowlessBucket: "6-24h",
+      },
+    });
+    // A way to return that the kind cannot have, a raw time and a title never pass.
+    expect(
+      normalize({
+        kind: "window-returned",
+        platform: "windows",
+        via: "prompt",
+        windowlessBucket: 90_000,
+        windowTitle: "PRIVATE-CONTENT",
+      })?.properties,
+    ).toEqual({
+      appVersion: "0.0.32",
+      buildChannel: "development",
+      contractRevision: ANALYTICS_CONTRACT_REVISION,
+      kind: "window-returned",
+      platform: "windows",
+      via: "unknown",
+    });
+    expect(
+      normalize({ kind: "tray-failed", platform: "linux", reason: "no-icon", via: "tray" })
+        ?.properties,
+    ).toMatchObject({ kind: "tray-failed", reason: "no-icon" });
+    expect(
+      normalize({ kind: "tray-failed", platform: "linux", via: "tray" })?.properties,
+    ).not.toHaveProperty("via");
+    expect(
+      normalize({
+        kind: "setting-changed",
+        platform: "macos",
+        enabled: false,
+        previousSetBy: "default",
+        windowlessBucket: "under-1m",
+      })?.properties,
+    ).toEqual({
+      appVersion: "0.0.32",
+      buildChannel: "development",
+      contractRevision: ANALYTICS_CONTRACT_REVISION,
+      kind: "setting-changed",
+      platform: "macos",
+      enabled: false,
+      previousSetBy: "default",
+    });
+    expect(normalize({ kind: "PRIVATE-CONTENT", platform: "macos" })?.properties).toMatchObject({
+      kind: "unknown",
+    });
+  });
 });

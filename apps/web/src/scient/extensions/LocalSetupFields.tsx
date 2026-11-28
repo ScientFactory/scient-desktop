@@ -32,7 +32,7 @@ import { Switch } from "../../components/ui/switch";
 import { Textarea } from "../../components/ui/textarea";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
+import { ApiKeyAccountPicker, keyOptions } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { commandFailureMessage } from "./ExtensionsFeedback";
 import { updateConnector } from "./extensionsState";
@@ -178,10 +178,13 @@ export function LocalSetupFields({
                     : gt("Paste a new key")
                 }
                 value={key.ref}
-                options={accounts.map((account) => ({
-                  value: keyRef(account.accountId),
-                  name: account.name,
-                }))}
+                options={keyOptions(
+                  { accounts },
+                  { kind: "local-connector", id: "" },
+                  (account) => account.details.kind === "api-key",
+                  (account) => keyRef(account.accountId),
+                  key.ref,
+                )}
                 onChange={(event) => onChange(field.key, { ...key, ref: event.target.value })}
               />
               {key.ref ? null : (

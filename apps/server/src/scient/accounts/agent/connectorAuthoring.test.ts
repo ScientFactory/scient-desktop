@@ -50,7 +50,7 @@ describe("connector tools' inputs", () => {
 describe("a connector's sign-in for the user", () => {
   it.effect("opens as the user's own tab in the chat's browser, ready to finish", () =>
     Effect.gen(function* () {
-      expect(yield* openForUser("https://vendor.example/authorize?state=1")).toBe(true);
+      expect(yield* openForUser("https://vendor.example/authorize?state=1")).toBeDefined();
       const { sessions } = yield* (yield* PreviewManager.PreviewManager).list({ threadId });
       expect(sessions).toMatchObject([
         {

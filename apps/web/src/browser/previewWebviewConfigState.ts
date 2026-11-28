@@ -12,6 +12,12 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { environmentCatalog } from "~/connection/catalog";
 
 import { tunnelsEnvironmentLoopback } from "./browserTargetResolver";
+// SCIENT-FORK:START — Scient Accounts: a cleared profile's tab follows its new partition.
+import {
+  profileGenerationAtom,
+  syncProfileGenerations,
+} from "~/scient/accounts/profileGenerations";
+// SCIENT-FORK:END
 
 const PREVIEW_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const PREVIEW_CONFIG_IDLE_TTL_MS = 10 * 60_000;
@@ -56,7 +62,12 @@ const loadPreviewWebviewConfig = (
   }
 
   return Effect.tryPromise({
-    try: () => bridge.getPreviewConfig(environmentId, profileId, tunnelLoopback),
+    // SCIENT-FORK:START — Scient Accounts: the desktop knows the profile's generation first.
+    try: () =>
+      syncProfileGenerations(environmentId).then(() =>
+        bridge.getPreviewConfig(environmentId, profileId, tunnelLoopback),
+      ),
+    // SCIENT-FORK:END
     catch: (cause) => new PreviewWebviewConfigLoadError({ environmentId, cause }),
   });
 };
@@ -80,15 +91,18 @@ const parseConfigKey = (key: string): { environmentId: EnvironmentId; profileId?
 const previewWebviewConfigAtom = Atom.family((key: string) => {
   const { environmentId, profileId } = parseConfigKey(key);
   // The catalog knows the target before the environment connects, and a change re-routes the partition.
-  return Atom.make((get) =>
-    loadPreviewWebviewConfig(
+  return Atom.make((get) => {
+    // SCIENT-FORK:START — Scient Accounts: a Clear's new generation is a new partition.
+    get(profileGenerationAtom(JSON.stringify([environmentId, profileId ?? ""])));
+    // SCIENT-FORK:END
+    return loadPreviewWebviewConfig(
       environmentId,
       profileId,
       tunnelsEnvironmentLoopback(
         get(environmentCatalog.catalogValueAtom).entries.get(environmentId)?.target,
       ),
-    ),
-  ).pipe(
+    );
+  }).pipe(
     Atom.swr({
       staleTime: PREVIEW_CONFIG_STALE_TIME_MS,
       revalidateOnMount: true,

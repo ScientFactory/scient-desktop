@@ -1,6 +1,6 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
-  ACCOUNTS_PROTOCOL,
+  ACCOUNTS_PROTOCOL_1,
   ThreadId,
   type DesktopCapturedSignIn,
   type EnvironmentId,
@@ -30,7 +30,7 @@ export function watchSignInKeeps(
     const attempt = snapshot.attempts?.find(
       (item) => item.threadId === tab.threadId && item.tabId === tab.tabId,
     );
-    if ((snapshot.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL || !attempt) return;
+    if ((snapshot.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL_1 || !attempt) return;
     void runAtomCommand(
       registry,
       accountsState.keepTyped,

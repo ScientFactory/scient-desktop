@@ -962,6 +962,51 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START — background running comes from the desktop's bootstrap, never the env.
+  it.effect("takes background running from the desktop bootstrap, not the environment", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-background-running-",
+      });
+      const resolve = (bootstrap: Option.Option<DesktopBackendBootstrapValue>) =>
+        Effect.gen(function* () {
+          const bootstrapFd = Option.isSome(bootstrap)
+            ? Option.some(yield* openBootstrapFd(bootstrap.value))
+            : Option.none<number>();
+          const resolved = yield* resolveServerConfig(
+            { ...minimalDesktopFlags(baseDir), bootstrapFd },
+            Option.none(),
+          ).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                ConfigProvider.layer(
+                  ConfigProvider.fromEnv({ env: { SCIENT_DESKTOP_BACKGROUND_RUNNING: "true" } }),
+                ),
+                NetService.layer,
+              ),
+            ),
+            Effect.provideService(HostProcess.Environment, {
+              SCIENT_DESKTOP_BACKGROUND_RUNNING: "true",
+            }),
+          );
+          return resolved.desktopBackgroundRunning;
+        });
+
+      assert.equal(
+        yield* resolve(Option.some(makeDesktopBootstrap({ desktopBackgroundRunning: true }))),
+        true,
+      );
+      assert.equal(
+        yield* resolve(Option.some(makeDesktopBootstrap({ desktopBackgroundRunning: false }))),
+        false,
+      );
+      // A desktop-mode server its desktop did not launch, in a shell that exported such a flag.
+      assert.equal(yield* resolve(Option.none()), undefined);
+    }),
+  );
+  // SCIENT-FORK:END
+
   it.effect("reports saved settings as the source of endpoints read from settings.json", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

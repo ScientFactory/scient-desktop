@@ -6,7 +6,13 @@ import {
 import type { Session } from "electron";
 import * as Schema from "effect/Schema";
 
-const ProfileScope = Schema.fromJsonString(Schema.Tuple([Schema.String, BrowserProfileId]));
+// A profile's later generations add theirs (round 6b): the same profile, another partition.
+const ProfileScope = Schema.fromJsonString(
+  Schema.Union([
+    Schema.Tuple([Schema.String, BrowserProfileId]),
+    Schema.Tuple([Schema.String, BrowserProfileId, Schema.Int]),
+  ]),
+);
 const decodeProfileScope = Schema.decodeOption(ProfileScope);
 const identities = new WeakMap<
   object,
@@ -22,7 +28,7 @@ export function rememberAccountsSession(
   if (namespace === "profile") {
     const decoded = decodeProfileScope(scope);
     if (decoded._tag === "None") return;
-    const [environmentId, profileId] = decoded.value;
+    const [environmentId, profileId] = decoded.value as readonly [string, string];
     identities.set(session, {
       environmentId,
       profileId,

@@ -26,7 +26,7 @@ import { XMLParser } from "fast-xml-parser";
 import { ARXIV_IDS_PER_REQUEST, lookupArxivIds } from "./ArxivIdentifierLookup.ts";
 import { METADATA_USER_AGENT, requestMetadata, type MetadataRequest } from "./metadataHttp.ts";
 import { createSerialRequestLane, runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
-import type { RequestPace, ResearchKeys } from "./SourceIdentifierResolver.ts";
+import { gatedRequest, type RequestPace, type ResearchKeys } from "./SourceIdentifierResolver.ts";
 import { scientSourceStoreKey } from "./SourcesBackend.ts";
 
 /** Sources looked up together; each registry answers a chunk in one or two requests. */
@@ -394,8 +394,8 @@ async function lookupSourceCategories(
   } = {},
 ): Promise<ReadonlyMap<string, ScientSourceCategories>> {
   const inputs = records.flatMap((record) => lookupInput(record) ?? []);
-  const request = options.request ?? requestMetadata;
   const keys = options.keys ?? {};
+  const request = gatedRequest(options.request ?? requestMetadata, keys);
   const now = (options.now ?? (() => new Date()))();
   const [pubmed, openAlex, arxiv] = await Promise.all([
     pubmedCategories(inputs, { request, keys, pace: options.pace ?? runWithNcbiRequestLimit }),

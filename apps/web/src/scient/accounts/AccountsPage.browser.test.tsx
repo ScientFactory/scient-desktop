@@ -14,10 +14,17 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { render } from "../../../test/render";
-import { AccountRow, ApiKeysDialog, MainSiteChoice } from "./AccountsPage";
+import {
+  AccountRow,
+  ApiKeysDialog,
+  MainSiteChoice,
+  SavedPasswordsDialog,
+  SignInCodesDialog,
+} from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, googleRecovery, ProfileDetail } from "./BrowserProfiles";
 import { RemoteComputers } from "./RemoteComputers";
+import { RemovedBand } from "./RemovedBand";
 
 const state = vi.hoisted(() => ({
   open: vi.fn(),
@@ -29,6 +36,12 @@ const state = vi.hoisted(() => ({
   results: {} as Record<string, unknown>,
   environments: [] as unknown[],
   copy: vi.fn(),
+  toast: vi.fn(),
+  refresh: vi.fn(),
+}));
+vi.mock("~/components/ui/toast", async (original) => ({
+  ...(await original<typeof import("~/components/ui/toast")>()),
+  toastManager: { add: state.toast },
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -50,6 +63,11 @@ vi.mock("~/state/environments", async (original) => ({
 }));
 
 vi.mock("~/browser/openFileInPreview", () => ({ openUrlInPreview: state.open }));
+vi.mock("~/scient/sameHost", async () => {
+  const { Atom } = await import("effect/reactivity");
+  // This desktop runs the "synthetic" server; "remote-primary" is a primary on another computer.
+  return { sameHostEnvironmentIdsAtom: Atom.make(new Set(["synthetic"])) };
+});
 vi.mock("./mainFill", async (original) => ({
   ...(await original<typeof import("./mainFill")>()),
   copySignInIntoMain: state.copy,
@@ -73,7 +91,11 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: {} }),
 }));
 vi.mock("./useAccounts", () => ({
-  useAccounts: () => ({ data: { accountsProtocol: state.protocol }, canWrite: true }),
+  useAccounts: () => ({
+    data: { accountsProtocol: state.protocol },
+    canWrite: true,
+    refresh: state.refresh,
+  }),
   useAccountCommand: (command: { label: string }) => async (input: unknown) => {
     state.calls.push(["record", input]);
     return { ok: true, value: state.results[command.label] ?? {} };
@@ -154,31 +176,6 @@ it("signs in again through Scient, then removes the status and action once signe
     .not.toBeInTheDocument();
 });
 
-it("says once that new tabs now open in Main, until dismissed", async () => {
-  using _fixture = fixture();
-  state.settings = { mainDefaultNotice: true };
-  const line = "New tabs now open in Main, which has your sign-ins. You can change this here.";
-  const view = () => (
-    <BrowserProfiles
-      environmentId={EnvironmentId.make("synthetic")}
-      snapshot={{ profiles: [], accounts: [] } as unknown as AccountsSnapshot}
-      canWrite
-      onImport={() => undefined}
-      renderSignIn={() => null}
-    />
-  );
-  try {
-    await using screen = await render(view());
-    await expect.element(page.getByText(line)).toBeVisible();
-    await page.getByRole("button", { name: "Dismiss" }).click();
-    await vi.waitFor(() => expect(state.settings.mainDefaultNotice).toBe(false));
-    await screen.rerender(view());
-    await expect.element(page.getByText(line)).not.toBeInTheDocument();
-  } finally {
-    state.settings = {};
-  }
-});
-
 it("hides a profile merged into Main though this client lists it, and Undo brings it back", async () => {
   using _fixture = fixture();
   const personal = { id: "personal", name: "Personal", kind: "persistent" as const };
@@ -224,7 +221,7 @@ it("says a held sign-in needs the person, with its Sign in on the row", async ()
   await using _screen = await render(
     row({ ...account, signIn: { state: "failed", at: "2026-11-04T02:00:00.000Z" } }),
   );
-  await expect.element(page.getByText("Sign in needed", { exact: true })).toBeVisible();
+  await expect.element(page.getByText(/^Sign-in failed · /)).toBeVisible();
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await vi.waitFor(() =>
     expect(state.calls).toContainEqual([
@@ -251,48 +248,35 @@ it("says an older server can't sign in to a website row from here", async () => 
 
 it.each([
   [
-    "a profile from a browser there to sign in, then refreshes it",
+    "a profile from a browser: Sign in again copies its sign-ins again",
     { browser: "chrome", profileName: "Yaacov", importedAt: "2026-11-03T00:00:00.000Z" },
-    "Signed out of Google.",
-    "Refresh from Chrome",
     "refresh",
   ],
-  [
-    "a profile with no source to a browser, then to import that profile",
-    undefined,
-    "Signed out of Google.",
-    "Import from a browser…",
-    "import",
-  ],
-] as const)(
-  "sends %s, never to a Google sign-in here",
-  async (_name, source, message, action, ran) => {
-    const actions = { refresh: vi.fn(), importProfile: vi.fn() };
-    await using _screen = await render(
-      <div style={{ width: 220 }}>
-        <ProfileDetail
-          email="a-very-long-address-that-cannot-fit@example.com"
-          signedOut
-          recover={googleRecovery(source as never, actions)}
-        />
-      </div>,
-    );
-    await expect.element(page.getByText(message, { exact: true })).toBeVisible();
-    await expect
-      .element(page.getByRole("button", { name: "Sign in", exact: true }))
-      .not.toBeInTheDocument();
-    // The line wraps in a narrow row: nothing is cut off, and the action stays inside it.
-    const line = page.getByText(message, { exact: true }).element();
-    expect(line.scrollWidth).toBeLessThanOrEqual(line.clientWidth);
-    const button = page.getByRole("button", { name: action, exact: true });
-    expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
-      button.element().closest("div")!.getBoundingClientRect().right,
-    );
-    await button.click();
-    expect(actions.refresh).toHaveBeenCalledTimes(ran === "refresh" ? 1 : 0);
-    expect(actions.importProfile).toHaveBeenCalledTimes(ran === "import" ? 1 : 0);
-  },
-);
+  ["a profile with no browser: Sign in again imports one", undefined, "import"],
+] as const)("without a Chrome window, %s at once", async (_name, source, ran) => {
+  const actions = { refresh: vi.fn(), importProfile: vi.fn() };
+  await using _screen = await render(
+    <div style={{ width: 220 }}>
+      <ProfileDetail
+        email="a-very-long-address-that-cannot-fit@example.com"
+        signedOut
+        recover={googleRecovery(source as never, actions)}
+      />
+    </div>,
+  );
+  // One line: the address shortens, the button stays whole; no explanation text.
+  const button = page.getByRole("button", { name: "Sign in to Google again", exact: true });
+  await expect.element(button).toBeVisible();
+  expect(document.body.textContent).not.toContain("Signed out of Google");
+  const line = button.element().parentElement!;
+  expect(line.getBoundingClientRect().height).toBeLessThan(24);
+  expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
+    line.getBoundingClientRect().right + 1,
+  );
+  await button.click();
+  expect(actions.refresh).toHaveBeenCalledTimes(ran === "refresh" ? 1 : 0);
+  expect(actions.importProfile).toHaveBeenCalledTimes(ran === "import" ? 1 : 0);
+});
 
 it("offers Main a copy of another profile's working Google before an import", async () => {
   const copy = vi.fn();
@@ -304,8 +288,7 @@ it("offers Main a copy of another profile's working Google before an import", as
   await using _screen = await render(
     <ProfileDetail signedOut email={undefined} recover={googleRecovery(undefined, actions)} />,
   );
-  await expect.element(page.getByText("Signed out of Google.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Copy from Yaacov", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in to Google again", exact: true }).click();
   expect(copy).toHaveBeenCalledOnce();
   expect(actions.importProfile).not.toHaveBeenCalled();
 });
@@ -314,11 +297,11 @@ it.each([
   [
     "an imported profile",
     { browser: "chrome", profileName: "Y", importedAt: "2026-11-03T00:00:00.000Z" },
-    "Refresh from Chrome",
+    "Copy again from Chrome",
   ],
   ["Main with a profile to copy from", undefined, "Copy from Work"],
   ["Main with nothing to copy or import", undefined, "Import from a browser…"],
-] as const)("offers %s a sign-in in a Chrome window", async (name, source, other) => {
+] as const)("gives %s one Sign in again with two named ways", async (name, source, other) => {
   const chromeWindow = vi.fn();
   const actions = {
     refresh: vi.fn(),
@@ -333,8 +316,9 @@ it.each([
       recover={googleRecovery(source as never, actions)}
     />,
   );
-  await expect.element(page.getByRole("button", { name: other, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sign in in a Chrome window", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in to Google again", exact: true }).click();
+  await expect.element(page.getByRole("menuitem", { name: other, exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "New Google sign-in", exact: true }).click();
   expect(chromeWindow).toHaveBeenCalledOnce();
 });
 
@@ -348,7 +332,7 @@ it("shows only the address while Google accepts the profile", async () => {
   );
   await expect.element(page.getByText("a@example.com", { exact: true })).toBeVisible();
   await expect
-    .element(page.getByRole("button", { name: "Import from a browser…", exact: true }))
+    .element(page.getByRole("button", { name: "Sign in to Google again", exact: true }))
     .not.toBeInTheDocument();
 });
 
@@ -415,6 +399,8 @@ it("lists Main beside imported profiles, each showing where it came from", async
           directory: "Profile 1",
           importedAt: "2026-11-03T00:00:00.000Z",
         },
+        // Held by this computer's browser until its server starts again (round 6l).
+        unavailable: true,
       },
     ],
     accounts: [],
@@ -446,6 +432,11 @@ it("lists Main beside imported profiles, each showing where it came from", async
   expect(
     page.getByRole("button", { name: "Signed-in sites for Personal" }).element().textContent,
   ).not.toContain("Safari");
+  // regression: a held profile looked ready.
+  await expect.element(lab.getByText("Unavailable", { exact: true })).toBeVisible();
+  expect(
+    page.getByRole("button", { name: "Signed-in sites for Personal" }).element().textContent,
+  ).not.toContain("Unavailable");
 });
 
 it("records a sign-out on Main before its cookies go, and counts what Main holds", async () => {
@@ -739,13 +730,14 @@ it("shows both key consumers and lists their names before removal", async () => 
           account: value,
           service: value.details.kind === "api-key" ? value.details.sites[0] : undefined,
           stored: "accounts",
+          files: [],
           uses: [
             {
               label: "Custom models",
               consumerName: "Research chat",
               href: "/settings/custom-models",
             },
-            { label: "Transcription", consumerName: "Meeting notes", href: "/settings/voice" },
+            { label: "Voice", consumerName: "Meeting notes", href: "/settings/voice" },
           ],
         },
       ]}
@@ -758,7 +750,9 @@ it("shows both key consumers and lists their names before removal", async () => 
       onClose={() => undefined}
     />,
   );
-  await expect.element(page.getByText(/Used by Custom models and Transcription/)).toBeVisible();
+  await expect
+    .element(page.getByText(/Used by Custom models · Research chat and Voice · Meeting notes/))
+    .toBeVisible();
   const directory = import.meta.env.VITE_SCIENT_CREDENTIALS_SCREENSHOTS;
   if (directory) {
     for (const animation of document.getAnimations())
@@ -777,11 +771,409 @@ it("shows both key consumers and lists their names before removal", async () => 
   await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("menuitem", { name: "Replace key…" }).click();
   await expect.element(page.getByText("Custom models · Research chat")).toBeVisible();
-  await expect.element(page.getByText("Transcription · Meeting notes")).toBeVisible();
+  await expect.element(page.getByText("Voice · Meeting notes")).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
   expect(onEdit).toHaveBeenCalledWith(value);
   await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("menuitem", { name: "Remove…" }).click();
   await expect.element(page.getByText("Custom models · Research chat")).toBeVisible();
-  await expect.element(page.getByText("Transcription · Meeting notes")).toBeVisible();
+  await expect.element(page.getByText("Voice · Meeting notes")).toBeVisible();
+});
+
+it("removes a key at once where the server keeps it for Undo, naming what uses it", async () => {
+  const value: AccountSummary = {
+    ...account,
+    name: "Research gateway",
+    details: { kind: "api-key", sites: ["https://models.example.test"], auth: { type: "bearer" } },
+    secrets: { token: { source: { type: "scient" } } },
+  };
+  state.protocol = 2;
+  state.calls = [];
+  state.results["accounts:remove"] = { removalId: "synthetic-removal" };
+  state.toast.mockReset();
+  try {
+    await using _screen = await render(
+      <ApiKeysDialog
+        rows={[
+          {
+            id: value.accountId,
+            name: value.name,
+            account: value,
+            service: undefined,
+            stored: "accounts",
+            files: [],
+            uses: [{ label: "Custom models", href: "/settings/custom-models" }],
+          },
+        ]}
+        roots={[]}
+        environmentId={EnvironmentId.make("synthetic")}
+        canWrite
+        onEdit={() => undefined}
+        onActivity={() => undefined}
+        onKept={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    await page.getByRole("button", { name: "Account menu" }).click();
+    await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+    await vi.waitFor(() => expect(state.toast).toHaveBeenCalledOnce());
+    const [toast] = state.toast.mock.calls[0]! as [
+      { description: string; timeout: number; actionProps: { onClick: () => void } },
+    ];
+    expect(toast.description).toBe("Used by Custom models");
+    // Long enough to press, past the default five seconds.
+    expect(toast.timeout).toBeGreaterThan(5_000);
+    toast.actionProps.onClick();
+    await vi.waitFor(() =>
+      expect(state.calls).toEqual([
+        [
+          "record",
+          {
+            accountId: value.accountId,
+            updatedAt: value.updatedAt,
+            operationId: expect.any(String),
+          },
+        ],
+        ["record", { accountId: value.accountId, removalId: "synthetic-removal" }],
+      ]),
+    );
+  } finally {
+    state.protocol = 1;
+    delete state.results["accounts:remove"];
+  }
+});
+
+it("offers Undo on Accounts for the hour, one for a university's rows removed together", async () => {
+  state.protocol = 2;
+  state.calls = [];
+  const entry = (id: string, name: string, at: string, operationId?: string) => ({
+    accountId: AccountId.make(`acc_${id}`),
+    name,
+    removalId: `removal-${id}`,
+    ...(operationId ? { operationId } : {}),
+    until: at,
+  });
+  try {
+    await using _screen = await render(
+      <RemovedBand
+        environmentId={EnvironmentId.make("synthetic")}
+        canWrite
+        snapshot={{
+          removed: [
+            // One press, rows named apart; then two presses on one name, a moment apart.
+            entry("huji0001", "Hebrew University", "2026-11-26T10:00:00.000Z", "press-1"),
+            entry("huji0002", "huji.ac.il", "2026-11-26T10:00:00.400Z", "press-1"),
+            entry("openai01", "OpenAI", "2026-11-26T10:05:00.000Z", "press-2"),
+            entry("openai02", "OpenAI", "2026-11-26T10:05:01.000Z", "press-3"),
+          ],
+        }}
+      />,
+    );
+    const undo = page.getByRole("button", { name: "Undo" });
+    await expect.element(undo.nth(2)).toBeVisible();
+    expect(undo.elements()).toHaveLength(3);
+    await undo.first().click();
+    await vi.waitFor(() =>
+      expect(state.calls).toEqual([
+        ["record", { accountId: "acc_huji0001", removalId: "removal-huji0001" }],
+        ["record", { accountId: "acc_huji0002", removalId: "removal-huji0002" }],
+      ]),
+    );
+  } finally {
+    state.protocol = 1;
+  }
+});
+
+it("opens Full Disk Access in one click, and asks again afresh on return", async () => {
+  using _fixture = fixture();
+  state.calls = [];
+  state.primary = "synthetic";
+  const openFullDiskAccess = vi.fn(async () => true);
+  const relaunch = vi.fn(async () => true);
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: { openSystemSettings: vi.fn(), accounts: { openFullDiskAccess, relaunch } },
+  });
+  // The fresh check on return says it's still denied.
+  state.results["accounts:checkCodeSources"] = { messagesNeedAccess: true };
+  await using _screen = await render(
+    <SignInCodesDialog
+      sources={{ messages: true }}
+      host={{ computer: "Lab Mac", readable: false }}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      onClose={() => undefined}
+    />,
+  );
+  await page.getByRole("button", { name: "Open Full Disk Access" }).click();
+  expect(openFullDiskAccess).toHaveBeenCalledOnce();
+  expect(page.getByRole("button", { name: "Restart Scient" }).elements()).toHaveLength(0);
+  window.dispatchEvent(new Event("focus"));
+  await expect.element(page.getByRole("button", { name: "Restart Scient" })).toBeVisible();
+  // It asked afresh, and wrote no switch.
+  expect(state.calls).toContainEqual(["record", {}]);
+  expect(state.calls).not.toContainEqual(["record", { messages: true }]);
+  await page.getByRole("button", { name: "Restart Scient" }).click();
+  expect(relaunch).toHaveBeenCalledOnce();
+});
+
+it("turns On when the person comes back with access granted, with no restart", async () => {
+  using _fixture = fixture();
+  state.primary = "synthetic";
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: {
+      openSystemSettings: vi.fn(),
+      accounts: { openFullDiskAccess: vi.fn(async () => true), relaunch: vi.fn() },
+    },
+  });
+  state.results["accounts:checkCodeSources"] = { messagesNeedAccess: false };
+  await using _screen = await render(
+    <SignInCodesDialog
+      sources={{ messages: true }}
+      host={{ computer: "Lab Mac", readable: false }}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      onClose={() => undefined}
+    />,
+  );
+  await page.getByRole("button", { name: "Open Full Disk Access" }).click();
+  window.dispatchEvent(new Event("focus"));
+  await expect
+    .element(page.getByRole("button", { name: "Open Full Disk Access" }))
+    .not.toBeInTheDocument();
+  expect(page.getByRole("button", { name: "Restart Scient" }).elements()).toHaveLength(0);
+});
+
+it("names the Mac instead of opening Settings on a primary that runs elsewhere", async () => {
+  using _fixture = fixture();
+  state.primary = "remote-primary";
+  const openFullDiskAccess = vi.fn(async () => true);
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: { openSystemSettings: vi.fn(), accounts: { openFullDiskAccess, relaunch: vi.fn() } },
+  });
+  await using _screen = await render(
+    <SignInCodesDialog
+      sources={{ messages: true }}
+      host={{ computer: "Lab Mac", readable: false }}
+      environmentId={EnvironmentId.make("remote-primary")}
+      canWrite
+      onClose={() => undefined}
+    />,
+  );
+  // regression: a configured remote primary counted as this Mac.
+  await expect.element(page.getByText("Allow Scient in Full Disk Access on Lab Mac")).toBeVisible();
+  expect(page.getByRole("button", { name: "Open Full Disk Access" }).elements()).toHaveLength(0);
+});
+
+it("never turns reading back on from a view another client has since changed", async () => {
+  using _fixture = fixture();
+  state.calls = [];
+  state.results["accounts:checkCodeSources"] = { messagesNeedAccess: false };
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: {
+      openSystemSettings: vi.fn(),
+      accounts: { openFullDiskAccess: vi.fn(async () => true), relaunch: vi.fn() },
+    },
+  });
+  await using _screen = await render(
+    <SignInCodesDialog
+      sources={{ messages: true }}
+      host={{ computer: "Lab Mac", readable: false }}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      onClose={() => undefined}
+    />,
+  );
+  await page.getByRole("button", { name: "Open Full Disk Access" }).click();
+  // Another client turns codes off; this view still says On when the window comes back.
+  state.refresh.mockClear();
+  window.dispatchEvent(new Event("focus"));
+  await vi.waitFor(() => expect(state.refresh).toHaveBeenCalled());
+  // regression: the stale On went back to the server as a write.
+  expect(state.calls).not.toContainEqual(["record", { messages: true }]);
+  expect(state.calls).toContainEqual(["record", {}]);
+});
+
+const savedLogin = (accountId: string, username: string, extra: Partial<AccountSummary> = {}) =>
+  ({
+    ...account,
+    accountId: AccountId.make(accountId),
+    name: "tss2.ada.huji.ac.il",
+    details: { kind: "website", sites: ["tss2.ada.huji.ac.il"], username },
+    secrets: { password: { source: { type: "scient" } } },
+    signIn: undefined,
+    ...extra,
+  }) as AccountSummary;
+
+it("opens a saved login in place with its password, status, Edit and Remove", async () => {
+  using _fixture = fixture();
+  state.calls = [];
+  state.protocol = 2;
+  state.results["accounts:reveal"] = { value: "synthetic-saved-pass" };
+  const onEdit = vi.fn();
+  const logins = [
+    savedLogin("acc_savedyaacov", "cc\\yaacovc", {
+      secrets: { password: { source: { type: "scient" }, verifiedAt: "2026-11-24T00:00:00.000Z" } },
+    }),
+    savedLogin("acc_savedother1", "other@example.org", {
+      name: "example.org",
+      details: { kind: "website", sites: ["example.org"], username: "other@example.org" },
+    }),
+  ];
+  await using _screen = await render(
+    <SavedPasswordsDialog
+      accounts={logins}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      agentAccess
+      grouped
+      onEdit={onEdit}
+      onActivity={() => undefined}
+      onClose={() => undefined}
+    />,
+  );
+  // A click opens it in place: no editor, no dialog.
+  await page.getByRole("button", { name: "Details for tss2.ada.huji.ac.il" }).click();
+  expect(onEdit).not.toHaveBeenCalled();
+  await expect.element(page.getByText(/^Worked /)).toBeVisible();
+  await page.getByRole("button", { name: "Show password" }).click();
+  await expect.element(page.getByText("synthetic-saved-pass")).toBeVisible();
+  expect(state.calls).toContainEqual([
+    "record",
+    { accountId: "acc_savedyaacov", field: "password" },
+  ]);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  expect(onEdit).toHaveBeenCalledWith(logins[0]);
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await vi.waitFor(() =>
+    expect(state.calls).toContainEqual([
+      "record",
+      expect.objectContaining({ accountId: "acc_savedyaacov" }),
+    ]),
+  );
+});
+
+it("opens every login of the site a key's Edit in Accounts named", async () => {
+  using _fixture = fixture();
+  state.protocol = 2;
+  await using _screen = await render(
+    <SavedPasswordsDialog
+      site="tss2.ada.huji.ac.il"
+      accounts={[
+        savedLogin("acc_savedcorcosy", "cc\\corcosy"),
+        savedLogin("acc_savedyaacov", "yaacovc"),
+      ]}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      agentAccess
+      grouped
+      onEdit={() => undefined}
+      onActivity={() => undefined}
+      onClose={() => undefined}
+    />,
+  );
+  await expect.element(page.getByRole("searchbox")).toHaveValue("tss2.ada.huji.ac.il");
+  expect(page.getByRole("button", { name: "Show password" }).elements()).toHaveLength(2);
+});
+
+it("opens the logins the key offered on the page, by its origin and the key's site rule", async () => {
+  using _fixture = fixture();
+  state.protocol = 2;
+  const at = (accountId: string, username: string, sites: string[]) =>
+    savedLogin(accountId, username, {
+      name: sites[0]!,
+      details: { kind: "website", sites, username },
+    });
+  await using _screen = await render(
+    <SavedPasswordsDialog
+      site="https://login.example.com"
+      accounts={[
+        // regression: a login for the parent domain, offered by the key, was left out.
+        at("acc_savedparent", "parent", ["example.com"]),
+        at("acc_savedexact", "exact", ["https://login.example.com"]),
+        // Another port is another page: the key offers neither of these there.
+        at("acc_savedport", "port", ["https://login.example.com:8443"]),
+        at("acc_savedother", "other", ["other.example.org"]),
+      ]}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      agentAccess
+      grouped
+      onEdit={() => undefined}
+      onActivity={() => undefined}
+      onClose={() => undefined}
+    />,
+  );
+  await expect.element(page.getByRole("searchbox")).toHaveValue("login.example.com");
+  expect(page.getByRole("button", { name: "Show password" }).elements()).toHaveLength(2);
+  expect(document.body.textContent).toContain("parent");
+  expect(document.body.textContent).not.toContain("port");
+});
+
+it("shows a login saved with and without its domain side by side, each removable in one click", async () => {
+  using _fixture = fixture();
+  state.calls = [];
+  state.protocol = 2;
+  await using _screen = await render(
+    <SavedPasswordsDialog
+      accounts={[
+        savedLogin("acc_saveddomain", "cc\\yaacovc"),
+        savedLogin("acc_savedcorcos", "cc\\corcosy"),
+        savedLogin("acc_savedplain1", "yaacovc"),
+      ]}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      agentAccess
+      grouped
+      onEdit={() => undefined}
+      onActivity={() => undefined}
+      onClose={() => undefined}
+    />,
+  );
+  // Next to each other, both marked; the other login isn't.
+  await expect.element(page.getByText("Possible duplicate").first()).toBeVisible();
+  expect(page.getByText("Possible duplicate").elements()).toHaveLength(2);
+  const rows = page.getByRole("button", { name: /^Details for / }).elements();
+  const order = rows.map((row) => row.textContent ?? "");
+  const domain = order.findIndex((text) => text.includes("cc\\yaacovc"));
+  const plain = order.findIndex((text) => text.includes("yaacovc") && !text.includes("cc\\"));
+  expect(Math.abs(domain - plain)).toBe(1);
+  // Never merged: removing one is the person's press, with Undo.
+  await page.getByRole("button", { name: "Remove yaacovc" }).click();
+  await vi.waitFor(() =>
+    expect(state.calls).toContainEqual([
+      "record",
+      expect.objectContaining({ accountId: "acc_savedplain1" }),
+    ]),
+  );
+});
+
+it("offers no one-click Remove on a server that can't undo it", async () => {
+  using _fixture = fixture();
+  state.calls = [];
+  // regression: an older server removed a login for good from the one-click Remove.
+  state.protocol = 1;
+  await using _screen = await render(
+    <SavedPasswordsDialog
+      site="tss2.ada.huji.ac.il"
+      accounts={[
+        savedLogin("acc_saveddomain", "cc\\yaacovc"),
+        savedLogin("acc_savedplain1", "yaacovc"),
+      ]}
+      environmentId={EnvironmentId.make("synthetic")}
+      canWrite
+      agentAccess
+      grouped={false}
+      onEdit={() => undefined}
+      onActivity={() => undefined}
+      onClose={() => undefined}
+    />,
+  );
+  await expect.element(page.getByText("Possible duplicate").first()).toBeVisible();
+  // Each login opened in place still has Edit, where removing asks first.
+  expect(page.getByRole("button", { name: "Edit", exact: true }).elements()).toHaveLength(2);
+  expect(page.getByRole("button", { name: /^Remove/ }).elements()).toHaveLength(0);
 });

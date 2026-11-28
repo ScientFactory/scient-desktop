@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { parseGoogleSessions, readGoogleSessions } from "./googleSessions.ts";
 
 const row = (email: string, valid: number) => {
@@ -17,6 +17,15 @@ it("reads each listed address and whether Google still accepts it", () => {
   ]);
   expect(parseGoogleSessions(JSON.stringify(["gaia.l.a.r", []]))).toEqual([]);
   expect(parseGoogleSessions("<html>")).toBeNull();
+  // regression: an entry with no validity field read as signed out, and a broken one vanished.
+  expect(
+    parseGoogleSessions(
+      JSON.stringify(["gaia.l.a.r", [["gaia.l.a", 1, "Name", "a@example.com", "picture"]]]),
+    ),
+  ).toBeNull();
+  expect(
+    parseGoogleSessions(JSON.stringify(["gaia.l.a.r", [row("a@example.com", 1), ["broken"]]])),
+  ).toBeNull();
   expect(parseGoogleSessions(JSON.stringify({}))).toBeNull();
 });
 
@@ -58,4 +67,34 @@ it("asks for leave only right before contacting Google, and asks nothing when re
   expect(await readGoogleSessions(session([{ name: "synthetic" }]), refuse)).toBeNull();
   expect(asked).toBe(1);
   expect(requests).toEqual([]);
+});
+
+it("calls no answer, a hung probe or an empty list beside Google's sign-in cookies unknown", async () => {
+  const jar = (names: ReadonlyArray<string>) =>
+    names.map((name) => ({ name, domain: ".google.com" }));
+  const session = (names: ReadonlyArray<string>, answer: () => Promise<Response>) =>
+    ({
+      cookies: { get: async () => jar(names) },
+      fetch: answer,
+    }) as unknown as Parameters<typeof readGoogleSessions>[0];
+  const empty = async () => new Response(JSON.stringify(["gaia.l.a.r", []]));
+  // regression: an empty list wrote every row signed out while Google still accepted the profile.
+  expect(await readGoogleSessions(session(["SID", "NID"], empty))).toBeNull();
+  // With no sign-in cookie left, the empty list is corroborated.
+  expect(await readGoogleSessions(session(["NID"], empty))).toEqual([]);
+  expect(
+    await readGoogleSessions(
+      session(["SID"], async () => {
+        throw new TypeError("net::ERR_INTERNET_DISCONNECTED");
+      }),
+    ),
+  ).toBeNull();
+  vi.useFakeTimers();
+  try {
+    const hung = readGoogleSessions(session(["SID"], () => new Promise<Response>(() => {})));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await hung).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -18,6 +18,7 @@ import {
   PaperItemState,
   PaperVersion,
   PreviewTabId,
+  ProjectId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
@@ -59,7 +60,7 @@ const list = metadata(
   Tool.make("scient_accounts_list", {
     ...common,
     description:
-      "List accounts and browser profiles for this session: how each may be used, and which the user turned off (tell the user; they can allow it in Settings → Accounts & secrets). Never returns values. preview_open signs in by itself with Allowed saved sign-ins; read its accountsNote.",
+      "List accounts and browser profiles for this session: how each may be used and its sign-in state. Using an Off one asks the user to turn it on. Never returns values. preview_open signs in by itself with Allowed saved sign-ins; read its accountsNote.",
     parameters: Tool.EmptyParams,
     success: Schema.Struct({
       accounts: Schema.Array(
@@ -74,6 +75,20 @@ const list = metadata(
           usage: Schema.Array(Schema.String),
           status: Schema.String,
           signIn: Schema.optional(Schema.String),
+          reason: Schema.optional(Schema.String),
+          lastWorked: Schema.optional(Schema.String),
+          profileId: Schema.optional(Schema.String),
+          /** Scient won't sign in by itself until the person does or the saved value changes. */
+          held: Schema.optional(Schema.Boolean),
+          /** A 2FA key is stored; Scient types its codes. */
+          twoFactor: Schema.optional(Schema.Boolean),
+          /** How many unused backup codes are stored; only the person's tap uses one. */
+          backupCodes: Schema.optional(Schema.Int),
+          /** Something wrong with the saved password; the person's row offers Fix. */
+          passwordHealth: Schema.optional(Schema.Literals(["leaked", "reused", "weak"])),
+          /** What applies in this project and profile, and why when it isn't Allowed. */
+          effective: Schema.optional(Schema.Literals(["allowed", "ask", "off"])),
+          why: Schema.optional(Schema.String),
         }),
       ),
       profiles: Schema.Array(
@@ -86,6 +101,8 @@ const list = metadata(
           scriptSignIn: Schema.Boolean,
         }),
       ),
+      /** The person's "Renew sign-ins automatically"; off, renewal only looks. */
+      renewAutomatically: Schema.Boolean,
     }),
   }),
   "list",
@@ -96,13 +113,15 @@ const credentials = metadata(
   Tool.make("scient_account_credentials", {
     ...common,
     description:
-      "Write a readable account's credentials to private session files. Returns paths and a shell usage hint. Hidden accounts require a visibility change in Settings → Accounts & secrets.",
+      "Write a readable account's credentials to private session files. Returns paths and a shell usage hint. A hidden account (website passwords by default) is used through sign_in, fill and request instead.",
     parameters: Schema.Struct({ accountId: AccountId }),
     success: ResultFiles,
   }),
   "credentials",
   "Prepare account credentials",
 );
+/** A one-time code as sites send it: digits, sometimes letters or a dash. */
+const SignInCode = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9-]{4,12}$/));
 const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
@@ -116,12 +135,19 @@ const signIn = metadata(
       SecretRequests,
     ],
     description:
-      "Sign in with a website or library account on your browser tab, with stored two-factor codes. Returns signed-in, password-rejected or code-rejected (never retried), limited (the site is limiting automation; wait), needs-user, or failed. Waits up to 3 minutes while the user does a CAPTCHA, passkey or approval in the browser.",
-    parameters: Schema.Struct({ accountId: AccountId, tabId: Schema.optional(PreviewTabId) }),
+      "Sign in with a website or library account on your browser tab, typing stored 2FA codes. When the user asks to be signed in, call this: it shows them the card and waits through a CAPTCHA, passkey or approval. password-rejected and code-rejected are held until the user acts; limited: wait. If the result has `code` and you can read the user's mail, call again with the code from those domains sent after that time; never ask the user for it.",
+    parameters: Schema.Struct({
+      accountId: AccountId,
+      tabId: Schema.optional(PreviewTabId),
+      code: Schema.optional(SignInCode),
+    }),
     success: Schema.Struct({
       outcome: AccountSignInOutcome,
       message: Schema.optional(Schema.String),
       tabId: Schema.optional(PreviewTabId),
+      code: Schema.optional(
+        Schema.Struct({ from: Schema.Array(Schema.String), sentAfter: Schema.String }),
+      ),
     }),
   }),
   "sign-in",
@@ -131,12 +157,13 @@ const fill = metadata(
   Tool.make("scient_account_fill", {
     ...common,
     description:
-      "Type one saved field of a website or library account into your own browser tab, on a page of the account's sites, without showing you the value. Use it when scient_account_sign_in returns needs-user or failed on a page you can read: find the step yourself, fill the field, then press the page's button. If the site refuses a password, tell the user.",
+      "Type one saved field of a website or library account into your browser tab without showing you the value. For needs-user or failed from scient_account_sign_in on a page you can read: fill the field, then press the page's button. field code with `code` types a code from the user's mail. A refused password: scient_account_add (secret: password).",
     parameters: Schema.Struct({
       accountId: AccountId,
       field: Schema.Literals(["username", "password", "code"]),
       tabId: Schema.optional(PreviewTabId),
       selector: Schema.optional(Schema.String),
+      code: Schema.optional(SignInCode),
     }),
     success: Schema.Struct({ filled: Schema.Boolean, message: Schema.optional(Schema.String) }),
   }),
@@ -186,6 +213,24 @@ const browserSession = metadata(
   "browser-session",
   "Prepare a browser session",
 );
+const check = metadata(
+  Tool.make("scient_account_check", {
+    ...common,
+    description:
+      "Check an account without changing or signing in to it: a website in a hidden tab in its profile, other kinds by their saved value.",
+    parameters: Schema.Struct({ accountId: AccountId }),
+    success: Schema.Struct({
+      state: Schema.String,
+      reason: Schema.optional(Schema.String),
+      lastWorked: Schema.optional(Schema.String),
+      profileId: Schema.optional(Schema.String),
+      held: Schema.optional(Schema.Boolean),
+    }),
+  }),
+  "check",
+  "Check an account",
+  true,
+);
 const findProfile = metadata(
   Tool.make("scient_account_find_profile", {
     ...common,
@@ -220,10 +265,10 @@ const add = metadata(
       SecretRequests,
     ],
     description:
-      "Ask the user to add an account in a private card, and wait. api-key: a key or token they paste, even one you pass on. website or university: they sign in on its own page. Scient keeps it; you get only its name and how to use it. A matching account is returned instead, or reported as turned off.",
+      "Keep a key or password in Accounts; use this, not request_secret. api-key: always a new account unless accountId. Without value, the user enters it in a private card you never see. website or university: secret asks for its password or 2FA key; without, the user signs in on its own page. Give the user the returned `open` link.",
     parameters: Schema.Struct({
       kind: Schema.optional(Schema.Literals(["api-key", "website", "university"])).annotate({
-        description: "api-key (default), website, or university.",
+        description: "Default api-key.",
       }),
       name: AccountSummary.fields.name.annotate({ description: "The service, e.g. OpenAI." }),
       reason: TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
@@ -239,9 +284,16 @@ const add = metadata(
         description: "Header name when the API doesn't use Authorization: Bearer.",
       }),
       accountId: Schema.optional(AccountId).annotate({
-        description: "Replace this account's key when it is wrong or expired.",
+        description: "Replace this account's key, password or 2FA key.",
+      }),
+      secret: Schema.optional(Schema.Literals(["password", "totp"])).annotate({
+        description: "website or university: ask for its password or 2FA key.",
       }),
       placeholder: Schema.optional(TrimmedNonEmptyString),
+      value: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))).annotate({
+        description:
+          "api-key: the key, when the user gave it in this chat or you created it; saved as is.",
+      }),
       site: Schema.optional(AccountSite).annotate({
         description: "website: the site to sign in to, e.g. github.com.",
       }),
@@ -260,6 +312,7 @@ const add = metadata(
         status: Schema.Literals(["saved", "exists", "signed-in"]),
         accountId: AccountId,
         usage: Schema.Array(Schema.String),
+        open: Schema.optional(Schema.String),
       }),
       Schema.Struct({
         status: Schema.Literals(["turned_off", "linked"]).annotate({
@@ -560,6 +613,7 @@ const paperGet = metadata(
         sourceId: Schema.optional(
           Schema.String.annotate({ description: "The Library source the PDF is on." }),
         ),
+        through: Schema.optional(Schema.String),
         message: Schema.optional(Schema.String),
       }),
       Schema.Struct({
@@ -629,13 +683,199 @@ const paperStatus = metadata(
   "Read queued papers",
   true,
 );
+const Page = {
+  cursor: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+};
+const Tighter = {
+  access: Schema.optional(Schema.Literals(["ask", "off"])),
+  scope: Schema.optional(
+    Schema.Array(ProjectId).annotate({ description: "Narrow to these projects only." }),
+  ),
+};
+const ManagedAccount = Schema.Struct({
+  accountId: AccountId,
+  name: Schema.String,
+  kind: Schema.String,
+  sites: Schema.Array(Schema.String),
+  username: Schema.optional(Schema.String),
+  envName: Schema.optional(Schema.String),
+  oneSession: Schema.optional(Schema.Boolean),
+  access: Schema.String,
+  readable: Schema.Boolean,
+  scope: Schema.optional(Schema.Array(Schema.String)),
+  version: Schema.String,
+  signIn: Schema.optional(Schema.String),
+  lastWorked: Schema.optional(Schema.String),
+});
+const accountManage = metadata(
+  Tool.make("scient_account_manage", {
+    ...common,
+    description:
+      "Manage a saved account, never its value: get (returns its version), activity, edit (name, a website's username, fewer sites, oneSession: a new sign-in there ends the other session, so Scient won't sign in by itself), controls (tighter only), remove (returns undo), undo, check_all (never signs in), save_offer, pin_task/unpin_task (the scheduledTaskId runs only as this sign-in, in its profile, on this computer). Writes take the version from get.",
+    parameters: Schema.Struct({
+      action: Schema.Literals([
+        "get",
+        "activity",
+        "edit",
+        "controls",
+        "remove",
+        "undo",
+        "check_all",
+        "save_offer",
+        "pin_task",
+        "unpin_task",
+      ]),
+      accountId: Schema.optional(AccountId),
+      scheduledTaskId: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+      version: Schema.optional(Schema.String),
+      name: Schema.optional(AccountSummary.fields.name),
+      username: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+      sites: Schema.optional(Schema.Array(AccountSite)),
+      oneSession: Schema.optional(Schema.Boolean),
+      ...Tighter,
+      hidden: Schema.optional(Schema.Literal(true)),
+      readOnly: Schema.optional(Schema.Literal(true)),
+      undo: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+      ...Page,
+    }),
+    success: Schema.Struct({
+      account: Schema.optional(ManagedAccount),
+      entries: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            at: Schema.String,
+            action: Schema.String,
+            outcome: Schema.optional(Schema.String),
+            detail: Schema.optional(Schema.String),
+            byChat: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
+      checked: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            accountId: AccountId,
+            name: Schema.String,
+            state: Schema.String,
+            reason: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
+      undo: Schema.optional(Schema.String),
+      undoUntil: Schema.optional(Schema.String),
+      nextCursor: Schema.optional(Schema.Number),
+      message: Schema.optional(Schema.String),
+    }),
+  }),
+  "manage",
+  "Manage an account",
+);
+const browserProfiles = metadata(
+  Tool.make("scient_browser_profiles", {
+    ...common,
+    description:
+      "Browser profiles in this session: list, sites (a profile's saved sign-ins), and with the version from list: controls (tighter only), sign_out (a site), clear, remove, transfer (sites into another profile), merge (into another, then remove), fold_main (merge into Main), sources (the user's desktop browser profiles), import (a sourceId's cookies and/or passwords into a new profile or profileId), refresh (re-import a linked profile). undo and status take an operationId; all but an import or refresh can be undone for an hour. An import may wait for the user to allow it: check status.",
+    parameters: Schema.Struct({
+      action: Schema.Literals([
+        "list",
+        "sites",
+        "controls",
+        "sign_out",
+        "clear",
+        "remove",
+        "transfer",
+        "merge",
+        "fold_main",
+        "sources",
+        "import",
+        "refresh",
+        "undo",
+        "status",
+      ]),
+      cookies: Schema.optional(Schema.Boolean),
+      passwords: Schema.optional(Schema.Boolean),
+      into: Schema.optional(BrowserProfileId),
+      mode: Schema.optional(Schema.Literals(["copy", "move"])),
+      sites: Schema.optional(Schema.Array(AccountSite).check(Schema.isMaxLength(100))),
+      profileId: Schema.optional(BrowserProfileId),
+      version: Schema.optional(Schema.String),
+      site: Schema.optional(AccountSite),
+      operationId: Schema.optional(Schema.String.check(Schema.isMaxLength(100))),
+      sourceId: Schema.optional(Schema.String.check(Schema.isMaxLength(400))),
+      ...Tighter,
+      scriptSignIn: Schema.optional(Schema.Literal(false)),
+      ...Page,
+    }),
+    success: Schema.Struct({
+      profiles: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            profileId: BrowserProfileId,
+            version: Schema.String,
+            name: Schema.String,
+            access: Schema.String,
+            scope: Schema.optional(Schema.Array(Schema.String)),
+            scriptSignIn: Schema.Boolean,
+            fromAnotherComputer: Schema.optional(Schema.Boolean),
+          }),
+        ),
+      ),
+      sources: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            sourceId: Schema.String,
+            name: Schema.String,
+            email: Schema.optional(Schema.String),
+            computer: Schema.String,
+            linkedTo: Schema.optional(BrowserProfileId),
+            offline: Schema.optional(Schema.Boolean),
+          }),
+        ),
+      ),
+      sites: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            site: Schema.String,
+            accountId: AccountId,
+            username: Schema.optional(Schema.String),
+            signIn: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
+      operation: Schema.optional(
+        Schema.Struct({
+          operationId: Schema.String,
+          kind: Schema.String,
+          undoUntil: Schema.String,
+          server: Schema.optional(Schema.String),
+          desktop: Schema.optional(Schema.String),
+          notCopied: Schema.optional(Schema.Array(Schema.String)),
+          stopped: Schema.optional(Schema.String),
+          undone: Schema.optional(Schema.Boolean),
+          keptSince: Schema.optional(Schema.Array(Schema.String)),
+        }),
+      ),
+      /** The profile an import made. */
+      profileId: Schema.optional(BrowserProfileId),
+      openIn: Schema.optional(Schema.Array(Schema.String)),
+      nextCursor: Schema.optional(Schema.Number),
+      message: Schema.optional(Schema.String),
+    }),
+  }),
+  "browser-profiles",
+  "Manage browser profiles",
+);
 export const ScientAccountsToolkit = Toolkit.make(
   list,
+  accountManage,
+  browserProfiles,
   credentials,
   signIn,
   fill,
   request,
   browserSession,
+  check,
   findProfile,
   add,
   connectorSetup,

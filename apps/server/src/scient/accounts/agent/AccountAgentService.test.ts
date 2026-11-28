@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import {
   AccountId,
+  AccountsError,
   BrowserProfileId,
   EnvironmentId,
   EventId,
@@ -25,8 +26,16 @@ import * as Layer from "effect/Layer";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
+import { ACCOUNTS_AWAIT_PERSON } from "../awaitPerson.ts";
 import { accountAgentOperations } from "./AccountAgentService.ts";
-import { fakeAccounts } from "../Accounts.testkit.ts";
+import {
+  fakeAccounts,
+  makeHarness,
+  memoryStore,
+  recordingKeychain,
+  website,
+  windowLeases,
+} from "../Accounts.testkit.ts";
 import { AccountSessionFiles, makeSessionFiles } from "./sessionFiles.ts";
 
 const createThread = Effect.gen(function* () {
@@ -96,7 +105,11 @@ it.effect(
         NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "account-delivery-")),
       );
       try {
-        const files = yield* makeSessionFiles(root);
+        let current = fakeAccounts({ accounts: [account] }).service.snapshot;
+        const files = yield* makeSessionFiles(
+          root,
+          Effect.suspend(() => current),
+        );
         const invocation = {
           environmentId: EnvironmentId.make("env-fixture"),
           threadId,
@@ -128,6 +141,7 @@ it.effect(
         expect(hidden.calls).not.toContain("resolve");
         expect(hidden.uses[0]?.outcome).toBe("error");
         const allowed = fakeAccounts({ accounts: [account], values: { token: "synthetic-token" } });
+        current = allowed.service.snapshot;
         const result = yield* run(allowed);
         expect(allowed.calls).toEqual(["authorize:account:credentials", "resolve"]);
         expect(allowed.uses[0]).toMatchObject({ action: "credentials", outcome: "ok", threadId });
@@ -135,6 +149,26 @@ it.effect(
         expect(yield* Effect.promise(() => NodeFSP.readFile(result.paths[0]!, "utf8"))).toContain(
           "synthetic-token",
         );
+        // Turned Off while its store was read: nothing is written out.
+        // Each export is its own folder in the conversation's.
+        const folder = NodePath.dirname(NodePath.dirname(result.paths[0]!));
+        yield* Effect.promise(() =>
+          NodeFSP.rm(NodePath.dirname(result.paths[0]!), { recursive: true }),
+        );
+        const revoked = fakeAccounts({ accounts: [account], values: { token: "synthetic-token" } });
+        current = revoked.service.snapshot;
+        const late = yield* Effect.flip(
+          run({
+            ...revoked,
+            service: {
+              ...revoked.service,
+              authorizeUse: () =>
+                Effect.fail(new AccountsError({ reason: "denied", message: "Turned Off." })),
+            },
+          }),
+        );
+        expect(late.reason).toBe("denied");
+        expect(yield* Effect.promise(() => NodeFSP.readdir(folder))).toEqual([]);
       } finally {
         yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
       }
@@ -237,5 +271,89 @@ it.effect("exports no session for a site the user is signing in to", () =>
       "The user is signing in on this tab. Wait for scient_account_sign_in.",
     );
     expect(reached).not.toContain("accountCookies");
+  }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
+);
+
+it.effect("an agent's fill types nothing with Renew sign-ins automatically off", () =>
+  Effect.gen(function* () {
+    const threadId = yield* createThread;
+    const account: AccountSummary = {
+      accountId: AccountId.make("acc_fill_fixture"),
+      name: "Fixture",
+      details: { kind: "website", sites: ["example.com"], username: "fixture" },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: {
+        access: "allowed",
+        permission: "full",
+        visibility: "hidden",
+        scope: { type: "all-projects" },
+      },
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const fake = fakeAccounts({ accounts: [account], values: { password: "synthetic-password" } });
+    const reached: string[] = [];
+    const refused = yield* accountAgentOperations
+      .scient_account_fill({ accountId: account.accountId, field: "password" })
+      .pipe(
+        Effect.flip,
+        Effect.provideService(
+          AccountsService,
+          AccountsService.of({ ...fake.service, renewAutomatically: Effect.succeed(false) }),
+        ),
+        Effect.provideService(PreviewAutomationBroker, {
+          invoke: (request: { readonly operation: string }) =>
+            Effect.sync(() => void reached.push(request.operation)),
+        } as unknown as PreviewAutomationBroker["Service"]),
+        Effect.provideService(AccountSessionFiles, {} as AccountSessionFiles["Service"]),
+        Effect.provideService(AgentInvocationContext, {
+          environmentId: EnvironmentId.make("env-fixture"),
+          threadId,
+          providerSessionId: "session-fixture",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["accounts", "preview"] as const),
+          issuedAt: 0,
+        }),
+      );
+    // regression: fill typed outside the sign-in path, whatever the switch said.
+    expect(refused.message).toBe(
+      "Renew sign-ins automatically is off, so Scient didn't sign in to Fixture.",
+    );
+    expect(reached).not.toContain("accountType");
+  }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
+);
+
+it.effect("an agent with nobody at a window never opens Accounts; it's told to try again", () =>
+  Effect.gen(function* () {
+    const threadId = yield* createThread;
+    const storage = memoryStore();
+    const { keychain, reads } = yield* recordingKeychain({ desktopBackgroundRunning: true });
+    yield* Effect.scoped(
+      Effect.flatMap(
+        makeHarness({ storage, keychain, leases: (yield* windowLeases(true)).leases }),
+        ({ service }) => service.save(website()),
+      ),
+    );
+    reads.length = 0;
+    // A cold start whose keychain would ask, and nobody at any window.
+    const { service } = yield* makeHarness({ storage, keychain });
+    const refused = yield* accountAgentOperations.scient_accounts_list().pipe(
+      Effect.flip,
+      Effect.provideService(AccountsService, service),
+      Effect.provideService(PreviewAutomationBroker, {} as PreviewAutomationBroker["Service"]),
+      Effect.provideService(AccountSessionFiles, {} as AccountSessionFiles["Service"]),
+      Effect.provideService(AgentInvocationContext, {
+        environmentId: EnvironmentId.make("env-fixture"),
+        threadId,
+        providerSessionId: "session-fixture",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["accounts"] as const),
+        issuedAt: 0,
+      }),
+    );
+    // regression: the list opened the store by the ordinary keychain read.
+    expect(refused.message).toBe(ACCOUNTS_AWAIT_PERSON);
+    expect(reads).toEqual([]);
   }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
 );

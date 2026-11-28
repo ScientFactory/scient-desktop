@@ -102,6 +102,10 @@ import React, {
 // SCIENT-FORK:START — quotes from Markdown files render as citation chips too.
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts: an agent's link to a row it saved opens it in Accounts.
+import { parseAccountLinkHref } from "@t3tools/shared/scientAccountLinks";
+import { AccountRowLink } from "../scient/accounts/AccountRowLink";
+// SCIENT-FORK:END
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationEmbed } from "./chat/AssistantCitationChip";
@@ -534,6 +538,9 @@ function safeUrl(value: string): string {
 function markdownUrlTransform(href: string) {
   // SCIENT-FORK:START — quotes from Markdown files are citations too.
   if (parseComposerCitationHref(href)) return href;
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: an agent's link to a row it saved.
+  if (parseAccountLinkHref(href)) return href;
   // SCIENT-FORK:END
   if (parseComposerContextHref(href)) return href;
   if (parseThreadLinkHref(href)) return href;
@@ -1553,6 +1560,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (citation) {
       return <AssistantCitationEmbed citation={citation} leading={leading} trailing={trailing} />;
     }
+    // SCIENT-FORK:START — Scient Accounts: an agent's link to a row it saved opens it in Accounts.
+    if (href && parseAccountLinkHref(href))
+      return <AccountRowLink href={href}>{hastPlainTextDeep(node)}</AccountRowLink>;
+    // SCIENT-FORK:END
     const threadLink = href ? parseThreadLinkHref(href) : null;
     if (threadLink) {
       const written = hastPlainTextDeep(node);

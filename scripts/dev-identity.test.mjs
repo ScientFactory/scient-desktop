@@ -796,6 +796,75 @@ describe("what a copy must not carry over", () => {
     assert.equal(readValue(), "new-pw");
   });
 
+  it("keeps a key the dev app added since its last copy, and drops a row the home removed", async () => {
+    const root = scratch();
+    const { home, vault } = makeFileVaultHome(NodePath.join(root, "home"));
+    const homeState = (accounts) =>
+      write(
+        NodePath.join(home.stateDir, "secrets", "accounts-state.bin"),
+        encrypt(vault.key, "accounts-state", Buffer.from(JSON.stringify({ format: 1, accounts }))),
+      );
+    const shared = {
+      summary: { accountId: "a", createdAt: "2026-01-01T00:00:00.000Z" },
+      values: {},
+    };
+    const dropped = {
+      summary: { accountId: "d", createdAt: "2026-01-02T00:00:00.000Z" },
+      values: {},
+    };
+    homeState([shared, dropped]);
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    // The first copy is dated after both home rows were made.
+    await importDevIdentity({
+      targetStateDir: target,
+      home,
+      now: () => new Date("2026-06-01T00:00:00.000Z"),
+    });
+    const targetKey = NodeFS.readFileSync(
+      NodePath.join(target, "secrets", "accounts-master-key.bin"),
+    );
+    const statePath = NodePath.join(target, "secrets", "accounts-state.bin");
+    const readState = () =>
+      JSON.parse(decrypt(targetKey, "accounts-state", NodeFS.readFileSync(statePath)).toString());
+    // The person adds Test key 2 in the dev app, with its value record.
+    const keyValue = "accounts-value-77777777-7777-4777-8777-777777777777";
+    write(
+      NodePath.join(target, "secrets", `${keyValue}.bin`),
+      encrypt(targetKey, keyValue, Buffer.from("synthetic-key")),
+    );
+    const added = {
+      summary: { accountId: "k", name: "Test key 2", createdAt: "2026-06-02T00:00:00.000Z" },
+      values: { token: keyValue },
+    };
+    write(
+      statePath,
+      encrypt(
+        targetKey,
+        "accounts-state",
+        Buffer.from(JSON.stringify({ format: 1, accounts: [...readState().accounts, added] })),
+      ),
+    );
+    // Meanwhile the home removes `d`; the dev app restarts and copies again.
+    homeState([shared]);
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(readState().accounts, [shared, added]);
+    // regression: the second restart dropped the app's own row, made before that copy.
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(readState().accounts, [shared, added]);
+    // A row the home removes after several copies still goes.
+    homeState([]);
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(readState().accounts, [added]);
+    assert.equal(
+      decrypt(
+        targetKey,
+        keyValue,
+        NodeFS.readFileSync(NodePath.join(target, "secrets", `${keyValue}.bin`)),
+      ).toString(),
+      "synthetic-key",
+    );
+  });
+
   it("rebases connector folders and never lets a copy own a folder outside its state", async () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));

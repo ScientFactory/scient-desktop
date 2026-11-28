@@ -16,10 +16,12 @@ it("derives unattended authority from the active run's initiating scheduled mess
   };
   const threadId = ThreadId.make("thread-fixture");
   const projectId = ProjectId.make("project-fixture");
+  // The task it serves comes along, so that task's pin binds what the run signs in as.
   expect(deriveAccountSessionScope(threadId, projectId, [run], [scheduled, interactive])).toEqual({
     threadId,
     projectId,
     unattended: true,
+    scheduledTaskId: "task-fixture",
   });
   expect(
     deriveAccountSessionScope(

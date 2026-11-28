@@ -19,6 +19,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopBootstrapSecret: Schema.optionalKey(Schema.String),
   // Fresh per launch. A backend without a control channel proves it holds this before it counts as ready; see @t3tools/shared/desktopReadinessProof.
   desktopReadinessSecret: Schema.optionalKey(Schema.String),
+  // SCIENT-FORK:START — Scient Accounts: the key for page seals, given only to the primary backend.
+  desktopPageSealSecret: Schema.optionalKey(Schema.String),
+  // SCIENT-FORK:END
   // Absent means the backend must hydrate PATH, as WSL and older desktops require.
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
@@ -35,6 +38,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
   filePublicationHelperPath: Schema.optionalKey(TrimmedNonEmptyString),
   syncTexNavigatorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  // SCIENT-FORK: the spawning desktop's effective "Keep Scient running in the background", kept
+  // out of the environment that providers and terminals inherit.
+  desktopBackgroundRunning: Schema.optionalKey(Schema.Boolean),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

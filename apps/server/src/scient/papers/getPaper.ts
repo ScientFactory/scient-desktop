@@ -89,6 +89,7 @@ const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
     environmentId: invocation.environmentId,
     threadId: scope.threadId,
     ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
+    ...(scope.scheduledTaskId === undefined ? {} : { scheduledTaskId: scope.scheduledTaskId }),
     browser: universities.length > 0 || (yield* mayBrowse(undefined)),
   } satisfies PaperRequester;
 });
@@ -172,6 +173,7 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: AgentPaperAske
       ...(done.title ? { title: done.title } : {}),
       ...(done.doi ? { doi: done.doi } : {}),
       ...(done.sourceId ? { sourceId: done.sourceId } : {}),
+      ...(done.through ? { through: done.through } : {}),
       ...(message ? { message } : {}),
     };
   }
@@ -222,7 +224,7 @@ export const paperStatus = Effect.fn("Papers.status")(function* (input: {
   };
 }, Effect.provide(FetchHttpClient.layer));
 
-/** The user's own request: no conversation, so every saved sign-in that isn't Off. */
+/** The user's own request: no conversation, so every saved sign-in; Off governs agents. */
 const userRequester = (environmentId: EnvironmentId): PaperRequester => ({
   environmentId,
   browser: true,
@@ -243,7 +245,12 @@ export const getPaperForSource = Effect.fn("Papers.getForSource")(function* (
   if (!item) return yield* unavailable("The paper could not be queued.");
   const done = yield* waitForPaper(root, item.itemId, ONE_PAPER_WAIT);
   if (done?.state === "saved")
-    return { status: "attached" as const, published: done.published ?? true };
+    return {
+      status: "attached" as const,
+      published: done.published ?? true,
+      ...(done.through ? { through: done.through } : {}),
+      ...(done.route === "university" || done.route === "library" ? { route: done.route } : {}),
+    };
   return {
     status: done?.state ?? ("waiting" as const),
     message: done?.message ?? "Still fetching. It will appear on the source when it arrives.",
@@ -266,10 +273,13 @@ export const continuePapersAsUser = (
   input: PaperQueueContinueInput,
   environmentId: EnvironmentId,
 ) =>
-  continuePapers(input.root, userRequester(environmentId), undefined, input.terms).pipe(
-    Effect.as({}),
-    Effect.provide(FetchHttpClient.layer),
-  );
+  continuePapers(
+    input.root,
+    userRequester(environmentId),
+    undefined,
+    input.terms,
+    input.unreached,
+  ).pipe(Effect.as({}), Effect.provide(FetchHttpClient.layer));
 
 /** A sign-in or a check just worked, so every paper that waited on the user goes again. */
 export const continueWaitingPapers = (environmentId: EnvironmentId, signedIn?: AccountId) =>

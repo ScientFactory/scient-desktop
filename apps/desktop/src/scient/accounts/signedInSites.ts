@@ -1,5 +1,5 @@
 import type { DesktopProfileSignedInSite } from "@t3tools/contracts";
-import { siteOf } from "@t3tools/shared/scientSiteMatch";
+import { inSignOutTarget, siteOf } from "@t3tools/shared/scientSiteMatch";
 
 /** A cookie domain's registrable site, or undefined for a domain no site could have. */
 export function cookieSite(cookieDomain: string): string | undefined {
@@ -8,7 +8,7 @@ export function cookieSite(cookieDomain: string): string | undefined {
   return siteOf(host);
 }
 
-/** The URL and name that remove each of a site's cookies, for every cookie of that registrable domain. */
+/** The URL and name that remove each cookie of a Sign out's target (`inSignOutTarget`). */
 export function siteCookieRemovals(
   cookies: ReadonlyArray<{
     readonly domain?: string | undefined;
@@ -19,7 +19,9 @@ export function siteCookieRemovals(
   site: string,
 ) {
   return cookies.flatMap((cookie) =>
-    cookie.domain !== undefined && cookieSite(cookie.domain) === site
+    cookie.domain !== undefined &&
+    cookieSite(cookie.domain) !== undefined &&
+    inSignOutTarget(cookie.domain, site)
       ? [
           {
             url: `${cookie.secure ? "https" : "http"}://${cookie.domain.replace(/^\./, "")}${cookie.path ?? "/"}`,

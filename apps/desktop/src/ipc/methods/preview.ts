@@ -55,6 +55,11 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+// SCIENT-FORK:START — Scient Accounts: Clear moves a profile to a new partition (generation).
+import { profileGeneration } from "../../scient/accounts/profileData.ts";
+import { enterJarTurn } from "../../scient/accounts/jarTurns.ts";
+import { writeCheckFor } from "../../scient/accounts/ownBackend.ts";
+// SCIENT-FORK:END
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
@@ -335,11 +340,22 @@ const clearCache = DesktopIpc.makeIpcMethod({
 export function resolvePartitionScope(
   environmentId: string,
   profileId: string | undefined,
+  // SCIENT-FORK:START — Scient Accounts: Clear moves a profile to a new partition (generation).
+  generation = profileGeneration(environmentId, profileId ?? DEFAULT_BROWSER_PROFILE_ID),
+  // SCIENT-FORK:END
 ): {
   readonly scope: string;
   readonly persistent: boolean;
   readonly namespace?: "profile";
 } {
+  // SCIENT-FORK:START — Scient Accounts: Clear moves a profile to a new partition (generation).
+  if (generation > 0 && profileId !== INCOGNITO_BROWSER_PROFILE_ID)
+    return {
+      scope: JSON.stringify([environmentId, profileId ?? DEFAULT_BROWSER_PROFILE_ID, generation]),
+      persistent: true,
+      namespace: "profile" as const,
+    };
+  // SCIENT-FORK:END
   if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
     return { scope: environmentId, persistent: true };
   }
@@ -449,19 +465,67 @@ export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// SCIENT-FORK:START — Scient Accounts: an agent's refresh writes in its jar's turn (round 6h).
+/**
+ * An agent's refresh import, in the jar's turn from its check to its last write: written only
+ * while it still stands. A refresh has no Undo (round 6m).
+ */
+const refreshImport = Effect.fn("desktop.ipc.preview.refreshImport")(function* <A, E, R>(
+  target: {
+    readonly operationId: string;
+    readonly environmentId: string;
+    readonly scope: string;
+    readonly persistent: boolean;
+    readonly namespace: "profile" | undefined;
+  },
+  run: (hooks: { readonly mayWrite: Effect.Effect<boolean> }) => Effect.Effect<A, E, R>,
+) {
+  const manager = yield* PreviewManager.PreviewManager;
+  const jar = yield* manager.getBrowserSession(target.scope, target.persistent, target.namespace);
+  const check = yield* writeCheckFor(target.environmentId, target.operationId, "do");
+  let release = () => undefined as void;
+  const mayWrite = Effect.promise(async () => {
+    release = await enterJarTurn([jar]);
+    return !check || (await check().catch(() => false));
+  });
+  return yield* run({ mayWrite }).pipe(Effect.ensuring(Effect.sync(() => release())));
+});
+// SCIENT-FORK:END
+
 export const importBrowserCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL,
   payload: DesktopPreviewImportCookiesInputSchema,
   result: BrowserImportResult,
   handler: Effect.fn("desktop.ipc.preview.importBrowserCookies")(function* ({
     environmentId,
+    // SCIENT-FORK:START — Scient Accounts: an agent's refresh writes into its own generation.
+    targetGeneration,
+    operationId,
+    // SCIENT-FORK:END
     ...importInput
   }) {
     const browserImport = yield* BrowserImport.BrowserImport;
     const { scope, persistent, namespace } = resolvePartitionScope(
       environmentId,
       importInput.targetProfileId,
+      // SCIENT-FORK:START — Scient Accounts: an agent's refresh writes into its own generation.
+      ...(targetGeneration === undefined ? [] : [targetGeneration]),
+      // SCIENT-FORK:END
     );
+    // SCIENT-FORK:START — Scient Accounts: an agent's refresh writes in its jar's turn (round 6h).
+    if (operationId !== undefined)
+      return yield* refreshImport(
+        { operationId, environmentId, scope, persistent, namespace },
+        (hooks) =>
+          browserImport.importCookies({
+            input: importInput,
+            scope,
+            persistent,
+            ...(namespace === undefined ? {} : { namespace }),
+            ...hooks,
+          }),
+      );
+    // SCIENT-FORK:END
     return yield* browserImport.importCookies({
       input: importInput,
       scope,

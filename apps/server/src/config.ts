@@ -112,6 +112,9 @@ export class ServerConfig extends Context.Service<
     readonly desktopBootstrapToken: string | undefined;
     readonly desktopBootstrapSecret?: string | undefined;
     readonly desktopReadinessSecret?: string | undefined;
+    // SCIENT-FORK:START — Scient Accounts: the key for the desktop's page seals (primary only).
+    readonly desktopPageSealSecret?: string | undefined;
+    // SCIENT-FORK:END
     readonly shellEnvironmentPrepared?: boolean | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
@@ -120,6 +123,8 @@ export class ServerConfig extends Context.Service<
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly syncTexNavigatorPath?: string | undefined;
+    /** SCIENT-FORK: the spawning desktop keeps Scient running with no window (bootstrap only). */
+    readonly desktopBackgroundRunning?: boolean | undefined;
     /** Host-owned native publisher; never selected by a workspace request. */
     readonly filePublicationHelperPath?: string | undefined;
     /** Shared physical-file history across profiles; tests use isolated storage. */

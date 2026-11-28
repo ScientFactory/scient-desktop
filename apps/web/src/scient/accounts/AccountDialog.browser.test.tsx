@@ -205,3 +205,31 @@ it("signs in to a signed-in suggestion through Scient, in its profile, only wher
   );
   expect(closed).toHaveBeenCalledOnce();
 });
+
+it("shows a new login's browser profile without opening More options", async () => {
+  const snapshot: AccountsSnapshot = {
+    agentAccess: true,
+    accounts: [],
+    profiles: [],
+    stores: {
+      scient: { protection: "keychain" },
+      keychain: { available: false, platform: "linux" },
+      onePassword: { state: "not-connected" },
+    },
+    approvals: [],
+    recentActivity: [],
+    customModelKeys: [],
+  };
+  await using _screen = await render(
+    <AccountDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      account={null}
+      canWrite
+      onClose={() => undefined}
+    />,
+  );
+  await page.getByText("Any website").click();
+  // Run 4: the profile took Add → Any website → More options → profile.
+  await expect.element(page.getByRole("combobox", { name: "Browser profile" })).toBeVisible();
+});

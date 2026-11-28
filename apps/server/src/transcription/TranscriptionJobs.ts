@@ -2406,9 +2406,14 @@ const make = Effect.gen(function* () {
           const cloudProjectId = isCloud && input.cloudEngineId ? await projectId() : undefined;
           const cloudEngine =
             isCloud && input.cloudEngineId
-              ? await run(cloud.resolve(input.cloudEngineId, cloudProjectId).pipe(Effect.result), {
-                  signal,
-                })
+              ? await run(
+                  cloud
+                    .resolve(input.cloudEngineId, cloudProjectId, agent ? "agent" : undefined)
+                    .pipe(Effect.result),
+                  {
+                    signal,
+                  },
+                )
               : undefined;
           if (cloudEngine?._tag === "Failure" && cloudEngine.failure.code === "consent-required") {
             throw new TranscriptionError({
@@ -2914,14 +2919,13 @@ const make = Effect.gen(function* () {
       }
       model = candidate.id;
     } else if (selection?.kind === "cloud") {
-      const registered = yield* projects
-        .findActiveByWorkspaceRoot(project)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
+      // Only agents start scoped jobs, so the key is checked for this project's agents.
+      const projectId = yield* projects.findActiveByWorkspaceRoot(project).pipe(
+        Effect.map(Option.match({ onNone: () => undefined, onSome: (row) => row.projectId })),
+        Effect.orElseSucceed(() => undefined),
+      );
       const resolved = yield* cloud
-        .resolve(
-          selection.engineId,
-          Option.isSome(registered) ? registered.value.projectId : undefined,
-        )
+        .resolve(selection.engineId, projectId, "agent")
         .pipe(Effect.mapError(unavailable));
       cloudEngineId = selection.engineId;
       model = resolved.model;

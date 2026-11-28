@@ -100,6 +100,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.accountsUniversitySignIn]: () => use("university.sign_in"),
   [WS_METHODS.accountsUniversityBrowse]: () => use("university.browse"),
   [WS_METHODS.accountsSetAgentAccess]: () => use("accounts.agent_access.set"),
+  [WS_METHODS.accountsSetRenewAutomatically]: () => use("accounts.renew_automatically.set"),
   [WS_METHODS.accountsProfileChoose]: () => use("accounts.profile.choose"),
   [WS_METHODS.accountsApprovalRespond]: () => use("accounts.approval.respond"),
   [WS_METHODS.accountsOnePasswordConnect]: () => use("accounts.password_manager.connect"),

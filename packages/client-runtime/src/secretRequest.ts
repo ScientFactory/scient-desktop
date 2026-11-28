@@ -12,17 +12,91 @@ import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-defin
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 // SCIENT-FORK:START — Scient Accounts: cards from scient_account_add save into Accounts.
-import { isAccountSecretRequest } from "@t3tools/shared/scientAccountSecretRequest";
+import type { AccountId } from "@t3tools/contracts";
+import {
+  accountSecretKind,
+  isAccountSecretRequest,
+  secretRequestIdOf,
+} from "@t3tools/shared/scientAccountSecretRequest";
 // SCIENT-FORK:END
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 // SCIENT-FORK:START — Scient Accounts: the Accounts cards' copy.
-/** Accounts cards' privacy note: new keys are readable by default, so the card says so. */
-const ACCOUNT_SECRET_REQUEST_NOTE = msg(
-  "Saved to Settings ▸ Accounts & secrets. Agents can use it, and read it in their commands, as you allow there",
-);
+/** Accounts cards' note, per kind: a key is kept as is; a password is used, never shown. */
+const ACCOUNT_SECRET_REQUEST_NOTE = msg("Saved to Accounts");
+const ACCOUNT_PASSWORD_REQUEST_NOTE = msg("Saved · agents can use it");
 const ACCOUNT_SECRET_REQUEST_SAVED = msg("Saved to Accounts");
+type AccountCardOutcome = "saved" | "failed" | "declined" | "cancelled" | "timed_out";
+const ACCOUNT_CARD_LABELS = {
+  saved: ACCOUNT_SECRET_REQUEST_SAVED,
+  failed: msg("Not saved"),
+  declined: msg("Declined"),
+  cancelled: msg("Cancelled"),
+  timed_out: msg("Timed out"),
+} satisfies Record<AccountCardOutcome, string>;
+
+/**
+ * How Accounts says this card ended, from the snapshot: its outcome, `settling` while Accounts
+ * keeps its value, `ended` once its outcome is no longer kept. Older servers say neither.
+ */
+export const accountCardOutcome = (
+  snapshot:
+    | {
+        readonly cards?:
+          | ReadonlyArray<{ readonly requestId: string; readonly outcome: AccountCardOutcome }>
+          | undefined;
+        readonly cardsSettling?: ReadonlyArray<string> | undefined;
+      }
+    | null
+    | undefined,
+  turnItemId: string,
+): AccountCardOutcome | "settling" | "ended" | undefined => {
+  const requestId = secretRequestIdOf(turnItemId);
+  if (requestId === undefined || !snapshot) return undefined;
+  const outcome = snapshot.cards?.find((card) => card.requestId === requestId)?.outcome;
+  if (outcome !== undefined) return outcome;
+  if (snapshot.cardsSettling === undefined) return undefined;
+  return snapshot.cardsSettling.includes(requestId) ? "settling" : "ended";
+};
+
+/** The row a saved Accounts card's value went into, from a server that says so. */
+export const accountCardAccountId = (
+  snapshot:
+    | {
+        readonly cards?:
+          | ReadonlyArray<{
+              readonly requestId: string;
+              readonly accountId?: AccountId | undefined;
+            }>
+          | undefined;
+      }
+    | null
+    | undefined,
+  turnItemId: string,
+) => {
+  const requestId = secretRequestIdOf(turnItemId);
+  return snapshot?.cards?.find((card) => card.requestId === requestId)?.accountId;
+};
+
+/**
+ * An answered Accounts card's line: Saved only once Accounts kept the value, and whether it
+ * timed out or was cancelled, which the card's own status doesn't tell apart.
+ */
+export const accountCardLabel = (
+  item: Pick<SecretRequestItem, "secretStatus"> & { readonly id: string },
+  outcome: ReturnType<typeof accountCardOutcome>,
+  resolve: MFunctionType = mFallback,
+) =>
+  !isAccountSecretRequest(item.id)
+    ? undefined
+    : outcome !== undefined && outcome !== "settling" && outcome !== "ended"
+      ? resolve(ACCOUNT_CARD_LABELS[outcome])
+      : item.secretStatus !== "saved"
+        ? undefined
+        : outcome === "ended"
+          ? resolve(msg("Ended", { $context: "an answered card whose result is no longer kept" }))
+          : resolve(msg("Saving…"));
 /** Any other card's answer: `request_secret` is for codes used once, so it is not kept. */
 const ONE_TIME_SECRET_REQUEST_SAVED = msg("Sent to this agent only, not kept in Accounts");
 // SCIENT-FORK:END
@@ -38,7 +112,9 @@ export const secretRequestPrivacyNote = (
   resolve: MFunctionType = mFallback,
 ) => {
   // SCIENT-FORK:START — Scient Accounts: an Accounts card keeps the key in Accounts.
-  if (isAccountSecretRequest(item.id)) return resolve(ACCOUNT_SECRET_REQUEST_NOTE);
+  const kind = accountSecretKind(item.id);
+  if (kind !== undefined)
+    return resolve(kind === "key" ? ACCOUNT_SECRET_REQUEST_NOTE : ACCOUNT_PASSWORD_REQUEST_NOTE);
   // SCIENT-FORK:END
   return item.delivery !== "file"
     ? resolve(msg("Stored securely, never shown to the agent"))
