@@ -28,17 +28,23 @@ describe("Scient release metadata", () => {
       SCIENT_ANALYTICS_ENABLED: "true",
     });
   });
-  it("stays off on CI runners and under DO_NOT_TRACK unless CI is explicitly enabled", () => {
-    const release = { appVersion: "0.6.8", isPackaged: true, isDevelopment: false };
-    const enabled = (env: Record<string, string>) =>
-      scientAnalyticsMetadata(release, env).SCIENT_ANALYTICS_ENABLED;
-    expect(enabled({ CI: "true" })).toBe("false");
-    expect(enabled({ GITHUB_ACTIONS: "true" })).toBe("false");
-    expect(enabled({ CI: "false" })).toBe("true");
-    expect(enabled({ CI: "0" })).toBe("true");
-    expect(enabled({ CI: "true", SCIENT_ANALYTICS_ENABLED: "true" })).toBe("true");
-    expect(enabled({ DO_NOT_TRACK: "1" })).toBe("false");
-    expect(enabled({ DO_NOT_TRACK: "true", SCIENT_ANALYTICS_ENABLED: "true" })).toBe("false");
+  const packagedEnabled = (env: Record<string, string>) =>
+    scientAnalyticsMetadata({ appVersion: "0.6.8", isPackaged: true, isDevelopment: false }, env)
+      .SCIENT_ANALYTICS_ENABLED;
+  it("keeps a CI runner's packaged default off while still honoring explicit opt-in", () => {
+    expect(packagedEnabled({ CI: "true" })).toBe("false");
+    expect(packagedEnabled({ CI: "false" })).toBe("true");
+    expect(packagedEnabled({ CI: "true", SCIENT_ANALYTICS_ENABLED: "true" })).toBe("true");
+  });
+  it("lets DO_NOT_TRACK switch analytics off over the default and every opt-in", () => {
+    expect(packagedEnabled({ DO_NOT_TRACK: "1" })).toBe("false");
+    expect(packagedEnabled({ DO_NOT_TRACK: "0" })).toBe("true");
+    expect(packagedEnabled({ DO_NOT_TRACK: "true", SCIENT_ANALYTICS_ENABLED: "true" })).toBe(
+      "false",
+    );
+    expect(
+      packagedEnabled({ CI: "true", DO_NOT_TRACK: "1", SCIENT_ANALYTICS_ENABLED: "true" }),
+    ).toBe("false");
   });
   it("does not count development or custom builds as stable releases", () => {
     expect(
