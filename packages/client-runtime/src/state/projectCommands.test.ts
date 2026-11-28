@@ -663,6 +663,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
     probe: Effect.void,
     closed: Effect.never,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
   };
   const state = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
   const supervisor = EnvironmentSupervisor.of({
@@ -697,6 +698,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
     reorderRoutes: () => Effect.void,
     removeRelayEnvironments: () => Effect.void,
     setEnabled: () => Effect.die("Unexpected environment toggle"),
+    setLabel: () => Effect.die("Unexpected label update"),
     setCompatibility: () => Effect.die("Unexpected compatibility update"),
     retryNow: () => Effect.void,
     state: () => SubscriptionRef.get(state),

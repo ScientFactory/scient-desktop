@@ -20,6 +20,7 @@ import {
   inlineCodeFilePathCandidate,
   parseMarkdownSandboxFileLink,
 } from "@t3tools/shared/markdownLinks";
+import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskEdits";
 import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
@@ -35,6 +36,8 @@ import {
   encodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
 import {
+  Code2Icon,
+  EyeIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
   GlobeIcon,
@@ -293,6 +296,7 @@ const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
   renderInsights?: boolean;
+  previewMarkdownFences?: boolean;
   /** Compact markdown transforms remove blocks before rendering inside a label. */
   inline?: boolean;
   text: string;
@@ -691,6 +695,7 @@ function useChatMarkdownState(
     environmentId: explicitEnvironmentId,
     onTaskListChange,
     isStreaming = false,
+    previewMarkdownFences = false,
     skills = EMPTY_MARKDOWN_SKILLS,
     // SCIENT-FORK:START — content direction; `messageId` also scopes the streaming reveal.
     contentDirection,
@@ -1277,6 +1282,7 @@ function useChatMarkdownState(
   };
 
   const componentState = (() => ({
+    agentDirectories,
     canOperateHost,
     canOperatePreview,
     cwd,
@@ -1293,6 +1299,7 @@ function useChatMarkdownState(
     inlineCodeFileLinkMetaByText,
     inline,
     isStreaming,
+    previewMarkdownFences,
     linkTargetPreference,
     markdownFileLinkMetaByHref,
     onTaskListChange,
@@ -2203,6 +2210,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       onRunShellCommand,
       resolvedContentDirection,
       inline,
+      previewMarkdownFences,
     } = use(ChatMarkdownRendererContext);
     // SCIENT-FORK:END
     const text = use(ChatMarkdownTextContext);
@@ -2269,6 +2277,27 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </Suspense>
       </RenderErrorBoundary>
     );
+    if (previewMarkdownFences && /^(?:markdown|md)$/i.test(language)) {
+      return (
+        <PreviewableMarkdownFence
+          code={codeBlock.code}
+          language={language}
+          fenceTitle={fenceTitle}
+          isStreaming={isStreaming}
+          // SCIENT-FORK:START — the source view keeps Scient's code direction.
+          dir={chatCodeBoxDirection({
+            code: codeBlock.code,
+            language,
+            fenceMeta,
+            conversationDirection: resolvedContentDirection,
+            isStreaming,
+          })}
+          // SCIENT-FORK:END
+        >
+          {highlightedCode}
+        </PreviewableMarkdownFence>
+      );
+    }
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
@@ -2298,6 +2327,83 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
 } satisfies MarkdownComponents;
+
+function PreviewableMarkdownFence({
+  code,
+  language,
+  fenceTitle,
+  isStreaming,
+  // SCIENT-FORK:START — the code box's direction.
+  dir,
+  // SCIENT-FORK:END
+  children,
+}: {
+  code: string;
+  language: string;
+  fenceTitle: string | null;
+  isStreaming: boolean;
+  // SCIENT-FORK:START — the code box's direction.
+  dir: "ltr" | "rtl" | "auto";
+  // SCIENT-FORK:END
+  children: ReactNode;
+}) {
+  const gt = useGT();
+  const [showPreview, setShowPreview] = useState(false);
+  const rendered = showPreview && !isStreaming;
+  const { agentDirectories, cwd, expandMedia, headingLevelOffset, resolvedTheme, threadRef } = use(
+    ChatMarkdownRendererContext,
+  );
+  const label = rendered ? gt("Show markdown source") : gt("Show rendered markdown");
+
+  return (
+    <MarkdownCodeBlock
+      code={code}
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={resolvedTheme}
+      isStreaming={isStreaming}
+      canWrap={!rendered}
+      // SCIENT-FORK:START — Hebrew or Arabic source reads right to left; a failed copy says so
+      // beside the Copy button, like Copy message.
+      dir={dir}
+      onCopyFailure={(cause, copyButton) => showAnchoredCopyErrorToast(copyButton, cause)}
+      // SCIENT-FORK:END
+      viewToggle={
+        isStreaming ? null : (
+          <SharedTooltipTrigger
+            label={label}
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                onClick={() => setShowPreview(!showPreview)}
+                aria-label={label}
+                aria-pressed={rendered}
+              />
+            }
+          >
+            {rendered ? <Code2Icon className="size-3" /> : <EyeIcon className="size-3" />}
+          </SharedTooltipTrigger>
+        )
+      }
+    >
+      {rendered ? (
+        <ChatMarkdown
+          text={maskMarkdownFrontmatter(code)}
+          cwd={cwd}
+          agentDirectories={agentDirectories}
+          threadRef={threadRef}
+          headingLevelOffset={headingLevelOffset}
+          onImageExpand={expandMedia}
+          className="mt-1 border-t border-border/70 bg-background px-3 py-3"
+        />
+      ) : (
+        children
+      )}
+    </MarkdownCodeBlock>
+  );
+}
 
 const markdownOptions = new WeakMap<MarkdownExtensions, Map<string, WordsHastOptions>>();
 

@@ -300,9 +300,23 @@ describe("searchSettings", () => {
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
       ["ChatGPT account", "providers"],
+      ["Live Processes", "diagnostics"],
+      ["Most Common Failures", "diagnostics"],
+      ["Top Span Names", "diagnostics"],
+      ["Slowest Spans", "diagnostics"],
+      ["Third-party notices", "open-source-licenses"],
       ["Words", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
+    }
+  });
+
+  it("finds the project page for its Pin switch", () => {
+    for (const query of ["pin", "pin project", "pinned projects"]) {
+      expect(
+        searchSettings(query).map((item) => item.id),
+        query,
+      ).toContain("project-overview");
     }
   });
 
@@ -328,7 +342,9 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    expect(getSettingsSearchTargetScope("response-streaming")?.scope).toBe("project-defaults");
+    for (const id of ["response-streaming", "project-actions"]) {
+      expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
+    }
     for (const scope of ["all", "environment", "project"] as const) {
       expect(isSettingsSearchScopeAvailable("project-defaults", scope)).toBe(true);
     }

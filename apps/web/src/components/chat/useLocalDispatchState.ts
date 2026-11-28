@@ -1,4 +1,9 @@
-import { type EnvironmentId, type MessageId, type RuntimeRequestId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type MessageId,
+  type ProviderInstanceId,
+  type RuntimeRequestId,
+} from "@t3tools/contracts";
 import { useLayoutEffect, useRef, useState } from "react";
 import { type ComposerSubmissionIntent } from "../../composer-logic";
 import { type SessionPhase, type Thread } from "../../types";
@@ -12,6 +17,7 @@ export interface LocalDispatchActions {
   readonly beginLocalDispatch: (options?: {
     readonly preparingWorktree?: boolean;
     readonly submissionIntent?: ComposerSubmissionIntent;
+    readonly providerInstanceId?: ProviderInstanceId;
   }) => void;
   readonly resetLocalDispatch: () => void;
 }
@@ -63,12 +69,14 @@ export function useLocalDispatchState(input: {
           : null;
       if (active) {
         const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
+        const providerInstanceId = options?.providerInstanceId ?? active.providerInstanceId;
         return active.preparingWorktree === preparingWorktree &&
-          active.submissionIntent === submissionIntent
+          active.submissionIntent === submissionIntent &&
+          active.providerInstanceId === providerInstanceId
           ? current
           : {
               threadKey: input.routeThreadKey,
-              snapshot: { ...active, preparingWorktree, submissionIntent },
+              snapshot: { ...active, preparingWorktree, submissionIntent, providerInstanceId },
             };
       }
       return {
@@ -90,6 +98,7 @@ export function useLocalDispatchState(input: {
     localDispatchLatestUserMessageId: activeLocalDispatch?.latestUserMessageId ?? null,
     isPreparingWorktree: activeLocalDispatch?.preparingWorktree ?? false,
     isSendBusy: activeLocalDispatch !== null,
+    localDispatchProviderInstanceId: activeLocalDispatch?.providerInstanceId ?? null,
     backgroundSubmissionPending: activeLocalDispatch?.submissionIntent === "background",
   };
 }

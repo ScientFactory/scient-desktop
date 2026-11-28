@@ -61,6 +61,8 @@ import { AntigravityInstallationError } from "./provider/AntigravityInstallation
 import { type ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
+import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
+import * as ServerConfig from "./config.ts";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import {
   NodeHttpServerTest,
@@ -2554,16 +2556,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const hostResources = yield* HostResources.make().pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provide(
-            Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
-              string: () =>
-                Ref.update(commandCalls, (count) => count + 1).pipe(
-                  Effect.as(
-                    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n" +
-                      "Pages free: 10.\nPages inactive: 20.\nPages speculative: 5.\n" +
-                      "Pages purgeable: 999.\n",
+            Layer.mergeAll(
+              Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
+                string: () =>
+                  Ref.update(commandCalls, (count) => count + 1).pipe(
+                    Effect.as(
+                      "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n" +
+                        "Pages free: 10.\nPages inactive: 20.\nPages speculative: 5.\n" +
+                        "Pages purgeable: 999.\n",
+                    ),
                   ),
-                ),
-            }),
+              }),
+              // Pressure reads the sidecar; disk space reads the server's folders.
+              NativeTelemetryClient.layerTest(),
+              ServerConfig.layerTest(process.cwd(), { prefix: "host-resources-" }),
+            ),
           ),
         );
         const [first, second] = yield* Effect.all([hostResources.read, hostResources.read], {
@@ -2583,20 +2590,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const hostResources = yield* HostResources.make().pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provide(
-            Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
-              string: () =>
-                Effect.gen(function* () {
-                  const call = yield* Ref.updateAndGet(commandCalls, (count) => count + 1);
-                  if (call === 1) {
-                    yield* Deferred.succeed(started, undefined);
-                    return yield* Effect.never;
-                  }
-                  return (
-                    "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n" +
-                    "Pages free: 10.\nPages inactive: 20.\nPages speculative: 5.\n"
-                  );
-                }),
-            }),
+            Layer.mergeAll(
+              Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
+                string: () =>
+                  Effect.gen(function* () {
+                    const call = yield* Ref.updateAndGet(commandCalls, (count) => count + 1);
+                    if (call === 1) {
+                      yield* Deferred.succeed(started, undefined);
+                      return yield* Effect.never;
+                    }
+                    return (
+                      "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n" +
+                      "Pages free: 10.\nPages inactive: 20.\nPages speculative: 5.\n"
+                    );
+                  }),
+              }),
+              NativeTelemetryClient.layerTest(),
+              ServerConfig.layerTest(process.cwd(), { prefix: "host-resources-" }),
+            ),
           ),
         );
         const firstRead = yield* hostResources.read.pipe(Effect.forkChild);

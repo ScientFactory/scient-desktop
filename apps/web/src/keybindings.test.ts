@@ -660,6 +660,22 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  // SCIENT-FORK:START — Scient keeps mod+alt+e for Files, so maximize defaults to mod+alt+shift+e.
+  it("maximizes the right panel with mod+alt+shift+e by default", () => {
+    // macOS reports Option+E as the dead key "´", so the physical key decides.
+    const mac = event({ key: "´", code: "KeyE", metaKey: true, altKey: true, shiftKey: true });
+    const linux = event({ key: "E", code: "KeyE", ctrlKey: true, altKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(mac, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "rightPanel.toggleMaximized",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(linux, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
+      "rightPanel.toggleMaximized",
+    );
+  });
+  // SCIENT-FORK:END
+
   it("uses terminal cycling shortcuts without changing bracket history shortcuts", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });

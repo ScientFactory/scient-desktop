@@ -165,6 +165,7 @@ const harness = Effect.gen(function* () {
         probe: Effect.void,
         closed: Effect.never,
         inboundFrames: Effect.succeed(0),
+        awaitingReply: Effect.succeed(false),
       }),
     ),
     prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),

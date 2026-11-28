@@ -100,6 +100,8 @@ function queuedRunEditStub(
     removeEditingAttachment: vi.fn(),
     restoreEditingAttachment: vi.fn(),
     saveEdit: vi.fn(async () => {}),
+    canMoveEditToStash: false,
+    removeEditedRun: vi.fn(),
     ...overrides,
   };
 }

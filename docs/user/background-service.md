@@ -45,6 +45,17 @@ To move to another release, stop the server, set `SCIENT_SERVER_VERSION` to the
 new exact version, and start it again. Let active agent work and terminal
 commands finish first.
 
+## Machine load warnings
+
+When the host is in trouble, the sidebar (or the top of the thread list on
+mobile) says so: **Memory is slowing agents down** (this can happen before
+memory runs out), **Almost out of disk space** (where Scient keeps its data and
+worktrees), or **Machine overloaded** (work waiting for a CPU or for the disk).
+A machine that is merely busy shows nothing. With several machines in trouble,
+one notice covers them all. On Linux the warning names the agents using the most
+memory or CPU, and you can force stop one there to free the machine for the
+rest. Their threads also show a warning icon in the thread list.
+
 ## Connection and removal boundaries
 
 Starting a server does not publish it to the internet, create a Scient cloud
@@ -88,7 +99,7 @@ app connecting over SSH, is refused until the repair ends.
 
 The repair's time grows with the size of the whole database, not only the
 space it reclaims, and can exceed an hour on a large database or a slow disk;
-`t3 doctor` shows each step as it runs. It rebuilds the database through a
+`scient doctor` shows each step as it runs. It rebuilds the database through a
 temporary copy, so it needs free space of about twice the data still in use
 (the database size minus the reclaimable space): once in the system temporary
 directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it is not set) and

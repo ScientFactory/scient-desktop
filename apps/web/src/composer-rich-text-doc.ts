@@ -1,4 +1,4 @@
-import { joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
+import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
 import {
   Fragment,
   Mark,
@@ -480,6 +480,18 @@ const ComposerListItemExtension = ListItem.extend({
       indent: { default: "" },
       marker: { default: "-" },
       space: { default: " " },
+    };
+  },
+  addCommands() {
+    return {
+      ...this.parent?.(),
+      // Tiptap's Cmd/Option/Shift+Backspace join backward, which would nest an item under the one above.
+      joinBackward:
+        () =>
+        ({ state, dispatch }) =>
+          (listItemTypeAt(state.selection.$from) !== null &&
+            joinTextblockBackward(state, dispatch)) ||
+          joinBackward(state, dispatch),
     };
   },
   addKeyboardShortcuts() {

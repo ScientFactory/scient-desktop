@@ -8,9 +8,11 @@ in once, and you choose what it may do.
 
 ## Get the MCP URL
 
-In **Settings → Environments**, open a saved environment's menu and choose
-**Copy MCP URL**. The URL is the environment's address followed by `/mcp`, for
-example:
+For the machine you are on, use **MCP URL** in **Settings → Sharing & access**:
+it is the Scient Connect address when the tunnel is on, otherwise a `localhost`
+or `https://` address. For a saved remote environment, open its menu in
+**Settings → Environments** and choose **Copy MCP URL**. The URL is the
+environment's address followed by `/mcp`, for example:
 
 ```text
 https://<environment-address>/mcp
@@ -26,9 +28,9 @@ same device can reach it.
   `http://100.x.y.z:3773`, may allow discovery, but OAuth clients can refuse it
   before completing sign-in.
 - **A hosted agent**, such as ChatGPT or a bot running in the cloud, must reach
-  the environment from the internet, so it needs a public HTTPS address you set
-  up for the environment, such as your own proxy. A Tailscale address only works
-  from your own tailnet. Scient does not provide a public address.
+  the environment from the internet, so it needs a public HTTPS address: the
+  Scient Connect address while the tunnel is on, or one you set up yourself,
+  such as your own proxy. A Tailscale address only works from your own tailnet.
 
 ## Approve a sign-in
 

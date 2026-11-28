@@ -1231,6 +1231,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         yield* emit({ type: "provider_session.updated", driver, providerSession: session });
       });
 
+    const setStartupPhase = Effect.fnUntraced(function* (phase: string | undefined) {
+      if (session.startupPhase === phase) return;
+      const updatedAt = yield* DateTime.now;
+      const { startupPhase: _reported, ...current } = session;
+      session = { ...current, ...(phase === undefined ? {} : { startupPhase: phase }), updatedAt };
+      yield* emit({ type: "provider_session.updated", driver, providerSession: session });
+    });
+
     const ordinalOf = (turn: ActiveTurn, nativeId: string) => {
       const known = turn.ordinals.get(nativeId);
       if (known !== undefined) return known;
@@ -4131,6 +4139,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           Effect.gen(function* () {
             streamFailure = "The OpenCode event stream was lost. Reconnecting.";
             yield* Effect.logWarning("Lost the OpenCode event stream; reconnecting.");
+            yield* setStartupPhase("connecting");
             // Failures may contain URLs or response text; annotate only the tag and keep details in cause.
             const next = yield* reconnect.pipe(
               Effect.tapCause((cause) =>
@@ -4140,6 +4149,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
                 ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
               ),
               Effect.option,
+              Effect.ensuring(setStartupPhase(undefined)),
             );
             if (next._tag === "None") {
               return yield* lock.withPermit(
