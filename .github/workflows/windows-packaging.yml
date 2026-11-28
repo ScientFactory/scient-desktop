@@ -359,6 +359,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The upgrade fixture is not open to Users' }
           $folderId = node scripts/qualify-windows-install-folder.mjs identity "$installDir"
           if ($LASTEXITCODE -ne 0) { throw 'Could not read the install folder identity' }
+          # 0.6.21, like every release through 0.6.34, carries the WSL runtime; the slim
+          # candidate must not leave it behind.
+          $oldWsl = Join-Path $installDir 'resources/wsl-runtime.tar.gz'
+          if (!(Test-Path -LiteralPath $oldWsl)) { throw '0.6.21 installed no WSL runtime to replace' }
           # No /D=: like an app update, the installer finds the registered install itself.
           $process = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed for 0.6.22 with exit $($process.ExitCode)" }
@@ -367,17 +371,37 @@ jobs:
           $installedVersion = (Get-Item $exe).VersionInfo.ProductVersion
           Write-Host "Installed Windows product version: $installedVersion"
           if ($installedVersion -ne '0.6.22.0') { throw "Installed version $installedVersion is not 0.6.22.0" }
+          foreach ($name in @('wsl-runtime.tar.gz', 'wsl-runtime.tar.gz.sha256')) {
+            if (Test-Path -LiteralPath (Join-Path $installDir "resources/$name")) { throw "The upgrade left 0.6.21's resources/$name" }
+          }
           node scripts/qualify-windows-install-folder.mjs installed "$installDir" "$folderId"
           if ($LASTEXITCODE -ne 0) { throw 'The installer did not protect the upgraded folder' }
           node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
-          if ($LASTEXITCODE -ne 0) { throw 'The upgraded app failed its runtime qualification' }
-          node scripts/native-server-compile-cache.mjs check "$installDir" Scient.exe
-          if ($LASTEXITCODE -ne 0) { throw 'The upgraded app did not accept its server bytecode' }
+      - name: Require the upgraded app to accept its server bytecode
+        shell: pwsh
+        run: node scripts/native-server-compile-cache.mjs check "$env:SCIENT_PACKAGING_INSTALL" Scient.exe
       # Last: each install here replaces the registered upgrade install above.
       - name: Install into a fresh, a shared and a linked folder
         shell: pwsh
         timeout-minutes: 10
         run: node scripts/qualify-windows-install-folder.mjs fixtures (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path
+      # The fixtures above only install; this fresh install is launched like a new user's.
+      - name: Install into a fresh folder and launch it
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+          SCIENT_NEXT_HOME: ${{ runner.temp }}/scient-fresh-profile
+          APPDATA: ${{ runner.temp }}/scient-fresh-appdata
+        run: |
+          $installDir = 'C:\scient-install-fresh'
+          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+          $process = Start-Process (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer failed with exit $($process.ExitCode)" }
+          node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
+      - name: Require the fresh install to accept its server bytecode
+        shell: pwsh
+        run: node scripts/native-server-compile-cache.mjs check 'C:\scient-install-fresh' Scient.exe
       # SCIENT-FORK:START — the full installer with the WSL runtime, on nightly and manual runs
       # only. These steps run despite an earlier failure, so a waived failure never leaves the
       # full package unqualified; each needs the step before it to have succeeded. Last: its
@@ -464,13 +488,13 @@ jobs:
           printf 'attempt=%s\nartifact_id=%s\nsha256=%s\ninstall_script_sha256=%s\n' "$GITHUB_RUN_ATTEMPT" "$ARTIFACT_ID" "$SHA256" "$INSTALL_SCRIPT_SHA256" >> "$GITHUB_OUTPUT"
       - name: Install the full WSL installer into a fresh folder
         if: ${{ !cancelled() && steps.wsl_uploaded.outcome == 'success' }}
+        id: wsl_install
         shell: pwsh
         timeout-minutes: 10
         env:
-          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+          SCIENT_NEXT_HOME: ${{ runner.temp }}/scient-wsl-profile
+          APPDATA: ${{ runner.temp }}/scient-wsl-appdata
         run: |
-          $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-wsl-profile'
-          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-wsl-appdata'
           $installDir = 'C:\scient-install-wsl'
           if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
           $installer = (Resolve-Path 'release-wsl/Scient-0.6.22-x64.exe').Path
@@ -479,10 +503,19 @@ jobs:
           $installed = (Get-FileHash (Join-Path $installDir 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash
           $qualified = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash
           if ($installed -ne $qualified) { throw "Installed WSL runtime $installed is not the uploaded $qualified" }
-          node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
-          if ($LASTEXITCODE -ne 0) { throw 'The full app failed its runtime qualification' }
-          node scripts/native-server-compile-cache.mjs check "$installDir" Scient.exe
-          if ($LASTEXITCODE -ne 0) { throw 'The full app did not accept its server bytecode' }
+      - name: Launch the installed full WSL app
+        if: ${{ !cancelled() && steps.wsl_install.outcome == 'success' }}
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+          SCIENT_NEXT_HOME: ${{ runner.temp }}/scient-wsl-profile
+          APPDATA: ${{ runner.temp }}/scient-wsl-appdata
+        run: node scripts/qualify-windows-packaged-runtime.mjs 'C:\scient-install-wsl' --launch-smoke
+      - name: Require the full WSL app to accept its server bytecode
+        if: ${{ !cancelled() && steps.wsl_install.outcome == 'success' }}
+        shell: pwsh
+        run: node scripts/native-server-compile-cache.mjs check 'C:\scient-install-wsl' Scient.exe
       # SCIENT-FORK:END
       # The installer and its blockmap are already compressed; deflating them again only costs time.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

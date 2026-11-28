@@ -50,6 +50,8 @@ const RUN_DESPITE_FAILURE = [
   "Write the WSL install script for the qualification",
   "Record the uploaded WSL payload",
   "Install the full WSL installer into a fresh folder",
+  "Launch the installed full WSL app",
+  "Require the full WSL app to accept its server bytecode",
 ];
 const GATE = "Check";
 // ci-check.cjs ADVISORY jobs: evidence and upkeep beside the gate, which never block.

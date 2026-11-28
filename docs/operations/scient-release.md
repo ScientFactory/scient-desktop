@@ -104,12 +104,13 @@ the stable scheduler and production gate.
   would compile on every launch.
 - CI calls Windows Packaging for changes affecting packaged code on pull
   requests, merge groups, and main. Successful qualification is part of the
-  existing required `Test` check; an unresolved diff runs qualification, and
+  required `Check` gate; an unresolved diff runs qualification, and
   a failed detector or an unqualified skip fails the gate. It builds the slim
   installer releases ship and runs the release payload validator and verifier,
   packaged terminal/Cursor native probes, an install/upgrade from the
-  checksum-pinned 0.6.21 installer (full, like every release through 0.6.34),
-  and installs into fresh, shared and linked folders, without signing
+  checksum-pinned 0.6.21 installer (full, like every release through 0.6.34)
+  that must leave no WSL runtime behind, installs into fresh, shared and linked
+  folders, and a fresh install's launch smoke and bytecode check, without signing
   secrets or publication authority. 0.6.21 downloads, verifies and installs in the
   background while the candidate builds; the candidate then installs over it. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
