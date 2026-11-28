@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off - The fixture binds a real Unix socket.
-import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -32,8 +31,10 @@ async function fixture() {
     setup,
     socket,
     listen: async () => {
-      server.listen(socket);
-      await NodeEvents.once(server, "listening");
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.once("error", reject);
+      server.listen(socket, resolve);
+      await promise;
     },
     consent,
     [Symbol.asyncDispose]: async () => {
