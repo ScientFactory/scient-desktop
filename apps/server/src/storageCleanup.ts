@@ -1361,10 +1361,13 @@ const make = Effect.gen(function* () {
       // A removal Git refused keeps its checkout, and the next sweep looks at it again.
       if (yield* fs.exists(entry.path).pipe(Effect.orElseSucceed(() => true))) return;
       if (!(yield* fs.exists(adminDir).pipe(Effect.orElseSucceed(() => true)))) return;
+      const gitdir = yield* readGitdir(adminDir);
+      // A partial deletion can remove the gitfile but leave the isolated checkout for recovery.
+      if (gitdir !== null && (yield* fs.exists(path.dirname(path.resolve(adminDir, gitdir)))))
+        return;
       const others = (yield* readLeftovers).filter((leftover) => leftover.adminDir !== adminDir);
       // SCIENT-FORK:START — the admin directory as noted, so a reused name is never deleted.
       const identity = yield* adminDirIdentity(adminDir);
-      const gitdir = yield* readGitdir(adminDir);
       yield* writeLeftovers([...others, { adminDir, entry, identity, gitdir }]);
       // SCIENT-FORK:END
     },
@@ -1388,9 +1391,12 @@ const make = Effect.gen(function* () {
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
       // SCIENT-FORK:END
     );
-    if (Option.isSome(gitFile) && (yield* fs.exists(gitFile.value))) {
-      const current = yield* worktreeAdminDir(path.dirname(gitFile.value));
-      if ((yield* fs.realPath(current)) === (yield* fs.realPath(adminDir))) return false;
+    if (Option.isSome(gitFile)) {
+      const checkout = path.dirname(gitFile.value);
+      if (yield* fs.exists(gitFile.value)) {
+        const current = yield* worktreeAdminDir(checkout);
+        if ((yield* fs.realPath(current)) === (yield* fs.realPath(adminDir))) return false;
+      } else if (yield* fs.exists(checkout)) return false;
     }
     // SCIENT-FORK:START — checked again just before the delete, after the Git call above.
     if (!(yield* isNotedLeftover(leftover, adminDir))) return false;

@@ -981,9 +981,14 @@ const make = Effect.gen(function* () {
     }
     const removeOne = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
       if (!(yield* exists(checkout.worktreePath))) {
-        yield* git
-          .pruneWorktrees({ cwd: checkout.repositoryPath })
-          .pipe(Effect.ignoreCause({ log: true }));
+        // SCIENT-FORK:START — a storage sweep can leave an isolated checkout for recovery.
+        // Repository-wide prune would discard its registration if its gitfile was lost.
+        if (input.removeCheckout === undefined) {
+          yield* git
+            .pruneWorktrees({ cwd: checkout.repositoryPath })
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
+        // SCIENT-FORK:END
         return true;
       }
       const { keep, force } = yield* verdict(checkout);

@@ -591,6 +591,35 @@ it.live("keeps a checkout that gained work while its folder's remove command wai
   ),
 );
 
+it.live("keeps a recovery checkout's Git registration in a guarded storage sweep", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const shop = path.join(tmp, "shop");
+      const api = yield* repository("shop/api");
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api);
+      const { taskFolder } = yield* create("feature");
+      const checkout = taskFolder.repositories[0]!;
+      const recovery = path.join(tmp, "recovery");
+      yield* run(api, "worktree", "move", checkout.worktreePath, recovery);
+      const adminDir = yield* run(recovery, "rev-parse", "--absolute-git-dir");
+      yield* fileSystem.remove(path.join(recovery, ".git"));
+
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      yield* taskFolders.remove({
+        root: taskFolder.root,
+        force: false,
+        forget: false,
+        removeCheckout: () => Effect.die("The original checkout is absent"),
+      });
+
+      assert.isTrue(yield* fileSystem.exists(adminDir));
+      assert.include(yield* run(api, "worktree", "list", "--porcelain"), recovery);
+    }),
+  ),
+);
+
 it.live("leaves a project's layout commands out for a request that may not run them", () =>
   withState((state) =>
     Effect.gen(function* () {

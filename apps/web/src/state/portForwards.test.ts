@@ -43,7 +43,7 @@ describe("forward locality", () => {
 
 it("recognizes only the desktop's top-level same-machine error", async () => {
   const sameMachine = "LoopbackTunnelSameMachineError: The server is on this machine.";
-  const ipcPrefix = "Error invoking remote method 'port-forward:start': ";
+  const ipcPrefix = "Error invoking remote method 'desktop:port-forward-start': ";
   const start = vi
     .fn()
     .mockRejectedValueOnce(new Error(ipcPrefix + sameMachine))

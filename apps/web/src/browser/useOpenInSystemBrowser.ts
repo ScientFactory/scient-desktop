@@ -1,5 +1,6 @@
 import { AuthTerminalOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
+import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
 
 import { isElectron } from "~/env";
@@ -19,6 +20,8 @@ import {
   resolveReachableExternalServerUrl,
   tunnelsEnvironmentLoopback,
 } from "./browserTargetResolver";
+
+const isSameMachineError = Schema.is(PortForwardSameMachineError);
 
 /** The port of an http(s) URL on localhost, 127.0.0.1 or ::1; null for any other URL. */
 export function loopbackWebPort(url: string): number | null {
@@ -82,7 +85,7 @@ export function useOpenInSystemBrowser(
     // Starting a forward runs the probe; only a confirmed local environment opens directly.
     // SCIENT-FORK:START — the desktop can finish the locality probe during this click.
     const forward = await forwardPort(environmentId, port).catch((error: unknown) => {
-      if (error instanceof PortForwardSameMachineError) return null;
+      if (isSameMachineError(error)) return null;
       throw error;
     });
     await api.shell.openExternal(forward === null ? url : forwardedUrl(forward, url));

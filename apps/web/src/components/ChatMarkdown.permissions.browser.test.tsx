@@ -446,7 +446,9 @@ it.each(["remote", "pending-local", "remote-error"] as const)(
     const forwarded = "http://localhost:45000/docs?x=1#top";
     if (route === "pending-local") {
       state.forwardLocality = "pending";
-      state.forwardPort.mockRejectedValue(new PortForwardSameMachineError("Same machine"));
+      state.forwardPort.mockRejectedValue(
+        new PortForwardSameMachineError({ port: 3000, cause: new Error("Same machine") }),
+      );
     }
     if (route === "remote-error") {
       state.forwardPort.mockRejectedValue(new Error("The other machine could not be reached"));

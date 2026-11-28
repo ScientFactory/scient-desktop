@@ -141,7 +141,18 @@ export const findPortForward = (
   );
 
 // SCIENT-FORK:START — callers may open the original URL on a confirmed same-machine route.
-export class PortForwardSameMachineError extends Error {}
+export class PortForwardSameMachineError extends Schema.TaggedError<PortForwardSameMachineError>()(
+  "PortForwardSameMachineError",
+  { port: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return m(
+      msg("This environment runs on this computer, so localhost:{port} already reaches it.", {
+        port: this.port,
+      }),
+    );
+  }
+}
 // SCIENT-FORK:END
 
 export function forwardPort(environmentId: EnvironmentId, remotePort: number) {
@@ -153,14 +164,7 @@ export function forwardPort(environmentId: EnvironmentId, remotePort: number) {
     // SCIENT-FORK:START — preserve the confirmed locality after Electron serializes the error.
     const ipcError = raw.replace(/^Error invoking remote method '[^']*':\s*/u, "");
     if (ipcError.startsWith("LoopbackTunnelSameMachineError:")) {
-      throw new PortForwardSameMachineError(
-        m(
-          msg("This environment runs on this computer, so localhost:{port} already reaches it.", {
-            port: remotePort,
-          }),
-        ),
-        { cause: error },
-      );
+      throw new PortForwardSameMachineError({ port: remotePort, cause: error });
     }
     // SCIENT-FORK:END
     throw new Error(
