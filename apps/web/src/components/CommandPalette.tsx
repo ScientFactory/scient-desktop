@@ -2447,11 +2447,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
     // SCIENT-FORK:START — a lost navigation claim (the picker closed, or the page changed) still
-    // lets a waiting draft take the added project; openAddedProject skips the navigation once the
-    // page changed. Awaited so `projectOpen` stays registered until the draft has moved.
+    // lets a waiting draft take the added project, but never opens a new thread. Awaited so
+    // `projectOpen` stays registered until the draft has moved.
     const settleLostClaim = async () => {
       if (addProjectDraftId === null || createResult._tag === "Failure") return;
-      await openAddedProject(scopeProjectRef(input.environmentId, projectId), projectOpen);
+      const project = await waitForProject(
+        scopeProjectRef(input.environmentId, projectId),
+        3_000,
+      ).catch(() => null);
+      if (project !== null && projectOpen.isCurrent()) {
+        await moveDraftToAddedProject(project, projectOpen.pathname);
+      }
     };
     if (!canCommitNavigation()) return await settleLostClaim();
     // SCIENT-FORK:END
