@@ -17,6 +17,47 @@ export type DelegateOutcome =
   | { readonly _tag: "Lost" }
   | { readonly _tag: "Replied"; readonly reply: unknown };
 
+/** Below the 104-byte Unix socket path limit on macOS (108 on Linux). */
+const SOCKET_PATH_LIMIT = 100;
+
+/**
+ * The store path wacli is given. Its delegate socket lives inside, so a store whose socket path
+ * would pass the limit is reached through a short link in `<temp root>/scient-whatsapp-<uid>`, a
+ * folder only this user owns: the first root whose whole socket path fits. `linkRoot` is that
+ * folder, absent when the store is used as is (always on Windows, whose pipes have no such limit).
+ */
+export function wacliStorePath(input: {
+  readonly platform: NodeJS.Platform;
+  readonly storeDir: string;
+  /** Candidate temp folders, most private first. */
+  readonly tempRoots: ReadonlyArray<string | undefined>;
+  readonly userId: number | undefined;
+  readonly linkName: string;
+  readonly join: (...segments: ReadonlyArray<string>) => string;
+}): { readonly storeDir: string; readonly linkRoot?: string } {
+  const fits = (dir: string) =>
+    new TextEncoder().encode(input.join(dir, ".send.sock")).length <= SOCKET_PATH_LIMIT;
+  if (input.platform === "win32" || fits(input.storeDir)) return { storeDir: input.storeDir };
+  for (const root of input.tempRoots) {
+    if (root === undefined || root === "") continue;
+    const linkRoot = input.join(root, `scient-whatsapp-${input.userId ?? "user"}`);
+    const storeDir = input.join(linkRoot, input.linkName);
+    if (fits(storeDir)) return { storeDir, linkRoot };
+  }
+  return { storeDir: input.storeDir };
+}
+
+/**
+ * Go's `strings.ToLower`, which wacli applies to the store path before naming its Windows pipe:
+ * one code point for one, where JavaScript can expand (`İ` becomes `i` plus a combining dot in
+ * JavaScript, plain `i` in Go).
+ */
+function goLowerCase(text: string): string {
+  let lowered = "";
+  for (const char of text) lowered += String.fromCodePoint(char.toLowerCase().codePointAt(0)!);
+  return lowered;
+}
+
 /**
  * Where the running sync listens: `<store>/.send.sock` on macOS and Linux (`storeDir` is the path
  * wacli was given), a pipe named for the store's real path on Windows.
@@ -29,7 +70,7 @@ export function delegateAddress(input: {
 }): string {
   if (input.platform !== "win32") return input.join(input.storeDir, ".send.sock");
   const digest = NodeCrypto.createHash("sha256")
-    .update(input.realStoreDir.toLowerCase())
+    .update(goLowerCase(input.realStoreDir))
     .digest("hex");
   return `\\\\.\\pipe\\wacli-send-${digest}`;
 }

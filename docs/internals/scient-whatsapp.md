@@ -45,9 +45,11 @@ The device name is fixed when the device links; renaming the computer later does
 wacli opens its delegate socket at `<store>/.send.sock`, and macOS and Linux cap Unix socket
 paths near 104 bytes. When that path would be longer than 100 bytes (a deep home or dev
 worktree), Scient passes wacli a short link to the store instead, in a folder only this user
-owns: `$XDG_RUNTIME_DIR` or `$TMPDIR` + `/scient-whatsapp-<uid>/<hash>`. The folder's owner and
-mode are checked, and the link re-made, before every run (temp folders get cleaned); nothing
-runs when the check fails, and unlink removes the link. Windows uses a named pipe and needs none.
+owns: `<root>/scient-whatsapp-<uid>/<hash>`, with the first of `$XDG_RUNTIME_DIR`, `$TMPDIR` and
+`/tmp` whose whole socket path fits (`wacliStorePath`). The folder's owner and mode are checked,
+and the link re-made, before every run (temp folders get cleaned); nothing runs when the check
+fails, and unlink removes the link. Windows uses a named pipe, named like wacli does from the
+store's real path lowercased the Go way (one code point for one), and needs no link.
 
 Logs keep wacli's error text (connections, files, WhatsApp's answers), never message content.
 
@@ -64,24 +66,31 @@ Logs keep wacli's error text (connections, files, WhatsApp's answers), never mes
   Windows), so there is never a second WhatsApp session. `logged_out` → `RemovedByPhone` (no
   restart).
   wacli's follow loop reconnects without waiting for WhatsApp's login verdict, so a temporary ban
-  never reaches its events. It gives up after five minutes; Scient then runs
-  `wacli --json doctor --connect`, which does wait for the verdict. `WhatsApp account is
-  temporarily banned: … (expires in …)` → `Restricted` until it ends (24 hours when WhatsApp
-  doesn't say), saved in `<stateDir>/whatsapp/restriction.json` so a restart waits too; a revoked
-  session → `RemovedByPhone`. Anything else restarts with backoff.
+  never reaches its events, and can leave it waiting without exiting. It gives up after five
+  minutes of failed reconnects, and Scient stops it after ten minutes without a connection; Scient
+  then runs `wacli --json groups refresh`, which logs in and returns the verdict as its error (the
+  pinned `doctor --connect` drops it; refreshing the local group list is the only other effect).
+  `WhatsApp account is temporarily banned: … (expires in …)` → `Restricted` until it ends (24
+  hours when WhatsApp doesn't say), saved in `<stateDir>/whatsapp/restriction.json` so a restart
+  waits too; a revoked session → `RemovedByPhone`. Anything else restarts with backoff.
 - **Agent reads**: `wacli --read-only --json chats list | messages list | messages search |
   contacts search`, run directly against the store; reads work alongside the connection's lock.
 - **Agent sends**: one JSON request over the running sync's delegate socket
   (`wacliDelegate.ts`, protocol version 1 of the pinned release): message text and recipients
   never appear in process arguments, and there is no fallback that opens a second session.
-  Recipients are one person or group (`…@s.whatsapp.net`, `…@lid`, `…@g.us` or a phone number);
+  Recipients are one person or group (`…@s.whatsapp.net`, `…@lid`, `…@g.us` or a phone number,
+  sent as `<digits>@s.whatsapp.net` so wacli never matches the digits against chat names);
   Status, broadcast lists and channels are refused. A reply means WhatsApp accepted the message,
-  not that it was delivered; a request that went out without a complete reply is
-  `send-uncertain`.
+  not that it was delivered; a request that went out without a complete reply, or whose reply
+  says the connection dropped first, is `send-uncertain`. A dispatched send runs to its end even
+  when the agent call is cancelled, and keeps its slot meanwhile.
 - **Unlink**: close admission to agent calls and wait for those running, stop the connection,
   `wacli auth logout`, delete the store. A logout WhatsApp didn't confirm is reported (remove the
-  device from the phone); a store that could not be deleted is `Failed` / `unlink-incomplete`.
-  Cancelling after the scan logs the device out the same way before forgetting it.
+  device from the phone); a store that could not be deleted is `Failed` / `unlink-incomplete`,
+  remembered in `<stateDir>/whatsapp/unlink-pending` so a restart does not resume it and a new
+  link waits until an unlink succeeds. A link that stops after pairing (Cancel, a failure) logs
+  the device out when `doctor` shows it authenticated, and reports a logout WhatsApp didn't
+  confirm.
 
 The link stays until the phone removes the device, the phone is offline for about 14 days, the
 account is banned or moved to a new phone, or the user unlinks. Restarting Scient reconnects
@@ -89,7 +98,8 @@ from the store without scanning again.
 
 Linked state is derived from the store at startup (`wacli --read-only --json doctor`:
 `authenticated` and not `session_revoked`). A check that can't tell keeps the store and shows
-`Failed`; it never deletes chats. Besides the store, Scient keeps only a pending restriction.
+`Failed`; it never deletes chats. Besides the store, Scient keeps only a pending restriction and
+the pending-unlink marker.
 
 ## Surfaces
 

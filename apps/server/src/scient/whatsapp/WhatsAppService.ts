@@ -24,7 +24,8 @@ export class WhatsAppService extends Context.Service<
     readonly changes: Stream.Stream<WhatsAppStatus>;
     /** Install if needed and start showing QR codes; a no-op while already linking or linked. */
     readonly startLink: Effect.Effect<WhatsAppStatus, WhatsAppError>;
-    readonly cancelLink: Effect.Effect<WhatsAppStatus>;
+    /** Stop linking; fails when a finished pairing could not be logged out of WhatsApp. */
+    readonly cancelLink: Effect.Effect<WhatsAppStatus, WhatsAppError>;
     /** Log this device out of WhatsApp, stop the connection and delete the local store. */
     readonly unlink: Effect.Effect<WhatsAppStatus, WhatsAppError>;
 

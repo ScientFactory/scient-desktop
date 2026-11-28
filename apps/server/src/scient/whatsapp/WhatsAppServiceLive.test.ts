@@ -68,7 +68,7 @@ function makeFakeWacli(files: Record<string, string>): FakeWacli {
 D='${dir}'
 echo "$WACLI_DEVICE_LABEL|$*|$WACLI_STORE_DIR" >> "$D/calls.log"
 case "$*" in
-  *"doctor --connect"*) K=probe;;
+  *"groups refresh"*) K=probe;;
   *doctor*) K=doctor;;
   *"auth logout"*) K=logout;;
   auth*) K=auth;;
@@ -132,6 +132,8 @@ const withService = <A, E>(
     readonly linkedStore?: boolean;
     readonly longPath?: boolean;
     readonly restriction?: { readonly until: number; readonly stated: boolean };
+    /** A previous unlink could not delete the store. */
+    readonly unlinkPending?: boolean;
   },
   body: (input: {
     readonly fake: FakeWacli;
@@ -183,6 +185,9 @@ const withService = <A, E>(
         NodePath.join(stateDir, "whatsapp", "restriction.json"),
         JSON.stringify(options.restriction),
       );
+    }
+    if (options.unlinkPending === true) {
+      NodeFS.writeFileSync(NodePath.join(stateDir, "whatsapp", "unlink-pending"), "");
     }
     const layer = WhatsAppServiceLive.layer.pipe(
       Layer.provide(
@@ -236,11 +241,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           );
           expect(scanning.state).toMatchObject({ issuedAt: 21_000 });
           expect(scanning.deviceName).toBe("Test MacBook");
-          // wacli gives up without a scan: nothing paired, so nothing is linked.
+          // wacli gives up without a scan: nothing paired, so nothing is linked or logged out.
           fake.release("auth");
           yield* statusWhere((state) => state._tag === "Failed");
           expect(NodeFS.existsSync(storeDir)).toBe(false);
-          expect(fake.calls()).toEqual([expect.stringMatching(/^Test MacBook\|auth /u)]);
+          expect(fake.calls()[0]).toMatch(/^Test MacBook\|auth /u);
+          expect(fake.calls().some((call) => call.includes("auth logout"))).toBe(false);
         }),
     ),
   );
@@ -376,6 +382,62 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
     ),
   );
 
+  it.effect("stops a connection that stays down and asks WhatsApp why", () =>
+    withService(
+      {
+        "doctor.stdout": LINKED_DOCTOR,
+        // A ban can leave wacli waiting without exiting: Scient stops it after ten minutes.
+        "sync.stderr": [event("connected"), event("disconnected")].join("\n"),
+        "sync.hold": "",
+        "probe.stdout": JSON.stringify({
+          success: false,
+          data: null,
+          error: "WhatsApp account is temporarily banned: 101 (expires in 1h0m0s)",
+        }),
+        "probe.exit": "1",
+      },
+      { linkedStore: true },
+      ({ fake }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          yield* statusWhere(
+            (state) =>
+              state._tag === "Linked" &&
+              state.connection === "connecting" &&
+              state.lastActivityAt !== undefined,
+          );
+          yield* TestClock.adjust(Duration.minutes(9));
+          expect((yield* service.status).state._tag).toBe("Linked");
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* statusWhere((state) => state._tag === "Restricted");
+          expect(fake.calls().some((call) => call.includes("|--json groups refresh|"))).toBe(true);
+        }),
+    ),
+  );
+
+  it.effect("an unlink that couldn't delete the store isn't resumed after a restart", () =>
+    withService(
+      { "doctor.stdout": LINKED_DOCTOR, "sync.stderr": event("connected"), "sync.hold": "" },
+      { linkedStore: true, unlinkPending: true },
+      ({ fake, storeDir }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          const failed = yield* statusWhere((state) => state._tag === "Failed");
+          expect(failed.state).toMatchObject({ reason: "unlink-incomplete" });
+          expect(yield* Effect.flip(service.startLink)).toMatchObject({
+            message: expect.stringContaining("Finish unlinking"),
+          });
+          expect(fake.calls()).toEqual([]);
+          // Unlinking again finishes the job.
+          expect((yield* service.unlink).state._tag).toBe("Unlinked");
+          expect(NodeFS.existsSync(storeDir)).toBe(false);
+          expect(
+            NodeFS.existsSync(NodePath.join(NodePath.dirname(storeDir), "unlink-pending")),
+          ).toBe(false);
+        }),
+    ),
+  );
+
   it.effect("a saved restriction holds the connection back after a restart", () =>
     withService(
       { "doctor.stdout": LINKED_DOCTOR, "sync.stderr": event("connected"), "sync.hold": "" },
@@ -395,6 +457,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
       {
         "auth.stderr": [event("qr_code", { code: "2@first" }), event("connected")].join("\n"),
         "auth.hold": "",
+        "doctor.stdout": LINKED_DOCTOR,
       },
       {},
       ({ fake, storeDir }) =>
@@ -404,6 +467,28 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           yield* statusWhere((state) => state._tag === "Syncing");
           expect((yield* service.cancelLink).state._tag).toBe("Unlinked");
           expect(fake.calls().some((call) => call.includes("auth logout"))).toBe(true);
+          expect(NodeFS.existsSync(storeDir)).toBe(false);
+        }),
+    ),
+  );
+
+  it.effect("cancelling after the scan says so when WhatsApp didn't confirm the logout", () =>
+    withService(
+      {
+        "auth.stderr": [event("qr_code", { code: "2@first" }), event("connected")].join("\n"),
+        "auth.hold": "",
+        "doctor.stdout": LINKED_DOCTOR,
+        "logout.exit": "1",
+      },
+      {},
+      ({ storeDir }) =>
+        Effect.gen(function* () {
+          const service = yield* WhatsAppService;
+          yield* service.startLink;
+          yield* statusWhere((state) => state._tag === "Syncing");
+          const error = yield* Effect.flip(service.cancelLink);
+          expect(error.message).toContain("remove “Test MacBook” from Linked devices");
+          expect((yield* service.status).state._tag).toBe("Unlinked");
           expect(NodeFS.existsSync(storeDir)).toBe(false);
         }),
     ),
@@ -517,19 +602,28 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           );
           const delegate = yield* serveDelegate(delegateOf(fake), (request) => {
             const { to } = request as { readonly to: string };
-            if (to === "972500000003") return { ok: false, error: "server returned error 463" };
-            if (to === "972500000004") return undefined;
-            return { ok: true, id: "MSG1", to: `${to}@s.whatsapp.net` };
+            if (to === "972500000003@s.whatsapp.net") {
+              return { ok: false, error: "server returned error 463" };
+            }
+            if (to === "972500000004@s.whatsapp.net") return undefined;
+            if (to === "972500000005@s.whatsapp.net") {
+              return {
+                ok: false,
+                error: "websocket disconnected before info query returned response",
+              };
+            }
+            return { ok: true, id: "MSG1", to };
           });
           expect(yield* service.sendText({ to: "+972 50-000-0002", text: "hello" })).toEqual({
             messageId: "MSG1",
             to: "972500000002@s.whatsapp.net",
           });
-          // Text and recipient travel over the socket, not in a process's arguments.
+          // Text and recipient travel over the socket, not in a process's arguments; a phone
+          // number goes as its user JID, never matched against chat names.
           expect(delegate.requests[0]).toMatchObject({
             version: 1,
             kind: "text",
-            to: "972500000002",
+            to: "972500000002@s.whatsapp.net",
             message: "hello",
             no_preview: true,
           });
@@ -541,6 +635,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           expect(yield* toolError(service.sendText({ to: "+972500000004", text: "hi" }))).toBe(
             "send-uncertain",
           );
+          // WhatsApp's connection dropped before its answer: also maybe sent.
+          expect(yield* toolError(service.sendText({ to: "+972500000005", text: "hi" }))).toBe(
+            "send-uncertain",
+          );
           // One person or group only: never Status, broadcast lists or channels.
           for (const to of ["status@broadcast", "123@broadcast", "456@newsletter", "Dana"]) {
             expect(yield* toolError(service.sendText({ to, text: "hi" }))).toBe("invalid-input");
@@ -548,7 +646,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("WhatsAppServic
           expect(yield* toolError(service.sendText({ to: "+972500000002", text: " " }))).toBe(
             "invalid-input",
           );
-          expect(delegate.requests).toHaveLength(3);
+          expect(delegate.requests).toHaveLength(4);
         }),
     ),
   );

@@ -31,7 +31,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { WacliInstall } from "./WacliInstall.ts";
-import { callDelegate, delegateAddress } from "./wacliDelegate.ts";
+import { callDelegate, delegateAddress, wacliStorePath } from "./wacliDelegate.ts";
 import {
   classifyLinkFailure,
   eventMessage,
@@ -66,7 +66,7 @@ import {
 import { WhatsAppService } from "./WhatsAppService.ts";
 
 const READ_TIMEOUT = Duration.seconds(30);
-/** `doctor --connect` waits for WhatsApp's login verdict. */
+/** `groups refresh` logs in and waits for WhatsApp's verdict. */
 const PROBE_TIMEOUT = Duration.seconds(90);
 /** The running sync's budget for one send: queueing, pacing and the send itself. */
 const SEND_BUDGET_MS = 90_000;
@@ -74,8 +74,6 @@ const SEND_BUDGET_MS = 90_000;
 const POST_SEND_WAIT_MS = 2_000;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 4096;
-/** Below the 104-byte Unix socket path limit on macOS (108 on Linux). */
-const SOCKET_PATH_LIMIT = 100;
 /** Agent calls in flight at once; unlinking takes them all, so it waits for the rest to finish. */
 const AGENT_CALLS = 64;
 /** Restart backoff for the connection: doubled per quick failure, capped. */
@@ -86,7 +84,9 @@ const HEALTHY_RUN_MS = 60_000;
 /** When WhatsApp restricts the account without saying for how long. */
 const UNKNOWN_RESTRICTION_MS = 24 * 60 * 60_000;
 // wacli's follow loop reconnects without WhatsApp's login verdict, so a temporary ban never
-// reaches its events. It gives up after five minutes; `doctor --connect` then asks for the verdict.
+// reaches its events: it gives up after five minutes of failed reconnects, or Scient stops it after
+// ten minutes without a connection, and `loginVerdict` then asks for the verdict.
+const STALL_MS = 10 * 60_000;
 const SYNC_ARGS = [
   "sync",
   "--follow",
@@ -134,21 +134,19 @@ const make = Effect.gen(function* () {
   const whatsappDir = path.join(config.stateDir, "whatsapp");
   const storeDir = path.join(whatsappDir, "store");
   const restrictionPath = path.join(whatsappDir, "restriction.json");
+  /** Present while an unlink could not delete the store: the link must not come back from it. */
+  const unlinkPendingPath = path.join(whatsappDir, "unlink-pending");
   const deviceName = descriptor.label;
 
-  // wacli opens its delegate socket inside the store, and macOS and Linux cap socket paths near
-  // 104 bytes. A store whose socket path is too long is reached through a short link, kept in a
-  // folder only this user owns (never directly in a shared /tmp). Windows uses a named pipe.
-  const socketPathFits =
-    platform === "win32" ||
-    new TextEncoder().encode(path.join(storeDir, ".send.sock")).length <= SOCKET_PATH_LIMIT;
-  const shortRoot = path.join(
-    hostEnvironment.XDG_RUNTIME_DIR ?? hostEnvironment.TMPDIR ?? "/tmp",
-    `scient-whatsapp-${userId ?? "user"}`,
-  );
-  const wacliStoreDir = socketPathFits
-    ? storeDir
-    : path.join(shortRoot, (Hash.string(storeDir) >>> 0).toString(36));
+  // wacli opens its delegate socket inside the store; a deep store is reached through a short link.
+  const { storeDir: wacliStoreDir, linkRoot: shortRoot } = wacliStorePath({
+    platform,
+    storeDir,
+    tempRoots: [hostEnvironment.XDG_RUNTIME_DIR, hostEnvironment.TMPDIR, "/tmp"],
+    userId,
+    linkName: (Hash.string(storeDir) >>> 0).toString(36),
+    join: path.join,
+  });
   const env = wacliEnvironment({
     hostEnvironment,
     storeDir: wacliStoreDir,
@@ -157,7 +155,7 @@ const make = Effect.gen(function* () {
   const storeLinkFailed = new WacliProcessError({ reason: "failed", command: "store link" });
   /** Temp folders get cleaned, so the link is checked before every run; nothing runs without it. */
   const ensureStoreLink =
-    wacliStoreDir === storeDir
+    shortRoot === undefined
       ? Effect.void
       : Effect.gen(function* () {
           yield* fileSystem.makeDirectory(shortRoot, { mode: 0o700 }).pipe(Effect.ignore);
@@ -271,10 +269,15 @@ const make = Effect.gen(function* () {
     return envelope?.success === true ? readDoctor(envelope.data) : undefined;
   });
 
-  /** A real login, for WhatsApp's verdict on it; empty when it could not run. */
+  /**
+   * WhatsApp's verdict on a login, as text; empty when it could not run. `groups refresh` waits for
+   * the verdict and returns its error (`WhatsApp account is temporarily banned: … (expires in …)`,
+   * `… session was revoked …`), where the pinned `doctor --connect` drops it. Its only other effect
+   * is refreshing the local group list, as official clients do.
+   */
   const loginVerdict = Effect.gen(function* () {
     const output = yield* runWacli({
-      ...(yield* command(["--json", "doctor", "--connect"], "doctor --connect")),
+      ...(yield* command(["--json", "groups", "refresh"], "groups refresh")),
       timeout: PROBE_TIMEOUT,
       maxStdoutBytes: MAX_STDOUT_BYTES,
     });
@@ -295,23 +298,45 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const stillOnPhone = `On your phone, remove “${deviceName}” from Linked devices.`;
+
+  /**
+   * After linking stopped: log out a pairing that completed (the phone already lists this
+   * computer), then forget the store. False when WhatsApp didn't confirm the logout.
+   */
+  const forgetPairing = Effect.gen(function* () {
+    const linked = (yield* storeExists)
+      ? yield* doctor.pipe(Effect.orElseSucceed(() => undefined))
+      : undefined;
+    const loggedOut = linked?.authenticated === true ? yield* logout : true;
+    yield* removeStore;
+    return loggedOut;
+  });
+  const unlinkPending = fileSystem
+    .exists(unlinkPendingPath)
+    .pipe(Effect.orElseSucceed(() => false));
+
   // ── Connection ────────────────────────────────────────────────────────────
 
-  /** One `sync --follow` run, until it exits: what ended it. */
+  /** One `sync --follow` run, until it exits or stays disconnected too long: what ended it. */
   const syncOnce = Effect.gen(function* () {
     let removed = false;
     let restrictedUntil: number | undefined;
     let restricted = false;
+    /** Since when the run has had no connection; a ban can leave it waiting, never exiting. */
+    let disconnectedSince: number | undefined = yield* Clock.currentTimeMillis;
     const onEvent = Effect.fn("WhatsApp.syncEvent")(function* (event: WacliEvent) {
       const now = event.ts ?? (yield* Clock.currentTimeMillis);
       switch (event.event) {
         case "connected":
+          disconnectedSince = undefined;
           yield* setConnection("connected", now);
           return;
         case "reconnecting":
         case "disconnected":
         case "stream_replaced":
         case "stale":
+          disconnectedSince ??= yield* Clock.currentTimeMillis;
           yield* setConnection("connecting");
           return;
         case "logged_out":
@@ -333,10 +358,17 @@ const make = Effect.gen(function* () {
         }
       }
     });
-    const exitCode = yield* runWacliWithEvents({
-      ...(yield* command(SYNC_ARGS, "sync")),
-      onEvent,
+    const stalled = Effect.gen(function* () {
+      while (true) {
+        yield* Effect.sleep(Duration.minutes(1));
+        const now = yield* Clock.currentTimeMillis;
+        if (disconnectedSince !== undefined && now - disconnectedSince >= STALL_MS) return;
+      }
     });
+    const exitCode = yield* Effect.raceFirst(
+      runWacliWithEvents({ ...(yield* command(SYNC_ARGS, "sync")), onEvent }),
+      stalled.pipe(Effect.as(undefined)),
+    );
     return { exitCode, removed, restricted, restrictedUntil };
   });
 
@@ -483,14 +515,12 @@ const make = Effect.gen(function* () {
           yield* startConnection;
           return;
         }
-        // A scanned link that did not finish still sits on the phone: log it out before forgetting it.
-        if (paired) yield* logout;
-        yield* removeStore;
+        const loggedOut = yield* forgetPairing;
         if (failure !== undefined) {
           yield* Effect.logWarning("whatsapp: linking failed", { message: failure.slice(0, 500) });
         }
         const { reason, message } = classifyLinkFailure(failure);
-        yield* setState({ _tag: "Failed", reason, message });
+        yield* setState({ _tag: "Failed", reason, message: loggedOut ? message : stillOnPhone });
       }),
     );
   }).pipe(
@@ -498,9 +528,9 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* Effect.logWarning("whatsapp: linking failed", { cause });
         yield* Ref.set(linkFiber, undefined);
-        yield* removeStore;
+        const loggedOut = yield* forgetPairing;
         const { reason, message } = classifyLinkFailure(undefined);
-        yield* setState({ _tag: "Failed", reason, message });
+        yield* setState({ _tag: "Failed", reason, message: loggedOut ? message : stillOnPhone });
       }),
     ),
   );
@@ -524,6 +554,11 @@ const make = Effect.gen(function* () {
           message: "WhatsApp linking is not available on this computer yet.",
         });
       }
+      if (yield* unlinkPending) {
+        return yield* new WhatsAppError({
+          message: "Finish unlinking first: Scient still has a copy of the old link.",
+        });
+      }
       yield* stopFiber(connectionFiber);
       yield* removeStore;
       yield* clearRestriction;
@@ -537,12 +572,10 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const fiber = yield* Ref.getAndSet(linkFiber, undefined);
       if (fiber === undefined) return yield* currentStatus;
-      // Once scanned, the phone already lists this computer: log it out before forgetting it.
-      const scanned = (yield* SubscriptionRef.get(state))._tag === "Syncing";
       yield* Fiber.interrupt(fiber);
-      if (scanned) yield* logout;
-      yield* removeStore;
+      const loggedOut = yield* forgetPairing;
       yield* setState({ _tag: "Unlinked" });
+      if (!loggedOut) return yield* new WhatsAppError({ message: stillOnPhone });
       return yield* currentStatus;
     }),
   );
@@ -554,11 +587,13 @@ const make = Effect.gen(function* () {
     let loggedOut = true;
     if (yield* storeExists) {
       loggedOut = yield* logout;
-      // Unlinking promises the chats are gone from this computer: say so when they are not.
+      // Unlinking promises the chats are gone from this computer: say so when they are not, and
+      // remember it, so a restart does not bring the link back from the copy that stayed.
       yield* fileSystem.remove(storeDir, { recursive: true, force: true }).pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             yield* Effect.logWarning("whatsapp: could not delete the local store", { cause });
+            yield* fileSystem.writeFileString(unlinkPendingPath, "").pipe(Effect.ignore);
             const message = "Scient couldn't delete its copy of your chats. Unlink again.";
             yield* setState({ _tag: "Failed", reason: "unlink-incomplete", message });
             return yield* new WhatsAppError({ message });
@@ -566,6 +601,7 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    yield* fileSystem.remove(unlinkPendingPath, { force: true }).pipe(Effect.ignore);
     if (wacliStoreDir !== storeDir) {
       yield* fileSystem.remove(wacliStoreDir, { force: true }).pipe(Effect.ignore);
     }
@@ -574,7 +610,7 @@ const make = Effect.gen(function* () {
     // A phone that already removed the device has nothing left to log out.
     if (!loggedOut && previous._tag !== "RemovedByPhone") {
       return yield* new WhatsAppError({
-        message: `Scient deleted its copy of your chats but couldn't reach WhatsApp to log out. On your phone, remove “${deviceName}” from Linked devices.`,
+        message: `Scient deleted its copy of your chats but couldn't reach WhatsApp to log out. ${stillOnPhone}`,
       });
     }
     return yield* currentStatus;
@@ -744,20 +780,24 @@ const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.fail(notConnected)),
       );
       const now = yield* Clock.currentTimeMillis;
-      const outcome = yield* callDelegate(
-        address,
-        {
-          version: 1,
-          kind: "text",
-          to: recipient,
-          message: text,
-          ...(replyTo === undefined ? {} : { reply_to: replyTo }),
-          no_preview: true,
-          timeout_ms: SEND_BUDGET_MS,
-          deadline_unix_ms: now + SEND_BUDGET_MS,
-          post_send_wait_ms: POST_SEND_WAIT_MS,
-        },
-        SEND_BUDGET_MS + POST_SEND_WAIT_MS + 10_000,
+      // Once dispatched, the send runs to its own end even if the caller goes away: wacli keeps
+      // sending, so the call keeps its slot and an unlink waits for it.
+      const outcome = yield* Effect.uninterruptible(
+        callDelegate(
+          address,
+          {
+            version: 1,
+            kind: "text",
+            to: recipient,
+            message: text,
+            ...(replyTo === undefined ? {} : { reply_to: replyTo }),
+            no_preview: true,
+            timeout_ms: SEND_BUDGET_MS,
+            deadline_unix_ms: now + SEND_BUDGET_MS,
+            post_send_wait_ms: POST_SEND_WAIT_MS,
+          },
+          SEND_BUDGET_MS + POST_SEND_WAIT_MS + 10_000,
+        ),
       );
       switch (outcome._tag) {
         case "Unavailable":
@@ -777,6 +817,14 @@ const make = Effect.gen(function* () {
   yield* fork(
     Effect.gen(function* () {
       if (!(yield* storeExists)) return;
+      if (yield* unlinkPending) {
+        yield* setState({
+          _tag: "Failed",
+          reason: "unlink-incomplete",
+          message: "Scient couldn't delete its copy of your chats. Unlink again.",
+        });
+        return;
+      }
       const linked = yield* doctor.pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("whatsapp: could not read the saved link", { cause }).pipe(

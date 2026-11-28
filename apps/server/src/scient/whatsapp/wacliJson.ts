@@ -210,14 +210,15 @@ const PHONE = /^\+?[\d\s().-]+$/u;
 /**
  * What `whatsapp_send` may address: one person or group, as a JID or a phone number. Status
  * (`status@broadcast`), broadcast lists and channels are refused: an ordinary text sent there
- * reaches an audience, not a chat.
+ * reaches an audience, not a chat. A phone number becomes its user JID, so wacli never resolves
+ * the digits by name (a group named with them would match).
  */
 export function recipientFor(to: string): string | undefined {
   const value = to.trim();
   if (JID.test(value)) return value;
   if (!PHONE.test(value)) return undefined;
   const digits = value.replace(/\D/gu, "");
-  return digits.length >= 7 && digits.length <= 15 ? digits : undefined;
+  return digits.length >= 7 && digits.length <= 15 ? `${digits}@s.whatsapp.net` : undefined;
 }
 
 const NOT_FOUND = /no local exact name match|no contacts, groups, or chats match|not found/iu;
@@ -275,8 +276,9 @@ export function sendFailure(error: string, to: string): WhatsAppToolError {
       message: "WhatsApp didn't send the message. Try again.",
     });
   }
+  // After dispatch: the message may be with WhatsApp although no answer came back.
   if (
-    /may still have gone through|uncertain|deadline exceeded|timed out|timeout|EOF|broken pipe|connection reset/iu.test(
+    /may still have gone through|uncertain|deadline exceeded|timed out|timeout|EOF|broken pipe|connection reset|disconnected/iu.test(
       error,
     )
   ) {
