@@ -71,8 +71,8 @@ click its Dock icon on macOS, to bring a window back. On Windows and Linux,
 while the switch is on, Scient's tray icon has **Open Scient** and **Quit
 completely**; on macOS, **Quit Scient** (`Cmd+Q`) quits completely. Quitting
 stops the server and everything it runs. Quit asks first while Compute runs or
-analysis runs are still going or waiting, or when it cannot check. It does not
-count agent turns, which Quit stops too.
+analysis runs are still going or waiting; with the switch on it also asks when
+it cannot check. It does not count agent turns, which Quit stops too.
 
 Scient does not start by itself when you log in. After a restart, it runs
 again once you open it.
