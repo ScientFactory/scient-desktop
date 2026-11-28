@@ -209,7 +209,7 @@ describe("DesktopBackgroundRunning", () => {
           kind: "quit",
           platform: "windows",
           via: "tray",
-          prompt: "none",
+          quitPrompt: "none",
           windowlessBucket: "under-1m",
         },
       ]);

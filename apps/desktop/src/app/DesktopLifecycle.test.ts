@@ -656,7 +656,7 @@ describe("DesktopLifecycle", () => {
             kind: "quit",
             platform: "windows",
             via: "other",
-            prompt: "cancelled",
+            quitPrompt: "cancelled",
             windowlessBucket: "under-1m",
           },
         ]);

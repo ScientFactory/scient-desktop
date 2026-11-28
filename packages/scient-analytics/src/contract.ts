@@ -1215,8 +1215,15 @@ function backgroundEventProperties(input: Readonly<Record<string, unknown>>) {
     kind,
     platform: closedCategory(property(input, "platform"), [...PLATFORM_VALUES]),
     ...(via === undefined ? {} : { via: closedCategory(property(input, "via"), via) }),
+    // `prompt` is a free-text key the wire contract refuses, so the field is `quitPrompt`.
     ...(kind === "quit"
-      ? { prompt: closedCategory(property(input, "prompt"), ["none", "confirmed", "cancelled"]) }
+      ? {
+          quitPrompt: closedCategory(property(input, "quitPrompt"), [
+            "none",
+            "confirmed",
+            "cancelled",
+          ]),
+        }
       : {}),
     ...(kind === "tray-failed"
       ? { reason: closedCategory(property(input, "reason"), ["no-icon", "error"]) }

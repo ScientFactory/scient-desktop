@@ -2531,7 +2531,7 @@
         "kind": "quit",
         "platform": "linux",
         "via": "tray",
-        "prompt": "cancelled",
+        "quitPrompt": "cancelled",
         "windowlessBucket": "6-24h",
         "appVersion": "0.6.8",
         "buildChannel": "stable",

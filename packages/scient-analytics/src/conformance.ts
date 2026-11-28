@@ -465,7 +465,7 @@ export function buildAnalyticsConformanceFixture() {
       kind: "quit",
       platform: "linux",
       via: "tray",
-      prompt: "cancelled",
+      quitPrompt: "cancelled",
       windowlessBucket: "6-24h",
     }),
     fixtureCase("background-tray-failed", "app.background.event", {

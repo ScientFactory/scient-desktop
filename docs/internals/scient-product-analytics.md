@@ -1015,7 +1015,7 @@ No window title, path, name or free text enters them.
   Linux) or `other` (a link, an opened file, a menu). A request while the backend is still
   starting waits for it; the window that opens when it is ready reports the request's `via`.
 - `quit`: Quit while windowless. `via` is `tray` (Quit completely) or `other` (`Cmd+Q`, the Dock
-  menu, logging out); `prompt` is `none` (nothing running), `confirmed` or `cancelled`. A cancelled
+  menu, logging out); `quitPrompt` is `none` (nothing running), `confirmed` or `cancelled`. A cancelled
   Quit leaves Scient windowless, so the period goes on.
 - `tray-failed`: `reason` is `no-icon` (no icon file for the platform) or `error` (Electron
   refused). A Linux desktop with no status notifier host shows no tray and reports no error, which
@@ -1038,7 +1038,7 @@ summaries sent while it lasted count its time.
 | How many installs on each platform have it on, by default or by choice? | Each installation's latest summary: `platform`, `enabled`, `setBy`                                                                                 |
 | How often does Scient run with no window, and for how long?             | Daily `windowlessCount` and `windowlessTimeBucket`; `windowlessBucket` on the events that end a period                                             |
 | How do people come back?                                                | `via` on `window-returned`                                                                                                                         |
-| How do they quit while windowless?                                      | `via` and `prompt` on `quit`                                                                                                                       |
+| How do they quit while windowless?                                      | `via` and `quitPrompt` on `quit`                                                                                                                   |
 | Does it fail?                                                           | `window-not-shown`, `tray-failed`, `splash-fallback`, `backend-restarted`                                                                          |
 | Do people turn it off again, and after how long?                        | `setting-changed` with `enabled: false`; the time since that installation's previous `setting-changed`, or its first summary with `setBy: default` |
 

@@ -13,6 +13,18 @@ import { ANALYTICS_EVENT_NAMES, normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation, type PrivacyLevel } from "./wireContract.ts";
 
 describe("analytics contract conformance corpus", () => {
+  // The gateway runs the same check on this corpus; a case it rejects would be dropped there.
+  it("accepts every case of the current corpus", () => {
+    for (const entry of fixture.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
   it("continues accepting the complete revision 10 corpus", () => {
     for (const entry of revision10.cases)
       expect(

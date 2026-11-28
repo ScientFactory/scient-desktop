@@ -711,7 +711,7 @@ describe("Scient analytics contract", () => {
         kind: "quit",
         platform: "linux",
         via: "tray",
-        prompt: "confirmed",
+        quitPrompt: "confirmed",
         windowlessBucket: "6-24h",
         reason: "error",
         enabled: true,
@@ -727,7 +727,7 @@ describe("Scient analytics contract", () => {
         kind: "quit",
         platform: "linux",
         via: "tray",
-        prompt: "confirmed",
+        quitPrompt: "confirmed",
         windowlessBucket: "6-24h",
       },
     });

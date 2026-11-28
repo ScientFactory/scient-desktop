@@ -167,7 +167,11 @@ export const make = Effect.fn("DesktopBackgroundFacts.make")(function* (input: {
           ? Option.map(yield* Ref.get(windowlessSince), (since) => now - since)
           : yield* endWindowless;
       if (Option.isNone(length)) return;
-      yield* event("quit", { via, prompt, windowlessBucket: windowlessBucket(length.value) });
+      yield* event("quit", {
+        via,
+        quitPrompt: prompt,
+        windowlessBucket: windowlessBucket(length.value),
+      });
     }),
     trayFailed: Effect.fn("DesktopBackgroundFacts.trayFailed")(function* (reason) {
       yield* event("tray-failed", { reason });
