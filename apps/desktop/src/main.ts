@@ -28,6 +28,7 @@ import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient keeps running in the background.
 import * as DesktopBackgroundRunning from "./scient/backgroundRunning/DesktopBackgroundRunning.ts";
+import * as DesktopBackgroundFacts from "./scient/backgroundRunning/DesktopBackgroundFacts.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — feedback reports to the Scient team.
 import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
@@ -225,8 +226,10 @@ const layerDesktopPreview = PreviewManager.layer.pipe(
 const layerDesktopWindow = DesktopWindow.layer.pipe(
   // SCIENT-FORK: the same journal layer as the updater's, so both share one journal.
   Layer.provideMerge(DesktopTelemetryPublisher.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
-  // SCIENT-FORK:START — startup timing joins that journal, so it follows the same analytics gate.
+  // SCIENT-FORK:START — startup timing and background running join that journal, so they follow
+  // the same analytics gate.
   Layer.provideMerge(DesktopStartupTiming.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
+  Layer.provideMerge(DesktopBackgroundFacts.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
   // SCIENT-FORK:END
   Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(layerDesktopServerExposure),

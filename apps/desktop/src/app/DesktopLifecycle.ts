@@ -24,6 +24,15 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 // SCIENT-FORK:START — Scient keeps running in the background.
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+
+/** Background-running analytics, when the app provides them. */
+const recordBackground = (
+  record: (facts: DesktopBackgroundFacts.DesktopBackgroundFacts["Service"]) => Effect.Effect<void>,
+) =>
+  Effect.serviceOption(DesktopBackgroundFacts.DesktopBackgroundFacts).pipe(
+    Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: record })),
+  );
 // SCIENT-FORK:END
 // SCIENT-FORK:START — quitting stops running work, so it asks first.
 import { confirmQuitStopsRunningWork } from "../scient/quitGuard/quitGuard.ts";
@@ -179,7 +188,9 @@ function handleBeforeQuit(
     Effect.gen(function* () {
       const state = yield* DesktopState.DesktopState;
       if (yield* Ref.get(state.quitting)) return true;
-      return yield* Effect.promise(confirmQuitStopsRunningWork);
+      const prompt = yield* Effect.promise(confirmQuitStopsRunningWork);
+      yield* recordBackground((facts) => facts.quitDecided(prompt));
+      return prompt !== "cancelled";
     }),
   ).then(
     (proceed) => {
@@ -209,6 +220,7 @@ const reopenAfterCancelledQuit = Effect.gen(function* () {
   yield* desktopWindow.activate;
   if (Option.isNone(yield* electronWindow.currentMainOrFirst)) {
     yield* desktopWindow.showConnectingSplash;
+    yield* recordBackground((facts) => facts.splashFallback);
   }
 }).pipe(Effect.ignoreCause({ log: true }), Effect.withSpan("desktop.lifecycle.quitCancelled"));
 
@@ -345,7 +357,10 @@ export const make = DesktopLifecycle.of({
         Effect.gen(function* () {
           const state = yield* DesktopState.DesktopState;
           if (yield* Ref.get(state.quitting)) return;
-          yield* desktopWindow.activate;
+          // SCIENT-FORK: the Dock icon, or opening Scient again on macOS.
+          yield* desktopWindow.activate.pipe(
+            Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "dock"),
+          );
         }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
       );
     });
@@ -363,6 +378,7 @@ export const make = DesktopLifecycle.of({
           );
           if (keepRunning) {
             yield* Ref.set(state.background, true);
+            yield* recordBackground((facts) => facts.windowlessStarted);
             return;
           }
           // SCIENT-FORK:END

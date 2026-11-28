@@ -104,10 +104,13 @@ export function quitPrompt(count: number | null): { message: string; detail: str
       };
 }
 
-/** Whether to go on quitting, read when the person quits since no window may be open to report it. */
-export async function confirmQuitStopsRunningWork(): Promise<boolean> {
+/**
+ * Whether Quit asked and what the person chose, read when they quit since no window may be open to
+ * report it. Quit goes on unless it is `cancelled`.
+ */
+export async function confirmQuitStopsRunningWork(): Promise<"none" | "confirmed" | "cancelled"> {
   const prompt = quitPrompt(await readAtQuit());
-  if (prompt === null) return true;
+  if (prompt === null) return "none";
   const { response } = await Electron.dialog.showMessageBox({
     type: "warning",
     ...prompt,
@@ -115,5 +118,5 @@ export async function confirmQuitStopsRunningWork(): Promise<boolean> {
     defaultId: 1,
     cancelId: 1,
   });
-  return response === 0;
+  return response === 0 ? "confirmed" : "cancelled";
 }

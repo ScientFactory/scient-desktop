@@ -986,6 +986,65 @@ launches. Neither does `app.session.started`: it marks each backend analytics se
 (`ScientAnalytics.ts`), so a desktop process that exits before its backend starts analytics adds
 none, and a backend restart within one launch adds another.
 
+## Background running
+
+"Keep Scient running in the background" is on by default on macOS and off by default on Windows
+and Linux, where collaborators turn it on to test it. Two Essential events, fully closed like the
+update events, say whether it works there. [`DesktopBackgroundFacts.ts`](../../apps/desktop/src/scient/backgroundRunning/DesktopBackgroundFacts.ts)
+records them into the update-facts journal above, so they follow the same gate (nothing is
+journaled while analytics is off for that launch, and what an earlier launch kept is deleted) and
+the same delivery to one backend. App version and build channel come from the envelope. Both
+events also carry `platform` (`macos`, `windows`, `linux`, `other`): the desktop's own, since the
+backend that delivers them can be a WSL one, whose session reports Linux for a Windows computer.
+No window title, path, name or free text enters them.
+
+`app.background.summary` is sent at launch and once a day while Scient runs:
+
+- `reason`: `launch` or `daily`.
+- `enabled`: whether closing the last window keeps Scient running, as the app applies it.
+- `setBy`: `default` (no choice stored, so the platform's default applies) or `person`.
+- Daily only: `windowlessCount`, the windowless periods begun since the previous summary, and
+  `windowlessTimeBucket`, the time with no window since then, including a period still under way.
+
+`app.background.event` has a closed `kind`:
+
+- `window-returned` and `window-not-shown`: a request for a window ended a windowless period, and
+  a window (the main window or the connecting splash) was open afterwards, or none was although
+  the primary backend was ready. `via` says how it was asked for: `tray`, `dock` (macOS delivers
+  the Dock icon and opening the app again as the same activation), `second-launch` (Windows and
+  Linux) or `other` (a link, an opened file, a menu). A request while the backend is still
+  starting waits for it; the window that opens when it is ready reports the request's `via`.
+- `quit`: Quit while windowless. `via` is `tray` (Quit completely) or `other` (`Cmd+Q`, the Dock
+  menu, logging out); `prompt` is `none` (nothing running), `confirmed` or `cancelled`. A cancelled
+  Quit leaves Scient windowless, so the period goes on.
+- `tray-failed`: `reason` is `no-icon` (no icon file for the platform) or `error` (Electron
+  refused). A Linux desktop with no status notifier host shows no tray and reports no error, which
+  this cannot see.
+- `splash-fallback`: with the switch off, a Quit cancelled with no window open showed the
+  connecting splash because the primary backend was not ready.
+- `backend-restarted`: the primary backend became ready again while windowless; by design no
+  window opens.
+- `setting-changed`: the person used the switch: `enabled` and `previousSetBy`.
+
+`window-returned`, `window-not-shown` and `quit` carry `windowlessBucket`, how long the period
+lasted (so far, for a cancelled Quit). Windowless times reach the journal, and leave the computer,
+only as buckets: `under-1m`, `1-10m`, `10-60m`, `1-6h`, `6-24h`, `1-3d`, `3-7d`, `over-7d`; the
+desktop buckets them and the contract accepts only those values. A period that ends with none of
+these events (a crash, a forced stop, an update install) has no ending event; only the daily
+summaries sent while it lasted count its time.
+
+| Question                                                                | Where the answer is                                                                                                                                |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How many installs on each platform have it on, by default or by choice? | Each installation's latest summary: `platform`, `enabled`, `setBy`                                                                                 |
+| How often does Scient run with no window, and for how long?             | Daily `windowlessCount` and `windowlessTimeBucket`; `windowlessBucket` on the events that end a period                                             |
+| How do people come back?                                                | `via` on `window-returned`                                                                                                                         |
+| How do they quit while windowless?                                      | `via` and `prompt` on `quit`                                                                                                                       |
+| Does it fail?                                                           | `window-not-shown`, `tray-failed`, `splash-fallback`, `backend-restarted`                                                                          |
+| Do people turn it off again, and after how long?                        | `setting-changed` with `enabled: false`; the time since that installation's previous `setting-changed`, or its first summary with `setBy: default` |
+
+The conformance corpus has ordinary and hostile cases for both events. The gateway accepts them
+unchanged (revision 10); its copy of the corpus is regenerated with the command above.
+
 ## Privacy invariants
 
 Analytics must never include prompts, responses, file contents or paths, URLs (except a public skill

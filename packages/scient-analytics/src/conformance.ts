@@ -439,6 +439,56 @@ export function buildAnalyticsConformanceFixture() {
       ...privateProperties,
     }),
   );
+  // Background running: closed kinds, ways and buckets; no window titles, paths or free text.
+  cases.push(
+    fixtureCase("background-summary-launch", "app.background.summary", {
+      reason: "launch",
+      platform: "windows",
+      enabled: false,
+      setBy: "default",
+    }),
+    fixtureCase("background-summary-daily", "app.background.summary", {
+      reason: "daily",
+      platform: "linux",
+      enabled: true,
+      setBy: "person",
+      windowlessCount: 3,
+      windowlessTimeBucket: "1-6h",
+    }),
+    fixtureCase("background-window-returned", "app.background.event", {
+      kind: "window-returned",
+      platform: "windows",
+      via: "tray",
+      windowlessBucket: "10-60m",
+    }),
+    fixtureCase("background-quit-cancelled", "app.background.event", {
+      kind: "quit",
+      platform: "linux",
+      via: "tray",
+      prompt: "cancelled",
+      windowlessBucket: "6-24h",
+    }),
+    fixtureCase("background-tray-failed", "app.background.event", {
+      kind: "tray-failed",
+      platform: "linux",
+      reason: "no-icon",
+    }),
+    fixtureCase("background-setting-changed", "app.background.event", {
+      kind: "setting-changed",
+      platform: "macos",
+      enabled: false,
+      previousSetBy: "default",
+    }),
+    fixtureCase("background-hostile", "app.background.event", {
+      kind: "window-returned",
+      platform: "/private/os",
+      via: "PRIVATE-CONTENT",
+      windowlessBucket: 90_000,
+      windowlessMs: 90_000,
+      windowTitle: "PRIVATE-CONTENT",
+      ...privateProperties,
+    }),
+  );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {
     const rejected = captureOutcome === "partial" || captureOutcome === "failed";
     const retained = captureOutcome === "partial" || captureOutcome === "retained";

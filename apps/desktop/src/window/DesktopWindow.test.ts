@@ -72,6 +72,9 @@ import * as PreviewManager from "../preview/Manager.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
 // SCIENT-FORK:END scient-window
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
+// SCIENT-FORK:START — background-running analytics.
+import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
+// SCIENT-FORK:END
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -949,6 +952,130 @@ describe("DesktopWindow", () => {
         yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
         assert.equal(yield* Ref.get(createCount), 2);
       }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+    }),
+  );
+
+  /** Background facts recorded in memory, as the Windows desktop would journal them. */
+  const backgroundFacts = Effect.gen(function* () {
+    const recorded: Array<Readonly<Record<string, string | number | boolean>>> = [];
+    const facts = yield* DesktopBackgroundFacts.make({
+      platform: "win32",
+      record: (_name, properties) => Effect.sync(() => void recorded.push(properties)),
+    });
+    return { facts, recorded };
+  });
+
+  it.effect("reports a backend restart while windowless and the way a window came back", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const { facts, recorded } = yield* backgroundFacts;
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        const state = yield* DesktopState.DesktopState;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fake.isDestroyed.mockReturnValue(true);
+        fake.windowListeners.get("closed")?.();
+        yield* Ref.set(state.background, true);
+        yield* facts.windowlessStarted;
+        yield* windows.handleBackendNotReady;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* TestClock.adjust("2 hours");
+        fake.isDestroyed.mockReturnValue(false);
+        yield* windows.activate.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "tray"),
+        );
+        assert.equal(yield* Ref.get(createCount), 2);
+      }).pipe(
+        Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })),
+        Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
+      );
+      assert.deepEqual(recorded, [
+        { kind: "backend-restarted", platform: "windows" },
+        { kind: "window-returned", platform: "windows", via: "tray", windowlessBucket: "1-6h" },
+      ]);
+    }),
+  );
+
+  it.effect("an activation while the backend is down reports its way once the window opens", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const { facts, recorded } = yield* backgroundFacts;
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        const state = yield* DesktopState.DesktopState;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fake.isDestroyed.mockReturnValue(true);
+        fake.windowListeners.get("closed")?.();
+        yield* Ref.set(state.background, true);
+        yield* facts.windowlessStarted;
+        yield* windows.handleBackendNotReady;
+        fake.isDestroyed.mockReturnValue(false);
+        yield* windows.activate.pipe(
+          Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "second-launch"),
+        );
+        assert.deepEqual(recorded, []);
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+      }).pipe(
+        Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })),
+        Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
+      );
+      assert.deepEqual(recorded, [
+        {
+          kind: "window-returned",
+          platform: "windows",
+          via: "second-launch",
+          windowlessBucket: "under-1m",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("reports a window that does not show when asked for with the backend ready", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const failCreate = yield* Ref.make(false);
+      const { facts, recorded } = yield* backgroundFacts;
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        const state = yield* DesktopState.DesktopState;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fake.isDestroyed.mockReturnValue(true);
+        fake.windowListeners.get("closed")?.();
+        yield* Ref.set(state.background, true);
+        yield* facts.windowlessStarted;
+        yield* Ref.set(failCreate, true);
+        yield* Effect.exit(
+          windows.activate.pipe(
+            Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, "dock"),
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: fake.window,
+            createCount,
+            mainWindow,
+            onWindowCreate: Ref.get(failCreate).pipe(
+              Effect.flatMap((fail) => (fail ? Effect.die("no window") : Effect.void)),
+            ),
+          }),
+        ),
+        Effect.provideService(DesktopBackgroundFacts.DesktopBackgroundFacts, facts),
+      );
+      assert.deepEqual(recorded, [
+        {
+          kind: "window-not-shown",
+          platform: "windows",
+          via: "dock",
+          windowlessBucket: "under-1m",
+        },
+      ]);
     }),
   );
   // SCIENT-FORK:END

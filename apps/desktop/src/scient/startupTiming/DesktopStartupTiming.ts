@@ -49,7 +49,10 @@ export function startupBucket(ms: number): string {
   return "over-60s";
 }
 
-function analyticsPlatform(platform: NodeJS.Platform): "macos" | "windows" | "linux" | "other" {
+/** The platform as the analytics contract names it. */
+export function analyticsPlatform(
+  platform: NodeJS.Platform,
+): "macos" | "windows" | "linux" | "other" {
   if (platform === "darwin") return "macos";
   if (platform === "win32") return "windows";
   if (platform === "linux") return "linux";

@@ -51,8 +51,9 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
-// SCIENT-FORK:START — startup timing, reported through the consented analytics path.
+// SCIENT-FORK:START — startup timing and background running, reported through the analytics path.
 import * as DesktopStartupTiming from "../scient/startupTiming/DesktopStartupTiming.ts";
+import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — near-full default size and one-time size updates for older profiles.
 import { applyOneTimeMainWindowSizing, nearFullMainWindowSize } from "./scientMainWindowSizing.ts";
@@ -456,8 +457,11 @@ export const make = Effect.gen(function* () {
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const telemetry = yield* Effect.serviceOption(DesktopTelemetryPublisher);
   const restartTiming = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
-  // SCIENT-FORK:START — startup timing, reported through the consented analytics path.
+  // SCIENT-FORK:START — startup timing and background running, reported through the analytics path.
   const startupTiming = yield* Effect.serviceOption(DesktopStartupTiming.DesktopStartupTiming);
+  const backgroundFacts = yield* Effect.serviceOption(
+    DesktopBackgroundFacts.DesktopBackgroundFacts,
+  );
   // SCIENT-FORK:END
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
@@ -1226,6 +1230,7 @@ export const make = Effect.gen(function* () {
 
     // SCIENT-FORK: an open app window ends running in the background.
     yield* Ref.set(desktopState.background, false);
+    if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.windowRequested("shown");
     return Option.some(window);
   });
 
@@ -1269,10 +1274,24 @@ export const make = Effect.gen(function* () {
   const createMainIfBackendReady = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
     // SCIENT-FORK: running in the background opens no window on its own.
-    if (yield* Ref.get(desktopState.background)) return;
+    if (yield* Ref.get(desktopState.background)) {
+      if (Option.isSome(backgroundFacts)) yield* backgroundFacts.value.backendRestarted;
+      return;
+    }
     if (yield* waitingForBackend) return;
     yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
+
+  // SCIENT-FORK:START — background-running analytics: did asking for a window bring one back?
+  const settleBackgroundReturn = Effect.gen(function* () {
+    if (Option.isNone(backgroundFacts) || (yield* Ref.get(desktopState.quitting))) return;
+    const shown = Option.isSome(yield* electronWindow.currentMainOrFirst);
+    const backendReady = yield* Ref.get(backendReadyRef);
+    yield* backgroundFacts.value.windowRequested(
+      shown ? "shown" : backendReady ? "not-shown" : "pending",
+    );
+  });
+  // SCIENT-FORK:END
 
   const showConnectingSplash = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
@@ -1402,7 +1421,11 @@ export const make = Effect.gen(function* () {
         }
       }
       yield* createMainIfBackendReady;
-    }).pipe(Effect.withSpan("desktop.window.activate")),
+    }).pipe(
+      // SCIENT-FORK: background-running analytics.
+      Effect.ensuring(settleBackgroundReturn),
+      Effect.withSpan("desktop.window.activate"),
+    ),
     createMainIfBackendReady,
     showConnectingSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {

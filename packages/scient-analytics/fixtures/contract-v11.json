@@ -215,6 +215,62 @@
       }
     },
     {
+      "case": "app.background.summary:fallbacks",
+      "name": "app.background.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "unknown",
+        "platform": "unknown",
+        "enabled": false,
+        "setBy": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.summary:representative",
+      "name": "app.background.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "unknown",
+        "platform": "macos",
+        "enabled": false,
+        "setBy": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:fallbacks",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "unknown",
+        "platform": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:representative",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "unknown",
+        "platform": "macos",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
       "case": "server.boot.heartbeat:fallbacks",
       "name": "server.boot.heartbeat",
       "privacyLevel": "essential",
@@ -2414,6 +2470,112 @@
         "uiReadyBucket": "unknown",
         "backendReadyBucket": "unknown",
         "projectRestored": false,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.summary:background-summary-launch",
+      "name": "app.background.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "launch",
+        "platform": "windows",
+        "enabled": false,
+        "setBy": "default",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.summary:background-summary-daily",
+      "name": "app.background.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "daily",
+        "platform": "linux",
+        "enabled": true,
+        "setBy": "person",
+        "windowlessCount": 3,
+        "windowlessTimeBucket": "1-6h",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:background-window-returned",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "window-returned",
+        "platform": "windows",
+        "via": "tray",
+        "windowlessBucket": "10-60m",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:background-quit-cancelled",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "quit",
+        "platform": "linux",
+        "via": "tray",
+        "prompt": "cancelled",
+        "windowlessBucket": "6-24h",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:background-tray-failed",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "tray-failed",
+        "platform": "linux",
+        "reason": "no-icon",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:background-setting-changed",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "setting-changed",
+        "platform": "macos",
+        "enabled": false,
+        "previousSetBy": "default",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.background.event:background-hostile",
+      "name": "app.background.event",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "kind": "window-returned",
+        "platform": "unknown",
+        "via": "unknown",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"

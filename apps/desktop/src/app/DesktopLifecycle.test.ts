@@ -20,12 +20,31 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 // SCIENT-FORK:START — Scient background running.
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopBackgroundFacts from "../scient/backgroundRunning/DesktopBackgroundFacts.ts";
 import { vi } from "vite-plus/test";
 
-const quitGuard = vi.hoisted(() => ({ proceed: true }));
-vi.mock("../scient/quitGuard/quitGuard.ts", () => ({
-  confirmQuitStopsRunningWork: () => Promise.resolve(quitGuard.proceed),
+const quitGuard = vi.hoisted(() => ({
+  prompt: "none" as "none" | "confirmed" | "cancelled",
 }));
+vi.mock("../scient/quitGuard/quitGuard.ts", () => ({
+  confirmQuitStopsRunningWork: () => Promise.resolve(quitGuard.prompt),
+}));
+
+/** Background facts the lifecycle records, kept in memory. */
+function layerBackgroundFacts(
+  platform: NodeJS.Platform,
+  recorded: Array<Readonly<Record<string, string | number | boolean>>>,
+  onRecord: Effect.Effect<void> = Effect.void,
+) {
+  return Layer.effect(
+    DesktopBackgroundFacts.DesktopBackgroundFacts,
+    DesktopBackgroundFacts.make({
+      platform,
+      record: (_name, properties) =>
+        Effect.sync(() => void recorded.push(properties)).pipe(Effect.andThen(onRecord)),
+    }),
+  );
+}
 // SCIENT-FORK:END
 
 function layerElectronApp(
@@ -517,6 +536,8 @@ describe("DesktopLifecycle", () => {
           Effect.sync(() => {
             open = Option.some(window);
           }).pipe(Effect.andThen(Deferred.succeed(shown, kind)), Effect.asVoid);
+        const recorded: Array<Readonly<Record<string, string | number | boolean>>> = [];
+        const reported = yield* Deferred.make<void>();
         const layer = DesktopLifecycle.layer.pipe(
           Layer.provideMerge(layerElectronApp(appListeners)),
           Layer.provideMerge(layerElectronTheme),
@@ -543,8 +564,15 @@ describe("DesktopLifecycle", () => {
           Layer.provideMerge(DesktopShutdown.layer),
           Layer.provideMerge(DesktopState.layer),
           Layer.provideMerge(DesktopAppSettings.layerTest()),
+          Layer.provideMerge(
+            layerBackgroundFacts(
+              platform,
+              recorded,
+              Deferred.succeed(reported, undefined).pipe(Effect.asVoid),
+            ),
+          ),
         );
-        quitGuard.proceed = false;
+        quitGuard.prompt = "cancelled";
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
@@ -558,12 +586,117 @@ describe("DesktopLifecycle", () => {
             } else {
               assert.equal(yield* Deferred.await(shown), shows);
             }
+            // The splash is the fallback analytics counts; nothing else here is reported.
+            if (shows === "splash") {
+              yield* Deferred.await(reported);
+              assert.deepEqual(recorded, [
+                { kind: "splash-fallback", platform: platform === "win32" ? "windows" : platform },
+              ]);
+            } else {
+              assert.deepEqual(recorded, []);
+            }
           }),
         ).pipe(
           Effect.provide(layer),
-          Effect.ensuring(Effect.sync(() => (quitGuard.proceed = true))),
+          Effect.ensuring(Effect.sync(() => (quitGuard.prompt = "none"))),
         );
       }),
+  );
+
+  it.effect(
+    "the last window closing begins a windowless period that a cancelled Quit reports",
+    () =>
+      Effect.gen(function* () {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        const recorded: Array<Readonly<Record<string, string | number | boolean>>> = [];
+        const reported = yield* Deferred.make<void>();
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(layerElectronApp(appListeners)),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(layerElectronWindow()),
+          Layer.provideMerge(layerDesktopWindow()),
+          Layer.provideMerge(
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              platform: "win32",
+              appImagePath: Option.none(),
+              isDevelopment: false,
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+          Layer.provideMerge(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              keepRunningInBackground: true,
+            }),
+          ),
+          Layer.provideMerge(
+            layerBackgroundFacts(
+              "win32",
+              recorded,
+              Deferred.succeed(reported, undefined).pipe(Effect.asVoid),
+            ),
+          ),
+        );
+        quitGuard.prompt = "cancelled";
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+            appListeners.get("window-all-closed")?.();
+            yield* Effect.yieldNow;
+            appListeners.get("before-quit")?.({ preventDefault: () => {} } as Electron.Event);
+            yield* Deferred.await(reported);
+          }),
+        ).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.sync(() => (quitGuard.prompt = "none"))),
+        );
+        assert.deepEqual(recorded, [
+          {
+            kind: "quit",
+            platform: "windows",
+            via: "other",
+            prompt: "cancelled",
+            windowlessBucket: "under-1m",
+          },
+        ]);
+      }),
+  );
+
+  it.effect("the Dock icon asks for a window as the Dock", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const via = yield* Deferred.make<DesktopBackgroundFacts.ReturnVia>();
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners)),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(
+          layerDesktopWindow({
+            activate: Effect.gen(function* () {
+              yield* Deferred.succeed(via, yield* DesktopBackgroundFacts.CurrentReturnVia);
+            }),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "darwin",
+            appImagePath: Option.none(),
+            isDevelopment: false,
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(DesktopAppSettings.layerTest()),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+          appListeners.get("activate")?.();
+          assert.equal(yield* Deferred.await(via), "dock");
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
   );
   // SCIENT-FORK:END
 });

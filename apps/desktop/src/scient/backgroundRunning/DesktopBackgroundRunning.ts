@@ -21,14 +21,21 @@ import {
 import { makeIpcMethod, makeSyncIpcMethod } from "../../ipc/DesktopIpc.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
+import * as DesktopBackgroundFacts from "./DesktopBackgroundFacts.ts";
 
 export interface BackgroundTrayActions {
   readonly open: () => void;
   readonly quit: () => void;
 }
 
-/** The Windows/Linux tray icon; `null` removes it. */
-export type SetTray = (actions: BackgroundTrayActions | null) => Effect.Effect<void>;
+/** The Windows/Linux tray icon; `null` removes it. Fails soft, saying why no tray shows. */
+export type SetTray = (
+  actions: BackgroundTrayActions | null,
+) => Effect.Effect<DesktopBackgroundFacts.TrayFailure | null>;
+
+class DesktopTrayError extends Schema.TaggedError<DesktopTrayError>()("DesktopTrayError", {
+  cause: Schema.Defect(),
+}) {}
 
 export class DesktopBackgroundRunning extends Context.Service<
   DesktopBackgroundRunning,
@@ -47,15 +54,25 @@ export const make = Effect.fn("DesktopBackgroundRunning.make")(function* (setTra
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const state = yield* DesktopState.DesktopState;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const facts = yield* DesktopBackgroundFacts.DesktopBackgroundFacts;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
 
+  const activateVia = (via: DesktopBackgroundFacts.ReturnVia) =>
+    desktopWindow.activate.pipe(
+      Effect.provideService(DesktopBackgroundFacts.CurrentReturnVia, via),
+      Effect.ignoreCause({ log: true }),
+    );
   const trayActions: BackgroundTrayActions = {
-    open: () => runFork(desktopWindow.activate.pipe(Effect.ignoreCause({ log: true }))),
-    quit: () => runFork(electronApp.quit),
+    open: () => runFork(activateVia("tray")),
+    quit: () => runFork(facts.trayQuitChosen.pipe(Effect.andThen(electronApp.quit))),
   };
   // macOS keeps the Dock icon, which opens and quits Scient already.
-  const syncTray = (enabled: boolean) =>
-    setTray(enabled && environment.platform !== "darwin" ? trayActions : null);
+  const syncTray = Effect.fn("DesktopBackgroundRunning.syncTray")(function* (enabled: boolean) {
+    const failure = yield* setTray(
+      enabled && environment.platform !== "darwin" ? trayActions : null,
+    );
+    if (failure !== null) yield* facts.trayFailed(failure);
+  });
 
   return DesktopBackgroundRunning.of({
     start: Effect.gen(function* () {
@@ -63,19 +80,25 @@ export const make = Effect.fn("DesktopBackgroundRunning.make")(function* (setTra
       yield* electronApp.on("second-instance", () => {
         runFork(
           Ref.get(state.background).pipe(
-            Effect.flatMap((background) => (background ? desktopWindow.activate : Effect.void)),
-            Effect.ignoreCause({ log: true }),
+            Effect.flatMap((background) =>
+              background ? activateVia("second-launch") : Effect.void,
+            ),
           ),
         );
       });
       yield* syncTray(
         DesktopAppSettings.keepsRunningInBackground(yield* appSettings.get, environment.platform),
       );
+      yield* facts.summaries(
+        appSettings.get.pipe(Effect.map((settings) => settings.keepRunningInBackground)),
+      );
       yield* Effect.addFinalizer(() => setTray(null));
     }).pipe(Effect.withSpan("DesktopBackgroundRunning.start")),
     setEnabled: Effect.fn("DesktopBackgroundRunning.setEnabled")(function* (enabled) {
-      yield* appSettings.setKeepRunningInBackground(enabled);
+      const previous = (yield* appSettings.get).keepRunningInBackground;
+      const { changed } = yield* appSettings.setKeepRunningInBackground(enabled);
       yield* syncTray(enabled);
+      if (changed) yield* facts.settingChanged({ enabled, previous });
     }),
   });
 });
@@ -95,29 +118,37 @@ const makeElectronTray = Effect.gen(function* () {
   };
 
   const setTray: SetTray = (actions) =>
-    Effect.sync(() => {
-      if (actions === null) {
-        tray?.destroy();
-        tray = null;
-        return;
-      }
-      if (tray !== null) return;
-      const icon = trayIcon();
-      if (icon === null) return;
-      tray = new Electron.Tray(icon);
-      tray.setToolTip(environment.displayName);
-      tray.setContextMenu(
-        Electron.Menu.buildFromTemplate([
-          {
-            label: m(msg("Open {appName}"), { appName: environment.displayName }),
-            click: actions.open,
-          },
-          { type: "separator" },
-          { label: m(msg("Quit completely")), click: actions.quit },
-        ]),
-      );
-      tray.on("click", actions.open);
-    });
+    Effect.try({
+      try: (): DesktopBackgroundFacts.TrayFailure | null => {
+        if (actions === null) {
+          tray?.destroy();
+          tray = null;
+          return null;
+        }
+        if (tray !== null) return null;
+        const icon = trayIcon();
+        if (icon === null) return "no-icon";
+        tray = new Electron.Tray(icon);
+        tray.setToolTip(environment.displayName);
+        tray.setContextMenu(
+          Electron.Menu.buildFromTemplate([
+            {
+              label: m(msg("Open {appName}"), { appName: environment.displayName }),
+              click: actions.open,
+            },
+            { type: "separator" },
+            { label: m(msg("Quit completely")), click: actions.quit },
+          ]),
+        );
+        tray.on("click", actions.open);
+        return null;
+      },
+      catch: (cause) => new DesktopTrayError({ cause }),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not show the tray icon.", error).pipe(Effect.as("error" as const)),
+      ),
+    );
   return setTray;
 });
 
