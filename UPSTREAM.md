@@ -731,6 +731,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`ddeb226831a3cbca8d6d07f362e9c55f82b41eab` is recorded in
+[the 2026-11-28 ddeb226831 receipt](docs/internals/t3-upstream-sync-20261128-ddeb226831.md), Scient PR #1180.
+Literal merge `5f69412114443ec2f701ccab819c2a41ad3b46ab` has owned base
+`c8efa33bd9daa2cc4d84cbd20bedea899f4446ea` and the frozen official target as parents, retaining
+the 237 official commits after `241d46c562`. The range adds per-agent usage access, machine-load
+readings, image drawing, folder attachments, Markdown code-block previews, indefinite snooze and
+many document-preview fixes. Release remains separate.
+
+The previous committed alignment through
 `241d46c562fa9a0e1bfc58de181a704dd43ac8f7` is recorded in
 [the 2026-11-28 241d46c562 receipt](docs/internals/t3-upstream-sync-20261128-241d46c562.md), Scient PR #1169.
 Literal merge `fee9d6734e041eb9d3838868a533b348f55d6f73` has owned base
