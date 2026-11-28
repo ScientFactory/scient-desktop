@@ -1,21 +1,22 @@
-// @effect-diagnostics nodeBuiltinImport:off - Checks permissions and links without opening the broker credential.
+// @effect-diagnostics nodeBuiltinImport:off - Checks filesystem ownership and permissions without opening credentials.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-const BROKER_URL = "http://127.0.0.1:8765";
+const BROKER_SOCKET = "broker.sock";
 const TOKEN_FILE = "auth-broker.token";
 
-/** Gives a managed macOS dev agent a reference to the owner-enabled local broker. */
+/** Finds an owner-enabled socket without writing anything into the dev agent's state. */
 export async function prepareScientAgentDevBroker(input: {
   readonly platform: NodeJS.Platform;
+  readonly desktop: boolean;
   readonly environment: NodeJS.ProcessEnv;
   readonly home: string;
-  readonly root: string;
   readonly userId: number | undefined;
 }): Promise<string | undefined> {
   const { environment } = input;
   if (
     input.platform !== "darwin" ||
+    !input.desktop ||
     environment.SCIENT_LOCAL_DEV_APP_MANAGED !== "1" ||
     environment.SCIENT_NEXT_DEVELOPMENT_STATE !== "true" ||
     environment.SCIENT_DEV_IDENTITY === "off" ||
@@ -26,9 +27,13 @@ export async function prepareScientAgentDevBroker(input: {
 
   const brokerRoot = NodePath.join(input.home, ".local", "share", "scient-dev-chatgpt");
   const source = NodePath.join(brokerRoot, TOKEN_FILE);
-  const [directory, consent, token] = await Promise.all(
-    [brokerRoot, NodePath.join(brokerRoot, "share-with-dev-apps"), source].map((path) =>
-      NodeFSP.lstat(path).catch(() => undefined),
+  const socketPath = NodePath.join(brokerRoot, BROKER_SOCKET);
+  const [directory, consent, token, socket] = await Promise.all(
+    [brokerRoot, NodePath.join(brokerRoot, "share-with-dev-apps"), source, socketPath].map((path) =>
+      NodeFSP.lstat(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      }),
     ),
   );
   const isPrivate = (entry: typeof token) =>
@@ -37,6 +42,8 @@ export async function prepareScientAgentDevBroker(input: {
     !directory?.isDirectory() ||
     !consent?.isFile() ||
     !token?.isFile() ||
+    !socket?.isSocket() ||
+    socket.uid !== input.userId ||
     !isPrivate(directory) ||
     !isPrivate(consent) ||
     !isPrivate(token)
@@ -44,14 +51,5 @@ export async function prepareScientAgentDevBroker(input: {
     return undefined;
   }
 
-  const target = NodePath.join(input.root, TOKEN_FILE);
-  try {
-    await NodeFSP.symlink(source, target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    // A candidate with its own broker keeps it. Only links this setup owns are reused.
-    const existing = await NodeFSP.readlink(target).catch(() => undefined);
-    if (existing !== source) return undefined;
-  }
-  return BROKER_URL;
+  return `unix:${socketPath}`;
 }

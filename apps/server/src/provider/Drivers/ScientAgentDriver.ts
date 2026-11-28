@@ -165,9 +165,10 @@ export const ScientAgentDriver: ScientProviderDriver<
       try: () =>
         prepareScientAgentDevBroker({
           platform,
+          desktop:
+            serverConfig.mode === "desktop" && serverConfig.desktopBootstrapSecret !== undefined,
           environment: hostEnvironment,
           home: userHome,
-          root,
           userId,
         }),
       catch: (cause) =>
@@ -175,7 +176,7 @@ export const ScientAgentDriver: ScientProviderDriver<
           cause instanceof Error ? cause : {},
         ),
     }).pipe(Effect.catch((error) => Effect.logWarning(error.detail).pipe(Effect.as(undefined))));
-    if (brokerUrl !== undefined) processEnv.SCIENT_AGENT_AUTH_BROKER_URL = brokerUrl;
+    if (brokerUrl !== undefined) processEnv.SCIENT_AGENT_DEV_CHATGPT_BROKER_URL = brokerUrl;
     // The Codex home whose installed plugins the codex-plugins source reads. A given CODEX_HOME is
     // expanded as Codex expands its home and passed on resolved, so both read the same folder.
     const configuredCodexHome = processEnv.CODEX_HOME?.trim();

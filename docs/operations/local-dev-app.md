@@ -360,18 +360,29 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
 ### Optional shared ChatGPT sign-in for Scient Agent
 
 This is separate from the Codex provider and from connector sign-ins. On macOS,
-the owner can start a dedicated Scient Agent auth broker on `127.0.0.1:8765`
-with `SCIENT_AGENT_ROOT` set to a private `~/.local/share/scient-dev-chatgpt`
-directory. Sign in once with `scient-agent auth-broker login openai-codex`
-using the same root. Keep that broker dedicated to this dev account.
+each developer can sign in once to a dedicated Scient Agent auth broker:
 
-After checking the setup, the owner can enable managed dev apps to use it by
-creating a private `share-with-dev-apps` file in that directory. The next
-managed desktop launch on code that supports this feature links to the broker's
-private bearer file rather than copying any OAuth refresh token or sharing the
-agent database. This also applies to the managed Stable review app on a
-supporting ref. Installed apps and headless servers do not opt in. Existing
-per-app broker bearer files are not replaced.
+```sh
+broker="$HOME/.local/share/scient-dev-chatgpt"
+(umask 077; mkdir -p "$broker")
+SCIENT_AGENT_ROOT="$broker" scient-agent auth-broker login openai-codex
+SCIENT_AGENT_ROOT="$broker" scient-agent auth-broker serve --bind "unix:$broker/broker.sock"
+```
+
+Use a Scient Agent build that lists `unix` in `authBrokerTransports` in
+`scient-agent --runtime-info` for both the broker and the dev apps. Older
+agents ignore the shared sign-in. The broker listens only at the private
+socket. If updating an existing broker, stop the old process before changing
+its bind address; keep its root and sign-in.
+
+To opt in, create `share-with-dev-apps` in that directory with mode `0600`.
+Restart the managed dev app. Its agent reads the bearer beside the socket; the
+setup does not copy or link that file or the OAuth vault into app state. The
+agent may cache short-lived access tokens locally, encrypted with the broker
+bearer. This also applies to the managed Stable review app on a supporting ref.
+Installed apps and headless servers do not opt in. An explicitly configured
+broker takes precedence. For automatic sharing, only ChatGPT uses the shared
+vault; other provider logins stay local to the app.
 
 Every enabled dev app can use the account and its quota. Manage the account at
 the broker; signing out of a shared account from a client affects other clients.
