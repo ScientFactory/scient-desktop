@@ -60,7 +60,7 @@ const list = metadata(
   Tool.make("scient_accounts_list", {
     ...common,
     description:
-      "List accounts and browser profiles for this session: how each may be used, its sign-in state and reason, when its password last worked, and whether Scient holds automatic sign-in. Using an Off one shows the user a card to turn it on. Never returns values. preview_open signs in by itself with Allowed saved sign-ins; read its accountsNote.",
+      "List accounts and browser profiles for this session: how each may be used and its sign-in state. Using an Off one asks the user to turn it on. Never returns values. preview_open signs in by itself with Allowed saved sign-ins; read its accountsNote.",
     parameters: Tool.EmptyParams,
     success: Schema.Struct({
       accounts: Schema.Array(
@@ -135,7 +135,7 @@ const signIn = metadata(
       SecretRequests,
     ],
     description:
-      "Sign in with a website or library account on your browser tab, with stored two-factor codes. Returns signed-in, password-rejected or code-rejected (held until the user signs in or saves a new one), limited (the site is limiting automation; wait), needs-user, or failed. When the user asks to be signed in, call this: it shows them the sign-in card and waits while they do a CAPTCHA, passkey or approval. Scient reads texted and mailed codes on its Mac itself. When the result has `code`, and you can read the user's mail, find a code from those domains sent after that time and call again with it as `code`; never ask the user for it.",
+      "Sign in with a website or library account on your browser tab, typing stored 2FA codes. When the user asks to be signed in, call this: it shows them the card and waits through a CAPTCHA, passkey or approval. password-rejected and code-rejected are held until the user acts; limited: wait. If the result has `code` and you can read the user's mail, call again with the code from those domains sent after that time; never ask the user for it.",
     parameters: Schema.Struct({
       accountId: AccountId,
       tabId: Schema.optional(PreviewTabId),
@@ -157,7 +157,7 @@ const fill = metadata(
   Tool.make("scient_account_fill", {
     ...common,
     description:
-      "Type one saved field of a website or library account into your own browser tab, on a page of the account's sites, without showing you the value. Use it when scient_account_sign_in returns needs-user or failed on a page you can read: find the step yourself, fill the field, then press the page's button. With field code, pass `code` to type a code you read from the user's mail instead of the saved 2FA key's. If the site refuses a password, ask for the new one with scient_account_add (secret: password).",
+      "Type one saved field of a website or library account into your browser tab without showing you the value. For needs-user or failed from scient_account_sign_in on a page you can read: fill the field, then press the page's button. field code with `code` types a code from the user's mail. A refused password: scient_account_add (secret: password).",
     parameters: Schema.Struct({
       accountId: AccountId,
       field: Schema.Literals(["username", "password", "code"]),
@@ -217,7 +217,7 @@ const check = metadata(
   Tool.make("scient_account_check", {
     ...common,
     description:
-      "Check an account without changing it: a website in a hidden tab in its profile, never signing in; a key or other account by reading its saved value. Returns its state and reason, when its password last worked, its profile and whether Scient holds automatic sign-in.",
+      "Check an account without changing or signing in to it: a website in a hidden tab in its profile, other kinds by their saved value.",
     parameters: Schema.Struct({ accountId: AccountId }),
     success: Schema.Struct({
       state: Schema.String,
@@ -265,10 +265,10 @@ const add = metadata(
       SecretRequests,
     ],
     description:
-      "Keep a secret in Accounts. api-key: always a new account, even beside a saved key for the service; pass accountId only to replace that one. With value (a key the user gave in this chat or you created), it is saved as is; without, a private card asks the user and you never see it. website or university: with secret, its password or 2FA key (also to replace one by accountId); without, they sign in on its own page. Use this, not request_secret, for keys and passwords. Returns the account, how to use it, and open: give the user that link.",
+      "Keep a key or password in Accounts; use this, not request_secret. api-key: always a new account unless accountId. Without value, the user enters it in a private card you never see. website or university: secret asks for its password or 2FA key; without, the user signs in on its own page. Give the user the returned `open` link.",
     parameters: Schema.Struct({
       kind: Schema.optional(Schema.Literals(["api-key", "website", "university"])).annotate({
-        description: "api-key (default), website, or university.",
+        description: "Default api-key.",
       }),
       name: AccountSummary.fields.name.annotate({ description: "The service, e.g. OpenAI." }),
       reason: TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
@@ -284,14 +284,15 @@ const add = metadata(
         description: "Header name when the API doesn't use Authorization: Bearer.",
       }),
       accountId: Schema.optional(AccountId).annotate({
-        description: "Replace this account's key, password or 2FA key when it is wrong or expired.",
+        description: "Replace this account's key, password or 2FA key.",
       }),
       secret: Schema.optional(Schema.Literals(["password", "totp"])).annotate({
-        description: "website or university: ask for its password or 2FA key in the card.",
+        description: "website or university: ask for its password or 2FA key.",
       }),
       placeholder: Schema.optional(TrimmedNonEmptyString),
       value: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))).annotate({
-        description: "api-key: the key, when the user gave it in this chat or you created it.",
+        description:
+          "api-key: the key, when the user gave it in this chat or you created it; saved as is.",
       }),
       site: Schema.optional(AccountSite).annotate({
         description: "website: the site to sign in to, e.g. github.com.",
@@ -711,7 +712,7 @@ const accountManage = metadata(
   Tool.make("scient_account_manage", {
     ...common,
     description:
-      "Manage a saved account, never its value: get (its version), activity, edit (name, a website's username, fewer sites, or oneSession: a new sign-in there ends the other session, so Scient never signs in by itself), controls (only tighter), remove (with Undo), undo, check_all (looks, never signs in), save_offer (offer to save again), pin_task/unpin_task (a scheduledTaskId runs only as this sign-in, in its profile, on this computer; each run checks first). Writes take the version read and are shown to the user with this chat. Only the user loosens controls: using an Off account asks them to turn it on.",
+      "Manage a saved account, never its value: get (returns its version), activity, edit (name, a website's username, fewer sites, oneSession: a new sign-in there ends the other session, so Scient won't sign in by itself), controls (tighter only), remove (returns undo), undo, check_all (never signs in), save_offer, pin_task/unpin_task (the scheduledTaskId runs only as this sign-in, in its profile, on this computer). Writes take the version from get.",
     parameters: Schema.Struct({
       action: Schema.Literals([
         "get",
@@ -774,7 +775,7 @@ const browserProfiles = metadata(
   Tool.make("scient_browser_profiles", {
     ...common,
     description:
-      "Browser profiles in this session: list, sites (a profile's saved sign-ins, never cookies), and at the version from list: controls (only tighter: access, scope, or scriptSignIn false), sign_out (a site), clear, remove, transfer (copy or move sites into another profile), merge (all into another, then remove), fold_main (merge into Main), sources (the user's browser profiles on their desktops), import from a sourceId (cookies and/or passwords) into a new profile, or into profileId if no wider, and refresh from its link. Each is the user's own action; all but an import or refresh have their Undo for an hour. Pass operationId to undo or status; an import may wait for the user to allow the browser, so check status. Nothing reaches further than it did; tabs open in chats stop a remove or merge, and the reply names them.",
+      "Browser profiles in this session: list, sites (a profile's saved sign-ins), and with the version from list: controls (tighter only), sign_out (a site), clear, remove, transfer (sites into another profile), merge (into another, then remove), fold_main (merge into Main), sources (the user's desktop browser profiles), import (a sourceId's cookies and/or passwords into a new profile or profileId), refresh (re-import a linked profile). undo and status take an operationId; all but an import or refresh can be undone for an hour. An import may wait for the user to allow it: check status.",
     parameters: Schema.Struct({
       action: Schema.Literals([
         "list",

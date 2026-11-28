@@ -875,6 +875,6 @@ describe("two identical imports at once are one (round 6f)", () => {
 it("promises no Undo for an import or refresh, in the tool or a stopped import's reply (6n)", () => {
   const description = ScientAccountsToolkit.tools.scient_browser_profiles.description ?? "";
   // regression: "Each is the user's own action, with their Undo for an hour", import included.
-  expect(description).toContain("all but an import or refresh have their Undo for an hour");
+  expect(description).toContain("all but an import or refresh can be undone for an hour");
   expect(PROFILE_IMPORT_CAUSE_COPY.stopped).not.toMatch(/put back|undo|roll/i);
 });

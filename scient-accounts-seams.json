@@ -9,6 +9,7 @@
   ],
   "ownedFiles": [
     "apps/web/src/testUtils/shardWeights.json",
+    "evals/mcp-tool-use/cases/accounts.ndjson",
     "packages/contracts/src/scient/accounts.ts",
     "packages/contracts/src/scient/accountRpcs.ts",
     "packages/contracts/src/scient/desktopAccountsBridge.ts",
@@ -44,6 +45,16 @@
       "path": ".github/workflows/ci.yml",
       "anchor": "SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory",
       "purpose": "Run the desktop Accounts and browser import tests, and real Chrome and Edge sign-in windows, on Windows."
+    },
+    {
+      "path": "evals/mcp-tool-use/run.ts",
+      "anchor": "accountsAccess: setup.world?.accounts === true,",
+      "purpose": "List the Accounts tools and text for an eval case whose world grants Accounts."
+    },
+    {
+      "path": "evals/mcp-tool-use/secret-grading.ts",
+      "anchor": "SCIENT-FORK: so is saving it to Scient Accounts.",
+      "purpose": "Grade a pasted key saved with scient_account_add as a safe handoff."
     },
     {
       "path": "apps/server/src/auth/EnvironmentAuth.ts",
@@ -479,11 +490,6 @@
       "path": "apps/mobile/src/features/browser/BrowserPreviewRouteScreen.tsx",
       "anchor": "<BrowserSignInKey",
       "purpose": "Sign in on a phone browser tab with a saved login."
-    },
-    {
-      "path": "apps/server/src/mcp/toolkits/orchestrator/tools.ts",
-      "anchor": "Keys and passwords to keep: `scient_account_add`.",
-      "purpose": "Point agents asking for a key or password to keep at Accounts."
     },
     {
       "path": "apps/web/src/components/chat/SecretRequestCard.tsx",

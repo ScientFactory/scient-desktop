@@ -123,6 +123,9 @@ import {
   type SourcesLibrary,
 } from "./scientSources.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient's Accounts tools, listed for a case whose world has `accounts`.
+import { ScientAccountsToolkit } from "../../apps/server/src/scient/accounts/agent/tools.ts";
+// SCIENT-FORK:END
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
@@ -336,6 +339,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     browserAgentAccess: Schema.optional(Schema.Boolean),
     // SCIENT-FORK: the person's Library. With it, Scient's Sources tools are listed and answer from it.
     library: Schema.optional(LibraryWorld),
+    // SCIENT-FORK: true: Scient Accounts is granted, so its tools and text are listed; calls answer from `mocks`.
+    accounts: Schema.optional(Schema.Boolean),
     /** The Agent feedback mode; absent is off. On, T3 lists its tools and its text has the mode's line. */
     agentFeedback: Schema.optional(Contracts.AgentFeedbackMode),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
@@ -501,11 +506,14 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
   web__run: "WebFetch",
 };
 // SCIENT-FORK:START — Scient registers upstream's `t3_*` tools as `scient_*`; cases keep T3's names.
+const ACCOUNTS_TOOL_NAMES = new Set(
+  Object.values(ScientAccountsToolkit.tools).map((tool: Tool.Any) => tool.name),
+);
 const t3CaseName = (name: string) =>
   name === "scient_thread_inspect"
     ? "t3_thread_read"
-    : // Scient's own Sources tools have no T3 name.
-      isSourcesTool(name)
+    : // Scient's own Sources and Accounts tools have no T3 name.
+      isSourcesTool(name) || ACCOUNTS_TOOL_NAMES.has(name)
       ? name
       : name.replace(/^scient_/, "t3_");
 // SCIENT-FORK:END
@@ -634,17 +642,25 @@ const visibleT3Tools = (options: {
       (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
-// SCIENT-FORK:START — a case with a Library also gets Scient's Sources tools, from source.
+// SCIENT-FORK:START — a case with a Library or Accounts also gets those Scient tools, from source.
 const sourcesTools: ReadonlyArray<ApiTool> = SOURCES_TOOLS.map((tool) => ({
   name: `${T3_PREFIX}${tool.name}`,
   description: Tool.getDescription(tool) ?? "",
   input_schema: advertisedJsonSchema(tool),
 }));
-const visibleTools = (options: Parameters<typeof visibleT3Tools>[0] & SourcesAccess) => [
+const accountsTools: ReadonlyArray<ApiTool> = Object.values(ScientAccountsToolkit.tools).map(
+  (tool: Tool.Any) => ({
+    name: `${T3_PREFIX}${tool.name}`,
+    description: Tool.getDescription(tool) ?? "",
+    input_schema: advertisedJsonSchema(tool),
+  }),
+);
+const visibleTools = (options: Parameters<typeof visibleT3Tools>[0] & ScientAccess) => [
   ...visibleT3Tools(options),
   ...(options.sourcesAccess === true ? sourcesTools : []),
+  ...(options.accountsAccess === true ? accountsTools : []),
 ];
-type SourcesAccess = { readonly sourcesAccess?: boolean };
+type ScientAccess = { readonly sourcesAccess?: boolean; readonly accountsAccess?: boolean };
 // SCIENT-FORK:END
 
 /**
@@ -656,7 +672,7 @@ const claudeQueryOptions = (
   model: Model,
   device = true,
   browser = true,
-  sources = false,
+  scient: ScientAccess = {},
   agentFeedback: Contracts.AgentFeedbackMode = "off",
 ) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
@@ -674,7 +690,7 @@ const claudeQueryOptions = (
     browserToolsAvailable: browser,
     // SCIENT-FORK:START — Scient's granted awareness carries the session's device block.
     scientAwareness: buildScientAwareness(
-      scientEvalCapabilities(device, browser, sources),
+      scientEvalCapabilities(device, browser, scient),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     ),
     // SCIENT-FORK:END
@@ -687,10 +703,10 @@ export const t3SystemAppend = (
   model: Model,
   device = true,
   browser = true,
-  sources = false,
+  scient: ScientAccess = {},
   agentFeedback: Contracts.AgentFeedbackMode = "off",
 ) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser, sources, agentFeedback);
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, scient, agentFeedback);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -736,12 +752,13 @@ const SCIENT_EVAL_CAPABILITIES = new Set(["preview", "device"] as const);
 const scientEvalCapabilities = (
   device: boolean,
   browser = true,
-  sources = false,
+  { sourcesAccess, accountsAccess }: ScientAccess = {},
 ): ReadonlySet<McpInvocationContext.McpCapability> =>
   new Set([
     ...(browser ? (["preview"] as const) : []),
     ...(device ? (["device"] as const) : []),
-    ...(sources ? (["sources:read", "sources:write"] as const) : []),
+    ...(sourcesAccess ? (["sources:read", "sources:write"] as const) : []),
+    ...(accountsAccess ? (["accounts"] as const) : []),
   ]);
 // SCIENT-FORK:END
 
@@ -797,8 +814,8 @@ export const buildBase = (
     /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
     readonly agentFeedback?: Contracts.AgentFeedbackMode;
     readonly arm?: Arm;
-    // SCIENT-FORK: true lists the Sources tools and adds the Library's part of Scient's text.
-  } & SourcesAccess,
+    // SCIENT-FORK: lists the granted Sources and Accounts tools and adds their part of Scient's text.
+  } & ScientAccess,
 ) => {
   const t3 = visibleTools(options);
   const firstAssistant = template.messages.findIndex((message) => message.role === "assistant");
@@ -823,13 +840,13 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : // SCIENT-FORK: the Library's part follows the case's Library.
+    : // SCIENT-FORK: the Library's and Accounts' parts follow the case's world.
       forArm(
         t3SystemAppend(
           model,
           options.deviceAccess,
           options.browserAccess,
-          options.sourcesAccess,
+          options,
           options.agentFeedback,
         ),
         options.arm,
@@ -906,8 +923,8 @@ const buildCodexBase = (
     /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
     readonly agentFeedback?: Contracts.AgentFeedbackMode;
     readonly arm?: Arm;
-    // SCIENT-FORK: true lists the Sources tools and adds the Library's part of Scient's text.
-  } & SourcesAccess,
+    // SCIENT-FORK: lists the granted Sources and Accounts tools and adds their part of Scient's text.
+  } & ScientAccess,
 ): Base => {
   const t3 = visibleTools(options);
   const contentText = (item: Block) =>
@@ -947,11 +964,7 @@ const buildCodexBase = (
       agentFeedback: options.agentFeedback ?? "off",
     },
     // SCIENT-FORK: Scient grants named capabilities instead of browser/device flags.
-    scientEvalCapabilities(
-      options.deviceAccess ?? true,
-      options.browserAccess ?? true,
-      options.sourcesAccess,
-    ),
+    scientEvalCapabilities(options.deviceAccess ?? true, options.browserAccess ?? true, options),
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) =>
@@ -3410,8 +3423,8 @@ const main = Effect.gen(function* () {
     browserAccess: boolean,
     links: boolean,
     forge: boolean,
-    // SCIENT-FORK: true for a case with a Library.
-    sourcesAccess = false,
+    // SCIENT-FORK: the Sources and Accounts a case's world grants.
+    scient: ScientAccess = {},
     agentFeedback: Contracts.AgentFeedbackMode = "off",
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
@@ -3426,7 +3439,7 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
-              sourcesAccess,
+              ...scient,
               agentFeedback,
               arm: flags.arm,
             }),
@@ -3443,7 +3456,7 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
-              sourcesAccess,
+              ...scient,
               agentFeedback,
               arm: flags.arm,
             });
@@ -3478,35 +3491,46 @@ const main = Effect.gen(function* () {
         browser === "true",
         links === "true",
         forge === "true",
-        false,
+        {},
         feedback as Contracts.AgentFeedbackMode,
       ),
     );
   }
-  // SCIENT-FORK:START — a case with a Library gets its own base, which lists the Sources tools.
-  const libraryBases = new Map<string, Base>();
+  // SCIENT-FORK:START — a case with a Library or Accounts gets its own base, which lists those tools.
+  const scientAccess = ({ setup }: McpToolUseCase): ScientAccess => ({
+    sourcesAccess: setup.world?.library !== undefined,
+    accountsAccess: setup.world?.accounts === true,
+  });
+  const scientKey = (testCase: McpToolUseCase) => {
+    const { sourcesAccess, accountsAccess } = scientAccess(testCase);
+    return sourcesAccess || accountsAccess
+      ? `${baseKey(testCase)}:${sourcesAccess}:${accountsAccess}`
+      : undefined;
+  };
+  const scientBases = new Map<string, Base>();
   for (const testCase of selected) {
+    const key = scientKey(testCase);
+    if (key === undefined || scientBases.has(key)) continue;
     const { role, world, linkedEnvironments, forge } = testCase.setup;
-    if (world?.library === undefined || libraryBases.has(baseKey(testCase))) continue;
-    libraryBases.set(
-      baseKey(testCase),
+    scientBases.set(
+      key,
       yield* buildFor(
         role,
-        world.deviceAgentAccess !== false,
-        world.browserAgentAccess !== false,
+        world?.deviceAgentAccess !== false,
+        world?.browserAgentAccess !== false,
         linkedEnvironments === true,
         forge !== false,
-        true,
-        world.agentFeedback ?? "off",
+        scientAccess(testCase),
+        world?.agentFeedback ?? "off",
       ),
     );
   }
-  const baseFor = (testCase: McpToolUseCase) =>
-    (testCase.setup.world?.library === undefined
-      ? undefined
-      : libraryBases.get(baseKey(testCase))) ??
-    bases.get(baseKey(testCase)) ??
-    base;
+  const baseFor = (testCase: McpToolUseCase) => {
+    const key = scientKey(testCase);
+    return (
+      (key === undefined ? undefined : scientBases.get(key)) ?? bases.get(baseKey(testCase)) ?? base
+    );
+  };
   // SCIENT-FORK:END
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
   if (flags["dry-run"]) {

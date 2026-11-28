@@ -735,6 +735,29 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   assert.notEqual(prompt?.text, childCase.prompt);
 });
 
+// SCIENT-FORK:START — a case whose world grants Accounts lists its tools and text, under Scient's names.
+it("lists Scient's Accounts tools and text only for a case that grants Accounts", () => {
+  const off = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const on = buildBase(template, {
+    model: "claude-sonnet-5-5",
+    keepUserInstructions: false,
+    accountsAccess: true,
+  });
+  const add = "mcp__t3-code__scient_account_add";
+  assert.notInclude(
+    off.t3.map((tool) => tool.name),
+    add,
+  );
+  assert.include(
+    on.t3.map((tool) => tool.name),
+    add,
+  );
+  assert.notInclude(off.system.map((block) => String(block.text)).join(), "## Scient connectors");
+  assert.include(on.system.map((block) => String(block.text)).join(), "## Scient connectors");
+  assert.equal(normalizeToolName(add), "scient_account_add");
+});
+// SCIENT-FORK:END
+
 it("lists link tools only while a case turns the beta on, and sends chips as T3 projects them", () => {
   const off = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const on = buildBase(template, {
@@ -2017,6 +2040,74 @@ it.each([
     JSON.stringify(shell),
   );
 });
+
+// SCIENT-FORK:START — the Accounts cases pass the saved-account route and fail the plausible others.
+const KEY = "FAKEacmeWX0000000000000000000000000001";
+const accountCase = (id: string) =>
+  NodeFS.readFileSync(new URL("./cases/accounts.ndjson", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .find((c) => c.id === id)!;
+const call = (tool: string, input: Record<string, unknown> = {}) => ({ step: 0, tool, input });
+it.each([
+  [
+    "account-saved-signin",
+    [
+      call("scient_accounts_list"),
+      call("scient_account_sign_in", { accountId: "acc_billing0001" }),
+    ],
+    true,
+  ],
+  [
+    "account-saved-signin",
+    [call("request_secret", { label: "Acme billing password", delivery: "file" })],
+    false,
+  ],
+  [
+    "account-saved-signin",
+    [
+      call("scient_accounts_list"),
+      call("scient_account_add", {
+        kind: "website",
+        name: "Acme",
+        reason: "x",
+        secret: "password",
+      }),
+    ],
+    false,
+  ],
+  [
+    "account-saved-signin",
+    [call("scient_account_sign_in", { accountId: "acc_billing0001" })],
+    false,
+  ],
+  [
+    "account-pasted-key-keep",
+    [call("scient_account_add", { name: "Acme Weather", value: KEY })],
+    true,
+  ],
+  [
+    "account-pasted-key-keep",
+    [call("request_secret", { label: "Acme Weather", value: KEY })],
+    false,
+  ],
+  [
+    "account-pasted-key-keep",
+    [call("Bash", { command: `echo ACME_WEATHER_API_KEY=${KEY} >> .env` })],
+    false,
+  ],
+  ["account-pasted-key-keep", [call("scient_account_add", { name: "Acme Weather" })], false],
+])("grades %s on run %#", (id, calls, pass) => {
+  const testCase = accountCase(id);
+  const failed = gradeSample(
+    testCase.expect,
+    { calls, text: "", stopReason: "end_turn" },
+    pastedText(testCase),
+  ).filter((check) => !check.pass);
+  assert.equal(failed.length === 0, pass, JSON.stringify(failed));
+});
+// SCIENT-FORK:END
 
 const secretCase = (id: string) => secretCases().find((c) => c.id === id)!;
 const secretFailures = (id: string, run: Parameters<typeof gradeSample>[1]) =>
