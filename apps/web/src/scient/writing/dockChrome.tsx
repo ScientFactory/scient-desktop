@@ -110,9 +110,6 @@ export function DockButton(props: {
 
 const DockCommandContext = createContext<((action: () => void) => void) | null>(null);
 
-/** Closes the menu or panel that holds a control and returns focus to the editor; null outside one. */
-export const DockPanelCloseContext = createContext<(() => void) | null>(null);
-
 // Menu primitives finish focus handling after onClick. Defer editing commands
 // until the closed state commits, so typing and nested editors receive focus
 // after the menu relinquishes it, even when animation frames are suspended.
@@ -215,83 +212,75 @@ export function DockMenu(props: {
     }
     command?.();
   }, [open, ownerId]);
-  // Closes like a menu command does: the editor gets its focus and selection back.
-  const closeAndRestoreSelection = useStableCallback(() => {
-    closedByCommand.current = true;
-    pendingCommand.current = () => {};
-    setOpen(false);
-  });
   return (
     <DockCommandContext value={queueCommand}>
-      <DockPanelCloseContext value={closeAndRestoreSelection}>
-        <Menu
-          open={open}
-          onOpenChangeComplete={(open) => {
-            if (open || !cancelled.current) return;
-            cancelled.current = false;
-            document.getElementById(ownerId)?.dispatchEvent(
-              new CustomEvent("scient-writing-restore-selection", {
-                bubbles: true,
-                detail: "focus",
-              }),
-            );
-          }}
-          onOpenChange={(open, details) => {
-            if (open) closedByCommand.current = false;
-            else if (details.reason === "item-press") closedByCommand.current = true;
-            cancelled.current = !open && details.reason === "escape-key";
-            closedByEscape.current =
-              cancelled.current &&
-              Boolean(document.getElementById(ownerId)?.closest(".scient-latex-visual-workspace"));
-            setOpen(open);
-          }}
+      <Menu
+        open={open}
+        onOpenChangeComplete={(open) => {
+          if (open || !cancelled.current) return;
+          cancelled.current = false;
+          document.getElementById(ownerId)?.dispatchEvent(
+            new CustomEvent("scient-writing-restore-selection", {
+              bubbles: true,
+              detail: "focus",
+            }),
+          );
+        }}
+        onOpenChange={(open, details) => {
+          if (open) closedByCommand.current = false;
+          else if (details.reason === "item-press") closedByCommand.current = true;
+          cancelled.current = !open && details.reason === "escape-key";
+          closedByEscape.current =
+            cancelled.current &&
+            Boolean(document.getElementById(ownerId)?.closest(".scient-latex-visual-workspace"));
+          setOpen(open);
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            id={ownerId}
+            render={
+              <MenuTrigger
+                id={ownerId}
+                disabled={props.disabled}
+                render={
+                  <button
+                    type="button"
+                    className={dockButtonClass(props.active)}
+                    aria-label={props.label}
+                  >
+                    {props.icon ?? props.label}
+                    {(props.chevron ?? true) ? (
+                      <Chevron className="size-3 shrink-0 opacity-60" />
+                    ) : null}
+                  </button>
+                }
+              />
+            }
+          />
+          <TooltipPopup side="top">{props.label}</TooltipPopup>
+        </Tooltip>
+        <MenuPopup
+          side={props.side ?? "bottom"}
+          align={props.align ?? "start"}
+          className={cn("w-44", props.popupClassName)}
+          data-keybinding-capture=""
+          data-dock-command-scope={props.commandScope}
+          data-writing-menu-owner={ownerId}
+          // Commands own focus. LaTeX Escape restores the editing surface after
+          // the popup has released focus; other dismissals use the trigger.
+          finalFocus={() => !closedByCommand.current && !closedByEscape.current}
         >
-          <Tooltip>
-            <TooltipTrigger
-              id={ownerId}
-              render={
-                <MenuTrigger
-                  id={ownerId}
-                  disabled={props.disabled}
-                  render={
-                    <button
-                      type="button"
-                      className={dockButtonClass(props.active)}
-                      aria-label={props.label}
-                    >
-                      {props.icon ?? props.label}
-                      {(props.chevron ?? true) ? (
-                        <Chevron className="size-3 shrink-0 opacity-60" />
-                      ) : null}
-                    </button>
-                  }
-                />
-              }
-            />
-            <TooltipPopup side="top">{props.label}</TooltipPopup>
-          </Tooltip>
-          <MenuPopup
-            side={props.side ?? "bottom"}
-            align={props.align ?? "start"}
-            className={cn("w-44", props.popupClassName)}
-            data-keybinding-capture=""
-            data-dock-command-scope={props.commandScope}
-            data-writing-menu-owner={ownerId}
-            // Commands own focus. LaTeX Escape restores the editing surface after
-            // the popup has released focus; other dismissals use the trigger.
-            finalFocus={() => !closedByCommand.current && !closedByEscape.current}
-          >
-            {props.groupLabel ? (
-              <MenuGroup>
-                <MenuGroupLabel>{props.groupLabel}</MenuGroupLabel>
-                {props.children}
-              </MenuGroup>
-            ) : (
-              props.children
-            )}
-          </MenuPopup>
-        </Menu>
-      </DockPanelCloseContext>
+          {props.groupLabel ? (
+            <MenuGroup>
+              <MenuGroupLabel>{props.groupLabel}</MenuGroupLabel>
+              {props.children}
+            </MenuGroup>
+          ) : (
+            props.children
+          )}
+        </MenuPopup>
+      </Menu>
     </DockCommandContext>
   );
 }

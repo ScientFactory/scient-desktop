@@ -2,11 +2,17 @@
 // sized one by one, the word under the caret, and + and − over mixed sizes.
 import { Editor, Mark } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { fakeTimers } from "../../../test/render";
 import { attachShortcutHost } from "../keyboard/host";
 import { isMacKeyboard } from "../keyboard/keys";
 import { drawnPointsAt } from "../writing/fontChoices";
-import { latexFontState, setLatexFontSize, stepLatexFontSize } from "./latexFontCommands";
+import {
+  latexFontState,
+  setLatexFontFamily,
+  setLatexFontSize,
+  stepLatexFontSize,
+} from "./latexFontCommands";
 import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
 
 const marks = [
@@ -65,6 +71,34 @@ const sizes = (editor: Editor) => {
 };
 
 describe("LaTeX font commands in a real editor", () => {
+  it("leaves focus outside the editor, so the Font / Size panel that ran them stays open", () => {
+    using opened = open("alpha beta");
+    const { editor } = opened;
+    select(editor, 0, 5);
+    const panelButton = document.createElement("button");
+    document.body.append(panelButton);
+    // Tiptap's focus command lands on a later animation frame: run those frames before each check.
+    using _timers = fakeTimers();
+    try {
+      panelButton.focus();
+      expect(setLatexFontSize(editor, 14)).toBe(true);
+      vi.advanceTimersToNextFrame();
+      vi.advanceTimersToNextFrame();
+      expect(document.activeElement).toBe(panelButton);
+      expect(stepLatexFontSize(editor, 1, 10)).toBe(true);
+      vi.advanceTimersToNextFrame();
+      vi.advanceTimersToNextFrame();
+      expect(document.activeElement).toBe(panelButton);
+      expect(setLatexFontFamily(editor, "Arial", "pdftex")).toBe(true);
+      vi.advanceTimersToNextFrame();
+      vi.advanceTimersToNextFrame();
+      expect(document.activeElement).toBe(panelButton);
+      expect(sizes(editor)).toContainEqual(["alpha", 15]);
+    } finally {
+      panelButton.remove();
+    }
+  });
+
   it("shows the common size of words sized one by one", () => {
     using fixture = open("alpha beta gamma");
     const { editor } = fixture;

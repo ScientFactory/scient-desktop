@@ -788,6 +788,13 @@ export class ScientMarkdownEditorView {
     return handled;
   }
 
+  /** A font family or size chosen in the Font / Size panel; focus stays in the panel, which stays open. */
+  applyFontCommand(command: ScientMarkdownCommand): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    return runScientMarkdownCommand(command, view.state, view.dispatch);
+  }
+
   /**
    * Moves every run of the selection by `steps` size steps, each keeping its own size. Focus
    * stays where it is, so the size panel stays open for the next click.

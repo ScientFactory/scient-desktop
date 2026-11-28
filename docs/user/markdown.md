@@ -389,8 +389,9 @@ their differences, as in Word. A click in the field lists common sizes (8 to 72)
 plus and minus buttons. They name the key's position on a US keyboard, unless a saved shortcut already matches the event. On a French keyboard, use the `:` and `;` keys. Sizes are absolute, as in Word: 12 means 12 pt whatever the
 surrounding text.
 
-Press Enter in the size field, or choose a font, and the panel closes with the
-selection kept, so the result shows at once. The font list opens when you click
+The panel stays open after Enter in the size field, a size from the list or a
+font, so you can see the result and try another; Escape or a click outside
+closes it. The font list opens when you click
 the font button; it is searchable and scrolls inside its panel; each name is
 shown in its own face. A selection that mixes fonts shows "Mixed fonts".
 **Default** removes the local setting. The selection toolbar has the same panel

@@ -1,9 +1,8 @@
 import { T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon } from "lucide-react";
-import { type MouseEvent, useContext, useState } from "react";
-import { catalogueFont } from "@scientfactory/scient-markdown/fonts";
+import { ChevronDownIcon, RotateCcwIcon } from "lucide-react";
+import { type MouseEvent, useState } from "react";
 import { Input } from "~/components/ui/input";
-import { DockPanelCloseContext } from "./dockChrome";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -53,55 +52,41 @@ export function FontControls(props: {
     ...group,
     fonts: group.fonts.filter((font) => font.name.toLowerCase().includes(needle)),
   })).filter((group) => group.fonts.length > 0);
-  const closePanel = useContext(DockPanelCloseContext);
-  const choose = (family: string | null) => {
-    props.onFamily(family);
-    setOpen(false);
-    setQuery("");
-    closePanel?.();
-  };
-  const chooseSize = (size: number) => {
-    props.onSize(size);
-    setPresetsOpen(false);
-    closePanel?.();
-  };
+  // A choice keeps the panel and its list open, so the result can be seen and another tried.
+  const choose = (family: string | null) => props.onFamily(family);
+  const chooseSize = (size: number) => props.onSize(size);
   return (
     <div
-      className="grid w-64 gap-3 p-2 text-sm"
+      className="grid w-48 gap-2 p-2 text-sm"
       data-keybinding-capture=""
       onKeyDown={(event) => {
         if (event.key === "Escape") return;
         event.stopPropagation();
-        // The number field only commits on blur, so Enter blurs it (which applies the size) and
-        // closes the panel: the result shows in the document at once.
+        // The number field only commits on blur, so Enter blurs it (which applies the size), then
+        // takes focus back so the panel stays open.
         if (
           event.key === "Enter" &&
           event.target instanceof HTMLInputElement &&
           event.target.hasAttribute("data-font-size-input")
         ) {
-          // The editor gets focus back before the key finishes: without this its Enter would
-          // replace the selected text with a new paragraph.
+          // Without this, Enter would also reach the editor and replace the selected text.
           event.preventDefault();
-          event.target.blur();
-          closePanel?.();
+          const input = event.target;
+          input.blur();
+          input.focus();
         }
       }}
     >
       <div className="grid gap-1.5">
-        <span className="text-xs text-foreground/70">
-          <T context="font family">Font</T>
-        </span>
         <button
           type="button"
           aria-expanded={open}
           disabled={props.disabled}
-          className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input px-2 text-start hover:bg-accent disabled:opacity-50"
-          style={
-            props.family === null ? undefined : { fontFamily: catalogueFont(props.family)?.css }
-          }
+          // The name uses the interface font, so the button keeps its width; the list shows each face.
+          className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input px-2 text-start hover:bg-accent disabled:opacity-50"
           onClick={() => setOpen(!open)}
         >
-          <span className="truncate">
+          <span className="min-w-0 truncate">
             {props.familyMixed ? gt("Mixed fonts") : (props.family ?? gt("Default font"))}
           </span>
           <ChevronDownIcon className="size-4 shrink-0 text-foreground/70" />
@@ -199,17 +184,26 @@ export function FontControls(props: {
             onClick={() => setPresetsOpen(true)}
           />
           <NumberFieldIncrement aria-label={gt("Larger", { $context: "font size" })} />
-          <button
-            type="button"
-            disabled={props.disabled || (props.size === null && !props.sizeMixed)}
-            className="ms-auto rounded-md px-1.5 py-0.5 text-xs text-foreground/70 hover:bg-accent disabled:opacity-50"
-            onClick={() => {
-              props.onSize(null);
-              requestAnimationFrame(() => setDefaultSize(measureSelectionSize()));
-            }}
-          >
-            <T>Default size</T>
-          </button>
+          {/* An icon keeps the row on one line in every language; its name is the label and tooltip. */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  disabled={props.disabled || (props.size === null && !props.sizeMixed)}
+                  aria-label={gt("Default size")}
+                  className="ms-auto flex h-6.5 w-5 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground disabled:opacity-50"
+                  onClick={() => {
+                    props.onSize(null);
+                    requestAnimationFrame(() => setDefaultSize(measureSelectionSize()));
+                  }}
+                >
+                  <RotateCcwIcon className="size-3" />
+                </button>
+              }
+            />
+            <TooltipPopup side="top">{gt("Default size")}</TooltipPopup>
+          </Tooltip>
         </NumberField>
         {presetsOpen && (
           <div className="max-h-40 overflow-y-auto" role="listbox" aria-label={gt("Font size")}>
